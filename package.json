@@ -2,7 +2,12 @@
   "name": "@revazi/pi-tmux-orchestrator",
   "version": "0.4.0",
   "description": "Pi extension, skill, and dependency-free Python CLI for coordinating coding agents in tmux",
-  "license": "UNLICENSED",
+  "license": "MIT",
+  "author": {
+    "name": "Revaz Zakalashvili",
+    "email": "revaz.zakalashvili@gmail.com",
+    "url": "https://github.com/revazi"
+  },
   "keywords": [
     "pi-package",
     "pi",
@@ -36,6 +41,7 @@
   },
   "files": [
     "CHANGELOG.md",
+    "LICENSE.md",
     "README.md",
     "SECURITY.md",
     "SKILL.md",

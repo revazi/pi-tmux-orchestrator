@@ -2,11 +2,12 @@
 
 This checklist prepares a human-controlled release. It does not authorize publication, tagging, pushing, or making the repository public. Local package checks establish publish-ready mechanics only; they do not establish npm-registry, Pi-gallery, update, rollback, or production acceptance.
 
-## 1. Owner and license decision
+## 1. Owner, author, and license confirmation
 
 - [ ] Obtain explicit owner authorization for the release.
-- [ ] Record the owner's license decision. `UNLICENSED` is the current intentional metadata and grants no software license; do not substitute another license without explicit authorization.
-- [ ] Confirm the public repository/package content is appropriate for distribution despite that license status.
+- [ ] Confirm `LICENSE.md` is the canonical MIT text with `Copyright (c) 2026 Revaz Zakalashvili` and `package.json` reports license `MIT`.
+- [ ] Confirm npm author metadata is exactly Revaz Zakalashvili, `revaz.zakalashvili@gmail.com`, and `https://github.com/revazi`; do not change the license or public identity/contact metadata without another explicit owner decision.
+- [ ] Confirm the public repository/package content is appropriate for distribution under the MIT License.
 
 ## 2. Clean release source
 
@@ -33,8 +34,8 @@ This checklist prepares a human-controlled release. It does not authorize public
   tar -tzf "$ARTIFACT_DIR"/*.tgz
   ```
 
-- [ ] Confirm it contains only the manifest, runtime files, and operator documentation; no tests, CI, state, sessions, credentials, caches, generated sessions, private task content, or unrelated development files. Remove the disposable artifact directory after review.
-- [ ] Confirm the installed CLI reports `pi-tmux-agents 0.4.0`, the owned npm dependency tree is empty, and installed-artifact Pi discovery exposes exactly the three extension commands plus `skill:tmux-agent-orchestrator`.
+- [ ] Confirm it contains exactly 10 files: the manifest, `LICENSE.md`, runtime resources, and operator documentation; no tests, CI, state, sessions, credentials, caches, generated sessions, private task content, or unrelated development files. Remove the disposable artifact directory after review.
+- [ ] Confirm the packed/installed manifest reports the exact MIT/author metadata, the installed CLI reports `pi-tmux-agents 0.4.0`, the owned npm dependency tree is empty, and installed-artifact Pi discovery exposes exactly the three extension commands plus `skill:tmux-agent-orchestrator`.
 - [ ] Confirm the isolated offline `npm publish --dry-run` succeeds. It uses empty npm configuration, scripts disabled, offline mode, and a loopback registry; it is not a registry acceptance test.
 
 ## 4. Human npm checks

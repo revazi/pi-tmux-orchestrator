@@ -39,7 +39,7 @@ Do not push feature work directly to `main` after the initial repository bootstr
 - CLI help and an all-role dry-run
 - Node built-in extension tests for registration, trust, confirmation, cancellation, and private-file cleanup
 - deterministic manifest and `npm pack --dry-run --json` checks
-- exact inspection and disposable installation of the actual tarball
+- exact inspection and disposable installation of the actual 10-file tarball, including MIT/author metadata
 - isolated Pi RPC `get_commands` discovery from that installed artifact
 - an offline `npm publish --dry-run` with empty isolated npm configuration
 
@@ -47,7 +47,7 @@ The test suite must never issue a provider request or inspect real Pi/npm authen
 
 ## Release preparation
 
-Follow [RELEASE.md](RELEASE.md) for the human-controlled release checklist. A `0.4.0` source tree, tarball, CI pass, or publication dry-run means publish-ready, not actually published. Keep `UNLICENSED` unless the owner explicitly authorizes another license; the release operator must acknowledge that decision separately from technical verification.
+Follow [RELEASE.md](RELEASE.md) for the human-controlled release checklist. A `0.4.0` source tree, tarball, CI pass, or publication dry-run means publish-ready, not actually published. The MIT license and Revaz Zakalashvili author metadata are explicitly owner-authorized; do not change the license or public identity/contact metadata without another explicit owner decision.
 
 ## Security reports
 

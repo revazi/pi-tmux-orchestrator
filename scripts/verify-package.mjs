@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const expectedFiles = [
   "CHANGELOG.md",
+  "LICENSE.md",
   "README.md",
   "SECURITY.md",
   "SKILL.md",
@@ -20,7 +21,12 @@ const expectedManifest = {
   name: "@revazi/pi-tmux-orchestrator",
   version: "0.4.0",
   description: "Pi extension, skill, and dependency-free Python CLI for coordinating coding agents in tmux",
-  license: "UNLICENSED",
+  license: "MIT",
+  author: {
+    name: "Revaz Zakalashvili",
+    email: "revaz.zakalashvili@gmail.com",
+    url: "https://github.com/revazi",
+  },
   keywords: [
     "pi-package",
     "pi",
@@ -47,6 +53,28 @@ const expectedManifest = {
     skills: ["./SKILL.md"],
   },
 };
+const expectedLicense = `MIT License
+
+Copyright (c) 2026 Revaz Zakalashvili
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+`;
 const forbiddenControlFields = [
   "private",
   "scripts",
@@ -81,6 +109,11 @@ for (const field of forbiddenControlFields) {
   }
 }
 assertExact("package.json", manifest, expectedManifest);
+
+const license = await readFile(resolve(root, "LICENSE.md"), "utf8");
+if (license !== expectedLicense) {
+  throw new Error("LICENSE.md drifted from the canonical MIT license contract");
+}
 
 const version = (await readFile(resolve(root, "VERSION"), "utf8")).trim();
 const python = await readFile(resolve(root, "scripts/pi-tmux-agents.py"), "utf8");
@@ -142,5 +175,5 @@ for (const path of actualPacked) {
   if (forbiddenPath.test(path)) throw new Error(`forbidden package path: ${path}`);
 }
 console.log(
-  `Verified exact publish-ready package ${manifest.version}: ${actualPacked.length} files, explicit public access, zero lifecycle/dependency surface.`,
+  `Verified exact publish-ready package ${manifest.version}: ${actualPacked.length} files, MIT/author metadata, explicit public access, zero lifecycle/dependency surface.`,
 );

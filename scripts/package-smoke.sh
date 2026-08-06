@@ -11,6 +11,7 @@ chmod 700 "$TEMP"
 
 EXPECTED_FILES=(
   CHANGELOG.md
+  LICENSE.md
   README.md
   SECURITY.md
   SKILL.md
@@ -46,6 +47,7 @@ TARBALL=$(find "$TEMP" -maxdepth 1 -type f -name '*.tgz' -print -quit)
 test -n "$TARBALL"
 
 python3 - "$TARBALL" "${EXPECTED_FILES[@]}" <<'PY'
+import json
 import sys
 import tarfile
 
@@ -53,11 +55,22 @@ tarball, *expected = sys.argv[1:]
 expected_names = sorted(f"package/{path}" for path in expected)
 with tarfile.open(tarball, "r:gz") as archive:
     members = archive.getmembers()
+    manifest = json.load(archive.extractfile("package/package.json"))
+    license_text = archive.extractfile("package/LICENSE.md").read().decode("utf-8")
 actual_names = sorted(member.name for member in members)
 if actual_names != expected_names:
     raise SystemExit(f"actual tarball allowlist mismatch: {actual_names!r}")
 if any(not member.isfile() for member in members):
     raise SystemExit("actual tarball contains a non-regular entry")
+expected_author = {
+    "name": "Revaz Zakalashvili",
+    "email": "revaz.zakalashvili@gmail.com",
+    "url": "https://github.com/revazi",
+}
+if manifest.get("license") != "MIT" or manifest.get("author") != expected_author:
+    raise SystemExit("actual tarball omitted exact MIT/author metadata")
+if not license_text.startswith("MIT License\n\nCopyright (c) 2026 Revaz Zakalashvili\n"):
+    raise SystemExit("actual tarball omitted the canonical MIT license")
 PY
 
 mkdir "$TEMP/install"
@@ -72,6 +85,7 @@ PACKAGE="$TEMP/install/node_modules/@revazi/pi-tmux-orchestrator"
 VERSION=$($TEMP/install/node_modules/.bin/pi-tmux-agents --version)
 test "$VERSION" = "pi-tmux-agents 0.4.0"
 test ! -e "$TEMP/install/node_modules/@earendil-works"
+test -f "$PACKAGE/LICENSE.md"
 test -z "$(find "$PACKAGE" -type d -name node_modules -print -quit)"
 test -z "$(find "$PACKAGE" -type f \( -name '*.tgz' -o -name 'package-lock.json' \) -print -quit)"
 
@@ -124,4 +138,4 @@ if actual != sorted(expected):
     raise SystemExit("publication dry-run file allowlist mismatch")
 PY
 
-printf '%s\n' 'Actual tarball install/discovery and isolated offline npm publication dry-run passed (no owned dependency tree, real Pi home, auth, or provider request).'
+printf '%s\n' 'Actual 10-file tarball with MIT/author metadata, install/discovery, and isolated offline npm publication dry-run passed (no owned dependency tree, real Pi home, auth, or provider request).'

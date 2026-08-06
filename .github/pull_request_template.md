@@ -16,7 +16,7 @@
 - [ ] No credentials/private payloads added
 - [ ] README/reference/release docs updated for CLI or package-contract changes
 - [ ] Publish-ready source is not described as actually published without registry evidence
-- [ ] `UNLICENSED` preserved unless an explicit owner decision authorizes a change
+- [ ] MIT license and public author metadata match the explicit owner decision
 - [ ] Python 3.11+, Node 22.19+, and tmux compatibility considered
 
 ## Residual limitations

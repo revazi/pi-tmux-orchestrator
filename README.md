@@ -77,7 +77,7 @@ PI_CODING_AGENT_DIR="$TEMP_PI_DIR" pi --no-session -e "$PWD"
 rm -rf "$TEMP_PI_DIR"
 ```
 
-The package smoke builds a real tarball, checks its exact file allowlist, installs it with scripts disabled and an empty dependency tree, discovers its extension and root skill through isolated Pi RPC, and performs an offline `npm publish --dry-run` against a loopback registry with isolated npm configuration. It sends no prompt, makes no provider request, and does not read the configured Pi home or npm credentials.
+The package smoke builds the exact 10-file tarball, checks its MIT license and author metadata, installs it with scripts disabled and an empty dependency tree, discovers its extension and root skill through isolated Pi RPC, and performs an offline `npm publish --dry-run` against a loopback registry with isolated npm configuration. It sends no prompt, makes no provider request, and does not read the configured Pi home or npm credentials.
 
 For inspected sources, Pi also supports persistent local-path installation. A pinned Git fallback is appropriate only after the matching tag exists:
 
@@ -86,7 +86,7 @@ pi install /absolute/path/to/pi-tmux-orchestrator
 pi install git:github.com/revazi/pi-tmux-orchestrator@v0.4.0
 ```
 
-The package imports no Pi core module, so it declares no dependencies or peers and owns no runtime tree. Its `UNLICENSED` metadata makes no software-license grant; changing that is an explicit owner decision, not a failure of the technical package checks.
+The package imports no Pi core module, so it declares no dependencies or peers and owns no runtime tree. It is distributed under the MIT License in [LICENSE.md](LICENSE.md).
 
 The legacy `install.sh` remains a standalone CLI/root-skill fallback and does not install the extension. Existing standalone installations are not migrated automatically. Evaluate the installer only with a disposable destination:
 
@@ -247,6 +247,12 @@ Put `--json` before or after the command to emit exactly one JSON object on stdo
 
 Failures return nonzero with `data: null` (or bounded diagnostic data for checks) and `error: {"code":"...","message":"..."}`. `doctor`, `list`, `status`, `start`, `send`, `restart`, and `stop` return structured metadata. `attach` fails with `interactive_only`. Task, prompt, report, provider, specialist, and message bodies are never returned; list/status expose bounded names, paths, role/pane records, and file sizes only.
 
+## Author and license
+
+Created and maintained by [Revaz Zakalashvili](https://github.com/revazi) (`@revazi`). Public contact: [revaz.zakalashvili@gmail.com](mailto:revaz.zakalashvili@gmail.com).
+
+Licensed under the [MIT License](LICENSE.md). Copyright (c) 2026 Revaz Zakalashvili.
+
 ## Development
 
 Run all local checks:
@@ -259,6 +265,6 @@ The suite includes 39+ standard-library Python tests, Node built-in extension te
 
 ## Project status
 
-Current source package: `0.4.0`, technically publish-ready and still `UNLICENSED`. The Python/tmux CLI remains the authoritative process/data plane; the extension only invokes its JSON mode with argument arrays. Child Pi TUIs remain separate processes, with no SDK/RPC child bridge.
+Current source package: `0.4.0`, technically publish-ready and MIT-licensed. The Python/tmux CLI remains the authoritative process/data plane; the extension only invokes its JSON mode with argument arrays. Child Pi TUIs remain separate processes, with no SDK/RPC child bridge.
 
 A version in source, a tarball, and successful dry-runs do not prove npm-registry or Pi-gallery publication. This repository does not distribute credentials, model access, or provider configuration.

@@ -4,6 +4,15 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- Added the owner-authorized canonical MIT license with 2026 Revaz Zakalashvili copyright
+
+### Changed
+
+- Added exact npm author name, public email, and GitHub profile metadata
+- Expanded deterministic package acceptance to enforce the MIT/author metadata and exact 10-file artifact without changing version or publication status
+
 ## 0.4.0 - 2026-08-06
 
 This source release is technically publish-ready. The version entry does not assert that npm publication, a Pi gallery listing, or a Git tag has occurred.
