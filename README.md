@@ -11,7 +11,7 @@ It turns the recurring “implementer + reviewer + optional specialist” setup 
 - An optional read-only integration, contract, security, or runtime probe
 - An optional read-only Playwright tester for real local browser behavior
 - An optional read-only senior Django expert for framework-specific review
-- A live relay/status pane that routes all specialist reports
+- A live relay/status pane that validates and routes report-ready transitions
 - Numbered implementation, specialist, and review rounds
 - Configurable provider, model, and thinking level per role
 - Role messaging and model restart commands
@@ -162,11 +162,11 @@ A restart preserves project files and coordination state but starts a fresh Pi c
 ## Handoff flow
 
 1. The implementer writes `handoff-N.md` and `handoff-N.ready`.
-2. The relay notifies the reviewer and enabled Playwright/Django specialists.
+2. After validating the marker and a regular non-empty handoff report, the relay notifies the reviewer and enabled Playwright/Django specialists.
 3. Playwright writes `playwright-N.md` (`PASS` or `FAIL`) and `playwright-N.ready`.
 4. Django writes `django-review-N.md` (`ADVISORY_APPROVED` or `ISSUES_FOUND`) and `django-review-N.ready`.
 5. The reviewer waits for enabled specialist reports, then writes `review-N.md` (`APPROVED` or `CHANGES_REQUESTED`) and `review-N.ready`.
-6. The relay routes specialist reports to implementer/reviewer and the review to the implementer.
+6. The relay routes specialist reports to implementer/reviewer and the review to the implementer only after validating each required first-line result.
 7. Requested changes start another numbered round with fresh specialist reports.
 8. Approval produces `implementation-ready.md` and stops before push or merge unless explicitly authorized.
 9. An optional probe writes `probe.md` and `probe.ready`; the relay informs implementer and reviewer.
@@ -177,7 +177,7 @@ Coordination records live under:
 ~/.pi/agent/orchestrations/<session>/<run>/
 ```
 
-They are created with private permissions and remain outside the target repository.
+They are created with private permissions and remain outside the target repository. Status and monitor views show report file names and byte sizes, never report previews.
 
 ## Safety model
 
@@ -187,7 +187,12 @@ They are created with private permissions and remain outside the target reposito
 - Playwright artifacts and test data are restricted to ignored or external temporary paths, with bounded process cleanup.
 - Child sessions read the target project's governing instructions before acting.
 - `--approve-project` is explicit because it bypasses child trust prompts.
-- Existing tmux sessions are never replaced; existence checks target exact names so prefix collisions do not block a distinct session.
+- Existing tmux sessions are never replaced; every operation on an existing session/window uses an exact target, so a vanished target cannot fall through to a prefix collision during attach, status, stop, or cleanup.
+- State root, session, and run directories must be canonical non-symlink directories; state files must be regular non-symlink files.
+- Schema-v1 manifests are strictly validated before acting on an existing orchestration's panes or processes.
+- Ready markers remain pending until their report is valid and transport succeeds for every enabled recipient; successful recipients are not notified again during another recipient's retry.
+- Tmux `send-keys` success is transport-level only. It does not prove that Pi processed or acknowledged a notice.
+- Failed starts retain a private `startup-state` diagnosis and kill any partial tmux session.
 - The orchestrator never reads or copies Pi authentication files.
 - `pi --list-models` validates availability without making a model request.
 - Role prompts are attached by file rather than exposed as command-line payloads.
@@ -203,7 +208,7 @@ Run all local checks:
 scripts/test.sh
 ```
 
-The functional smoke creates a temporary six-pane tmux grid with five fake sleeping agents plus monitor, verifies exact session-name handling and every relay marker, and removes the sessions. It sends no provider request.
+The functional smoke creates a temporary six-pane tmux grid with five fake sleeping agents plus monitor, verifies exact session-name handling and every relay marker, and removes the sessions and temporary state. It sends no provider request and does not inspect authentication files.
 
 ## Project status
 

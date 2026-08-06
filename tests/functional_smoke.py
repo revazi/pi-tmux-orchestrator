@@ -38,7 +38,28 @@ def main() -> int:
             stderr=subprocess.DEVNULL,
         )
     subprocess.run(
-        ["tmux", "new-session", "-d", "-s", prefix_collision, "sleep", "60"],
+        [
+            "tmux",
+            "new-session",
+            "-d",
+            "-s",
+            prefix_collision,
+            "-n",
+            ORCHESTRATOR.WINDOW,
+            "sleep",
+            "60",
+        ],
+        check=True,
+    )
+    subprocess.run(
+        [
+            "tmux",
+            "set-option",
+            "-t",
+            ORCHESTRATOR.exact_window_target(prefix_collision),
+            "@pi_agents_coord",
+            "/prefix-collision-canary",
+        ],
         check=True,
     )
 
@@ -69,6 +90,16 @@ def main() -> int:
     ORCHESTRATOR.command_path = smoke_command_path
     ORCHESTRATOR.STATE_ROOT = temporary_root / "state"
     ORCHESTRATOR.SCRIPT_PATH = wrapper
+
+    def cleanup() -> None:
+        for candidate in (session, prefix_collision):
+            subprocess.run(
+                ["tmux", "kill-session", "-t", f"={candidate}"],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        shutil.rmtree(temporary_root, ignore_errors=True)
 
     arguments = argparse.Namespace(
         project=str(ROOT),
@@ -108,7 +139,14 @@ def main() -> int:
     try:
         ORCHESTRATOR.start_command(arguments)
         coord_value = subprocess.run(
-            ["tmux", "show-options", "-qv", "-t", session, "@pi_agents_coord"],
+            [
+                "tmux",
+                "show-options",
+                "-qv",
+                "-t",
+                ORCHESTRATOR.exact_window_target(session),
+                "@pi_agents_coord",
+            ],
             check=True,
             text=True,
             capture_output=True,
@@ -129,7 +167,7 @@ def main() -> int:
                 "-t",
                 f"{session}:agents",
                 "-F",
-                "#{pane_id} #{pane_current_command} #{pane_dead}",
+                "#{pane_id} #{pane_current_command} #{pane_pid} #{pane_dead}",
             ],
             check=True,
             text=True,
@@ -137,6 +175,7 @@ def main() -> int:
         ).stdout.splitlines()
         if len(panes) != 6 or any(line.rsplit(" ", 1)[-1] != "0" for line in panes):
             raise AssertionError(f"unexpected pane state: {panes}")
+        pane_pids = [int(line.split()[-2]) for line in panes]
 
         reports = {
             "probe.md": "Synthetic probe complete.\n",
@@ -151,11 +190,16 @@ def main() -> int:
             "playwright-1.ready",
             "django-review-1.ready",
             "review-1.ready",
+            "implementation-ready.md",
         }
         for name, content in reports.items():
             (coord / name).write_text(content, encoding="utf-8")
-        for name in markers:
+        for name in markers - {"implementation-ready.md"}:
             (coord / name).touch()
+        (coord / "implementation-ready.md").write_text(
+            "Synthetic implementation readiness.\n",
+            encoding="utf-8",
+        )
 
         deadline = time.time() + 8
         seen = coord / ".relay-seen"
@@ -167,21 +211,63 @@ def main() -> int:
 
         if not ORCHESTRATOR.session_exists(prefix_collision):
             raise AssertionError("prefix-collision control session was unexpectedly replaced")
+
+        subprocess.run(
+            ["tmux", "kill-session", "-t", ORCHESTRATOR.exact_session_target(session)],
+            check=True,
+        )
+        vanished_target = subprocess.run(
+            ["tmux", "kill-session", "-t", ORCHESTRATOR.exact_session_target(session)],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        if vanished_target.returncode == 0:
+            raise AssertionError("an absent exact target unexpectedly matched another session")
+        if ORCHESTRATOR.session_option(session, "@pi_agents_coord") is not None:
+            raise AssertionError("an absent option target matched its prefix-collision control")
+        if not ORCHESTRATOR.session_exists(prefix_collision):
+            raise AssertionError("vanished exact target affected its prefix-collision control")
+
         print("OK functional grid: all five roles plus monitor are healthy")
-        print("OK exact session targeting ignores a prefix-collision session")
+        print("OK exact targeting preserves a prefix session after the target disappears")
         print("OK private manifest, session options, and read-only specialist tools")
-        print("OK relay consumed all handoff, specialist, probe, and review markers")
+        print(
+            "OK relay consumed all handoff, specialist, probe, review, and "
+            "implementation-ready markers"
+        )
         print("OK no Pi provider process was launched")
-        return 0
-    finally:
+        cleanup()
         for candidate in (session, prefix_collision):
-            subprocess.run(
-                ["tmux", "kill-session", "-t", f"={candidate}"],
+            residue = subprocess.run(
+                ["tmux", "has-session", "-t", f"={candidate}"],
                 check=False,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
-        shutil.rmtree(temporary_root, ignore_errors=True)
+            if residue.returncode == 0:
+                raise AssertionError(f"tmux session residue remains: {candidate}")
+        if temporary_root.exists():
+            raise AssertionError(f"temporary state residue remains: {temporary_root}")
+        deadline = time.time() + 3
+        live_pids = pane_pids
+        while live_pids and time.time() < deadline:
+            remaining = []
+            for pid in live_pids:
+                try:
+                    os.kill(pid, 0)
+                except ProcessLookupError:
+                    continue
+                remaining.append(pid)
+            live_pids = remaining
+            if live_pids:
+                time.sleep(0.05)
+        if live_pids:
+            raise AssertionError(f"pane process residue remains: {live_pids}")
+        print("OK no tmux, process, or temporary-state residue remains")
+        return 0
+    finally:
+        cleanup()
 
 
 if __name__ == "__main__":

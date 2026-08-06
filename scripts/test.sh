@@ -21,6 +21,7 @@ from pathlib import Path
 for path in (
     Path("$ROOT/scripts/pi-tmux-agents.py"),
     Path("$ROOT/tests/test_orchestrator.py"),
+    Path("$ROOT/tests/test_hardening.py"),
     Path("$ROOT/tests/functional_smoke.py"),
 ):
     ast.parse(path.read_text(encoding="utf-8"), filename=str(path))

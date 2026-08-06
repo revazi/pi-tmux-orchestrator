@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import os
 import subprocess
 import sys
 import tempfile
@@ -123,6 +124,74 @@ class UtilityTests(unittest.TestCase):
             ["has-session", "-t", "=pi-project-agents"],
             check=False,
             capture=True,
+        )
+
+    def test_exact_target_helpers_and_session_option(self) -> None:
+        self.assertEqual(
+            ORCHESTRATOR.exact_session_target("pi-project-agents"),
+            "=pi-project-agents",
+        )
+        self.assertEqual(
+            ORCHESTRATOR.exact_window_target("pi-project-agents"),
+            "=pi-project-agents:=agents",
+        )
+        with self.assertRaises(ORCHESTRATOR.OrchestrationError):
+            ORCHESTRATOR.exact_window_target("pi-project-agents", "other")
+
+        completed = subprocess.CompletedProcess([], 0, "/private/run\n", "")
+        with mock.patch.object(ORCHESTRATOR, "tmux", return_value=completed) as tmux:
+            self.assertEqual(
+                ORCHESTRATOR.session_option("pi-project-agents", "@pi_agents_coord"),
+                "/private/run",
+            )
+        tmux.assert_called_once_with(
+            [
+                "show-options",
+                "-qv",
+                "-t",
+                "=pi-project-agents:=agents",
+                "@pi_agents_coord",
+            ],
+            check=False,
+            capture=True,
+        )
+
+    def test_attach_and_stop_use_exact_session_targets(self) -> None:
+        with (
+            mock.patch.dict(os.environ, {"TMUX": "active"}),
+            mock.patch.object(ORCHESTRATOR, "tmux") as tmux,
+        ):
+            ORCHESTRATOR.attach_session("pi-project-agents")
+        tmux.assert_called_once_with(
+            ["switch-client", "-t", "=pi-project-agents"]
+        )
+
+        with (
+            mock.patch.object(
+                ORCHESTRATOR,
+                "resolve_session",
+                return_value=("pi-project-agents", Path("/private/run")),
+            ),
+            mock.patch.object(ORCHESTRATOR, "load_manifest"),
+            mock.patch.object(ORCHESTRATOR, "tmux") as tmux,
+        ):
+            ORCHESTRATOR.stop_command(
+                argparse.Namespace(session="pi-project-agents", yes=True)
+            )
+        tmux.assert_called_once_with(
+            ["kill-session", "-t", "=pi-project-agents"]
+        )
+
+    def test_external_attach_exec_uses_exact_session_target(self) -> None:
+        with (
+            mock.patch.dict(os.environ, {}, clear=True),
+            mock.patch.object(ORCHESTRATOR, "command_path", return_value="/usr/bin/tmux"),
+            mock.patch.object(ORCHESTRATOR.os, "execvp") as execvp,
+        ):
+            ORCHESTRATOR.attach_session("pi-project-agents")
+        execvp.assert_called_once_with(
+            "/usr/bin/tmux",
+            ["tmux", "attach", "-t", "=pi-project-agents"],
         )
 
     def test_secure_write_uses_private_mode(self) -> None:
@@ -248,51 +317,18 @@ class UtilityTests(unittest.TestCase):
             expected_tools = None if role == "implementer" else ORCHESTRATOR.READ_ONLY_TOOLS
             self.assertEqual(config["tools"], expected_tools)
 
-    def test_relay_routes_every_marker_without_provider_process(self) -> None:
-        roles = {
-            role: {"pane_id": f"%{index}"}
-            for index, role in enumerate(
-                ("implementer", "reviewer", "probe", "playwright", "django"),
-                start=1,
-            )
-        }
-        manifest = {"roles": roles}
-        with tempfile.TemporaryDirectory() as directory:
-            coord = Path(directory)
-            seen = coord / ".relay-seen"
-            for marker in (
-                "handoff-1.ready",
-                "probe.ready",
-                "playwright-1.ready",
-                "django-review-1.ready",
-                "review-1.ready",
-            ):
-                (coord / marker).touch()
-            with mock.patch.object(ORCHESTRATOR, "relay_send") as relay_send:
-                ORCHESTRATOR.relay_once(coord, manifest, seen)
-
-            destinations = [call.args[1] for call in relay_send.call_args_list]
-            self.assertEqual(destinations.count("implementer"), 4)
-            self.assertEqual(destinations.count("reviewer"), 4)
-            self.assertEqual(destinations.count("playwright"), 1)
-            self.assertEqual(destinations.count("django"), 1)
-            messages = "\n".join(call.args[2] for call in relay_send.call_args_list)
-            for report in (
-                "handoff-1.md",
-                "probe.md",
-                "playwright-1.md",
-                "django-review-1.md",
-                "review-1.md",
-            ):
-                self.assertIn(report, messages)
-            for marker in (
-                "handoff-1.ready",
-                "probe.ready",
-                "playwright-1.ready",
-                "django-review-1.ready",
-                "review-1.ready",
-            ):
-                self.assertTrue((seen / marker).exists())
+    def test_relay_send_reports_transport_result(self) -> None:
+        manifest = {"roles": {"reviewer": {"pane_id": "%2"}}}
+        with mock.patch.object(ORCHESTRATOR, "send_keys") as send_keys:
+            self.assertTrue(ORCHESTRATOR.relay_send(manifest, "reviewer", "notice"))
+        send_keys.assert_called_once_with("%2", "notice")
+        with mock.patch.object(
+            ORCHESTRATOR,
+            "send_keys",
+            side_effect=subprocess.CalledProcessError(1, ["tmux"]),
+        ):
+            self.assertFalse(ORCHESTRATOR.relay_send(manifest, "reviewer", "notice"))
+        self.assertFalse(ORCHESTRATOR.relay_send(manifest, "probe", "notice"))
 
 
 if __name__ == "__main__":
