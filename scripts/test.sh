@@ -40,9 +40,11 @@ PATH="$TEMP_BIN:$PATH" "$ROOT/scripts/pi-tmux-agents.py" start \
   --task 'Synthetic dry-run only.' \
   --session pi-repository-dry-run \
   --with-probe \
+  --with-playwright \
+  --with-django-expert \
   --skip-model-check \
   --dry-run
-if tmux has-session -t pi-repository-dry-run 2>/dev/null; then
+if tmux has-session -t =pi-repository-dry-run 2>/dev/null; then
   printf '%s\n' 'Dry run leaked a tmux session.' >&2
   exit 1
 fi

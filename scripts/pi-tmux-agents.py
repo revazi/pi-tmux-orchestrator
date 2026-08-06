@@ -28,7 +28,7 @@ STATE_ROOT = Path(
         str(Path.home() / ".pi" / "agent" / "orchestrations"),
     )
 ).expanduser()
-VERSION = "0.1.0"
+VERSION = "0.3.0"
 WINDOW = "agents"
 THINKING_LEVELS = ("off", "minimal", "low", "medium", "high", "xhigh", "max")
 DEFAULT_MODELS = {
@@ -45,6 +45,16 @@ DEFAULT_MODELS = {
     "probe": {
         "provider": "openai-codex",
         "model": "gpt-5.4-mini",
+        "thinking": "high",
+    },
+    "playwright": {
+        "provider": "openai-codex",
+        "model": "gpt-5.4",
+        "thinking": "high",
+    },
+    "django": {
+        "provider": "openai-codex",
+        "model": "gpt-5.4",
         "thinking": "high",
     },
 }
@@ -134,7 +144,7 @@ def validate_session_name(value: str) -> str:
 
 
 def session_exists(session: str) -> bool:
-    result = tmux(["has-session", "-t", session], check=False, capture=True)
+    result = tmux(["has-session", "-t", f"={session}"], check=False, capture=True)
     return result.returncode == 0
 
 
@@ -259,7 +269,8 @@ def implementer_prompt(project: Path, coord: Path, task: str) -> str:
         - Keep behavior, tests, documentation, migrations, and public contracts aligned.
         - Use synthetic/non-secret fixtures unless the user explicitly authorized other data.
         - Do not expose credentials, private payloads, prompts, provider responses, or raw errors.
-        - The reviewer and optional probe are read-only; do not ask them to edit source.
+        - The reviewer, optional probe, optional Playwright tester, and optional
+          Django expert are read-only; do not ask them to edit source.
         - Do not push, merge, publish, or deploy unless the task explicitly requests it and
           repository workflow permits it. Never merge without explicit user approval.
         """
@@ -272,6 +283,8 @@ def implementer_prompt(project: Path, coord: Path, task: str) -> str:
 
         1. Write `implementer.started.md` when you begin.
         2. If `probe.ready` appears, read `probe.md` and incorporate only valid findings.
+           For each handoff round, also read any matching `playwright-N.md` and
+           `django-review-N.md` before responding to reviewer findings.
         3. When implementation and required verification are ready, choose the next integer N,
            write `handoff-N.md`, then create `handoff-N.ready`.
         4. The handoff must list scope, changed files, exact commands/results, current git status,
@@ -325,7 +338,11 @@ def reviewer_prompt(project: Path, coord: Path, task: str) -> str:
         1. Write `reviewer.started.md`, then wait for `handoff-1.ready` or a relay notification.
         2. For each round N, read `handoff-N.md`, inspect the current worktree diff, and run
            appropriate read-only verification.
-        3. Write `review-N.md`. The first line must be exactly `APPROVED` or
+        3. If `playwright.prompt.md` exists, wait for `playwright-N.ready` and inspect
+           `playwright-N.md`. If `django.prompt.md` exists, wait for
+           `django-review-N.ready` and inspect `django-review-N.md`. Independently
+           evaluate all evidence and limitations. Then write `review-N.md`. The first
+           line must be exactly `APPROVED` or
            `CHANGES_REQUESTED`, then create `review-N.ready`.
         4. For changes requested, list findings in severity order and wait for round N+1.
         5. For approval, include verification evidence and residual limitations, create
@@ -386,6 +403,115 @@ def probe_prompt(project: Path, coord: Path, task: str, probe_task: str) -> str:
         "## Focused probe",
         probe_task,
         rules,
+        deliverable,
+    )
+
+
+def playwright_prompt(project: Path, coord: Path, task: str, playwright_task: str) -> str:
+    introduction = textwrap.dedent(
+        """
+        You are a read-only Playwright test agent. Do not edit tracked files, commit,
+        push, merge, publish, deploy, change dependency declarations, or access
+        credentials/private project data. Browser downloads, test databases, logs,
+        screenshots, and traces are allowed only in ignored or external temporary paths.
+        """
+    )
+    rules = textwrap.dedent(
+        """
+        ## Browser-test rules
+
+        - Independently inspect the actual current worktree and the applicable handoff.
+        - Wait for each `handoff-N.ready` before testing that round.
+        - Exercise the real test application through a browser, not only HTTP clients or
+          unit tests. Verify visible user behavior and at least one relevant failure path.
+        - Use only synthetic local data and test-owned credentials. Never enter or record
+          secrets, provider payloads, private data, or raw external errors.
+        - Start and stop local application/database processes in a bounded command with
+          cleanup traps. Do not leave servers or browser processes behind.
+        - Do not treat a browser smoke as authorization, semantic proof, security audit,
+          or complete adapter coverage.
+        """
+    )
+    deliverable = textwrap.dedent(
+        f"""
+        ## Deliverable
+
+        Coordination directory: `{coord}`
+
+        1. Write `playwright.started.md`, then wait for `handoff-1.ready` or relay notice.
+        2. For each handoff round N, run the authorized Playwright test-app checks.
+        3. Write `playwright-N.md`; its first line must be exactly `PASS` or `FAIL`.
+           Include tested commit/worktree, commands, browser/version, routes and visible
+           assertions, database/backend, artifacts, failures, limitations, process cleanup,
+           and privacy confirmation.
+        4. Create `playwright-N.ready` and wait for another round.
+        5. Never include credentials, private payloads, prompts, provider responses,
+           endpoints beyond local test URLs, or raw provider errors.
+        """
+    )
+    return join_prompt_sections(
+        "# Role: independent Playwright test agent",
+        introduction,
+        common_project_guidance(project),
+        "## Overall task context",
+        task,
+        "## Focused Playwright task",
+        playwright_task,
+        rules,
+        deliverable,
+    )
+
+
+def django_expert_prompt(project: Path, coord: Path, task: str, django_task: str) -> str:
+    introduction = textwrap.dedent(
+        """
+        You are a read-only senior Django expert. Do not edit tracked files, commit,
+        push, merge, publish, deploy, change dependencies, or access credentials/private
+        project data. Review actual Django behavior, public APIs, lifecycle, database
+        semantics, test architecture, and operational best practices independently.
+        """
+    )
+    standard = textwrap.dedent(
+        """
+        ## Django review standard
+
+        - Wait for each `handoff-N.ready`, then inspect the full diff and handoff.
+        - Prioritize supported Django APIs, settings/app lifecycle, migrations, ORM
+          semantics, transaction/test-database behavior, backend portability within the
+          authorized PostgreSQL scope, security boundaries, maintainability, and CI.
+        - Distinguish blocking correctness/security findings from optional style or future
+          best practices. Do not demand speculative abstractions or out-of-scope features.
+        - Run read-only focused checks when useful and report exact environments/results.
+        - Treat browser and generic reviewer evidence as inputs, not substitutes for your
+          own Django-specific inspection.
+        """
+    )
+    deliverable = textwrap.dedent(
+        f"""
+        ## Deliverable
+
+        Coordination directory: `{coord}`
+
+        1. Write `django.started.md`, then wait for `handoff-1.ready` or relay notice.
+        2. For each round N, write `django-review-N.md`; its first line must be exactly
+           `ADVISORY_APPROVED` or `ISSUES_FOUND`.
+        3. Include severity-ordered findings with file/line references, focused commands,
+           concrete corrections, accepted best-practice observations, residual risks,
+           limitations, and privacy confirmation.
+        4. Create `django-review-N.ready` and wait for another round.
+        5. Never edit source or include credentials, private payloads, provider responses,
+           endpoints, or raw external errors.
+        """
+    )
+    return join_prompt_sections(
+        "# Role: independent senior Django expert",
+        introduction,
+        common_project_guidance(project),
+        "## Overall task context",
+        task,
+        "## Focused Django review task",
+        django_task,
+        standard,
         deliverable,
     )
 
@@ -519,6 +645,42 @@ def start_command(args: argparse.Namespace) -> int:
             raise OrchestrationError("--probe-task requires --with-probe")
         probe_task = None
 
+    if args.with_playwright:
+        if args.playwright_task is None and args.playwright_task_file is None:
+            playwright_task = (
+                "Run an independent browser smoke against the actual local test application "
+                "after each implementer handoff. Verify the task's user-visible behavior and "
+                "a relevant failure path with synthetic data, then report limitations.\n"
+            )
+        else:
+            playwright_task = read_text_argument(
+                args.playwright_task,
+                args.playwright_task_file,
+                "playwright-task",
+            )
+    else:
+        if args.playwright_task is not None or args.playwright_task_file is not None:
+            raise OrchestrationError("--playwright-task requires --with-playwright")
+        playwright_task = None
+
+    if args.with_django_expert:
+        if args.django_task is None and args.django_task_file is None:
+            django_task = (
+                "Independently review each handoff for Django ORM, settings, lifecycle, "
+                "database, security, testing, and operational best practices. Separate "
+                "blocking findings from optional future improvements.\n"
+            )
+        else:
+            django_task = read_text_argument(
+                args.django_task,
+                args.django_task_file,
+                "django-task",
+            )
+    else:
+        if args.django_task is not None or args.django_task_file is not None:
+            raise OrchestrationError("--django-task requires --with-django-expert")
+        django_task = None
+
     session = validate_session_name(args.session or f"pi-{slugify(project.name)}-agents")
     if session_exists(session):
         raise OrchestrationError(
@@ -528,6 +690,10 @@ def start_command(args: argparse.Namespace) -> int:
     roles = ["implementer", "reviewer"]
     if args.with_probe:
         roles.append("probe")
+    if args.with_playwright:
+        roles.append("playwright")
+    if args.with_django_expert:
+        roles.append("django")
     configs = {role: role_config(args, role) for role in roles}
     if not args.skip_model_check:
         for role, config in configs.items():
@@ -561,6 +727,10 @@ def start_command(args: argparse.Namespace) -> int:
     secure_write(coord / "task.md", task)
     if probe_task is not None:
         secure_write(coord / "probe-task.md", probe_task)
+    if playwright_task is not None:
+        secure_write(coord / "playwright-task.md", playwright_task)
+    if django_task is not None:
+        secure_write(coord / "django-task.md", django_task)
 
     prompt_paths = {
         "implementer": coord / "implementer.prompt.md",
@@ -571,6 +741,18 @@ def start_command(args: argparse.Namespace) -> int:
     if probe_task is not None:
         prompt_paths["probe"] = coord / "probe.prompt.md"
         secure_write(prompt_paths["probe"], probe_prompt(project, coord, task, probe_task))
+    if playwright_task is not None:
+        prompt_paths["playwright"] = coord / "playwright.prompt.md"
+        secure_write(
+            prompt_paths["playwright"],
+            playwright_prompt(project, coord, task, playwright_task),
+        )
+    if django_task is not None:
+        prompt_paths["django"] = coord / "django.prompt.md"
+        secure_write(
+            prompt_paths["django"],
+            django_expert_prompt(project, coord, task, django_task),
+        )
 
     manifest: dict[str, Any] = {
         "version": 1,
@@ -619,6 +801,8 @@ def coordination_files(coord: Path) -> list[Path]:
     patterns = (
         "*.started.md",
         "probe.md",
+        "playwright-*.md",
+        "django-review-*.md",
         "handoff-*.md",
         "review-*.md",
         "implementation-ready.md",
@@ -843,6 +1027,53 @@ def relay_once(coord: Path, manifest: dict[str, Any], seen_dir: Path) -> None:
             f"{coord}/handoff-{round_number}.md. Review it now and write review-{round_number}.md "
             f"plus review-{round_number}.ready.",
         )
+        relay_send(
+            manifest,
+            "playwright",
+            f"Coordination notice: implementer handoff round {round_number} is ready at "
+            f"{coord}/handoff-{round_number}.md. Run the browser test now and write "
+            f"playwright-{round_number}.md plus playwright-{round_number}.ready.",
+        )
+        relay_send(
+            manifest,
+            "django",
+            f"Coordination notice: implementer handoff round {round_number} is ready at "
+            f"{coord}/handoff-{round_number}.md. Run the Django expert review now and "
+            f"write django-review-{round_number}.md plus django-review-{round_number}.ready.",
+        )
+        mark_seen(seen_dir, token)
+
+    for marker in sorted(coord.glob("playwright-*.ready")):
+        token = marker.name
+        if is_seen(seen_dir, token):
+            continue
+        match = re.fullmatch(r"playwright-(\d+)\.ready", marker.name)
+        if not match:
+            continue
+        round_number = match.group(1)
+        message = (
+            f"Coordination notice: Playwright report round {round_number} is ready at "
+            f"{coord}/playwright-{round_number}.md. Evaluate the evidence and failures."
+        )
+        relay_send(manifest, "implementer", message)
+        relay_send(manifest, "reviewer", message)
+        mark_seen(seen_dir, token)
+
+    for marker in sorted(coord.glob("django-review-*.ready")):
+        token = marker.name
+        if is_seen(seen_dir, token):
+            continue
+        match = re.fullmatch(r"django-review-(\d+)\.ready", marker.name)
+        if not match:
+            continue
+        round_number = match.group(1)
+        message = (
+            f"Coordination notice: Django expert review round {round_number} is ready at "
+            f"{coord}/django-review-{round_number}.md. Evaluate the findings and "
+            "best-practice recommendations within authorized scope."
+        )
+        relay_send(manifest, "implementer", message)
+        relay_send(manifest, "reviewer", message)
         mark_seen(seen_dir, token)
 
     for marker in sorted(coord.glob("review-*.ready")):
@@ -919,7 +1150,10 @@ def render_monitor(coord: Path, manifest: dict[str, Any]) -> None:
             first = ""
             size = 0
         print(f"  {path.name:<30} {size:>7} bytes | {first[:90]}")
-    print("\nRelay: handoff → reviewer; review → implementer; probe → both")
+    print(
+        "\nRelay: handoff → reviewer/playwright/django; specialist reports → "
+        "implementer/reviewer; review → implementer; probe → both"
+    )
     print(f"Attach/switch: pi-tmux-agents attach {session}")
     print(f"Status:        pi-tmux-agents status {session}")
     print(f"Stop:          pi-tmux-agents stop {session} --yes")
@@ -959,6 +1193,8 @@ def build_parser() -> argparse.ArgumentParser:
               pi-tmux-agents doctor
               pi-tmux-agents start --project "$PWD" --task-file /tmp/task.md --approve-project
               pi-tmux-agents start --project "$PWD" --task-file /tmp/task.md --with-probe --attach
+              pi-tmux-agents start --project "$PWD" --task-file /tmp/task.md \\
+                --with-probe --with-playwright
               pi-tmux-agents status pi-my-project-agents
               pi-tmux-agents restart pi-my-project-agents --role implementer \\
                 --provider openai-codex --model gpt-5.6-sol --thinking xhigh --yes
@@ -976,11 +1212,17 @@ def build_parser() -> argparse.ArgumentParser:
     start.add_argument("--with-probe", action="store_true")
     start.add_argument("--probe-task")
     start.add_argument("--probe-task-file")
+    start.add_argument("--with-playwright", action="store_true")
+    start.add_argument("--playwright-task")
+    start.add_argument("--playwright-task-file")
+    start.add_argument("--with-django-expert", action="store_true")
+    start.add_argument("--django-task")
+    start.add_argument("--django-task-file")
     start.add_argument("--approve-project", action="store_true")
     start.add_argument("--attach", action="store_true")
     start.add_argument("--dry-run", action="store_true")
     start.add_argument("--skip-model-check", action="store_true")
-    for role_name in ("implementer", "reviewer", "probe"):
+    for role_name in ("implementer", "reviewer", "probe", "playwright", "django"):
         add_model_arguments(start, role_name)
     start.set_defaults(handler=start_command)
 
@@ -997,14 +1239,22 @@ def build_parser() -> argparse.ArgumentParser:
 
     send = subparsers.add_parser("send", help="send a steering message to a role")
     send.add_argument("session")
-    send.add_argument("--role", required=True, choices=("implementer", "reviewer", "probe"))
+    send.add_argument(
+        "--role",
+        required=True,
+        choices=("implementer", "reviewer", "probe", "playwright", "django"),
+    )
     send.add_argument("--message")
     send.add_argument("--message-file")
     send.set_defaults(handler=send_command)
 
     restart = subparsers.add_parser("restart", help="restart one role, optionally changing model")
     restart.add_argument("session")
-    restart.add_argument("--role", required=True, choices=("implementer", "reviewer", "probe"))
+    restart.add_argument(
+        "--role",
+        required=True,
+        choices=("implementer", "reviewer", "probe", "playwright", "django"),
+    )
     restart.add_argument("--provider")
     restart.add_argument("--model")
     restart.add_argument("--thinking", choices=THINKING_LEVELS)

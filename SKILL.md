@@ -1,6 +1,6 @@
 ---
 name: tmux-agent-orchestrator
-description: Starts and coordinates multiple Pi coding agents in a monitorable tmux grid with one writer, an independent reviewer, optional probe, file-based handoffs, model selection, status, messaging, restart, and cleanup commands. Use when the user asks to delegate work across Pi agents, run implementer/reviewer loops, use parallel model probes, or monitor agents in tmux across any project.
+description: Starts and coordinates multiple Pi coding agents in a monitorable tmux grid with one writer, an independent reviewer, optional technical probe, Playwright tester, and Django expert, file-based handoffs, model selection, status, messaging, restart, and cleanup commands. Use when the user asks to delegate work across Pi agents, run implementer/reviewer loops, request specialist Django or browser reviews, or monitor agents in tmux across any project.
 compatibility: Requires Pi, Python 3, and tmux. tmux 3.5+ with extended-keys csi-u is recommended.
 ---
 
@@ -12,10 +12,10 @@ Use the bundled `pi-tmux-agents` command instead of hand-writing tmux panes, pro
 
 1. Resolve the project directory and read its governing instructions before launch.
 2. Treat the user's orchestration request as permission to create external orchestration state, but do not approve an unfamiliar project automatically.
-3. Keep one writer: only the implementer may edit project files. Reviewer and probe are read-only roles with verification access.
+3. Keep one writer: only the implementer may edit project files. Reviewer, probe, Playwright tester, and Django expert are read-only roles with verification access.
 4. Put the complete task and acceptance criteria in a task file. Do not put credentials, private documents, provider responses, or other secrets in task or handoff files.
-5. Use a probe only when the task benefits from independent integration, contract, security, or runtime investigation.
-6. Never claim a probe is wire-equivalent to a production provider unless it actually exercises that exact boundary.
+5. Use a probe only when the task benefits from independent integration, contract, security, or runtime investigation. Add Playwright only when a real local test application and user-visible browser behavior should be exercised. Add the Django expert for ORM, settings, lifecycle, database, migration, security, testing, or operational best-practice review.
+6. Never claim a probe is wire-equivalent to a production provider unless it actually exercises that exact boundary. Never treat a browser smoke as complete semantic, security, or adapter evidence.
 7. Do not push, merge, publish, spend provider credits outside the launched Pi sessions, or perform destructive cleanup unless explicitly approved.
 
 ## Start a grid
@@ -35,7 +35,7 @@ Default roles and models:
 - reviewer: `openai-codex/gpt-5.4`, `high`
 - relay/status monitor
 
-Add an independent probe when needed:
+Add an independent technical probe when needed:
 
 ```bash
 pi-tmux-agents start \
@@ -46,7 +46,34 @@ pi-tmux-agents start \
   --approve-project
 ```
 
-Use `--attach` only when the user wants the current terminal switched immediately. Otherwise report the generated session name and let the user attach when ready.
+Add an independent Playwright tester when needed:
+
+```bash
+pi-tmux-agents start \
+  --project "$PWD" \
+  --task-file /tmp/pi-agent-task.md \
+  --with-probe \
+  --probe-task-file /tmp/pi-agent-probe.md \
+  --with-playwright \
+  --playwright-task-file /tmp/pi-agent-playwright.md \
+  --approve-project
+```
+
+Add an independent Django expert alongside the browser tester:
+
+```bash
+pi-tmux-agents start \
+  --project "$PWD" \
+  --task-file /tmp/pi-agent-task.md \
+  --with-probe \
+  --with-playwright \
+  --playwright-task-file /tmp/pi-agent-playwright.md \
+  --with-django-expert \
+  --django-task-file /tmp/pi-agent-django.md \
+  --approve-project
+```
+
+The Playwright and Django roles wait for each implementer handoff and report before reviewer approval. Use `--attach` only when the user wants the current terminal switched immediately. Otherwise report the generated session name and let the user attach when ready.
 
 ## Operate an existing grid
 

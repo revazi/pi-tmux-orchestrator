@@ -19,7 +19,7 @@ Do not push feature work directly to `main` after the initial repository bootstr
 
 ## Design expectations
 
-- Preserve a single-writer model.
+- Preserve a single-writer model: reviewer, probe, Playwright, and Django roles remain read-only.
 - Keep Python dependencies at zero unless a concrete requirement justifies one.
 - Keep target repository files separate from orchestration state.
 - Retain explicit confirmation for trust bypass, role restart, and session stop.
@@ -34,8 +34,8 @@ Do not push feature work directly to `main` after the initial repository bootstr
 - Standard-library unit tests
 - Skill frontmatter checks
 - Shell syntax checks
-- A model-free tmux functional smoke
-- CLI help and dry-run checks
+- A model-free tmux functional smoke covering all roles, relay markers, and exact session targeting
+- CLI help and an all-role dry-run
 
 The test suite must never issue a provider request or inspect Pi authentication files.
 
