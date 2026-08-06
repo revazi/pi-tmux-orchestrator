@@ -335,7 +335,12 @@ class MetadataOutputTests(PrivateStateFixture):
             f"{self.canary}\nprivate body\n",
             encoding="utf-8",
         )
-        self.tmux_result = subprocess.CompletedProcess([], 0, "pane metadata only\n", "")
+        self.tmux_result = subprocess.CompletedProcess(
+            [],
+            0,
+            "0\t%1\t123\tpython3\t0\tIMPLEMENTER\n",
+            "",
+        )
 
     def test_status_prints_only_file_metadata(self) -> None:
         output = io.StringIO()

@@ -1,6 +1,6 @@
 # Pi Tmux Orchestrator
 
-A reusable [Pi](https://github.com/badlogic/pi-mono) skill and dependency-free Python CLI for coordinating coding agents in monitorable tmux grids.
+A reusable [Pi](https://github.com/badlogic/pi-mono) skill and dependency-free Python CLI for coordinating coding agents in monitorable tmux grids, with an unreleased private `0.4.0-dev.0` Pi package/extension candidate.
 
 It turns the recurring “implementer + reviewer + optional specialist” setup into one command, with durable handoffs and explicit safety boundaries.
 
@@ -8,15 +8,16 @@ It turns the recurring “implementer + reviewer + optional specialist” setup 
 
 - One primary implementer with normal Pi coding tools
 - One independent reviewer with read/verification tools
-- An optional read-only integration, contract, security, or runtime probe
-- An optional read-only Playwright tester for real local browser behavior
-- An optional read-only senior Django expert for framework-specific review
+- An optional workflow-read-only integration, contract, security, or runtime probe
+- An optional workflow-read-only Playwright tester for real local browser behavior
+- An optional workflow-read-only senior Django expert for framework-specific review
 - A live relay/status pane that validates and routes report-ready transitions
 - Numbered implementation, specialist, and review rounds
 - Configurable provider, model, and thinking level per role
 - Role messaging and model restart commands
 - External coordination state that does not pollute project repositories
 - Model-free dry runs and functional smoke tests
+- An opt-in versioned JSON CLI boundary and thin Pi extension that delegates to it
 
 ## Default grid
 
@@ -40,8 +41,9 @@ The default grid has implementer, reviewer, and monitor panes. Optional roles ad
 
 ## Requirements
 
-- Pi coding agent available as `pi`
+- Pi coding agent available as `pi` (extension candidate tested with Pi 0.80.10 and designed for newer compatible APIs)
 - Python 3.11+
+- Node 22.19+ for candidate package verification/evaluation
 - tmux 3.2+; tmux 3.5+ is recommended
 - A project already inspected and trusted before using `--approve-project`
 
@@ -52,28 +54,39 @@ set -g extended-keys on
 set -g extended-keys-format csi-u
 ```
 
-## Installation
+## Private candidate and disposable evaluation
 
-Clone this private repository, then install the global skill and CLI:
+`0.4.0-dev.0` is an unreleased, private, non-publishable candidate (`private: true`, `UNLICENSED`). Do **not** install this candidate into the real Pi home or publish it. The extension imports no Pi core package, so the manifest declares no dependencies or peers and owns no runtime tree.
+
+Evaluate source-package discovery through isolated Pi RPC:
 
 ```bash
-git clone https://github.com/revazi/pi-tmux-orchestrator.git
-cd pi-tmux-orchestrator
-./install.sh
+scripts/pi-extension-smoke.sh
 ```
 
-This installs:
+The smoke uses a disposable `PI_CODING_AGENT_DIR`, sends only RPC `get_commands`, tolerates the extension's status/widget lifecycle events, and asserts exactly the three extension commands plus `skill:tmux-agent-orchestrator`. It sends no prompt and makes no provider request. For a disposable standalone-skill smoke, redirect the legacy installer too:
 
-```text
-~/.pi/agent/skills/tmux-agent-orchestrator/
-~/.pi/agent/bin/pi-tmux-agents
+```bash
+TEMP_PI_HOME=$(mktemp -d)
+PI_AGENT_HOME="$TEMP_PI_HOME" ./install.sh
+PATH="$TEMP_PI_HOME/bin:$PATH" pi-tmux-agents --version
+rm -rf "$TEMP_PI_HOME"
 ```
 
-`~/.pi/agent/bin` must be on `PATH`. New Pi sessions discover the skill automatically.
+The legacy `install.sh` remains the standalone CLI/skill fallback and does not install the extension. Existing `0.3.0` installations are not migrated automatically. No Git-package update or rollback acceptance is claimed; neither flow is exercised here.
 
 ## Start from Pi
 
-In a new Pi session:
+When loaded, the extension provides:
+
+- tool `tmux_orchestrator`: `doctor`, `list`, `status`, `start`, and `send`
+- `/orchestrate`: confirmed interactive start
+- `/orchestrations`: metadata-only list/widget refresh
+- `/orchestrator-stop`: stop with explicit UI confirmation
+
+The tool intentionally excludes restart and stop. Start is rejected outside the interactive TUI because confirmation is required. Parent trust is checked before an optional child `--approve`; a separate confirmation is required for every run, and parent trust is never treated as inherited by children.
+
+Without the extension, use the skill/CLI fallback in a new Pi session:
 
 ```text
 /skill:tmux-agent-orchestrator Start an implementer and reviewer for the current task and attach.
@@ -183,7 +196,7 @@ They are created with private permissions and remain outside the target reposito
 
 - Only the implementer receives Pi's normal write tools.
 - Reviewer, probe, Playwright tester, and Django expert are launched without `edit` and `write`.
-- Read-only roles retain `bash` for verification, so prompts also prohibit tracked modifications.
+- Workflow-read-only roles retain `bash` for verification and are not OS-sandboxed, so prompts also prohibit tracked modifications.
 - Playwright artifacts and test data are restricted to ignored or external temporary paths, with bounded process cleanup.
 - Child sessions read the target project's governing instructions before acting.
 - `--approve-project` is explicit because it bypasses child trust prompts.
@@ -200,6 +213,16 @@ They are created with private permissions and remain outside the target reposito
 
 See [SECURITY.md](SECURITY.md) and [references/usage.md](references/usage.md) for details.
 
+## JSON CLI boundary
+
+Put `--json` before or after the command to emit exactly one JSON object on stdout. The v1 envelope is:
+
+```json
+{"schema_version":"1","command":"status","success":true,"data":{},"error":null}
+```
+
+Failures return nonzero with `data: null` (or bounded diagnostic data for checks) and `error: {"code":"...","message":"..."}`. `doctor`, `list`, `status`, `start`, `send`, `restart`, and `stop` return structured metadata. `attach` fails with `interactive_only`. Task, prompt, report, provider, specialist, and message bodies are never returned; list/status expose bounded names, paths, role/pane records, and file sizes only.
+
 ## Development
 
 Run all local checks:
@@ -208,10 +231,10 @@ Run all local checks:
 scripts/test.sh
 ```
 
-The functional smoke creates a temporary six-pane tmux grid with five fake sleeping agents plus monitor, verifies exact session-name handling and every relay marker, and removes the sessions and temporary state. It sends no provider request and does not inspect authentication files.
+The suite includes 39+ standard-library Python tests, Node built-in extension tests, deterministic `npm pack --dry-run --json` verification, a disposable tarball install, an isolated Pi RPC command/skill discovery smoke, and the existing six-pane tmux smoke. It sends no prompt or provider request and does not inspect real authentication files.
 
 ## Project status
 
-Current source-controlled baseline: `0.3.0`, reconciled from the installed local skill. This is source recovery, not a package or public release.
+Current candidate: `0.4.0-dev.0`, private and unreleased. The Python/tmux CLI remains the authoritative process/data plane; the extension only invokes its JSON mode with argument arrays. Child Pi TUIs remain separate processes, with no SDK/RPC child bridge.
 
-This repository is not published to npm or PyPI and does not distribute credentials, model access, or provider configuration.
+This repository is not published to npm, PyPI, or a Pi gallery and does not distribute credentials, model access, or provider configuration.

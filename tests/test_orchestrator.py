@@ -35,6 +35,8 @@ class SkillMetadataTests(unittest.TestCase):
         self.assertLessEqual(len(name), 64)
         self.assertGreater(len(description), 0)
         self.assertLessEqual(len(description), 1024)
+        self.assertIn("tmux_orchestrator", content)
+        self.assertIn("standalone `pi-tmux-agents` CLI fallback", content)
 
 
 class PromptTests(unittest.TestCase):
@@ -221,7 +223,7 @@ class UtilityTests(unittest.TestCase):
         self.assertIn("restart", help_text)
 
     def test_version(self) -> None:
-        self.assertEqual(ORCHESTRATOR.VERSION, "0.3.0")
+        self.assertEqual(ORCHESTRATOR.VERSION, "0.4.0-dev.0")
 
     def test_default_model_contract_for_all_roles(self) -> None:
         self.assertEqual(

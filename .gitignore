@@ -9,6 +9,11 @@ htmlcov/
 .venv/
 venv/
 
+# Node/package artifacts
+node_modules/
+*.tgz
+.npm/
+
 # Editors and OS
 .DS_Store
 .idea/
