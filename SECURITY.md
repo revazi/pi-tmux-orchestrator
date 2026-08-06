@@ -32,7 +32,17 @@ Never put these values in task, handoff, review, probe, status, test, or issue c
 - private endpoints
 - unbounded raw errors
 
-Coordination directories are created with mode `0700` and files with mode `0600`. Operators remain responsible for local backups, screen recording, shell history, and tmux server access.
+Coordination directories are created with mode `0700` and files with mode `0600`. The configured state root and each session/run directory must be non-symlink directories, canonical coordination paths must remain under that root, and state files consumed by the orchestrator must be regular non-symlink files. Writes use no-follow opens where available, descriptor checks, and private permissions. Manifest updates use unique temporary files and atomic replacement.
+
+Schema-v1 manifests are bounded and strictly validated for required fields, known roles, role configuration types, pane IDs, trust type, canonical project/coordination paths, exact session/window identity, and contained prompt/session paths before an existing orchestration is acted upon. Validation inspects prompt metadata without reading prompt or report bodies.
+
+Status and monitor output expose only bounded metadata such as coordination file names and byte sizes. They do not preview report bodies. Operators remain responsible for local backups, screen recording, shell history, tmux server access, and other processes running as the same user.
+
+## Relay delivery boundary
+
+The relay requires each ready marker's matching report to be a regular non-empty file. Playwright, Django, and reviewer reports also require their documented first-line enums. Invalid or missing reports remain pending. Successful transport is recorded per marker and enabled recipient so retries do not intentionally duplicate already successful recipients; a marker is globally complete only after all intended recipients succeed.
+
+A successful tmux `send-keys` operation proves only that tmux accepted the keystrokes. It does not prove Pi received, processed, or acknowledged the notice. Same-user processes can inspect or alter tmux and coordination state; these checks are hardening, not same-user sandboxing.
 
 ## Project trust
 
@@ -43,8 +53,10 @@ Coordination directories are created with mode `0700` and files with mode `0600`
 The CLI:
 
 - refuses to replace an existing tmux session
+- uses exact tmux targets for every operation on an existing session/window, including attach, status, stop, and failure cleanup
 - requires `--yes` to restart a role
 - requires `--yes` to stop a session
 - retains coordination records after session termination
+- kills a partially created tmux session after startup failure and leaves a private `FAILED` startup state when safe
 
 It does not push, merge, publish, deploy, or clean target repositories.

@@ -53,7 +53,7 @@ Lists sessions created by this skill. Unrelated tmux sessions are ignored.
 
 ### `status [SESSION]`
 
-Shows role panes, process state, project path, coordination directory, and handoff files. If the session is omitted, the command uses the current project's conventional session when unambiguous.
+Shows role panes, process state, project path, coordination directory, and bounded handoff metadata. Coordination files are displayed by name and byte size only; report content and first-line previews are not printed. If the session is omitted, the command uses the current project's conventional session when unambiguous.
 
 ### `attach [SESSION]`
 
@@ -80,16 +80,16 @@ Checks Pi, Python, tmux, tmux extended-key settings, and default model availabil
 The coordination directory is external to the repository and mode `0700`.
 
 1. Implementer writes `handoff-N.md` and `handoff-N.ready`.
-2. Relay submits a notification to the reviewer and optional Playwright/Django panes.
+2. Relay verifies that both marker and matching handoff report are regular files under the run and that the report is non-empty, then submits a notification to the reviewer and optional Playwright/Django panes.
 3. Optional Playwright tester runs the real local test application, writes `playwright-N.md` beginning with `PASS` or `FAIL`, and creates `playwright-N.ready`.
 4. Optional Django expert reviews ORM/settings/lifecycle/database/security/testing best practices, writes `django-review-N.md` beginning with `ADVISORY_APPROVED` or `ISSUES_FOUND`, and creates `django-review-N.ready`.
 5. Reviewer waits for matching specialist reports, then writes `review-N.md`; its first line is `APPROVED` or `CHANGES_REQUESTED`, followed by `review-N.ready`.
-6. Relay submits specialist and review results to the implementer.
+6. Relay accepts only `PASS`/`FAIL`, `ADVISORY_APPROVED`/`ISSUES_FOUND`, and `APPROVED`/`CHANGES_REQUESTED` as the applicable first-line values, then submits specialist and review notices to their intended recipients.
 7. Requested changes produce another numbered round, including fresh specialist reviews.
 8. Approval causes the implementer to write `implementation-ready.md` and stop before push/merge unless the task and repository workflow explicitly authorize more.
 9. Optional technical probe writes `probe.md` and `probe.ready`; relay informs both implementation and review agents.
 
-The relay transports file paths and state transitions, not source documents or provider payloads.
+The relay transports file paths and state transitions, not source documents or provider payloads. A missing, empty, symlinked, non-regular, or invalid-enum report leaves its marker pending. Delivery is recorded per marker and recipient; a successful recipient is not duplicated while another recipient retries, and global completion is recorded only after every enabled intended recipient succeeds. Tmux `send-keys` success is transport-level only and is not a Pi acknowledgement.
 
 ## Security boundaries
 
@@ -98,6 +98,9 @@ The relay transports file paths and state transitions, not source documents or p
 - The Playwright tester may create browser caches, screenshots, traces, logs, and test databases only under ignored or external temporary paths and must clean up local servers/browser processes.
 - The orchestrator never reads or copies Pi authentication files.
 - Model validation uses `pi --list-models`, which checks configured availability but sends no model request.
+- State root, session, and run paths must resolve within the configured orchestration root and may not themselves be symlink directories. State files used by the orchestrator must be regular non-symlink files.
+- Schema-v1 manifests require exact structural, role, pane, trust, canonical path, and containment validation before actions on an existing orchestration.
+- Manifest updates use unique mode-`0600` temporary files and atomic replacement. Failed starts kill partial sessions and retain a private `startup-state` diagnosis when safe.
 - Avoid task text on the command line when it contains sensitive project information; use `--task-file`.
 - Never place credentials, raw career documents, private customer data, prompts, provider responses, or raw provider errors in coordination files.
 - `--approve-project` bypasses child-session trust prompts and must be limited to a project already inspected and trusted.
@@ -130,11 +133,11 @@ pi-tmux-agents restart SESSION --role implementer \
 
 ### Existing session name
 
-Inspect it with `status`, stop it explicitly, or pass another `--session` name. The tool never replaces an existing tmux session automatically.
+Inspect it with `status`, stop it explicitly, or pass another `--session` name. The tool never replaces an existing tmux session automatically. Existing session/window operations use exact tmux targets, so if the selected orchestration disappears during an operation, a prefix-named session is not substituted.
 
 ### Relay pane exited
 
-Project agents continue running, but automatic notifications stop. Restarting relay is intentionally conservative; send messages manually with `send`, or stop and create a new orchestration after preserving work.
+Project agents continue running, but automatic notifications stop. Restarting relay is intentionally conservative; send messages manually with `send`, or stop and create a new orchestration after preserving work. If a report-ready marker remains pending, verify that its matching report is a regular non-empty file with the required first-line result; transport failures are retried without resending to recipients already recorded as successful.
 
 ### Child session asks for project trust
 

@@ -12,14 +12,16 @@ import datetime as dt
 import json
 import os
 import re
+import secrets
 import shlex
 import shutil
+import stat
 import subprocess
 import sys
 import textwrap
 import time
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 SCRIPT_PATH = Path(__file__).resolve()
 STATE_ROOT = Path(
@@ -60,6 +62,25 @@ DEFAULT_MODELS = {
 }
 READ_ONLY_TOOLS = "read,bash,grep,find,ls"
 MAX_TASK_BYTES = 64 * 1024
+MAX_MANIFEST_BYTES = 64 * 1024
+KNOWN_ROLES = frozenset(DEFAULT_MODELS)
+MANIFEST_FIELDS = frozenset(
+    {
+        "version",
+        "created_at",
+        "session",
+        "window",
+        "project",
+        "coord",
+        "approve_project",
+        "monitor_pane_id",
+        "roles",
+    }
+)
+ROLE_FIELDS = frozenset(
+    {"provider", "model", "thinking", "tools", "pane_id", "prompt_path", "session_dir"}
+)
+PANE_ID_PATTERN = re.compile(r"%[0-9]+")
 
 
 class OrchestrationError(RuntimeError):
@@ -98,36 +119,378 @@ def tmux(args: list[str], *, check: bool = True, capture: bool = False) -> subpr
     return run([command_path("tmux"), *args], check=check, capture=capture)
 
 
-def secure_write(path: Path, content: str, mode: int = 0o600) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+def absolute_path(path: Path) -> Path:
+    return Path(os.path.abspath(os.fspath(path.expanduser())))
+
+
+def path_lstat(path: Path, label: str) -> os.stat_result:
     try:
-        path.parent.chmod(0o700)
-    except OSError:
-        pass
-    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
-    descriptor = os.open(path, flags, mode)
-    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-        handle.write(content)
-    path.chmod(mode)
+        return path.lstat()
+    except OSError as error:
+        raise OrchestrationError(f"Cannot inspect {label}") from error
+
+
+def require_directory(path: Path, label: str) -> os.stat_result:
+    metadata = path_lstat(path, label)
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+        raise OrchestrationError(f"{label} must be a non-symlink directory")
+    return metadata
+
+
+def require_regular_file(
+    path: Path,
+    label: str,
+    *,
+    nonempty: bool = False,
+) -> os.stat_result:
+    metadata = path_lstat(path, label)
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+        raise OrchestrationError(f"{label} must be a non-symlink regular file")
+    if nonempty and metadata.st_size == 0:
+        raise OrchestrationError(f"{label} must be non-empty")
+    return metadata
+
+
+def open_directory(path: Path) -> int:
+    expected = require_directory(path, "private state directory")
+    flags = os.O_RDONLY
+    flags |= getattr(os, "O_DIRECTORY", 0)
+    flags |= getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as error:
+        raise OrchestrationError("Cannot safely open private state directory") from error
+    metadata = os.fstat(descriptor)
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or metadata.st_dev != expected.st_dev
+        or metadata.st_ino != expected.st_ino
+    ):
+        os.close(descriptor)
+        raise OrchestrationError("Private state directory changed while opening")
+    return descriptor
+
+
+def ensure_private_directory(path: Path, *, parents: bool = False) -> Path:
+    return _ensure_private_directory(path, parents=parents, enforce_existing=True)
+
+
+def _ensure_private_directory(
+    path: Path,
+    *,
+    parents: bool,
+    enforce_existing: bool,
+) -> Path:
+    path = absolute_path(path)
+    created = False
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        if path.parent == path:
+            raise OrchestrationError("Cannot create private state directory at filesystem root")
+        if parents:
+            parent = _ensure_private_directory(
+                path.parent,
+                parents=True,
+                enforce_existing=False,
+            )
+        else:
+            parent = absolute_path(path.parent)
+            require_directory(parent, "private state parent")
+            parent = parent.resolve(strict=True)
+        parent_descriptor = open_directory(parent)
+        try:
+            try:
+                os.mkdir(path.name, 0o700, dir_fd=parent_descriptor)
+            except FileExistsError as error:
+                raise OrchestrationError(
+                    "Private state directory changed during creation"
+                ) from error
+            created = True
+        except OrchestrationError:
+            raise
+        except OSError as error:
+            raise OrchestrationError("Cannot create private state directory") from error
+        finally:
+            os.close(parent_descriptor)
+        metadata = path_lstat(path, "private state directory")
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+        raise OrchestrationError("Private state path must be a non-symlink directory")
+    canonical = path.resolve(strict=True)
+    if created or enforce_existing:
+        descriptor = open_directory(canonical)
+        try:
+            os.fchmod(descriptor, 0o700)
+        except OSError as error:
+            raise OrchestrationError("Cannot set private state directory permissions") from error
+        finally:
+            os.close(descriptor)
+    return canonical
+
+
+def canonical_state_root(*, create: bool) -> Path:
+    root = absolute_path(STATE_ROOT)
+    try:
+        metadata = root.lstat()
+    except FileNotFoundError:
+        if not create:
+            raise OrchestrationError("Orchestration state root does not exist")
+        return ensure_private_directory(root, parents=True)
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+        raise OrchestrationError("Orchestration state root must be a non-symlink directory")
+    return ensure_private_directory(root)
+
+
+def validate_coordination_directory(coord: Path) -> Path:
+    root = canonical_state_root(create=False)
+    candidate = absolute_path(coord)
+    require_directory(candidate, "coordination run directory")
+    canonical = candidate.resolve(strict=True)
+    try:
+        relative = canonical.relative_to(root)
+    except ValueError as error:
+        raise OrchestrationError("Coordination path is outside the configured state root") from error
+    if len(relative.parts) != 2:
+        raise OrchestrationError("Coordination path must identify one session and one run")
+    require_directory(root / relative.parts[0], "orchestration session directory")
+    require_directory(canonical, "coordination run directory")
+    return canonical
+
+
+def secure_write(
+    path: Path,
+    content: str,
+    mode: int = 0o600,
+    *,
+    exclusive: bool = False,
+) -> None:
+    path = absolute_path(path)
+    parent = ensure_private_directory(path.parent, parents=True)
+    parent_descriptor = open_directory(parent)
+    before: os.stat_result | None = None
+    try:
+        try:
+            before = os.stat(path.name, dir_fd=parent_descriptor, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        if before is not None and (
+            stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode)
+        ):
+            raise OrchestrationError("Private state destination must be a regular file")
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+        if exclusive:
+            flags |= os.O_EXCL
+        flags |= getattr(os, "O_CLOEXEC", 0)
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+        try:
+            descriptor = os.open(path.name, flags, mode, dir_fd=parent_descriptor)
+        except OSError as error:
+            raise OrchestrationError("Cannot safely open private state file") from error
+        try:
+            opened = os.fstat(descriptor)
+            if not stat.S_ISREG(opened.st_mode):
+                raise OrchestrationError("Private state destination must be a regular file")
+            if before is not None and not hasattr(os, "O_NOFOLLOW") and (
+                opened.st_dev != before.st_dev or opened.st_ino != before.st_ino
+            ):
+                raise OrchestrationError("Private state destination changed during write")
+            os.fchmod(descriptor, mode)
+            with os.fdopen(descriptor, "w", encoding="utf-8", closefd=False) as handle:
+                handle.write(content)
+                handle.flush()
+                os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+    finally:
+        os.close(parent_descriptor)
+
+
+def read_regular_file(path: Path, label: str, maximum_bytes: int) -> bytes:
+    metadata = require_regular_file(path, label)
+    if metadata.st_size > maximum_bytes:
+        raise OrchestrationError(f"{label} exceeds the safety limit")
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as error:
+        raise OrchestrationError(f"Cannot safely open {label}") from error
+    try:
+        opened = os.fstat(descriptor)
+        if not stat.S_ISREG(opened.st_mode):
+            raise OrchestrationError(f"{label} must be a regular file")
+        if opened.st_dev != metadata.st_dev or opened.st_ino != metadata.st_ino:
+            raise OrchestrationError(f"{label} changed while opening")
+        chunks: list[bytes] = []
+        remaining = maximum_bytes + 1
+        while remaining > 0:
+            chunk = os.read(descriptor, min(remaining, 8192))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        content = b"".join(chunks)
+        if len(content) > maximum_bytes:
+            raise OrchestrationError(f"{label} exceeds the safety limit")
+        return content
+    finally:
+        os.close(descriptor)
+
+
+def validate_manifest(
+    value: object,
+    coord: Path,
+    *,
+    expected_session: str | None = None,
+) -> dict[str, Any]:
+    coord = validate_coordination_directory(coord)
+    if not isinstance(value, dict):
+        raise OrchestrationError("Orchestration manifest must be a JSON object")
+    if set(value) != MANIFEST_FIELDS:
+        raise OrchestrationError("Orchestration manifest has missing or unknown top-level fields")
+    if type(value["version"]) is not int or value["version"] != 1:
+        raise OrchestrationError("Unsupported orchestration manifest version")
+    if not isinstance(value["created_at"], str):
+        raise OrchestrationError("Manifest created_at must be a timestamp string")
+    try:
+        created_at = dt.datetime.fromisoformat(value["created_at"])
+    except ValueError as error:
+        raise OrchestrationError("Manifest created_at is invalid") from error
+    if created_at.tzinfo is None:
+        raise OrchestrationError("Manifest created_at must include a timezone")
+
+    session = value["session"]
+    if not isinstance(session, str):
+        raise OrchestrationError("Manifest session must be a string")
+    validate_session_name(session)
+    if session != coord.parent.name or (expected_session is not None and session != expected_session):
+        raise OrchestrationError("Manifest session does not match its coordination path")
+    if value["window"] != WINDOW or not isinstance(value["window"], str):
+        raise OrchestrationError("Manifest window is invalid")
+    if value["coord"] != str(coord) or not isinstance(value["coord"], str):
+        raise OrchestrationError("Manifest coordination path is not canonical")
+    if type(value["approve_project"]) is not bool:
+        raise OrchestrationError("Manifest approve_project must be a boolean")
+
+    project_value = value["project"]
+    if not isinstance(project_value, str):
+        raise OrchestrationError("Manifest project must be a path string")
+    project = Path(project_value)
+    if not project.is_absolute():
+        raise OrchestrationError("Manifest project path must be absolute")
+    try:
+        project_canonical = project.resolve(strict=True)
+    except OSError as error:
+        raise OrchestrationError("Manifest project path does not exist") from error
+    if project_canonical != project or not project.is_dir():
+        raise OrchestrationError("Manifest project path must be a canonical directory")
+
+    monitor_pane_id = value["monitor_pane_id"]
+    if not isinstance(monitor_pane_id, str) or not PANE_ID_PATTERN.fullmatch(monitor_pane_id):
+        raise OrchestrationError("Manifest monitor pane ID is invalid")
+    roles = value["roles"]
+    if not isinstance(roles, dict):
+        raise OrchestrationError("Manifest roles must be an object")
+    if not {"implementer", "reviewer"}.issubset(roles) or not set(roles).issubset(KNOWN_ROLES):
+        raise OrchestrationError("Manifest roles contain missing or unknown role names")
+
+    pane_ids = {monitor_pane_id}
+    for role_name, role in roles.items():
+        if not isinstance(role, dict) or set(role) != ROLE_FIELDS:
+            raise OrchestrationError(f"Manifest role {role_name} has invalid fields")
+        for field in ("provider", "model"):
+            field_value = role[field]
+            if not isinstance(field_value, str) or not field_value or len(field_value) > 256:
+                raise OrchestrationError(f"Manifest role {role_name} has invalid {field}")
+        if role["thinking"] not in THINKING_LEVELS or not isinstance(role["thinking"], str):
+            raise OrchestrationError(f"Manifest role {role_name} has invalid thinking level")
+        expected_tools = None if role_name == "implementer" else READ_ONLY_TOOLS
+        if role["tools"] != expected_tools:
+            raise OrchestrationError(f"Manifest role {role_name} has invalid tool configuration")
+        pane_id = role["pane_id"]
+        if not isinstance(pane_id, str) or not PANE_ID_PATTERN.fullmatch(pane_id):
+            raise OrchestrationError(f"Manifest role {role_name} has invalid pane ID")
+        if pane_id in pane_ids:
+            raise OrchestrationError("Manifest pane IDs must be unique")
+        pane_ids.add(pane_id)
+
+        prompt_value = role["prompt_path"]
+        session_value = role["session_dir"]
+        if not isinstance(prompt_value, str) or not isinstance(session_value, str):
+            raise OrchestrationError(f"Manifest role {role_name} paths must be strings")
+        expected_prompt = coord / f"{role_name}.prompt.md"
+        expected_session_dir = coord / "sessions" / role_name
+        if Path(prompt_value) != expected_prompt or Path(session_value) != expected_session_dir:
+            raise OrchestrationError(f"Manifest role {role_name} paths are invalid")
+        require_regular_file(expected_prompt, f"{role_name} prompt", nonempty=True)
+        sessions_parent = coord / "sessions"
+        if sessions_parent.exists() or sessions_parent.is_symlink():
+            require_directory(sessions_parent, "role sessions directory")
+            if sessions_parent.resolve(strict=True) != sessions_parent:
+                raise OrchestrationError("Manifest sessions path is not canonical")
+        if expected_session_dir.exists() or expected_session_dir.is_symlink():
+            require_directory(expected_session_dir, f"{role_name} session directory")
+            if expected_session_dir.resolve(strict=True) != expected_session_dir:
+                raise OrchestrationError(f"Manifest role {role_name} session path is not canonical")
+    return value
 
 
 def save_manifest(coord: Path, manifest: dict[str, Any]) -> None:
+    coord = validate_coordination_directory(coord)
+    validate_manifest(manifest, coord, expected_session=manifest.get("session"))
     destination = coord / "manifest.json"
-    temporary = coord / ".manifest.json.tmp"
-    secure_write(temporary, json.dumps(manifest, indent=2, sort_keys=True) + "\n")
-    temporary.replace(destination)
-    destination.chmod(0o600)
-
-
-def load_manifest(coord: Path) -> dict[str, Any]:
+    if destination.exists() or destination.is_symlink():
+        require_regular_file(destination, "orchestration manifest")
+    temporary = coord / f".manifest.json.{os.getpid()}.{secrets.token_hex(8)}.tmp"
+    temporary_created = False
     try:
-        with (coord / "manifest.json").open(encoding="utf-8") as handle:
-            value = json.load(handle)
-    except (OSError, json.JSONDecodeError) as error:
-        raise OrchestrationError(f"Cannot read orchestration manifest in {coord}: {error}") from error
-    if value.get("version") != 1:
-        raise OrchestrationError(f"Unsupported orchestration manifest version in {coord}")
-    return value
+        secure_write(
+            temporary,
+            json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+            exclusive=True,
+        )
+        temporary_created = True
+        os.replace(temporary, destination)
+        temporary_created = False
+        destination_descriptor = os.open(
+            destination,
+            os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
+        )
+        try:
+            os.fchmod(destination_descriptor, 0o600)
+            os.fsync(destination_descriptor)
+        finally:
+            os.close(destination_descriptor)
+        directory_descriptor = open_directory(coord)
+        try:
+            os.fsync(directory_descriptor)
+        finally:
+            os.close(directory_descriptor)
+    finally:
+        try:
+            metadata = temporary.lstat()
+        except FileNotFoundError:
+            pass
+        else:
+            if (
+                temporary_created
+                and stat.S_ISREG(metadata.st_mode)
+                and not stat.S_ISLNK(metadata.st_mode)
+            ):
+                temporary.unlink()
+
+
+def load_manifest(coord: Path, *, expected_session: str | None = None) -> dict[str, Any]:
+    coord = validate_coordination_directory(coord)
+    manifest_path = coord / "manifest.json"
+    try:
+        content = read_regular_file(manifest_path, "orchestration manifest", MAX_MANIFEST_BYTES)
+        value = json.loads(content)
+    except UnicodeDecodeError as error:
+        raise OrchestrationError("Orchestration manifest is not valid UTF-8") from error
+    except json.JSONDecodeError as error:
+        raise OrchestrationError("Orchestration manifest is not valid JSON") from error
+    return validate_manifest(value, coord, expected_session=expected_session)
 
 
 def slugify(value: str) -> str:
@@ -143,8 +506,22 @@ def validate_session_name(value: str) -> str:
     return value
 
 
+def exact_session_target(session: str) -> str:
+    return f"={validate_session_name(session)}"
+
+
+def exact_window_target(session: str, window: str = WINDOW) -> str:
+    if window != WINDOW:
+        raise OrchestrationError(f"Unexpected orchestration window: {window}")
+    return f"{exact_session_target(session)}:={window}"
+
+
 def session_exists(session: str) -> bool:
-    result = tmux(["has-session", "-t", f"={session}"], check=False, capture=True)
+    result = tmux(
+        ["has-session", "-t", exact_session_target(session)],
+        check=False,
+        capture=True,
+    )
     return result.returncode == 0
 
 
@@ -157,7 +534,7 @@ def list_tmux_sessions() -> list[str]:
 
 def session_option(session: str, option: str) -> str | None:
     result = tmux(
-        ["show-options", "-qv", "-t", session, option],
+        ["show-options", "-qv", "-t", exact_window_target(session), option],
         check=False,
         capture=True,
     )
@@ -170,6 +547,10 @@ def session_option(session: str, option: str) -> str | None:
 def orchestrated_sessions() -> list[tuple[str, Path]]:
     found: list[tuple[str, Path]] = []
     for session in list_tmux_sessions():
+        try:
+            validate_session_name(session)
+        except OrchestrationError:
+            continue
         coord = session_option(session, "@pi_agents_coord")
         if coord:
             found.append((session, Path(coord)))
@@ -552,17 +933,19 @@ def create_tmux_grid(
             str(project),
         ]
     )
+    session_target = exact_session_target(session)
+    window_target = exact_window_target(session)
     try:
         for _ in range(total_panes - 1):
-            tmux(["split-window", "-d", "-t", f"{session}:{WINDOW}", "-c", str(project)])
-        tmux(["select-layout", "-t", f"{session}:{WINDOW}", "tiled"])
-        tmux(["set-window-option", "-t", f"{session}:{WINDOW}", "remain-on-exit", "on"])
-        tmux(["set-option", "-t", session, "pane-border-status", "top"])
+            tmux(["split-window", "-d", "-t", window_target, "-c", str(project)])
+        tmux(["select-layout", "-t", window_target, "tiled"])
+        tmux(["set-window-option", "-t", window_target, "remain-on-exit", "on"])
+        tmux(["set-window-option", "-t", window_target, "pane-border-status", "top"])
         tmux(
             [
-                "set-option",
+                "set-window-option",
                 "-t",
-                session,
+                window_target,
                 "pane-border-format",
                 " #{pane_index} #{pane_title} ",
             ]
@@ -572,7 +955,7 @@ def create_tmux_grid(
             [
                 "list-panes",
                 "-t",
-                f"{session}:{WINDOW}",
+                window_target,
                 "-F",
                 "#{pane_index}\t#{pane_id}",
             ],
@@ -597,30 +980,49 @@ def create_tmux_grid(
                 title = f"{label.upper()} · {role['provider']}/{role['model']} · {role['thinking']}"
             tmux(["select-pane", "-t", pane_id, "-T", title])
 
-        tmux(["set-option", "-q", "-t", session, "@pi_agents_coord", str(coord)])
-        tmux(["set-option", "-q", "-t", session, "@pi_agents_project", str(project)])
-        tmux(["set-option", "-q", "-t", session, "@pi_agents_version", "1"])
+        tmux(["set-option", "-q", "-t", window_target, "@pi_agents_coord", str(coord)])
+        tmux(["set-option", "-q", "-t", window_target, "@pi_agents_project", str(project)])
+        tmux(["set-option", "-q", "-t", window_target, "@pi_agents_version", "1"])
         save_manifest(coord, manifest)
 
         for role_name in roles:
             pane_id = manifest["roles"][role_name]["pane_id"]
             command = shlex.join(
-                [str(SCRIPT_PATH), "_run-agent", "--coord", str(coord), "--role", role_name]
+                [
+                    str(SCRIPT_PATH),
+                    "_run-agent",
+                    "--state-root",
+                    str(coord.parent.parent),
+                    "--coord",
+                    str(coord),
+                    "--role",
+                    role_name,
+                ]
             )
             tmux(["respawn-pane", "-k", "-t", pane_id, command])
 
-        relay_command = shlex.join([str(SCRIPT_PATH), "_relay", "--coord", str(coord)])
+        relay_command = shlex.join(
+            [
+                str(SCRIPT_PATH),
+                "_relay",
+                "--state-root",
+                str(coord.parent.parent),
+                "--coord",
+                str(coord),
+            ]
+        )
         tmux(["respawn-pane", "-k", "-t", manifest["monitor_pane_id"], relay_command])
     except Exception:
-        tmux(["kill-session", "-t", session], check=False)
+        tmux(["kill-session", "-t", session_target], check=False)
         raise
 
 
 def attach_session(session: str) -> None:
+    target = exact_session_target(session)
     if os.environ.get("TMUX"):
-        tmux(["switch-client", "-t", session])
+        tmux(["switch-client", "-t", target])
     else:
-        os.execvp(command_path("tmux"), ["tmux", "attach", "-t", session])
+        os.execvp(command_path("tmux"), ["tmux", "attach", "-t", target])
 
 
 def start_command(args: argparse.Namespace) -> int:
@@ -715,64 +1117,75 @@ def start_command(args: argparse.Namespace) -> int:
         return 0
 
     timestamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    STATE_ROOT.mkdir(parents=True, exist_ok=True)
-    STATE_ROOT.chmod(0o700)
-    session_root = STATE_ROOT / session
-    session_root.mkdir(exist_ok=True)
-    session_root.chmod(0o700)
-    coord = session_root / f"{timestamp}-{os.getpid()}"
-    coord.mkdir(exist_ok=False)
-    coord.chmod(0o700)
+    root = canonical_state_root(create=True)
+    session_root = ensure_private_directory(root / session)
+    coord = ensure_private_directory(session_root / f"{timestamp}-{os.getpid()}")
 
-    secure_write(coord / "task.md", task)
-    if probe_task is not None:
-        secure_write(coord / "probe-task.md", probe_task)
-    if playwright_task is not None:
-        secure_write(coord / "playwright-task.md", playwright_task)
-    if django_task is not None:
-        secure_write(coord / "django-task.md", django_task)
+    try:
+        secure_write(coord / "startup-state", "STARTING\n")
+        secure_write(coord / "task.md", task)
+        if probe_task is not None:
+            secure_write(coord / "probe-task.md", probe_task)
+        if playwright_task is not None:
+            secure_write(coord / "playwright-task.md", playwright_task)
+        if django_task is not None:
+            secure_write(coord / "django-task.md", django_task)
 
-    prompt_paths = {
-        "implementer": coord / "implementer.prompt.md",
-        "reviewer": coord / "reviewer.prompt.md",
-    }
-    secure_write(prompt_paths["implementer"], implementer_prompt(project, coord, task))
-    secure_write(prompt_paths["reviewer"], reviewer_prompt(project, coord, task))
-    if probe_task is not None:
-        prompt_paths["probe"] = coord / "probe.prompt.md"
-        secure_write(prompt_paths["probe"], probe_prompt(project, coord, task, probe_task))
-    if playwright_task is not None:
-        prompt_paths["playwright"] = coord / "playwright.prompt.md"
-        secure_write(
-            prompt_paths["playwright"],
-            playwright_prompt(project, coord, task, playwright_task),
+        prompt_paths = {
+            "implementer": coord / "implementer.prompt.md",
+            "reviewer": coord / "reviewer.prompt.md",
+        }
+        secure_write(prompt_paths["implementer"], implementer_prompt(project, coord, task))
+        secure_write(prompt_paths["reviewer"], reviewer_prompt(project, coord, task))
+        if probe_task is not None:
+            prompt_paths["probe"] = coord / "probe.prompt.md"
+            secure_write(prompt_paths["probe"], probe_prompt(project, coord, task, probe_task))
+        if playwright_task is not None:
+            prompt_paths["playwright"] = coord / "playwright.prompt.md"
+            secure_write(
+                prompt_paths["playwright"],
+                playwright_prompt(project, coord, task, playwright_task),
+            )
+        if django_task is not None:
+            prompt_paths["django"] = coord / "django.prompt.md"
+            secure_write(
+                prompt_paths["django"],
+                django_expert_prompt(project, coord, task, django_task),
+            )
+
+        manifest: dict[str, Any] = {
+            "version": 1,
+            "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+            "session": session,
+            "window": WINDOW,
+            "project": str(project),
+            "coord": str(coord),
+            "approve_project": bool(args.approve_project),
+            "monitor_pane_id": None,
+            "roles": {},
+        }
+        for role in roles:
+            config = configs[role]
+            config["prompt_path"] = str(prompt_paths[role])
+            config["session_dir"] = str(coord / "sessions" / role)
+            manifest["roles"][role] = config
+
+        create_tmux_grid(session, project, coord, roles, manifest)
+        secure_write(coord / "startup-state", "RUNNING\n")
+    except BaseException:
+        tmux(
+            ["kill-session", "-t", exact_session_target(session)],
+            check=False,
+            capture=True,
         )
-    if django_task is not None:
-        prompt_paths["django"] = coord / "django.prompt.md"
-        secure_write(
-            prompt_paths["django"],
-            django_expert_prompt(project, coord, task, django_task),
-        )
-
-    manifest: dict[str, Any] = {
-        "version": 1,
-        "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
-        "session": session,
-        "window": WINDOW,
-        "project": str(project),
-        "coord": str(coord),
-        "approve_project": bool(args.approve_project),
-        "monitor_pane_id": None,
-        "roles": {},
-    }
-    for role in roles:
-        config = configs[role]
-        config["prompt_path"] = str(prompt_paths[role])
-        config["session_dir"] = str(coord / "sessions" / role)
-        manifest["roles"][role] = config
-    save_manifest(coord, manifest)
-
-    create_tmux_grid(session, project, coord, roles, manifest)
+        try:
+            secure_write(coord / "startup-state", "FAILED\n")
+        except OrchestrationError:
+            try:
+                coord.rmdir()
+            except OSError:
+                pass
+        raise
     print(f"Coordination: {coord}")
     print(f"Status: pi-tmux-agents status {session}")
     print(f"Attach: pi-tmux-agents attach {session}")
@@ -789,7 +1202,7 @@ def list_command(_: argparse.Namespace) -> int:
         return 0
     for session, coord in sessions:
         try:
-            manifest = load_manifest(coord)
+            manifest = load_manifest(coord, expected_session=session)
             roles = ",".join(manifest["roles"].keys())
             print(f"{session}\t{manifest['project']}\troles={roles}\t{coord}")
         except OrchestrationError as error:
@@ -797,7 +1210,8 @@ def list_command(_: argparse.Namespace) -> int:
     return 0
 
 
-def coordination_files(coord: Path) -> list[Path]:
+def coordination_files(coord: Path) -> list[tuple[Path, os.stat_result]]:
+    coord = validate_coordination_directory(coord)
     patterns = (
         "*.started.md",
         "probe.md",
@@ -810,12 +1224,16 @@ def coordination_files(coord: Path) -> list[Path]:
     files: set[Path] = set()
     for pattern in patterns:
         files.update(coord.glob(pattern))
-    return sorted(files, key=lambda path: (path.stat().st_mtime, path.name))
+    metadata = [
+        (path, require_regular_file(path, f"coordination file {path.name}"))
+        for path in files
+    ]
+    return sorted(metadata, key=lambda item: (item[1].st_mtime, item[0].name))
 
 
 def status_command(args: argparse.Namespace) -> int:
     session, coord = resolve_session(args.session)
-    manifest = load_manifest(coord)
+    manifest = load_manifest(coord, expected_session=session)
     print(f"Session: {session}")
     print(f"Project: {manifest['project']}")
     print(f"Coordination: {coord}")
@@ -823,7 +1241,7 @@ def status_command(args: argparse.Namespace) -> int:
         [
             "list-panes",
             "-t",
-            f"{session}:{manifest['window']}",
+            exact_window_target(session, manifest["window"]),
             "-F",
             "pane=#{pane_index} id=#{pane_id} pid=#{pane_pid} cmd=#{pane_current_command} "
             "dead=#{pane_dead} title=#{pane_title}",
@@ -837,17 +1255,14 @@ def status_command(args: argparse.Namespace) -> int:
     files = coordination_files(coord)
     if not files:
         print("  waiting for agent status")
-    for path in files:
-        try:
-            first = path.read_text(encoding="utf-8").splitlines()[0]
-        except (OSError, IndexError):
-            first = ""
-        print(f"  {path.name}: {first[:120]}")
+    for path, metadata in files:
+        print(f"  {path.name}: {metadata.st_size} bytes")
     return 0
 
 
 def attach_command(args: argparse.Namespace) -> int:
-    session, _ = resolve_session(args.session)
+    session, coord = resolve_session(args.session)
+    load_manifest(coord, expected_session=session)
     attach_session(session)
     return 0
 
@@ -859,7 +1274,7 @@ def send_keys(pane_id: str, message: str) -> None:
 
 def send_command(args: argparse.Namespace) -> int:
     session, coord = resolve_session(args.session)
-    manifest = load_manifest(coord)
+    manifest = load_manifest(coord, expected_session=session)
     if args.role not in manifest["roles"]:
         available = ", ".join(manifest["roles"].keys())
         raise OrchestrationError(f"Role {args.role!r} is not in {session}; available: {available}")
@@ -873,7 +1288,7 @@ def restart_command(args: argparse.Namespace) -> int:
     if not args.yes:
         raise OrchestrationError("restart replaces the role's Pi conversation; pass --yes")
     session, coord = resolve_session(args.session)
-    manifest = load_manifest(coord)
+    manifest = load_manifest(coord, expected_session=session)
     if args.role not in manifest["roles"]:
         available = ", ".join(manifest["roles"].keys())
         raise OrchestrationError(f"Role {args.role!r} is not in {session}; available: {available}")
@@ -888,10 +1303,20 @@ def restart_command(args: argparse.Namespace) -> int:
         validate_model(args.role, role)
     save_manifest(coord, manifest)
     started = coord / f"{args.role}.started.md"
-    if started.exists():
+    if started.exists() or started.is_symlink():
+        require_regular_file(started, f"{args.role} started state")
         started.unlink()
     command = shlex.join(
-        [str(SCRIPT_PATH), "_run-agent", "--coord", str(coord), "--role", args.role]
+        [
+            str(SCRIPT_PATH),
+            "_run-agent",
+            "--state-root",
+            str(coord.parent.parent),
+            "--coord",
+            str(coord),
+            "--role",
+            args.role,
+        ]
     )
     tmux(["respawn-pane", "-k", "-t", role["pane_id"], command])
     print(
@@ -905,7 +1330,8 @@ def stop_command(args: argparse.Namespace) -> int:
     if not args.yes:
         raise OrchestrationError("stop kills the selected tmux agent grid; pass --yes")
     session, coord = resolve_session(args.session)
-    tmux(["kill-session", "-t", session])
+    load_manifest(coord, expected_session=session)
+    tmux(["kill-session", "-t", exact_session_target(session)])
     print(f"Stopped {session}")
     print(f"Coordination state retained at {coord}")
     return 0
@@ -950,16 +1376,17 @@ def doctor_command(_: argparse.Namespace) -> int:
 
 
 def run_agent_command(args: argparse.Namespace) -> int:
-    coord = Path(args.coord).expanduser().resolve()
+    global STATE_ROOT
+    STATE_ROOT = Path(args.state_root)
+    coord = absolute_path(Path(args.coord))
     manifest = load_manifest(coord)
     role = manifest["roles"].get(args.role)
     if role is None:
         raise OrchestrationError(f"Unknown role in manifest: {args.role}")
     project = manifest["project"]
     prompt_path = Path(role["prompt_path"])
-    if not prompt_path.is_file():
-        raise OrchestrationError(f"Role prompt does not exist: {prompt_path}")
-    Path(role["session_dir"]).mkdir(parents=True, exist_ok=True)
+    require_regular_file(prompt_path, "role prompt", nonempty=True)
+    ensure_private_directory(Path(role["session_dir"]), parents=True)
     command = [
         command_path("pi"),
         "--session-dir",
@@ -991,27 +1418,95 @@ def run_agent_command(args: argparse.Namespace) -> int:
     return 0
 
 
-def relay_send(manifest: dict[str, Any], role: str, message: str) -> None:
+def relay_send(manifest: dict[str, Any], role: str, message: str) -> bool:
     role_config_value = manifest["roles"].get(role)
     if not role_config_value:
-        return
+        return False
     try:
         send_keys(role_config_value["pane_id"], message)
     except (OrchestrationError, subprocess.CalledProcessError):
-        pass
+        return False
+    return True
+
+
+def seen_path(seen_dir: Path, token: str) -> Path:
+    safe = re.sub(r"[^A-Za-z0-9_.-]+", "-", token)
+    return seen_dir / safe
 
 
 def mark_seen(seen_dir: Path, token: str) -> None:
-    safe = re.sub(r"[^A-Za-z0-9_.-]+", "-", token)
-    secure_write(seen_dir / safe, "")
+    secure_write(seen_path(seen_dir, token), "")
 
 
 def is_seen(seen_dir: Path, token: str) -> bool:
-    safe = re.sub(r"[^A-Za-z0-9_.-]+", "-", token)
-    return (seen_dir / safe).exists()
+    path = seen_path(seen_dir, token)
+    if not path.exists() and not path.is_symlink():
+        return False
+    require_regular_file(path, "relay delivery state")
+    return True
+
+
+def report_first_line(path: Path) -> str:
+    metadata = require_regular_file(path, f"coordination report {path.name}", nonempty=True)
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as error:
+        raise OrchestrationError("Cannot safely inspect coordination report") from error
+    try:
+        opened = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or opened.st_dev != metadata.st_dev
+            or opened.st_ino != metadata.st_ino
+        ):
+            raise OrchestrationError("Coordination report changed while opening")
+        first_line = os.read(descriptor, 257).split(b"\n", 1)[0]
+        if len(first_line) > 256:
+            raise OrchestrationError("Coordination report first line is too long")
+        try:
+            return first_line.decode("utf-8").rstrip("\r")
+        except UnicodeDecodeError as error:
+            raise OrchestrationError("Coordination report first line is not valid UTF-8") from error
+    finally:
+        os.close(descriptor)
+
+
+def ready_report_is_valid(
+    marker: Path,
+    report: Path,
+    allowed_first_lines: frozenset[str] | None = None,
+) -> bool:
+    try:
+        require_regular_file(marker, f"coordination marker {marker.name}")
+        require_regular_file(report, f"coordination report {report.name}", nonempty=True)
+        if allowed_first_lines is not None and report_first_line(report) not in allowed_first_lines:
+            return False
+    except OrchestrationError:
+        return False
+    return True
+
+
+def deliver_marker(
+    manifest: dict[str, Any],
+    seen_dir: Path,
+    token: str,
+    recipients: dict[str, str],
+) -> None:
+    enabled = {role: message for role, message in recipients.items() if role in manifest["roles"]}
+    for role, message in enabled.items():
+        recipient_token = f"{token}--{role}"
+        if is_seen(seen_dir, recipient_token):
+            continue
+        if relay_send(manifest, role, message):
+            mark_seen(seen_dir, recipient_token)
+    if enabled and all(is_seen(seen_dir, f"{token}--{role}") for role in enabled):
+        mark_seen(seen_dir, token)
 
 
 def relay_once(coord: Path, manifest: dict[str, Any], seen_dir: Path) -> None:
+    coord = validate_coordination_directory(coord)
+    seen_dir = ensure_private_directory(seen_dir, parents=True)
     for marker in sorted(coord.glob("handoff-*.ready")):
         token = marker.name
         if is_seen(seen_dir, token):
@@ -1020,28 +1515,31 @@ def relay_once(coord: Path, manifest: dict[str, Any], seen_dir: Path) -> None:
         if not match:
             continue
         round_number = match.group(1)
-        relay_send(
+        report = coord / f"handoff-{round_number}.md"
+        if not ready_report_is_valid(marker, report):
+            continue
+        deliver_marker(
             manifest,
-            "reviewer",
-            f"Coordination notice: implementer handoff round {round_number} is ready at "
-            f"{coord}/handoff-{round_number}.md. Review it now and write review-{round_number}.md "
-            f"plus review-{round_number}.ready.",
+            seen_dir,
+            token,
+            {
+                "reviewer": (
+                    f"Coordination notice: implementer handoff round {round_number} is ready at "
+                    f"{report}. Review it now and write review-{round_number}.md plus "
+                    f"review-{round_number}.ready."
+                ),
+                "playwright": (
+                    f"Coordination notice: implementer handoff round {round_number} is ready at "
+                    f"{report}. Run the browser test now and write playwright-{round_number}.md "
+                    f"plus playwright-{round_number}.ready."
+                ),
+                "django": (
+                    f"Coordination notice: implementer handoff round {round_number} is ready at "
+                    f"{report}. Run the Django expert review now and write "
+                    f"django-review-{round_number}.md plus django-review-{round_number}.ready."
+                ),
+            },
         )
-        relay_send(
-            manifest,
-            "playwright",
-            f"Coordination notice: implementer handoff round {round_number} is ready at "
-            f"{coord}/handoff-{round_number}.md. Run the browser test now and write "
-            f"playwright-{round_number}.md plus playwright-{round_number}.ready.",
-        )
-        relay_send(
-            manifest,
-            "django",
-            f"Coordination notice: implementer handoff round {round_number} is ready at "
-            f"{coord}/handoff-{round_number}.md. Run the Django expert review now and "
-            f"write django-review-{round_number}.md plus django-review-{round_number}.ready.",
-        )
-        mark_seen(seen_dir, token)
 
     for marker in sorted(coord.glob("playwright-*.ready")):
         token = marker.name
@@ -1051,13 +1549,19 @@ def relay_once(coord: Path, manifest: dict[str, Any], seen_dir: Path) -> None:
         if not match:
             continue
         round_number = match.group(1)
+        report = coord / f"playwright-{round_number}.md"
+        if not ready_report_is_valid(marker, report, frozenset({"PASS", "FAIL"})):
+            continue
         message = (
             f"Coordination notice: Playwright report round {round_number} is ready at "
-            f"{coord}/playwright-{round_number}.md. Evaluate the evidence and failures."
+            f"{report}. Evaluate the evidence and failures."
         )
-        relay_send(manifest, "implementer", message)
-        relay_send(manifest, "reviewer", message)
-        mark_seen(seen_dir, token)
+        deliver_marker(
+            manifest,
+            seen_dir,
+            token,
+            {"implementer": message, "reviewer": message},
+        )
 
     for marker in sorted(coord.glob("django-review-*.ready")):
         token = marker.name
@@ -1067,14 +1571,24 @@ def relay_once(coord: Path, manifest: dict[str, Any], seen_dir: Path) -> None:
         if not match:
             continue
         round_number = match.group(1)
+        report = coord / f"django-review-{round_number}.md"
+        if not ready_report_is_valid(
+            marker,
+            report,
+            frozenset({"ADVISORY_APPROVED", "ISSUES_FOUND"}),
+        ):
+            continue
         message = (
             f"Coordination notice: Django expert review round {round_number} is ready at "
-            f"{coord}/django-review-{round_number}.md. Evaluate the findings and "
-            "best-practice recommendations within authorized scope."
+            f"{report}. Evaluate the findings and best-practice recommendations within "
+            "authorized scope."
         )
-        relay_send(manifest, "implementer", message)
-        relay_send(manifest, "reviewer", message)
-        mark_seen(seen_dir, token)
+        deliver_marker(
+            manifest,
+            seen_dir,
+            token,
+            {"implementer": message, "reviewer": message},
+        )
 
     for marker in sorted(coord.glob("review-*.ready")):
         token = marker.name
@@ -1084,34 +1598,60 @@ def relay_once(coord: Path, manifest: dict[str, Any], seen_dir: Path) -> None:
         if not match:
             continue
         round_number = match.group(1)
-        relay_send(
+        report = coord / f"review-{round_number}.md"
+        if not ready_report_is_valid(
+            marker,
+            report,
+            frozenset({"APPROVED", "CHANGES_REQUESTED"}),
+        ):
+            continue
+        deliver_marker(
             manifest,
-            "implementer",
-            f"Coordination notice: reviewer response round {round_number} is ready at "
-            f"{coord}/review-{round_number}.md. Read it now; address CHANGES_REQUESTED "
-            "or write implementation-ready.md if APPROVED.",
+            seen_dir,
+            token,
+            {
+                "implementer": (
+                    f"Coordination notice: reviewer response round {round_number} is ready at "
+                    f"{report}. Read it now; address CHANGES_REQUESTED or write "
+                    "implementation-ready.md if APPROVED."
+                )
+            },
         )
-        mark_seen(seen_dir, token)
 
     probe_marker = coord / "probe.ready"
-    if probe_marker.exists() and not is_seen(seen_dir, probe_marker.name):
+    if (
+        (probe_marker.exists() or probe_marker.is_symlink())
+        and not is_seen(seen_dir, probe_marker.name)
+        and ready_report_is_valid(probe_marker, coord / "probe.md")
+    ):
         message = (
             f"Coordination notice: the independent probe is ready at {coord}/probe.md. "
             "Use valid evidence while preserving its stated limitations."
         )
-        relay_send(manifest, "implementer", message)
-        relay_send(manifest, "reviewer", message)
-        mark_seen(seen_dir, probe_marker.name)
+        deliver_marker(
+            manifest,
+            seen_dir,
+            probe_marker.name,
+            {"implementer": message, "reviewer": message},
+        )
 
     ready = coord / "implementation-ready.md"
-    if ready.exists() and not is_seen(seen_dir, ready.name):
-        relay_send(
+    if (
+        (ready.exists() or ready.is_symlink())
+        and not is_seen(seen_dir, ready.name)
+        and ready_report_is_valid(ready, ready)
+    ):
+        deliver_marker(
             manifest,
-            "reviewer",
-            f"Coordination notice: {ready} exists. Confirm the latest round is approved and "
-            "remain available for final questions.",
+            seen_dir,
+            ready.name,
+            {
+                "reviewer": (
+                    f"Coordination notice: {ready} exists. Confirm the latest round is approved "
+                    "and remain available for final questions."
+                )
+            },
         )
-        mark_seen(seen_dir, ready.name)
 
 
 def render_monitor(coord: Path, manifest: dict[str, Any]) -> None:
@@ -1125,7 +1665,7 @@ def render_monitor(coord: Path, manifest: dict[str, Any]) -> None:
         [
             "list-panes",
             "-t",
-            f"{session}:{manifest['window']}",
+            exact_window_target(session, manifest["window"]),
             "-F",
             "pane #{pane_index} | #{pane_title} | cmd=#{pane_current_command} | "
             "pid=#{pane_pid} | dead=#{pane_dead} | #{pane_width}x#{pane_height}",
@@ -1141,15 +1681,8 @@ def render_monitor(coord: Path, manifest: dict[str, Any]) -> None:
     files = coordination_files(coord)
     if not files:
         print("  waiting for agent status...")
-    for path in files:
-        try:
-            lines = path.read_text(encoding="utf-8").splitlines()
-            first = lines[0] if lines else ""
-            size = path.stat().st_size
-        except OSError:
-            first = ""
-            size = 0
-        print(f"  {path.name:<30} {size:>7} bytes | {first[:90]}")
+    for path, metadata in files:
+        print(f"  {path.name:<30} {metadata.st_size:>7} bytes")
     print(
         "\nRelay: handoff → reviewer/playwright/django; specialist reports → "
         "implementer/reviewer; review → implementer; probe → both"
@@ -1161,11 +1694,11 @@ def render_monitor(coord: Path, manifest: dict[str, Any]) -> None:
 
 
 def relay_command(args: argparse.Namespace) -> int:
-    coord = Path(args.coord).expanduser().resolve()
+    global STATE_ROOT
+    STATE_ROOT = Path(args.state_root)
+    coord = absolute_path(Path(args.coord))
     manifest = load_manifest(coord)
-    seen_dir = coord / ".relay-seen"
-    seen_dir.mkdir(parents=True, exist_ok=True)
-    seen_dir.chmod(0o700)
+    seen_dir = ensure_private_directory(coord / ".relay-seen", parents=True)
     try:
         while session_exists(manifest["session"]):
             relay_once(coord, manifest, seen_dir)
@@ -1278,6 +1811,7 @@ def parse_internal_command(argv: list[str]) -> argparse.Namespace | None:
         return None
     command = argv[0]
     parser = argparse.ArgumentParser(prog=f"pi-tmux-agents {command}")
+    parser.add_argument("--state-root", required=True)
     parser.add_argument("--coord", required=True)
     if command == "_run-agent":
         parser.add_argument("--role", required=True)
