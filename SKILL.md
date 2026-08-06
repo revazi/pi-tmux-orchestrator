@@ -78,7 +78,7 @@ The Playwright and Django roles wait for each implementer handoff and report bef
 
 ## Operate an existing grid
 
-Prefer extension action `list`, `status`, or `send`; use `/orchestrator-stop` for confirmed stop. Restart is intentionally CLI-only in this candidate. Standalone fallback:
+Prefer extension action `list`, `status`, or `send`; use `/orchestrator-stop` for confirmed stop. Restart is intentionally CLI-only in the package extension. Standalone fallback:
 
 ```bash
 pi-tmux-agents list

@@ -38,10 +38,16 @@ Do not push feature work directly to `main` after the initial repository bootstr
 - A model-free tmux functional smoke covering all roles, relay markers, and exact session targeting
 - CLI help and an all-role dry-run
 - Node built-in extension tests for registration, trust, confirmation, cancellation, and private-file cleanup
-- deterministic `npm pack --dry-run --json` contents and version checks
-- a disposable tarball install and isolated Pi RPC `get_commands` discovery smoke
+- deterministic manifest and `npm pack --dry-run --json` checks
+- exact inspection and disposable installation of the actual tarball
+- isolated Pi RPC `get_commands` discovery from that installed artifact
+- an offline `npm publish --dry-run` with empty isolated npm configuration
 
-The test suite must never issue a provider request or inspect real Pi authentication files. Never run `install.sh` against the real home while developing the private candidate; use `PI_AGENT_HOME` or `PI_CODING_AGENT_DIR` pointing at a temporary directory. Do not publish, tag, or claim Git-package update/rollback acceptance.
+The test suite must never issue a provider request or inspect real Pi/npm authentication files. Never run `install.sh` against the real home while developing; use `PI_AGENT_HOME` or `PI_CODING_AGENT_DIR` pointing at a temporary directory. Tests must not publish, tag, or claim npm-registry, Pi-gallery, Git-package update, or rollback acceptance.
+
+## Release preparation
+
+Follow [RELEASE.md](RELEASE.md) for the human-controlled release checklist. A `0.4.0` source tree, tarball, CI pass, or publication dry-run means publish-ready, not actually published. Keep `UNLICENSED` unless the owner explicitly authorizes another license; the release operator must acknowledge that decision separately from technical verification.
 
 ## Security reports
 
