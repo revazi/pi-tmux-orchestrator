@@ -1,9 +1,28 @@
 {
   "name": "@revazi/pi-tmux-orchestrator",
-  "version": "0.4.0-dev.0",
-  "description": "Unreleased private Pi package candidate for the Python/tmux orchestrator",
-  "private": true,
+  "version": "0.4.0",
+  "description": "Pi extension, skill, and dependency-free Python CLI for coordinating coding agents in tmux",
   "license": "UNLICENSED",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "tmux",
+    "coding-agent",
+    "multi-agent",
+    "orchestration",
+    "developer-tools"
+  ],
+  "homepage": "https://github.com/revazi/pi-tmux-orchestrator#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/revazi/pi-tmux-orchestrator.git"
+  },
+  "bugs": {
+    "url": "https://github.com/revazi/pi-tmux-orchestrator/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "engines": {
     "node": ">=22.19"
@@ -17,7 +36,6 @@
   },
   "files": [
     "CHANGELOG.md",
-    "CONTRIBUTING.md",
     "README.md",
     "SECURITY.md",
     "SKILL.md",

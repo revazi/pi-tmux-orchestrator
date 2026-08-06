@@ -41,7 +41,7 @@ jobs:
         run: scripts/test.sh
 
   package:
-    name: Private package / Node ${{ matrix.node-version }}
+    name: Publish-ready package / Node ${{ matrix.node-version }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -57,7 +57,7 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
 
-      - name: Verify extension and private package
+      - name: Verify extension and publish-ready package
         run: |
           node --check extensions/tmux-orchestrator.js
           node --test tests/extension.test.mjs

@@ -1,6 +1,6 @@
 # Pi Tmux Orchestrator
 
-A reusable [Pi](https://github.com/badlogic/pi-mono) skill and dependency-free Python CLI for coordinating coding agents in monitorable tmux grids, with an unreleased private `0.4.0-dev.0` Pi package/extension candidate.
+A reusable [Pi](https://github.com/badlogic/pi-mono) extension, skill, and dependency-free Python CLI for coordinating coding agents in monitorable tmux grids. The source package is prepared as version `0.4.0`; that publish-ready state is not evidence that an npm release or Pi gallery entry exists.
 
 It turns the recurring “implementer + reviewer + optional specialist” setup into one command, with durable handoffs and explicit safety boundaries.
 
@@ -41,9 +41,9 @@ The default grid has implementer, reviewer, and monitor panes. Optional roles ad
 
 ## Requirements
 
-- Pi coding agent available as `pi` (extension candidate tested with Pi 0.80.10 and designed for newer compatible APIs)
+- Pi coding agent available as `pi` (package extension tested with Pi 0.80.10 and designed for newer compatible APIs)
 - Python 3.11+
-- Node 22.19+ for candidate package verification/evaluation
+- Node 22.19+ for package verification/evaluation
 - tmux 3.2+; tmux 3.5+ is recommended
 - A project already inspected and trusted before using `--approve-project`
 
@@ -54,17 +54,41 @@ set -g extended-keys on
 set -g extended-keys-format csi-u
 ```
 
-## Private candidate and disposable evaluation
+## Package installation and evaluation
 
-`0.4.0-dev.0` is an unreleased, private, non-publishable candidate (`private: true`, `UNLICENSED`). Do **not** install this candidate into the real Pi home or publish it. The extension imports no Pi core package, so the manifest declares no dependencies or peers and owns no runtime tree.
-
-Evaluate source-package discovery through isolated Pi RPC:
+Version `0.4.0` has a public scoped-package manifest and deterministic artifact checks, but this repository does not claim that a human has published it. After an operator confirms that the exact version exists on npm, install it persistently with:
 
 ```bash
-scripts/pi-extension-smoke.sh
+pi install npm:@revazi/pi-tmux-orchestrator@0.4.0
 ```
 
-The smoke uses a disposable `PI_CODING_AGENT_DIR`, sends only RPC `get_commands`, tolerates the extension's status/widget lifecycle events, and asserts exactly the three extension commands plus `skill:tmux-agent-orchestrator`. It sends no prompt and makes no provider request. For a disposable standalone-skill smoke, redirect the legacy installer too:
+Or evaluate the published package for one Pi run without adding it to settings:
+
+```bash
+pi -e npm:@revazi/pi-tmux-orchestrator@0.4.0
+```
+
+Before publication, inspect and evaluate the local source artifact instead:
+
+```bash
+scripts/package-smoke.sh
+TEMP_PI_DIR=$(mktemp -d)
+PI_CODING_AGENT_DIR="$TEMP_PI_DIR" pi --no-session -e "$PWD"
+rm -rf "$TEMP_PI_DIR"
+```
+
+The package smoke builds a real tarball, checks its exact file allowlist, installs it with scripts disabled and an empty dependency tree, discovers its extension and root skill through isolated Pi RPC, and performs an offline `npm publish --dry-run` against a loopback registry with isolated npm configuration. It sends no prompt, makes no provider request, and does not read the configured Pi home or npm credentials.
+
+For inspected sources, Pi also supports persistent local-path installation. A pinned Git fallback is appropriate only after the matching tag exists:
+
+```bash
+pi install /absolute/path/to/pi-tmux-orchestrator
+pi install git:github.com/revazi/pi-tmux-orchestrator@v0.4.0
+```
+
+The package imports no Pi core module, so it declares no dependencies or peers and owns no runtime tree. Its `UNLICENSED` metadata makes no software-license grant; changing that is an explicit owner decision, not a failure of the technical package checks.
+
+The legacy `install.sh` remains a standalone CLI/root-skill fallback and does not install the extension. Existing standalone installations are not migrated automatically. Evaluate the installer only with a disposable destination:
 
 ```bash
 TEMP_PI_HOME=$(mktemp -d)
@@ -73,7 +97,7 @@ PATH="$TEMP_PI_HOME/bin:$PATH" pi-tmux-agents --version
 rm -rf "$TEMP_PI_HOME"
 ```
 
-The legacy `install.sh` remains the standalone CLI/skill fallback and does not install the extension. Existing `0.3.0` installations are not migrated automatically. No Git-package update or rollback acceptance is claimed; neither flow is exercised here.
+No npm-registry, Pi-gallery, Git-package update, or rollback acceptance is claimed by the local smokes.
 
 ## Start from Pi
 
@@ -231,10 +255,10 @@ Run all local checks:
 scripts/test.sh
 ```
 
-The suite includes 39+ standard-library Python tests, Node built-in extension tests, deterministic `npm pack --dry-run --json` verification, a disposable tarball install, an isolated Pi RPC command/skill discovery smoke, and the existing six-pane tmux smoke. It sends no prompt or provider request and does not inspect real authentication files.
+The suite includes 39+ standard-library Python tests, Node built-in extension tests, deterministic manifest/pack verification, inspection and installation of the actual tarball, exact Pi command/skill discovery from that installed artifact, an isolated offline npm publication dry-run, and the existing six-pane tmux smoke. It sends no prompt or provider request and isolates Pi/npm configuration from real authentication files.
 
 ## Project status
 
-Current candidate: `0.4.0-dev.0`, private and unreleased. The Python/tmux CLI remains the authoritative process/data plane; the extension only invokes its JSON mode with argument arrays. Child Pi TUIs remain separate processes, with no SDK/RPC child bridge.
+Current source package: `0.4.0`, technically publish-ready and still `UNLICENSED`. The Python/tmux CLI remains the authoritative process/data plane; the extension only invokes its JSON mode with argument arrays. Child Pi TUIs remain separate processes, with no SDK/RPC child bridge.
 
-This repository is not published to npm, PyPI, or a Pi gallery and does not distribute credentials, model access, or provider configuration.
+A version in source, a tarball, and successful dry-runs do not prove npm-registry or Pi-gallery publication. This repository does not distribute credentials, model access, or provider configuration.

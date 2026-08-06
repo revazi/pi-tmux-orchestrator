@@ -1,8 +1,12 @@
 # Usage reference
 
-## Unreleased private package candidate
+## Package distribution status
 
-`0.4.0-dev.0` is private, `UNLICENSED`, non-publishable, and intended only for disposable evaluation. Do not install it into the real Pi home. Run `scripts/pi-extension-smoke.sh` for isolated RPC `get_commands` discovery under a disposable `PI_CODING_AGENT_DIR`; it asserts the exact command/skill surface without a prompt or provider request. The extension imports no Pi core package, so the package declares no dependency or peer tree. The package does not migrate an existing standalone installation, and Git-package update/rollback has not been accepted or claimed.
+The source and local artifact are prepared as `0.4.0`, with public scoped-package access metadata and `pi-package` discovery. That does not prove the version has been published to npm or listed in a Pi gallery. Once a human verifies publication, use `pi install npm:@revazi/pi-tmux-orchestrator@0.4.0` for a pinned persistent install or `pi -e npm:@revazi/pi-tmux-orchestrator@0.4.0` for one temporary run.
+
+Before publication, `scripts/package-smoke.sh` packs and installs the real artifact in disposable locations, validates its empty owned dependency tree and exact allowlist, runs isolated Pi RPC `get_commands` against the installed package, and performs an isolated offline npm publication dry-run. Local-path evaluation is also available with `pi --no-session -e /absolute/path/to/pi-tmux-orchestrator`; use a disposable `PI_CODING_AGENT_DIR` when the real Pi home must remain untouched. Persistent inspected-source fallbacks are `pi install /absolute/path/to/pi-tmux-orchestrator` and, only after the tag exists, `pi install git:github.com/revazi/pi-tmux-orchestrator@v0.4.0`.
+
+The extension imports no Pi core package, so the package declares no dependency or peer tree. `UNLICENSED` is retained because no owner-authorized license grant exists; this requires explicit human acknowledgment before release but does not invalidate the local technical checks. The legacy `install.sh` installs only the standalone CLI/root skill, does not install the extension, and does not migrate an existing standalone installation. npm registry, Pi gallery, Git-package update, and rollback acceptance remain unclaimed unless separately exercised.
 
 When available, prefer tool `tmux_orchestrator` (`doctor`, `list`, `status`, `start`, `send`) and commands `/orchestrate`, `/orchestrations`, and `/orchestrator-stop`. Restart remains CLI-only, stop is command-only with UI confirmation, and start requires the interactive TUI.
 

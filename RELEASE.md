@@ -1,0 +1,54 @@
+# Maintainer release checklist
+
+This checklist prepares a human-controlled release. It does not authorize publication, tagging, pushing, or making the repository public. Local package checks establish publish-ready mechanics only; they do not establish npm-registry, Pi-gallery, update, rollback, or production acceptance.
+
+## 1. Owner and license decision
+
+- [ ] Obtain explicit owner authorization for the release.
+- [ ] Record the owner's license decision. `UNLICENSED` is the current intentional metadata and grants no software license; do not substitute another license without explicit authorization.
+- [ ] Confirm the public repository/package content is appropriate for distribution despite that license status.
+
+## 2. Clean release source
+
+- [ ] Start from an up-to-date, clean `main`, not a feature worktree:
+
+  ```bash
+  git switch main
+  git pull --ff-only
+  test -z "$(git status --porcelain)"
+  ```
+
+- [ ] Confirm `package.json`, `VERSION`, `scripts/pi-tmux-agents.py`, tests, documentation, and the intended `v0.4.0` tag all use `0.4.0`.
+- [ ] Confirm no unexpected prerelease strings remain: `git grep '0\.4\.0-dev'` should return no matches.
+
+## 3. Full verification and artifact inspection
+
+- [ ] Run `scripts/test.sh` on supported Node/Python versions and require CI success.
+- [ ] Run `node scripts/verify-package.mjs` and `scripts/package-smoke.sh`.
+- [ ] Retain and manually inspect a fresh tarball:
+
+  ```bash
+  ARTIFACT_DIR=$(mktemp -d)
+  npm pack --ignore-scripts --pack-destination "$ARTIFACT_DIR"
+  tar -tzf "$ARTIFACT_DIR"/*.tgz
+  ```
+
+- [ ] Confirm it contains only the manifest, runtime files, and operator documentation; no tests, CI, state, sessions, credentials, caches, generated sessions, private task content, or unrelated development files. Remove the disposable artifact directory after review.
+- [ ] Confirm the installed CLI reports `pi-tmux-agents 0.4.0`, the owned npm dependency tree is empty, and installed-artifact Pi discovery exposes exactly the three extension commands plus `skill:tmux-agent-orchestrator`.
+- [ ] Confirm the isolated offline `npm publish --dry-run` succeeds. It uses empty npm configuration, scripts disabled, offline mode, and a loopback registry; it is not a registry acceptance test.
+
+## 4. Human npm checks
+
+These checks intentionally are not automated because they use the maintainer's network and npm identity.
+
+- [ ] Run `npm whoami` and verify the expected human account.
+- [ ] Verify that account controls the `@revazi` scope and may publish a public scoped package. For an existing package, verify its access with `npm access get status @revazi/pi-tmux-orchestrator`; for a first publication, verify scope ownership through npm's current CLI or website.
+- [ ] Confirm npm account protections, current registry, intended `latest` tag, and `publishConfig.access: public`.
+- [ ] Reinspect the exact tarball immediately before publication and confirm no secret, session, state, or private payload leakage.
+
+## 5. Authorized publication and tag consistency
+
+- [ ] Obtain a final explicit human approval for the exact commit and tarball.
+- [ ] Run any real `npm publish` only manually from that approved clean commit. Never run it from tests or CI in this repository.
+- [ ] Create/push `v0.4.0` only when authorized, and verify the tag points to the exact published source commit and matches all authoritative versions.
+- [ ] Only after registry verification describe `pi install npm:@revazi/pi-tmux-orchestrator@0.4.0` as available. Verify npm/Pi installation in a disposable home before making registry or gallery acceptance claims.

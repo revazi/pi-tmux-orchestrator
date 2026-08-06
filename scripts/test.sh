@@ -40,12 +40,9 @@ printf '%s\n' '==> Extension syntax and unit tests'
 node --check "$ROOT/extensions/tmux-orchestrator.js"
 node --test "$ROOT/tests/extension.test.mjs"
 
-printf '%s\n' '==> Private package verification and disposable install'
+printf '%s\n' '==> Publish-ready package verification, artifact install/discovery, and offline publication dry run'
 node "$ROOT/scripts/verify-package.mjs"
 "$ROOT/scripts/package-smoke.sh"
-
-printf '%s\n' '==> Disposable Pi RPC command/skill discovery smoke'
-"$ROOT/scripts/pi-extension-smoke.sh"
 
 printf '%s\n' '==> CLI help and provider-free dry run'
 "$ROOT/scripts/pi-tmux-agents.py" --help >/dev/null

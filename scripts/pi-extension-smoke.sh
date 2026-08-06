@@ -1,9 +1,17 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+if [[ $# -ne 1 ]]; then
+  printf 'Usage: %s INSTALLED_PACKAGE_ROOT\n' "$0" >&2
+  exit 2
+fi
+PACKAGE_ROOT=$(cd "$1" && pwd)
+test -f "$PACKAGE_ROOT/package.json"
+test -f "$PACKAGE_ROOT/extensions/tmux-orchestrator.js"
+test -f "$PACKAGE_ROOT/SKILL.md"
+
 if ! command -v pi >/dev/null 2>&1; then
-  printf '%s\n' 'SKIP disposable Pi RPC discovery smoke (pi not available).'
+  printf '%s\n' 'SKIP installed-package Pi RPC discovery smoke (pi not available).'
   exit 0
 fi
 TEMP=$(mktemp -d "${TMPDIR:-/tmp}/pi-tmux-extension-smoke.XXXXXX")
@@ -12,27 +20,42 @@ cleanup() {
 }
 trap cleanup EXIT
 chmod 700 "$TEMP"
+mkdir -p "$TEMP/pi-home" "$TEMP/home" "$TEMP/workspace" "$TEMP/xdg-config" "$TEMP/xdg-cache" "$TEMP/xdg-data"
+: > "$TEMP/npmrc"
 
-python3 - "$ROOT" "$TEMP/pi-home" <<'PY'
+python3 - "$PACKAGE_ROOT" "$TEMP/pi-home" "$TEMP/home" "$TEMP/workspace" "$TEMP/npmrc" "$TEMP/xdg-config" "$TEMP/xdg-cache" "$TEMP/xdg-data" <<'PY'
 import json
 import os
+from pathlib import Path
 import subprocess
 import sys
 
-root, pi_home = sys.argv[1:]
-environment = os.environ.copy()
-environment.update(
-    {
-        "PI_CODING_AGENT_DIR": pi_home,
-        "PI_SKIP_VERSION_CHECK": "1",
-        "PI_TELEMETRY": "0",
-    }
-)
+root, pi_home, home, workspace, npmrc, xdg_config, xdg_cache, xdg_data = sys.argv[1:]
+environment = {
+    "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+    "HOME": home,
+    "PI_CODING_AGENT_DIR": pi_home,
+    "PI_SKIP_VERSION_CHECK": "1",
+    "PI_TELEMETRY": "0",
+    "XDG_CONFIG_HOME": xdg_config,
+    "XDG_CACHE_HOME": xdg_cache,
+    "XDG_DATA_HOME": xdg_data,
+    "NPM_CONFIG_USERCONFIG": npmrc,
+    "HTTP_PROXY": "http://127.0.0.1:9",
+    "HTTPS_PROXY": "http://127.0.0.1:9",
+    "ALL_PROXY": "http://127.0.0.1:9",
+    "NO_PROXY": "",
+}
+for key in ("TMPDIR", "TMP", "TEMP", "LANG", "LC_ALL", "LC_CTYPE"):
+    if key in os.environ:
+        environment[key] = os.environ[key]
+
 process = subprocess.Popen(
     ["pi", "--mode", "rpc", "--no-session", "--extension", root],
     stdin=subprocess.PIPE,
     stdout=subprocess.PIPE,
     stderr=subprocess.PIPE,
+    cwd=workspace,
     env=environment,
 )
 request_id = "rpc-smoke-get-commands"
@@ -74,14 +97,26 @@ commands = response.get("data", {}).get("commands")
 if not isinstance(commands, list):
     raise SystemExit("Pi RPC get_commands response omitted commands")
 expected = {
-    "orchestrate": "extension",
-    "orchestrations": "extension",
-    "orchestrator-stop": "extension",
-    "skill:tmux-agent-orchestrator": "skill",
+    "orchestrate": ("extension", "extensions/tmux-orchestrator.js"),
+    "orchestrations": ("extension", "extensions/tmux-orchestrator.js"),
+    "orchestrator-stop": ("extension", "extensions/tmux-orchestrator.js"),
+    "skill:tmux-agent-orchestrator": ("skill", "SKILL.md"),
 }
 actual = {command.get("name"): command.get("source") for command in commands}
-if len(commands) != len(expected) or actual != expected:
+expected_sources = {name: source for name, (source, _path) in expected.items()}
+if len(commands) != len(expected) or actual != expected_sources:
     raise SystemExit("Pi RPC package command discovery did not match the exact expected surface")
+
+root_path = Path(root).resolve()
+for command in commands:
+    name = command["name"]
+    source_path = command.get("sourceInfo", {}).get("path")
+    if not isinstance(source_path, str):
+        raise SystemExit(f"Pi RPC command omitted package source path: {name}")
+    actual_path = Path(source_path).resolve()
+    expected_path = (root_path / expected[name][1]).resolve()
+    if actual_path != expected_path or not actual_path.is_relative_to(root_path):
+        raise SystemExit(f"Pi RPC command was not discovered from the installed package: {name}")
 
 for record in records:
     if record is response:
@@ -94,4 +129,4 @@ for record in records:
         raise SystemExit("Pi RPC emitted an unexpected non-response record")
 PY
 
-printf '%s\n' 'Disposable Pi RPC discovery smoke passed (exact commands/skill; no prompt or provider request).'
+printf '%s\n' 'Installed-package Pi RPC discovery passed (exact extension/skill source paths; isolated home/auth config; no prompt or provider request).'

@@ -30,7 +30,7 @@ STATE_ROOT = Path(
         str(Path.home() / ".pi" / "agent" / "orchestrations"),
     )
 ).expanduser()
-VERSION = "0.4.0-dev.0"
+VERSION = "0.4.0"
 JSON_SCHEMA_VERSION = "1"
 JSON_MODE = False
 MAX_ERROR_CHARS = 512
