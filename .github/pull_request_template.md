@@ -9,7 +9,8 @@
 
 ## Safety and compatibility
 
-- [ ] Single-writer boundary preserved
+- [ ] Single-writer boundary preserved for reviewer, probe, Playwright, and Django roles
+- [ ] Specialist prompts, routing, and artifacts remain bounded and documented when changed
 - [ ] Project trust behavior unchanged or documented
 - [ ] No credentials/private payloads added
 - [ ] README/reference docs updated for CLI changes

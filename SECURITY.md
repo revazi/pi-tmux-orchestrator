@@ -19,7 +19,7 @@ Pi Tmux Orchestrator:
 - validates model availability with `pi --list-models`, which does not send a model request
 - does not provide sandboxing between agents running as the same user
 
-Only the implementer is given normal Pi write tools. Reviewer and probe omit `edit` and `write`, but retain `bash` to run tests. Their read-only policy is therefore a workflow boundary, not an operating-system sandbox.
+Only the implementer is given normal Pi write tools. Reviewer, technical probe, Playwright tester, and Django expert omit `edit` and `write`, but retain `bash` to run tests. Their read-only policy is therefore a workflow boundary, not an operating-system sandbox. Playwright artifacts and test data are limited by prompt contract to ignored or external temporary paths, and the tester must clean up local servers and browser processes.
 
 ## Private data
 

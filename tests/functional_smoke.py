@@ -29,11 +29,17 @@ def main() -> int:
         return 1
 
     session = f"pi-orchestrator-smoke-{os.getpid()}"
+    prefix_collision = f"{session}-prefix-collision"
+    for candidate in (session, prefix_collision):
+        subprocess.run(
+            ["tmux", "kill-session", "-t", f"={candidate}"],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
     subprocess.run(
-        ["tmux", "kill-session", "-t", session],
-        check=False,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
+        ["tmux", "new-session", "-d", "-s", prefix_collision, "sleep", "60"],
+        check=True,
     )
 
     temporary_root = Path(tempfile.mkdtemp(prefix="pi-tmux-orchestrator-smoke-"))
@@ -72,6 +78,12 @@ def main() -> int:
         with_probe=True,
         probe_task="Exercise synthetic probe marker routing only.",
         probe_task_file=None,
+        with_playwright=True,
+        playwright_task="Exercise synthetic Playwright marker routing only.",
+        playwright_task_file=None,
+        with_django_expert=True,
+        django_task="Exercise synthetic Django marker routing only.",
+        django_task_file=None,
         approve_project=False,
         attach=False,
         dry_run=False,
@@ -85,6 +97,12 @@ def main() -> int:
         probe_provider=None,
         probe_model=None,
         probe_thinking=None,
+        playwright_provider=None,
+        playwright_model=None,
+        playwright_thinking=None,
+        django_provider=None,
+        django_model=None,
+        django_thinking=None,
     )
 
     try:
@@ -97,8 +115,12 @@ def main() -> int:
         ).stdout.strip()
         coord = Path(coord_value)
         manifest = ORCHESTRATOR.load_manifest(coord)
-        if set(manifest["roles"]) != {"implementer", "reviewer", "probe"}:
+        expected_roles = {"implementer", "reviewer", "probe", "playwright", "django"}
+        if set(manifest["roles"]) != expected_roles:
             raise AssertionError(f"unexpected roles: {manifest['roles'].keys()}")
+        for role in expected_roles - {"implementer"}:
+            if manifest["roles"][role]["tools"] != ORCHESTRATOR.READ_ONLY_TOOLS:
+                raise AssertionError(f"{role} did not receive the read-only tool set")
 
         panes = subprocess.run(
             [
@@ -113,34 +135,52 @@ def main() -> int:
             text=True,
             capture_output=True,
         ).stdout.splitlines()
-        if len(panes) != 4 or any(line.rsplit(" ", 1)[-1] != "0" for line in panes):
+        if len(panes) != 6 or any(line.rsplit(" ", 1)[-1] != "0" for line in panes):
             raise AssertionError(f"unexpected pane state: {panes}")
 
-        (coord / "probe.md").write_text("Synthetic probe complete.\n", encoding="utf-8")
-        (coord / "probe.ready").touch()
-        (coord / "handoff-1.md").write_text("Synthetic handoff.\n", encoding="utf-8")
-        (coord / "handoff-1.ready").touch()
+        reports = {
+            "probe.md": "Synthetic probe complete.\n",
+            "handoff-1.md": "Synthetic handoff.\n",
+            "playwright-1.md": "PASS\nSynthetic browser report.\n",
+            "django-review-1.md": "ADVISORY_APPROVED\nSynthetic Django report.\n",
+            "review-1.md": "APPROVED\nSynthetic review.\n",
+        }
+        markers = {
+            "probe.ready",
+            "handoff-1.ready",
+            "playwright-1.ready",
+            "django-review-1.ready",
+            "review-1.ready",
+        }
+        for name, content in reports.items():
+            (coord / name).write_text(content, encoding="utf-8")
+        for name in markers:
+            (coord / name).touch()
 
         deadline = time.time() + 8
-        probe_seen = coord / ".relay-seen" / "probe.ready"
-        handoff_seen = coord / ".relay-seen" / "handoff-1.ready"
-        while time.time() < deadline and not (probe_seen.exists() and handoff_seen.exists()):
+        seen = coord / ".relay-seen"
+        while time.time() < deadline and not all((seen / marker).exists() for marker in markers):
             time.sleep(0.25)
-        if not probe_seen.exists() or not handoff_seen.exists():
-            raise AssertionError("relay did not consume probe and handoff markers")
+        missing = sorted(marker for marker in markers if not (seen / marker).exists())
+        if missing:
+            raise AssertionError(f"relay did not consume markers: {missing}")
 
-        print("OK functional grid: 4 healthy panes")
-        print("OK private manifest and session options")
-        print("OK relay consumed probe and handoff markers")
+        if not ORCHESTRATOR.session_exists(prefix_collision):
+            raise AssertionError("prefix-collision control session was unexpectedly replaced")
+        print("OK functional grid: all five roles plus monitor are healthy")
+        print("OK exact session targeting ignores a prefix-collision session")
+        print("OK private manifest, session options, and read-only specialist tools")
+        print("OK relay consumed all handoff, specialist, probe, and review markers")
         print("OK no Pi provider process was launched")
         return 0
     finally:
-        subprocess.run(
-            ["tmux", "kill-session", "-t", session],
-            check=False,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+        for candidate in (session, prefix_collision):
+            subprocess.run(
+                ["tmux", "kill-session", "-t", f"={candidate}"],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
         shutil.rmtree(temporary_root, ignore_errors=True)
 
 
