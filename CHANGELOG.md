@@ -19,6 +19,7 @@ All notable changes to this project are documented here.
 - Strengthened the disposable Pi smoke to use strict JSONL RPC `get_commands` discovery and assert the exact extension-command/root-skill surface without prompting a provider
 - Made unexpected public JSON failures return one generic `internal_error` envelope, fixed command attribution on adversarial parser errors, clarified workflow-only read policy with retained bash, and returned custom tool rendering to Pi's safe fallback
 - Limited package OS metadata to tested macOS/Linux platforms, made verification enforce the exact manifest/control surface and packed allowlist, and made successful Pi RPC discovery require empty stderr
+- Updated every CI action to a full commit SHA on its Node 24-compatible v7 release
 
 - Hardened private state creation and writes against symlink redirection without changing pre-existing ancestor permissions, added canonical state-root containment, and made manifest replacement atomic with unique private temporary files
 - Added strict schema-v1 manifest validation for fields, roles, pane IDs, trust, canonical project/coordination paths, and contained role paths before orchestration actions
