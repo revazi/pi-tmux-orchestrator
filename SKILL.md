@@ -6,13 +6,13 @@ compatibility: Requires Pi, Python 3, and tmux. tmux 3.5+ with extended-keys csi
 
 # Tmux Agent Orchestrator
 
-Use the bundled `pi-tmux-agents` command instead of hand-writing tmux panes, prompts, or relay scripts.
+Prefer the `tmux_orchestrator` tool and `/orchestrate`, `/orchestrations`, or `/orchestrator-stop` commands when the package extension is available. They delegate to the bundled Python CLI and preserve its trust and privacy boundaries. Otherwise use the standalone `pi-tmux-agents` CLI fallback instead of hand-writing tmux panes, prompts, or relay scripts.
 
 ## Operating rules
 
 1. Resolve the project directory and read its governing instructions before launch.
 2. Treat the user's orchestration request as permission to create external orchestration state, but do not approve an unfamiliar project automatically.
-3. Keep one writer: only the implementer may edit project files. Reviewer, probe, Playwright tester, and Django expert are read-only roles with verification access.
+3. Keep one writer: only the implementer may edit project files. Reviewer, probe, Playwright tester, and Django expert are workflow-read-only roles; they retain verification access including `bash` and are not OS-sandboxed.
 4. Put the complete task and acceptance criteria in a task file. Do not put credentials, private documents, provider responses, or other secrets in task or handoff files.
 5. Use a probe only when the task benefits from independent integration, contract, security, or runtime investigation. Add Playwright only when a real local test application and user-visible browser behavior should be exercised. Add the Django expert for ORM, settings, lifecycle, database, migration, security, testing, or operational best-practice review.
 6. Never claim a probe is wire-equivalent to a production provider unless it actually exercises that exact boundary. Never treat a browser smoke as complete semantic, security, or adapter evidence.
@@ -20,13 +20,14 @@ Use the bundled `pi-tmux-agents` command instead of hand-writing tmux panes, pro
 
 ## Start a grid
 
-Write the agreed task to a temporary file, then run:
+With the extension, call `tmux_orchestrator` with action `start`; the extension uses private temporary files and confirms project, roles/models, external state retention, and child trust policy before delegation.
+
+For the standalone fallback, write the agreed task to a mode-`0600` temporary file, then run:
 
 ```bash
 pi-tmux-agents start \
   --project "$PWD" \
-  --task-file /tmp/pi-agent-task.md \
-  --approve-project
+  --task-file /tmp/pi-agent-task.md
 ```
 
 Default roles and models:
@@ -77,6 +78,8 @@ The Playwright and Django roles wait for each implementer handoff and report bef
 
 ## Operate an existing grid
 
+Prefer extension action `list`, `status`, or `send`; use `/orchestrator-stop` for confirmed stop. Restart is intentionally CLI-only in this candidate. Standalone fallback:
+
 ```bash
 pi-tmux-agents list
 pi-tmux-agents status SESSION
@@ -90,6 +93,8 @@ pi-tmux-agents stop SESSION --yes
 `restart` preserves filesystem changes and coordination state but starts a fresh Pi conversation for that role.
 
 ## Before launching
+
+The parent Pi trust decision never automatically applies to children. The extension permits `--approve-project` only for a parent-trusted project after a separate per-run confirmation; otherwise children use native trust prompts.
 
 Run a safe preview when model availability or layout is uncertain:
 

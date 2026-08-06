@@ -1,0 +1,37 @@
+{
+  "name": "@revazi/pi-tmux-orchestrator",
+  "version": "0.4.0-dev.0",
+  "description": "Unreleased private Pi package candidate for the Python/tmux orchestrator",
+  "private": true,
+  "license": "UNLICENSED",
+  "type": "module",
+  "engines": {
+    "node": ">=22.19"
+  },
+  "os": [
+    "darwin",
+    "linux"
+  ],
+  "bin": {
+    "pi-tmux-agents": "scripts/pi-tmux-agents.py"
+  },
+  "files": [
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "README.md",
+    "SECURITY.md",
+    "SKILL.md",
+    "VERSION",
+    "extensions/tmux-orchestrator.js",
+    "references/usage.md",
+    "scripts/pi-tmux-agents.py"
+  ],
+  "pi": {
+    "extensions": [
+      "./extensions/tmux-orchestrator.js"
+    ],
+    "skills": [
+      "./SKILL.md"
+    ]
+  }
+}

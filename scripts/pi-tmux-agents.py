@@ -30,7 +30,11 @@ STATE_ROOT = Path(
         str(Path.home() / ".pi" / "agent" / "orchestrations"),
     )
 ).expanduser()
-VERSION = "0.3.0"
+VERSION = "0.4.0-dev.0"
+JSON_SCHEMA_VERSION = "1"
+JSON_MODE = False
+MAX_ERROR_CHARS = 512
+MAX_JSON_ITEMS = 100
 WINDOW = "agents"
 THINKING_LEVELS = ("off", "minimal", "low", "medium", "high", "xhigh", "max")
 DEFAULT_MODELS = {
@@ -84,11 +88,87 @@ PANE_ID_PATTERN = re.compile(r"%[0-9]+")
 
 
 class OrchestrationError(RuntimeError):
-    pass
+    def __init__(self, message: str, code: str = "orchestration_error") -> None:
+        super().__init__(message)
+        self.code = code
+
+
+class CLIUsageError(OrchestrationError):
+    def __init__(self, message: str) -> None:
+        super().__init__(message, "invalid_arguments")
+
+
+class OrchestrationArgumentParser(argparse.ArgumentParser):
+    def error(self, message: str) -> None:
+        if JSON_MODE:
+            raise CLIUsageError(message)
+        super().error(message)
+
+
+class CommandResult:
+    def __init__(
+        self,
+        data: dict[str, Any] | None = None,
+        code: int = 0,
+        error_code: str | None = None,
+        error_message: str | None = None,
+    ) -> None:
+        self.data = data
+        self.code = code
+        self.error_code = error_code
+        self.error_message = error_message
+
+
+def bounded_message(value: object, limit: int = MAX_ERROR_CHARS) -> str:
+    text = re.sub(r"[\x00-\x1f\x7f]+", " ", str(value))
+    text = re.sub(r"\s+", " ", text).strip()
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 1)].rstrip() + "…"
+
+
+def human_print(*values: object) -> None:
+    if not JSON_MODE:
+        print(*values)
 
 
 def eprint(*values: object) -> None:
-    print(*values, file=sys.stderr)
+    if not JSON_MODE:
+        print(*values, file=sys.stderr)
+
+
+def emit_json(command: str, result: CommandResult) -> None:
+    error = None
+    if result.code != 0:
+        error = {
+            "code": result.error_code or "command_failed",
+            "message": bounded_message(result.error_message or "Command failed"),
+        }
+    envelope = {
+        "schema_version": JSON_SCHEMA_VERSION,
+        "command": command,
+        "success": result.code == 0,
+        "data": result.data,
+        "error": error,
+    }
+    print(json.dumps(envelope, separators=(",", ":"), sort_keys=True))
+
+
+def public_role(role: str, config: dict[str, Any]) -> dict[str, Any]:
+    value: dict[str, Any] = {
+        "name": role,
+        "provider": config["provider"],
+        "model": config["model"],
+        "thinking": config["thinking"],
+        "tool_policy": (
+            "default"
+            if config.get("tools") is None
+            else "workflow-read-only-with-bash"
+        ),
+    }
+    if config.get("pane_id") is not None:
+        value["pane_id"] = config["pane_id"]
+    return value
 
 
 def command_path(name: str) -> str:
@@ -105,13 +185,14 @@ def run(
     capture: bool = False,
     cwd: str | None = None,
 ) -> subprocess.CompletedProcess[str]:
+    capture_output = capture or JSON_MODE
     return subprocess.run(
         args,
         check=check,
         cwd=cwd,
         text=True,
-        stdout=subprocess.PIPE if capture else None,
-        stderr=subprocess.PIPE if capture else None,
+        stdout=subprocess.PIPE if capture_output else None,
+        stderr=subprocess.PIPE if capture_output else None,
     )
 
 
@@ -607,8 +688,7 @@ def model_available(provider: str, model: str) -> tuple[bool, str]:
     pi = command_path("pi")
     result = run([pi, "--list-models", provider], check=False, capture=True)
     if result.returncode != 0:
-        detail = (result.stderr or result.stdout).strip()
-        return False, detail or "pi --list-models failed"
+        return False, f"pi --list-models failed with exit code {result.returncode}"
     for line in result.stdout.splitlines()[1:]:
         columns = line.split()
         if len(columns) >= 2 and columns[0] == provider and columns[1] == model:
@@ -1025,7 +1105,12 @@ def attach_session(session: str) -> None:
         os.execvp(command_path("tmux"), ["tmux", "attach", "-t", target])
 
 
-def start_command(args: argparse.Namespace) -> int:
+def start_command(args: argparse.Namespace) -> CommandResult:
+    if getattr(args, "json_output", False) and args.attach:
+        raise OrchestrationError(
+            "start --attach is interactive-only and cannot be used with --json",
+            "interactive_only",
+        )
     command_path("pi")
     command_path("tmux")
     project = Path(args.project).expanduser().resolve()
@@ -1101,20 +1186,36 @@ def start_command(args: argparse.Namespace) -> int:
         for role, config in configs.items():
             validate_model(role, config)
 
-    print(f"Project: {project}")
-    print(f"Session: {session}")
-    print("Roles:")
+    data: dict[str, Any] = {
+        "project": str(project),
+        "session": session,
+        "roles": [public_role(role, configs[role]) for role in roles],
+        "monitor": {"kind": "relay/status"},
+        "trust": {
+            "child_bypass": bool(args.approve_project),
+            "policy": "approve" if args.approve_project else "native-prompts",
+        },
+        "dry_run": bool(args.dry_run),
+        "paths": {
+            "state_root": str(absolute_path(STATE_ROOT)),
+            "coordination": None,
+        },
+        "state_retained_on_stop": True,
+    }
+    human_print(f"Project: {project}")
+    human_print(f"Session: {session}")
+    human_print("Roles:")
     for role in roles:
         config = configs[role]
-        print(
+        human_print(
             f"  {role}: {config['provider']}/{config['model']} "
             f"thinking={config['thinking']}"
         )
-    print("  monitor: relay/status")
-    print(f"Child project trust bypass: {'enabled' if args.approve_project else 'disabled'}")
+    human_print("  monitor: relay/status")
+    human_print(f"Child project trust bypass: {'enabled' if args.approve_project else 'disabled'}")
     if args.dry_run:
-        print("Dry run complete; no files, sessions, or model requests were created.")
-        return 0
+        human_print("Dry run complete; no files, sessions, or model requests were created.")
+        return CommandResult(data=data)
 
     timestamp = dt.datetime.now(dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     root = canonical_state_root(create=True)
@@ -1186,28 +1287,62 @@ def start_command(args: argparse.Namespace) -> int:
             except OSError:
                 pass
         raise
-    print(f"Coordination: {coord}")
-    print(f"Status: pi-tmux-agents status {session}")
-    print(f"Attach: pi-tmux-agents attach {session}")
-    print(f"Stop: pi-tmux-agents stop {session} --yes")
+    data["paths"]["coordination"] = str(coord)
+    human_print(f"Coordination: {coord}")
+    human_print(f"Status: pi-tmux-agents status {session}")
+    human_print(f"Attach: pi-tmux-agents attach {session}")
+    human_print(f"Stop: pi-tmux-agents stop {session} --yes")
     if args.attach:
         attach_session(session)
-    return 0
+    return CommandResult(data=data)
 
 
-def list_command(_: argparse.Namespace) -> int:
+def list_command(_: argparse.Namespace) -> CommandResult:
     sessions = orchestrated_sessions()
+    values: list[dict[str, Any]] = []
     if not sessions:
-        print("No running pi-tmux-agents sessions.")
-        return 0
-    for session, coord in sessions:
+        human_print("No running pi-tmux-agents sessions.")
+        return CommandResult(
+            data={"sessions": values, "truncated": False, "total_sessions": 0}
+        )
+    selected_sessions = sessions[:MAX_JSON_ITEMS] if JSON_MODE else sessions
+    for session, coord in selected_sessions:
         try:
             manifest = load_manifest(coord, expected_session=session)
+            role_values = [
+                public_role(role, config) for role, config in manifest["roles"].items()
+            ]
+            values.append(
+                {
+                    "session": session,
+                    "valid": True,
+                    "project": manifest["project"],
+                    "roles": role_values,
+                    "paths": {"coordination": str(coord)},
+                }
+            )
             roles = ",".join(manifest["roles"].keys())
-            print(f"{session}\t{manifest['project']}\troles={roles}\t{coord}")
+            human_print(f"{session}\t{manifest['project']}\troles={roles}\t{coord}")
         except OrchestrationError as error:
-            print(f"{session}\tinvalid manifest: {error}")
-    return 0
+            message = bounded_message(error)
+            values.append(
+                {
+                    "session": session,
+                    "valid": False,
+                    "project": None,
+                    "roles": [],
+                    "paths": {"coordination": str(coord)},
+                    "error": {"code": error.code, "message": message},
+                }
+            )
+            human_print(f"{session}\tinvalid manifest: {message}")
+    return CommandResult(
+        data={
+            "sessions": values,
+            "truncated": JSON_MODE and len(sessions) > len(selected_sessions),
+            "total_sessions": len(sessions),
+        }
+    )
 
 
 def coordination_files(coord: Path) -> list[tuple[Path, os.stat_result]]:
@@ -1231,40 +1366,83 @@ def coordination_files(coord: Path) -> list[tuple[Path, os.stat_result]]:
     return sorted(metadata, key=lambda item: (item[1].st_mtime, item[0].name))
 
 
-def status_command(args: argparse.Namespace) -> int:
+def status_command(args: argparse.Namespace) -> CommandResult:
     session, coord = resolve_session(args.session)
     manifest = load_manifest(coord, expected_session=session)
-    print(f"Session: {session}")
-    print(f"Project: {manifest['project']}")
-    print(f"Coordination: {coord}")
+    human_print(f"Session: {session}")
+    human_print(f"Project: {manifest['project']}")
+    human_print(f"Coordination: {coord}")
     result = tmux(
         [
             "list-panes",
             "-t",
             exact_window_target(session, manifest["window"]),
             "-F",
-            "pane=#{pane_index} id=#{pane_id} pid=#{pane_pid} cmd=#{pane_current_command} "
-            "dead=#{pane_dead} title=#{pane_title}",
+            "#{pane_index}\t#{pane_id}\t#{pane_pid}\t#{pane_current_command}\t"
+            "#{pane_dead}\t#{pane_title}",
         ],
         capture=True,
     )
-    print("Panes:")
+    panes: list[dict[str, Any]] = []
+    human_print("Panes:")
     for line in result.stdout.splitlines():
-        print(f"  {line}")
-    print("Coordination files:")
+        columns = line.split("\t", 5)
+        if len(columns) != 6:
+            raise OrchestrationError("tmux returned invalid pane metadata", "invalid_tmux_output")
+        index, pane_id, pid, current_command, dead, title = columns
+        pane = {
+            "index": int(index),
+            "id": pane_id,
+            "pid": int(pid),
+            "command": bounded_message(current_command, 128),
+            "dead": dead == "1",
+            "title": bounded_message(title, 256),
+        }
+        if not JSON_MODE or len(panes) < MAX_JSON_ITEMS:
+            panes.append(pane)
+        human_print(
+            f"  pane={index} id={pane_id} pid={pid} cmd={current_command} "
+            f"dead={dead} title={title}"
+        )
+    human_print("Coordination files:")
     files = coordination_files(coord)
+    selected_files = files[:MAX_JSON_ITEMS] if JSON_MODE else files
+    file_values = [
+        {"name": path.name, "size_bytes": metadata.st_size}
+        for path, metadata in selected_files
+    ]
     if not files:
-        print("  waiting for agent status")
+        human_print("  waiting for agent status")
     for path, metadata in files:
-        print(f"  {path.name}: {metadata.st_size} bytes")
-    return 0
+        human_print(f"  {path.name}: {metadata.st_size} bytes")
+    return CommandResult(
+        data={
+            "session": session,
+            "project": manifest["project"],
+            "paths": {"coordination": str(coord)},
+            "roles": [
+                public_role(role, config) for role, config in manifest["roles"].items()
+            ],
+            "panes": panes,
+            "files": file_values,
+            "truncated": {
+                "panes": JSON_MODE and len(result.stdout.splitlines()) > len(panes),
+                "files": JSON_MODE and len(files) > len(selected_files),
+            },
+        }
+    )
 
 
-def attach_command(args: argparse.Namespace) -> int:
+def attach_command(args: argparse.Namespace) -> CommandResult:
+    if getattr(args, "json_output", False):
+        raise OrchestrationError(
+            "attach is interactive-only and cannot be used with --json",
+            "interactive_only",
+        )
     session, coord = resolve_session(args.session)
     load_manifest(coord, expected_session=session)
     attach_session(session)
-    return 0
+    return CommandResult(data={"session": session})
 
 
 def send_keys(pane_id: str, message: str) -> None:
@@ -1272,7 +1450,7 @@ def send_keys(pane_id: str, message: str) -> None:
     tmux(["send-keys", "-t", pane_id, "Enter"])
 
 
-def send_command(args: argparse.Namespace) -> int:
+def send_command(args: argparse.Namespace) -> CommandResult:
     session, coord = resolve_session(args.session)
     manifest = load_manifest(coord, expected_session=session)
     if args.role not in manifest["roles"]:
@@ -1280,11 +1458,11 @@ def send_command(args: argparse.Namespace) -> int:
         raise OrchestrationError(f"Role {args.role!r} is not in {session}; available: {available}")
     message = read_text_argument(args.message, args.message_file, "message").strip()
     send_keys(manifest["roles"][args.role]["pane_id"], message)
-    print(f"Sent message to {session}/{args.role}")
-    return 0
+    human_print(f"Sent message to {session}/{args.role}")
+    return CommandResult(data={"session": session, "role": args.role, "sent": True})
 
 
-def restart_command(args: argparse.Namespace) -> int:
+def restart_command(args: argparse.Namespace) -> CommandResult:
     if not args.yes:
         raise OrchestrationError("restart replaces the role's Pi conversation; pass --yes")
     session, coord = resolve_session(args.session)
@@ -1319,60 +1497,112 @@ def restart_command(args: argparse.Namespace) -> int:
         ]
     )
     tmux(["respawn-pane", "-k", "-t", role["pane_id"], command])
-    print(
+    human_print(
         f"Restarted {session}/{args.role} with "
         f"{role['provider']}/{role['model']} thinking={role['thinking']}"
     )
-    return 0
+    return CommandResult(
+        data={"session": session, "role": public_role(args.role, role), "restarted": True}
+    )
 
 
-def stop_command(args: argparse.Namespace) -> int:
+def stop_command(args: argparse.Namespace) -> CommandResult:
     if not args.yes:
         raise OrchestrationError("stop kills the selected tmux agent grid; pass --yes")
     session, coord = resolve_session(args.session)
     load_manifest(coord, expected_session=session)
     tmux(["kill-session", "-t", exact_session_target(session)])
-    print(f"Stopped {session}")
-    print(f"Coordination state retained at {coord}")
-    return 0
+    human_print(f"Stopped {session}")
+    human_print(f"Coordination state retained at {coord}")
+    return CommandResult(
+        data={
+            "session": session,
+            "stopped": True,
+            "state_retained": True,
+            "paths": {"coordination": str(coord)},
+        }
+    )
 
 
-def doctor_command(_: argparse.Namespace) -> int:
+def doctor_command(_: argparse.Namespace) -> CommandResult:
     ok = True
+    command_checks: list[dict[str, Any]] = []
     for name in ("pi", "tmux", "python3"):
         path = shutil.which(name)
+        command_checks.append(
+            {"name": name, "status": "ok" if path else "fail", "path": path}
+        )
         if path:
-            print(f"OK   {name}: {path}")
+            human_print(f"OK   {name}: {path}")
         else:
-            print(f"FAIL {name}: not found")
+            human_print(f"FAIL {name}: not found")
             ok = False
     if not ok:
-        return 1
+        return CommandResult(
+            data={
+                "commands": command_checks,
+                "tmux": None,
+                "model_checks": [],
+                "paths": {"state_root": str(absolute_path(STATE_ROOT))},
+            },
+            code=1,
+            error_code="missing_prerequisite",
+            error_message="One or more required local commands are unavailable",
+        )
 
-    version = run([command_path("tmux"), "-V"], capture=True).stdout.strip()
-    print(f"OK   {version}")
-    if list_tmux_sessions():
+    version = bounded_message(run([command_path("tmux"), "-V"], capture=True).stdout, 128)
+    human_print(f"OK   {version}")
+    tmux_data: dict[str, Any] = {
+        "version": version,
+        "server_running": bool(list_tmux_sessions()),
+        "extended_keys": None,
+        "extended_keys_format": None,
+    }
+    if tmux_data["server_running"]:
         extended = tmux(["show-options", "-gv", "extended-keys"], check=False, capture=True)
         key_format = tmux(
             ["show-options", "-gv", "extended-keys-format"],
             check=False,
             capture=True,
         )
-        extended_value = extended.stdout.strip() if extended.returncode == 0 else "unknown"
-        format_value = key_format.stdout.strip() if key_format.returncode == 0 else "unknown"
+        extended_value = (
+            bounded_message(extended.stdout, 64) if extended.returncode == 0 else "unknown"
+        )
+        format_value = (
+            bounded_message(key_format.stdout, 64) if key_format.returncode == 0 else "unknown"
+        )
         label = "OK" if extended_value == "on" else "WARN"
-        print(f"{label:<4} tmux extended-keys: {extended_value}")
+        human_print(f"{label:<4} tmux extended-keys: {extended_value}")
         label = "OK" if format_value == "csi-u" else "WARN"
-        print(f"{label:<4} tmux extended-keys-format: {format_value}")
+        human_print(f"{label:<4} tmux extended-keys-format: {format_value}")
+        tmux_data["extended_keys"] = extended_value
+        tmux_data["extended_keys_format"] = format_value
     else:
-        print("INFO tmux server is not running; extended-key options were not inspected")
+        human_print("INFO tmux server is not running; extended-key options were not inspected")
 
+    model_checks: list[dict[str, Any]] = []
     for role, config in DEFAULT_MODELS.items():
         available, detail = model_available(config["provider"], config["model"])
         label = "OK" if available else "WARN"
-        print(f"{label:<4} {role}: {config['provider']}/{config['model']} ({detail})")
-    print(f"OK   state root: {STATE_ROOT}")
-    return 0
+        human_print(f"{label:<4} {role}: {config['provider']}/{config['model']} ({detail})")
+        model_checks.append(
+            {
+                "role": role,
+                "provider": config["provider"],
+                "model": config["model"],
+                "available": available,
+                "detail": bounded_message(detail, 256),
+            }
+        )
+    human_print(f"OK   state root: {STATE_ROOT}")
+    return CommandResult(
+        data={
+            "commands": command_checks,
+            "tmux": tmux_data,
+            "model_checks": model_checks,
+            "paths": {"state_root": str(absolute_path(STATE_ROOT))},
+        }
+    )
 
 
 def run_agent_command(args: argparse.Namespace) -> int:
@@ -1716,7 +1946,7 @@ def add_model_arguments(parser: argparse.ArgumentParser, role: str) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = OrchestrationArgumentParser(
         prog="pi-tmux-agents",
         description="Run coordinated Pi implementer/reviewer/probe agents in a tmux grid.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -1735,6 +1965,12 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("--version", action="version", version=f"%(prog)s {VERSION}")
+    parser.add_argument(
+        "--json",
+        dest="json_output",
+        action="store_true",
+        help="emit one versioned JSON object on stdout",
+    )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     start = subparsers.add_parser("start", help="create and start an agent grid")
@@ -1821,22 +2057,88 @@ def parse_internal_command(argv: list[str]) -> argparse.Namespace | None:
     return parser.parse_args(argv[1:])
 
 
+def requested_command(argv: list[str]) -> str:
+    public_commands = {"doctor", "list", "status", "start", "attach", "send", "restart", "stop"}
+    for value in argv:
+        if value == "--json":
+            continue
+        if value.startswith("-"):
+            return "unknown"
+        return value if value in public_commands else "unknown"
+    return "unknown"
+
+
 def main() -> int:
-    args = parse_internal_command(sys.argv[1:])
-    if args is None:
-        parser = build_parser()
-        args = parser.parse_args()
+    global JSON_MODE
+    argv = sys.argv[1:]
+    internal = parse_internal_command(argv)
+    if internal is not None:
+        try:
+            return int(internal.handler(internal))
+        except OrchestrationError as error:
+            eprint(f"error: {bounded_message(error)}")
+            return 2
+        except subprocess.CalledProcessError as error:
+            eprint(f"error: local command failed ({error.returncode})")
+            if error.stderr:
+                eprint(bounded_message(error.stderr))
+            return error.returncode or 1
+
+    JSON_MODE = "--json" in argv
+    command = requested_command(argv)
+    if JSON_MODE and "--version" in argv:
+        emit_json("version", CommandResult(data={"version": VERSION}))
+        return 0
+    if JSON_MODE and any(value in {"-h", "--help"} for value in argv):
+        result = CommandResult(
+            code=2,
+            error_code="interactive_help_only",
+            error_message="CLI help is human-readable; omit --json to display it",
+        )
+        emit_json(command, result)
+        return result.code
+    parse_argv = list(argv)
+    if JSON_MODE:
+        parse_argv.remove("--json")
+        parse_argv.insert(0, "--json")
     try:
-        return int(args.handler(args))
+        parser = build_parser()
+        args = parser.parse_args(parse_argv)
+        command = args.command
+        outcome = args.handler(args)
+        result = outcome if isinstance(outcome, CommandResult) else CommandResult(code=int(outcome))
     except OrchestrationError as error:
-        eprint(f"error: {error}")
-        return 2
+        result = CommandResult(
+            code=2,
+            error_code=error.code,
+            error_message=bounded_message(error),
+        )
     except subprocess.CalledProcessError as error:
-        command = shlex.join(str(value) for value in error.cmd)
-        eprint(f"error: command failed ({error.returncode}): {command}")
-        if error.stderr:
-            eprint(error.stderr.strip())
-        return error.returncode or 1
+        result = CommandResult(
+            code=error.returncode or 1,
+            error_code="subprocess_failed",
+            error_message=f"A required local command failed with exit code {error.returncode}",
+        )
+    except (OSError, ValueError) as error:
+        result = CommandResult(
+            code=1,
+            error_code="local_runtime_error",
+            error_message="A bounded local runtime error prevented the command from completing",
+        )
+        if not JSON_MODE:
+            result.error_message = bounded_message(error)
+    except Exception:
+        result = CommandResult(
+            code=1,
+            error_code="internal_error",
+            error_message="An unexpected internal error prevented the command from completing",
+        )
+
+    if JSON_MODE:
+        emit_json(command, result)
+    elif result.code != 0:
+        eprint(f"error: {bounded_message(result.error_message or 'command failed')}")
+    return result.code
 
 
 if __name__ == "__main__":

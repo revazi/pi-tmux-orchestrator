@@ -1,5 +1,21 @@
 # Usage reference
 
+## Unreleased private package candidate
+
+`0.4.0-dev.0` is private, `UNLICENSED`, non-publishable, and intended only for disposable evaluation. Do not install it into the real Pi home. Run `scripts/pi-extension-smoke.sh` for isolated RPC `get_commands` discovery under a disposable `PI_CODING_AGENT_DIR`; it asserts the exact command/skill surface without a prompt or provider request. The extension imports no Pi core package, so the package declares no dependency or peer tree. The package does not migrate an existing standalone installation, and Git-package update/rollback has not been accepted or claimed.
+
+When available, prefer tool `tmux_orchestrator` (`doctor`, `list`, `status`, `start`, `send`) and commands `/orchestrate`, `/orchestrations`, and `/orchestrator-stop`. Restart remains CLI-only, stop is command-only with UI confirmation, and start requires the interactive TUI.
+
+## JSON boundary
+
+`pi-tmux-agents --json COMMAND ...` emits one schema-v1 JSON object on stdout on success or failure and uses a nonzero exit code for failure:
+
+```json
+{"schema_version":"1","command":"list","success":true,"data":{"sessions":[]},"error":null}
+```
+
+The envelope always has exactly `schema_version`, `command`, `success`, `data`, and `error`. Errors contain bounded `code` and `message` fields. Arrays are bounded and report truncation. Roles, panes, files, model checks, and paths are structured values. `list` and `status` remain metadata-only: no task, message, prompt, report, provider payload, or specialist body is included. `attach` returns `interactive_only` in JSON mode.
+
 ## Commands
 
 ### `start`
@@ -61,7 +77,7 @@ Inside tmux, switches the current client. Outside tmux, attaches normally.
 
 ### `send SESSION --role ROLE --message TEXT`
 
-Sends a steering message to an agent. Use `--message-file` for longer instructions. The message is submitted immediately; Pi queues it safely if the agent is currently working.
+Sends a steering message to an agent. Prefer a mode-`0600` `--message-file` for sensitive or longer instructions. The extension always uses a unique private temporary file and removes it in `finally`; message bodies are never put in child process arguments or returned JSON. The message is submitted immediately; Pi queues it safely if the agent is currently working.
 
 ### `restart SESSION --role ROLE ... --yes`
 
@@ -103,7 +119,9 @@ The relay transports file paths and state transitions, not source documents or p
 - Manifest updates use unique mode-`0600` temporary files and atomic replacement. Failed starts kill partial sessions and retain a private `startup-state` diagnosis when safe.
 - Avoid task text on the command line when it contains sensitive project information; use `--task-file`.
 - Never place credentials, raw career documents, private customer data, prompts, provider responses, or raw provider errors in coordination files.
-- `--approve-project` bypasses child-session trust prompts and must be limited to a project already inspected and trusted.
+- `--approve-project` bypasses child-session trust prompts and must be limited to a project already inspected and trusted. The extension additionally requires `ctx.isProjectTrusted()` and explicit per-run UI confirmation; parent trust is never automatically inherited by children.
+- Extension start/probe/specialist/message bodies use unique mode-`0600` temporary files, are passed only via `--*-file`, and are removed in `finally`.
+- The extension starts no background poller or resource in its factory; status/widget refresh occurs only on command, tool, or session lifecycle points.
 
 ## tmux navigation
 

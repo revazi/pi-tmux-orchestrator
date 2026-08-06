@@ -17,6 +17,7 @@ Pi Tmux Orchestrator:
 - stores orchestration state outside target repositories
 - passes role prompts as file attachments rather than full command-line text
 - validates model availability with `pi --list-models`, which does not send a model request
+- exposes a thin extension that invokes only the bundled Python CLI through versioned JSON mode
 - does not provide sandboxing between agents running as the same user
 
 Only the implementer is given normal Pi write tools. Reviewer, technical probe, Playwright tester, and Django expert omit `edit` and `write`, but retain `bash` to run tests. Their read-only policy is therefore a workflow boundary, not an operating-system sandbox. Playwright artifacts and test data are limited by prompt contract to ignored or external temporary paths, and the tester must clean up local servers and browser processes.
@@ -36,7 +37,9 @@ Coordination directories are created with mode `0700` and files with mode `0600`
 
 Schema-v1 manifests are bounded and strictly validated for required fields, known roles, role configuration types, pane IDs, trust type, canonical project/coordination paths, exact session/window identity, and contained prompt/session paths before an existing orchestration is acted upon. Validation inspects prompt metadata without reading prompt or report bodies.
 
-Status and monitor output expose only bounded metadata such as coordination file names and byte sizes. They do not preview report bodies. Operators remain responsible for local backups, screen recording, shell history, tmux server access, and other processes running as the same user.
+Status, monitor, and JSON output expose only bounded metadata such as coordination file names and byte sizes. They do not preview task, message, prompt, report, specialist, or provider payload bodies. The extension writes those input bodies to unique mode-`0600` files in a private temporary directory, passes only file paths in argument arrays, and removes the directory in `finally`, including cancellation and errors. Temporary cleanup reduces persistence but is not a secure-erasure claim. Operators remain responsible for local backups, screen recording, shell history, tmux server access, temporary-storage behavior, and other processes running as the same user.
+
+The private package candidate declares no dependencies or peers, owns no runtime tree, does not bundle Pi, excludes tests/state/sessions/auth/caches from its deterministic pack list, and is not configured or authorized for publication. Extension tests use mocks plus isolated RPC `get_commands` discovery under a disposable `PI_CODING_AGENT_DIR`; they do not send prompts, read the real Pi authentication files, or issue provider requests.
 
 ## Relay delivery boundary
 
@@ -46,7 +49,7 @@ A successful tmux `send-keys` operation proves only that tmux accepted the keyst
 
 ## Project trust
 
-`--approve-project` passes Pi's trust bypass to child sessions. Use it only after inspecting and trusting the target project. Without it, each child Pi session must obtain trust interactively.
+`--approve-project` passes Pi's trust bypass to child sessions. Use it only after inspecting and trusting the target project. Without it, each child Pi session must obtain trust interactively. The extension rejects this bypass unless the parent context reports the project trusted and the user separately confirms it for that run. The parent decision is never represented as automatically applying to children. Extension starts are rejected outside the interactive TUI when confirmation is unavailable.
 
 ## Destructive operations
 
