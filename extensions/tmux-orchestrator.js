@@ -8,6 +8,19 @@ const CLI_PATH = fileURLToPath(new URL("../scripts/pi-tmux-agents.py", import.me
 const STATUS_KEY = "tmux-orchestrator";
 const MAX_VISIBLE_CHARS = 12_000;
 const ACTIONS = ["doctor", "list", "status", "start", "send"];
+const ROLES = ["implementer", "reviewer", "probe", "playwright", "django"];
+const COMMAND_OVERVIEW = [
+  "/orchestrator-help — show this bounded command overview",
+  "/orchestrator-doctor — check local prerequisites without a provider request",
+  "/orchestrator-start [task] — confirm and start an orchestration",
+  "/orchestrator-list — list orchestrations and refresh the metadata-only widget",
+  "/orchestrator-status [session] — show metadata-only status",
+  "/orchestrator-send [session] — privately send a message to one role",
+  "/orchestrator-stop [session] — confirm and stop one exact session",
+  "/orchestrate — backward-compatible alias for /orchestrator-start",
+  "/orchestrations — backward-compatible alias for /orchestrator-list",
+  "Attach and restart remain terminal-only: attach takes over the terminal; restart requires explicit CLI confirmation and configuration.",
+].join("\n");
 
 const parameters = {
   type: "object",
@@ -19,7 +32,7 @@ const parameters = {
     session: { type: "string", description: "Exact orchestration session for status or send" },
     role: {
       type: "string",
-      enum: ["implementer", "reviewer", "probe", "playwright", "django"],
+      enum: ROLES,
       description: "Target role for send",
     },
     task: { type: "string", maxLength: 65536, description: "Start task; transferred through a private file" },
@@ -263,6 +276,127 @@ async function executeAction(pi, input, signal, ctx) {
   }
 }
 
+function requireInteractiveTui(ctx, command) {
+  if (ctx.mode === "tui" && ctx.hasUI) return true;
+  ctx.ui.notify(`/${command} requires the interactive TUI`, "error");
+  return false;
+}
+
+function notifyCommandFailure(ctx, action) {
+  const labels = {
+    doctor: "run orchestrator doctor",
+    list: "list orchestrations",
+    status: "show orchestration status",
+    start: "start orchestration",
+    send: "send orchestration message",
+    stop: "stop orchestration",
+  };
+  ctx.ui.setStatus(STATUS_KEY, "tmux: error");
+  ctx.ui.notify(`Unable to ${labels[action] || "run orchestrator command"}`, "error");
+}
+
+async function runCommandCli(pi, action, args, ctx) {
+  try {
+    const envelope = await runCli(pi, action, args, ctx.signal);
+    notifyEnvelope(ctx, envelope);
+    return envelope;
+  } catch {
+    notifyCommandFailure(ctx, action);
+    return undefined;
+  }
+}
+
+function refreshListWidget(ctx, envelope) {
+  const sessions = Array.isArray(envelope?.data?.sessions) ? envelope.data.sessions : [];
+  ctx.ui.setWidget(
+    STATUS_KEY,
+    sessions.length
+      ? sessions.slice(0, 8).map((item) => bounded(`${item.session} · ${item.project || "invalid"}`, 240))
+      : [bounded(compactSummary(envelope), 800)],
+  );
+}
+
+function createCommandHandlers(pi) {
+  const help = async (_args, ctx) => {
+    ctx.ui.notify(bounded(COMMAND_OVERVIEW, 2400), "info");
+  };
+
+  const doctor = async (_args, ctx) => {
+    await runCommandCli(pi, "doctor", [], ctx);
+  };
+
+  const start = async (args, ctx) => {
+    if (!requireInteractiveTui(ctx, "orchestrator-start")) return;
+    const task = String(args || "").trim() || await ctx.ui.editor("Orchestration task", "");
+    if (!task?.trim()) return;
+    const withProbe = await ctx.ui.confirm("Optional role", "Add the independent technical probe?");
+    const withPlaywright = await ctx.ui.confirm("Optional role", "Add the read-only Playwright tester?");
+    const withDjangoExpert = await ctx.ui.confirm("Optional role", "Add the read-only Django expert?");
+    let approveProject = false;
+    if (ctx.isProjectTrusted()) {
+      approveProject = await ctx.ui.confirm(
+        "Child trust policy",
+        "Request a separately confirmed --approve bypass for child Pi sessions? No keeps native child trust prompts.",
+      );
+    }
+    try {
+      const envelope = await runStart(
+        pi,
+        { task, withProbe, withPlaywright, withDjangoExpert, approveProject },
+        ctx.signal,
+        ctx,
+      );
+      notifyEnvelope(ctx, envelope);
+    } catch {
+      notifyCommandFailure(ctx, "start");
+    }
+  };
+
+  const list = async (_args, ctx) => {
+    const envelope = await runCommandCli(pi, "list", [], ctx);
+    if (envelope) refreshListWidget(ctx, envelope);
+  };
+
+  const status = async (args, ctx) => {
+    const session = String(args || "").trim();
+    await runCommandCli(pi, "status", session ? [session] : [], ctx);
+  };
+
+  const send = async (args, ctx) => {
+    if (!requireInteractiveTui(ctx, "orchestrator-send")) return;
+    const suppliedSession = String(args || "").trim();
+    const enteredSession = suppliedSession || await ctx.ui.input("Exact orchestration session", "pi-project-agents");
+    const session = String(enteredSession || "").trim();
+    if (!session) return;
+    const role = await ctx.ui.select("Target role", [...ROLES]);
+    if (!ROLES.includes(role)) return;
+    const message = await ctx.ui.editor(`Message to ${session}/${role}`, "");
+    if (!message?.trim()) return;
+    try {
+      const envelope = await runSend(pi, { session, role, message }, ctx.signal);
+      notifyEnvelope(ctx, envelope);
+    } catch {
+      notifyCommandFailure(ctx, "send");
+    }
+  };
+
+  const stop = async (args, ctx) => {
+    if (!requireInteractiveTui(ctx, "orchestrator-stop")) return;
+    const suppliedSession = String(args || "").trim();
+    const enteredSession = suppliedSession || await ctx.ui.input("Exact orchestration session", "pi-project-agents");
+    const session = String(enteredSession || "").trim();
+    if (!session) return;
+    const confirmed = await ctx.ui.confirm(
+      "Stop tmux orchestration?",
+      `Kill only ${bounded(session, 160)}? External coordination state and child session records are retained.`,
+    );
+    if (!confirmed) return;
+    await runCommandCli(pi, "stop", [session, "--yes"], ctx);
+  };
+
+  return { help, doctor, start, list, status, send, stop };
+}
+
 export default function tmuxOrchestratorExtension(pi) {
   pi.registerTool({
     name: "tmux_orchestrator",
@@ -278,79 +412,42 @@ export default function tmuxOrchestratorExtension(pi) {
     },
   });
 
-  pi.registerCommand("orchestrate", {
+  const commandHandlers = createCommandHandlers(pi);
+  pi.registerCommand("orchestrator-help", {
+    description: "Show the bounded tmux orchestrator command overview",
+    handler: commandHandlers.help,
+  });
+  pi.registerCommand("orchestrator-doctor", {
+    description: "Check local tmux orchestrator prerequisites",
+    handler: commandHandlers.doctor,
+  });
+  pi.registerCommand("orchestrator-start", {
     description: "Confirm and start a tmux orchestration",
-    handler: async (args, ctx) => {
-      if (ctx.mode !== "tui" || !ctx.hasUI) {
-        ctx.ui.notify("/orchestrate requires the interactive TUI", "error");
-        return;
-      }
-      const task = args.trim() || await ctx.ui.editor("Orchestration task", "");
-      if (!task?.trim()) return;
-      const withProbe = await ctx.ui.confirm("Optional role", "Add the independent technical probe?");
-      const withPlaywright = await ctx.ui.confirm("Optional role", "Add the read-only Playwright tester?");
-      const withDjangoExpert = await ctx.ui.confirm("Optional role", "Add the read-only Django expert?");
-      let approveProject = false;
-      if (ctx.isProjectTrusted()) {
-        approveProject = await ctx.ui.confirm(
-          "Child trust policy",
-          "Request a separately confirmed --approve bypass for child Pi sessions? No keeps native child trust prompts.",
-        );
-      }
-      try {
-        const envelope = await runStart(
-          pi,
-          { task, withProbe, withPlaywright, withDjangoExpert, approveProject },
-          ctx.signal,
-          ctx,
-        );
-        notifyEnvelope(ctx, envelope);
-      } catch (error) {
-        ctx.ui.notify(bounded(error instanceof Error ? error.message : "Start failed", 300), "error");
-      }
-    },
+    handler: commandHandlers.start,
   });
-
-  pi.registerCommand("orchestrations", {
-    description: "List running tmux orchestrations",
-    handler: async (_args, ctx) => {
-      try {
-        const envelope = await runCli(pi, "list", [], ctx.signal);
-        const summary = notifyEnvelope(ctx, envelope);
-        const sessions = envelope.data?.sessions || [];
-        ctx.ui.setWidget(
-          STATUS_KEY,
-          sessions.length
-            ? sessions.slice(0, 8).map((item) => bounded(`${item.session} · ${item.project || "invalid"}`, 240))
-            : [summary],
-        );
-      } catch {
-        ctx.ui.notify("Unable to list orchestrations", "error");
-      }
-    },
+  pi.registerCommand("orchestrator-list", {
+    description: "List running tmux orchestrations and refresh the metadata widget",
+    handler: commandHandlers.list,
   });
-
+  pi.registerCommand("orchestrator-status", {
+    description: "Show metadata-only orchestration status for an optional exact session",
+    handler: commandHandlers.status,
+  });
+  pi.registerCommand("orchestrator-send", {
+    description: "Privately send a message to one role in an exact orchestration session",
+    handler: commandHandlers.send,
+  });
   pi.registerCommand("orchestrator-stop", {
-    description: "Confirm and stop one tmux orchestration",
-    handler: async (args, ctx) => {
-      if (ctx.mode !== "tui" || !ctx.hasUI) {
-        ctx.ui.notify("/orchestrator-stop requires the interactive TUI", "error");
-        return;
-      }
-      const session = args.trim() || await ctx.ui.input("Exact orchestration session", "pi-project-agents");
-      if (!session) return;
-      const confirmed = await ctx.ui.confirm(
-        "Stop tmux orchestration?",
-        `Kill only ${bounded(session, 160)}? External coordination state and child session records are retained.`,
-      );
-      if (!confirmed) return;
-      try {
-        const envelope = await runCli(pi, "stop", [session, "--yes"], ctx.signal);
-        notifyEnvelope(ctx, envelope);
-      } catch {
-        ctx.ui.notify("Unable to stop orchestration", "error");
-      }
-    },
+    description: "Confirm and stop one exact tmux orchestration session",
+    handler: commandHandlers.stop,
+  });
+  pi.registerCommand("orchestrate", {
+    description: "Alias for /orchestrator-start",
+    handler: commandHandlers.start,
+  });
+  pi.registerCommand("orchestrations", {
+    description: "Alias for /orchestrator-list",
+    handler: commandHandlers.list,
   });
 
   pi.on("session_start", (_event, ctx) => {

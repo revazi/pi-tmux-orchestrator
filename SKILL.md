@@ -6,7 +6,7 @@ compatibility: Requires Pi, Python 3, and tmux. tmux 3.5+ with extended-keys csi
 
 # Tmux Agent Orchestrator
 
-Prefer the `tmux_orchestrator` tool and `/orchestrate`, `/orchestrations`, or `/orchestrator-stop` commands when the package extension is available. They delegate to the bundled Python CLI and preserve its trust and privacy boundaries. Otherwise use the standalone `pi-tmux-agents` CLI fallback instead of hand-writing tmux panes, prompts, or relay scripts.
+Prefer the package extension's canonical `/orchestrator-help`, `/orchestrator-doctor`, `/orchestrator-start`, `/orchestrator-list`, `/orchestrator-status`, `/orchestrator-send`, and `/orchestrator-stop` commands when available. `/orchestrate` and `/orchestrations` remain start/list aliases, and the `tmux_orchestrator` tool remains available for bounded model-driven actions. All delegate to the bundled Python JSON CLI and preserve its trust, confirmation, metadata-only, and private-file boundaries. Otherwise use the standalone `pi-tmux-agents` CLI fallback instead of hand-writing tmux panes, prompts, or relay scripts.
 
 ## Operating rules
 
@@ -20,7 +20,7 @@ Prefer the `tmux_orchestrator` tool and `/orchestrate`, `/orchestrations`, or `/
 
 ## Start a grid
 
-With the extension, call `tmux_orchestrator` with action `start`; the extension uses private temporary files and confirms project, roles/models, external state retention, and child trust policy before delegation.
+With the extension, use `/orchestrator-start [task]` or call `tmux_orchestrator` with action `start`; both use private temporary files and confirm project, roles/models, external state retention, and child trust policy before delegation.
 
 For the standalone fallback, write the agreed task to a mode-`0600` temporary file, then run:
 
@@ -78,7 +78,7 @@ The Playwright and Django roles wait for each implementer handoff and report bef
 
 ## Operate an existing grid
 
-Prefer extension action `list`, `status`, or `send`; use `/orchestrator-stop` for confirmed stop. Restart is intentionally CLI-only in the package extension. Standalone fallback:
+Prefer `/orchestrator-list`, `/orchestrator-status [session]`, `/orchestrator-send [session]`, and `/orchestrator-stop [session]`; `/orchestrator-help` summarizes the surface and `/orchestrator-doctor` checks prerequisites. Send obtains its message through Pi's editor and delegates only through a unique private file. Attach and restart remain CLI-only because attach takes over the terminal and restart requires explicit confirmation/configuration. Standalone fallback:
 
 ```bash
 pi-tmux-agents list

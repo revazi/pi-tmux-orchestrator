@@ -56,35 +56,36 @@ set -g extended-keys-format csi-u
 
 ## Package installation and evaluation
 
-Version `0.4.0` has a public scoped-package manifest and deterministic artifact checks, but this repository does not claim that a human has published it. After an operator confirms that the exact version exists on npm, install it persistently with:
-
-```bash
-pi install npm:@revazi/pi-tmux-orchestrator@0.4.0
-```
-
-Or evaluate the published package for one Pi run without adding it to settings:
-
-```bash
-pi -e npm:@revazi/pi-tmux-orchestrator@0.4.0
-```
-
-Before publication, inspect and evaluate the local source artifact instead:
-
-```bash
-scripts/package-smoke.sh
-TEMP_PI_DIR=$(mktemp -d)
-PI_CODING_AGENT_DIR="$TEMP_PI_DIR" pi --no-session -e "$PWD"
-rm -rf "$TEMP_PI_DIR"
-```
-
-The package smoke builds the exact 10-file tarball, checks its MIT license and author metadata, installs it with scripts disabled and an empty dependency tree, discovers its extension and root skill through isolated Pi RPC, and performs an offline `npm publish --dry-run` against a loopback registry with isolated npm configuration. It sends no prompt, makes no provider request, and does not read the configured Pi home or npm credentials.
-
-For inspected sources, Pi also supports persistent local-path installation. A pinned Git fallback is appropriate only after the matching tag exists:
+Version `0.4.0` is a real Pi package in this repository. After inspecting the source, install a local checkout in place or install the public Git package:
 
 ```bash
 pi install /absolute/path/to/pi-tmux-orchestrator
-pi install git:github.com/revazi/pi-tmux-orchestrator@v0.4.0
+pi install git:github.com/revazi/pi-tmux-orchestrator
 ```
+
+For a temporary run that does not add the package to settings, use:
+
+```bash
+pi -e /absolute/path/to/pi-tmux-orchestrator
+pi -e git:github.com/revazi/pi-tmux-orchestrator
+```
+
+The unversioned Git form uses the public repository's current default-branch source at installation time; use an explicit tag or commit when one is available and reproducibility is required. Pi packages execute with the current user's full permissions, so inspect the source before installation.
+
+The scoped npm manifest is publish-ready, but npm availability is still unverified. Only after an operator confirms that exact registry version exists should these commands be described as usable:
+
+```bash
+pi install npm:@revazi/pi-tmux-orchestrator@0.4.0
+pi -e npm:@revazi/pi-tmux-orchestrator@0.4.0
+```
+
+Run the package acceptance in disposable homes before publication:
+
+```bash
+scripts/package-smoke.sh
+```
+
+The smoke builds the exact 10-file tarball, installs it with npm scripts disabled and an empty dependency tree, then uses isolated `pi install <local-package-root>` and launches Pi RPC without `--extension`. It requires package-provenance discovery of exactly nine extension commands plus the root skill, performs an offline `npm publish --dry-run` against a loopback registry, sends no prompt/provider request, and does not use configured Pi/npm homes or credentials.
 
 The package imports no Pi core module, so it declares no dependencies or peers and owns no runtime tree. It is distributed under the MIT License in [LICENSE.md](LICENSE.md).
 
@@ -101,14 +102,23 @@ No npm-registry, Pi-gallery, Git-package update, or rollback acceptance is claim
 
 ## Start from Pi
 
-When loaded, the extension provides:
+The installed extension exposes exactly these slash commands:
 
-- tool `tmux_orchestrator`: `doctor`, `list`, `status`, `start`, and `send`
-- `/orchestrate`: confirmed interactive start
-- `/orchestrations`: metadata-only list/widget refresh
-- `/orchestrator-stop`: stop with explicit UI confirmation
+| Command | Behavior |
+| --- | --- |
+| `/orchestrator-help` | Show a bounded command overview without a subprocess. |
+| `/orchestrator-doctor` | Run the authoritative JSON CLI prerequisite checks without a provider request. |
+| `/orchestrator-start [task]` | Collect a task when omitted, select optional roles, enforce parent/child trust boundaries, preview, and confirm before start. |
+| `/orchestrator-list` | List running orchestrations and refresh the bounded metadata-only widget. |
+| `/orchestrator-status [session]` | Show metadata-only status for an exact session, or use safe unambiguous current-project resolution when omitted. |
+| `/orchestrator-send [session]` | Collect an exact session when omitted, select one of five roles, edit a non-empty private message, and send it through a unique mode-`0600` file. |
+| `/orchestrator-stop [session]` | Collect an exact session when omitted and require explicit confirmation before delegated `--yes`. |
+| `/orchestrate` | Backward-compatible alias for `/orchestrator-start`. |
+| `/orchestrations` | Backward-compatible alias for `/orchestrator-list`. |
 
-The tool intentionally excludes restart and stop. Start is rejected outside the interactive TUI because confirmation is required. Parent trust is checked before an optional child `--approve`; a separate confirmation is required for every run, and parent trust is never treated as inherited by children.
+The `tmux_orchestrator` model tool remains available for bounded `doctor`, `list`, `status`, `start`, and `send` actions; it intentionally excludes stop and restart. Start and slash-command send/stop require the interactive TUI. Parent trust is checked before an optional child `--approve`, a separate confirmation is required for every run, and parent trust is never treated as inherited by children. Message text never enters subprocess argv, status, details, notifications, or widgets.
+
+Attach and restart remain terminal/CLI-only. Attach takes over the terminal; restart requires explicit confirmation and provider/model/thinking configuration. This extension uses Pi's existing dialogs and does not redesign richer TUI or inter-agent message behavior.
 
 Without the extension, use the skill/CLI fallback in a new Pi session:
 
@@ -261,7 +271,7 @@ Run all local checks:
 scripts/test.sh
 ```
 
-The suite includes 39+ standard-library Python tests, Node built-in extension tests, deterministic manifest/pack verification, inspection and installation of the actual tarball, exact Pi command/skill discovery from that installed artifact, an isolated offline npm publication dry-run, and the existing six-pane tmux smoke. It sends no prompt or provider request and isolates Pi/npm configuration from real authentication files.
+The suite includes 39+ standard-library Python tests, Node extension tests for the exact nine-command surface and trust/private-message boundaries, deterministic manifest/pack verification, npm installation of the actual tarball, isolated Pi local-package installation plus package-provenance RPC discovery, an offline npm publication dry-run, and the existing six-pane tmux smoke. It sends no prompt or provider request and isolates Pi/npm configuration from real authentication files.
 
 ## Project status
 

@@ -7,11 +7,15 @@ All notable changes to this project are documented here.
 ### Added
 
 - Added the owner-authorized canonical MIT license with 2026 Revaz Zakalashvili copyright
+- Added the canonical `/orchestrator-*` help/doctor/start/list/status/send/stop command family while retaining `/orchestrate` and `/orchestrations` as shared-handler aliases
 
 ### Changed
 
 - Added exact npm author name, public email, and GitHub profile metadata
 - Expanded deterministic package acceptance to enforce the MIT/author metadata and exact 10-file artifact without changing version or publication status
+- Changed Pi discovery acceptance to install the npm-installed tarball root through isolated `pi install`, launch RPC without `--extension`, and require exact package provenance for nine extension commands plus the root skill
+- Documented immediately usable local-path and public Git package installation while keeping npm installation conditional on verified registry publication
+- Added slash-command regressions for exact registration/aliases, delegated doctor/list/status, start/stop confirmation, private interactive send cancellation/cleanup/redaction, and bounded errors
 
 ## 0.4.0 - 2026-08-06
 

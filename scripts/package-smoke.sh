@@ -138,4 +138,4 @@ if actual != sorted(expected):
     raise SystemExit("publication dry-run file allowlist mismatch")
 PY
 
-printf '%s\n' 'Actual 10-file tarball with MIT/author metadata, install/discovery, and isolated offline npm publication dry-run passed (no owned dependency tree, real Pi home, auth, or provider request).'
+printf '%s\n' 'Actual 10-file tarball with MIT/author metadata, npm install, isolated Pi local-package install/RPC discovery, and offline npm publication dry-run passed (no owned dependency tree, real Pi/npm home, auth, or provider request).'
