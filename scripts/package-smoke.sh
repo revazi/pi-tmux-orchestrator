@@ -128,8 +128,16 @@ import sys
 
 report_path, *expected = sys.argv[1:]
 with open(report_path, encoding="utf-8") as handle:
-    report = json.load(handle)
-if report.get("name") != "@revazi/pi-tmux-orchestrator" or report.get("version") != "0.4.0":
+    raw_report = json.load(handle)
+package_name = "@revazi/pi-tmux-orchestrator"
+# npm 11.16 wraps the single-package report under its package name.
+if isinstance(raw_report, dict) and set(raw_report) == {package_name}:
+    report = raw_report[package_name]
+else:
+    report = raw_report
+if not isinstance(report, dict):
+    raise SystemExit("publication dry-run report shape mismatch")
+if report.get("name") != package_name or report.get("version") != "0.4.0":
     raise SystemExit("publication dry-run name/version mismatch")
 if report.get("bundled") != []:
     raise SystemExit("publication dry-run reported bundled dependencies")
