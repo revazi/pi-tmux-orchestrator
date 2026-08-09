@@ -8,7 +8,11 @@ npm publication is not verified. Keep `pi install npm:@revazi/pi-tmux-orchestrat
 
 Before publication, `scripts/package-smoke.sh` packs and npm-installs the exact 29-file modular artifact in disposable locations, validates its MIT/author metadata and empty owned dependency tree, installs that npm package root through isolated `pi install <local-package-root>`, launches Pi RPC without `--extension`, asserts package provenance for exactly nine extension commands plus the root skill, and performs an isolated offline npm publication dry-run.
 
-The authoritative Python implementation is split across `pi_tmux_orchestrator/`; `supervisor_api.py` is the versioned tmux-independent durable-state client boundary, `supervisor_commands.py` contains its CLI adapters, and `bin/pi-tmux-agents` is a thin launcher shared by npm and the standalone installer. The extension imports no Pi core package, so the package declares no dependency or peer tree. The owner-authorized license is MIT; see [`LICENSE.md`](../LICENSE.md). The legacy `install.sh` installs only the standalone CLI/root skill, does not install the extension, and does not migrate an existing standalone installation. npm registry, Pi gallery, Git-package update, and rollback acceptance remain unclaimed unless separately exercised.
+The authoritative Python implementation is split across `pi_tmux_orchestrator/`; `supervisor_api.py` is the versioned tmux-independent durable-state read boundary, `supervisor_commands.py` contains its CLI adapters, and `bin/pi-tmux-agents` is a thin launcher shared by npm and the standalone installer. Worker/controller hosting and live-session operations remain intentionally tmux-specific; retained-state read independence is not a generic process-host abstraction. The extension imports no Pi core package, so the package declares no dependency or peer tree. The owner-authorized license is MIT; see [`LICENSE.md`](../LICENSE.md). The legacy `install.sh` installs only the standalone CLI/root skill, does not install the extension, and does not migrate an existing standalone installation. npm registry, Pi gallery, Git-package update, and rollback acceptance remain unclaimed unless separately exercised.
+
+## Scope boundary
+
+This repository remains focused on orchestrations hosted and monitored through tmux. A future terminal-independent authority may live in a separately governed Pi Deck project, with tmux, Herdr, and other terminal integrations acting only as optional monitoring/focus/attachment adapters. That future direction does not authorize a package rename, state-format dependency, generic host abstraction, or Pi Deck implementation here.
 
 ## Extension slash commands
 
@@ -24,7 +28,7 @@ The authoritative Python implementation is split across `pi_tmux_orchestrator/`;
 | `/orchestrate` | Alias for `/orchestrator-start`. |
 | `/orchestrations` | Alias for `/orchestrator-list`. |
 
-The `tmux_orchestrator` tool still exposes only `doctor`, `list`, `status`, `start`, and `send`. Slash start/send/stop require the interactive TUI. Start can select interactive TUI workers or opt-in RPC supervisors. Message bodies never enter subprocess argv, status, details, notifications, or widgets. Attach, the supervisor API, RPC events/abort, and restart stay terminal-only: attach takes over the terminal, abort is RPC-only, and restart requires explicit confirmation and provider/model/thinking configuration. Pi Deck is intentionally a later client of the supervisor API rather than another source of orchestration state transitions.
+The `tmux_orchestrator` tool still exposes only `doctor`, `list`, `status`, `start`, and `send`. Slash start/send/stop require the interactive TUI. Start can select interactive TUI workers or opt-in RPC supervisors. Message bodies never enter subprocess argv, status, details, notifications, or widgets. Attach, the supervisor API, RPC events/abort, and restart stay terminal-only: attach takes over the terminal, abort is RPC-only, and restart requires explicit confirmation and provider/model/thinking configuration. Pi Deck and terminal-neutral adapters are outside this package's scope.
 
 ## Dedicated controller
 
@@ -61,7 +65,7 @@ Manages the one persistent project-neutral controller described above. Stop requ
 
 ### `supervisor capabilities|sessions|runs|snapshot|events|command`
 
-Provides the stable read boundary intended for Pi Deck and other local clients:
+Provides this tmux package's stable metadata-only read boundary for local clients:
 
 ```bash
 pi-tmux-agents --json supervisor capabilities
@@ -76,7 +80,7 @@ pi-tmux-agents --json supervisor command SESSION [--run RUN_ID] \
 
 `capabilities` describes API v1, its bounds, acceptance-versus-completion semantics, crash-`uncertain` behavior, and the absence of an exactly-once claim. `sessions` lists each valid retained orchestration's newest run, while `runs` discovers exact history. `snapshot` returns manifest, worker registry, runtime record, and journal-cursor metadata without reading task/report bodies. TUI runs remain discoverable but have no durable worker/event surface. `events` pages one or more RPC roles independently; each repeated cursor is scoped to its role, and each page reports rotation gaps, truncation, and the next cursor. `command` returns the metadata-only lifecycle status for one exact idempotency key.
 
-All supervisor reads inspect only validated private retained state. They do not invoke tmux or claim that retained PIDs, sessions, or runtime records are live. Host runtime is reported as `not_observed`. State-directory scans, returned sessions/runs/issues, per-role event pages, and registry command counts are bounded.
+All supervisor reads inspect only validated private retained state. They do not invoke tmux or claim that retained PIDs, sessions, or runtime records are live. Host runtime is reported as `not_observed`. State-directory scans, returned sessions/runs/issues, per-role event pages, and registry command counts are bounded. Starts, worker processes, controller sessions, panes, monitoring, attachment, restart, and stop remain tmux-hosted; this API is not a promise of multiplexer-neutral orchestration.
 
 ### `start`
 

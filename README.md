@@ -1,6 +1,6 @@
 # Pi Tmux Orchestrator
 
-A reusable [Pi](https://github.com/badlogic/pi-mono) extension, skill, and dependency-free Python CLI with a persistent, project-neutral Pi controller for coordinating coding agents in monitorable tmux grids. The source package is prepared as version `0.4.0`; that publish-ready state is not evidence that an npm release or Pi gallery entry exists.
+An intentionally tmux-scoped [Pi](https://github.com/badlogic/pi-mono) extension, skill, and dependency-free Python CLI with a persistent, project-neutral Pi controller for coordinating coding agents in monitorable tmux grids. The source package is prepared as version `0.4.0`; that publish-ready state is not evidence that an npm release or Pi gallery entry exists.
 
 It turns the recurring “implementer + reviewer + optional specialist” setup into one command, with durable handoffs and explicit safety boundaries.
 
@@ -44,7 +44,20 @@ The default grid has implementer, reviewer, and monitor panes. Optional roles ad
 
 ## Implementation architecture
 
-`bin/pi-tmux-agents` is only an executable launcher. The authoritative standard-library implementation lives in `pi_tmux_orchestrator/`, separated into CLI/commands, controller, tmux, storage/manifest validation, prompts, relay, RPC protocol/store/supervisor modules, the versioned `supervisor_api` service, and separate supervisor CLI handlers. The JSON CLI remains the stable control-plane boundary used by the thin Pi extension and future Pi Deck clients. Tmux currently hosts panes and attachment; the supervisor read API consumes only private durable state and never queries tmux for runtime truth.
+`bin/pi-tmux-agents` is only an executable launcher. The authoritative standard-library implementation lives in `pi_tmux_orchestrator/`, separated into CLI/commands, controller, tmux, storage/manifest validation, prompts, relay, RPC protocol/store/supervisor modules, the versioned `supervisor_api` service, and separate supervisor CLI handlers. The JSON CLI remains the stable control-plane boundary used by the thin Pi extension and package-local clients. Tmux owns worker/controller hosting, panes, monitoring, attachment, and live-session operations. Supervisor reads consume only private durable state and can outlive tmux, but that read independence does not make this package a multiplexer-neutral process host.
+
+## Scope and future architecture
+
+This package will remain **Pi Tmux Orchestrator**. Maintenance here may improve its tmux workflows, compatibility, safety, and documented APIs, but it will not absorb a generic process-host framework, Pi Deck, or terminal-client-specific integrations.
+
+A future multiplexer-neutral effort should be a separate project with its own package identity, runtime contracts, versioning, and release decisions:
+
+1. Define a terminal-independent orchestration authority that owns detached local RPC workers and contains no pane IDs or tmux assumptions. That authority could live inside a separately governed Pi Deck project rather than requiring another standalone package.
+2. Prove its domain and process-host contracts with lifecycle, trust, privacy, idempotency, crash-recovery, and residue conformance tests.
+3. Keep tmux, Herdr, and other terminal integrations optional: add them as thin monitoring, focus, or attachment adapters only after inspecting their real contracts.
+4. Layer Pi Deck's CLI/TUI and other clients over the neutral authority without allowing any terminal adapter to become the source of orchestration identity or state transitions.
+
+The durable command/event semantics in this repository are useful reference behavior, not a commitment that a future project will import this package or preserve its private state format. No extraction, rename, new package, or Pi Deck implementation is part of this repository's current roadmap.
 
 ## Requirements
 
@@ -148,7 +161,7 @@ The installed extension exposes exactly these slash commands:
 
 The `tmux_orchestrator` model tool remains available for bounded `doctor`, `list`, `status`, `start`, and `send` actions; it intentionally excludes stop and restart. Start and slash-command send/stop require the interactive TUI. Parent trust is checked before an optional child `--approve`, a separate confirmation is required for every run, and parent trust is never treated as inherited by children. Message text never enters subprocess argv, status, details, notifications, or widgets.
 
-Attach, the supervisor API, RPC events/abort, and restart remain terminal/CLI-only. Attach takes over the terminal; abort requires RPC workers; restart requires explicit confirmation and provider/model/thinking configuration. The extension uses Pi's existing dialogs; Pi Deck will consume the supervisor API in a separate phase.
+Attach, the supervisor API, RPC events/abort, and restart remain terminal/CLI-only. Attach takes over the terminal; abort requires RPC workers; restart requires explicit confirmation and provider/model/thinking configuration. The extension uses Pi's existing dialogs; richer terminal-neutral clients are outside this package's scope.
 
 Without the extension, use the skill/CLI fallback in a new Pi session:
 
@@ -340,6 +353,6 @@ The suite includes 79+ standard-library Python tests, Node extension tests for t
 
 ## Project status
 
-Current source package: `0.4.0`, technically publish-ready and MIT-licensed. The authoritative process/data plane lives in the modular `pi_tmux_orchestrator/` Python package; `bin/pi-tmux-agents` is only a launcher and the extension invokes its JSON mode with argument arrays. Worker transport is selectable: interactive Pi TUIs remain the default, while opt-in RPC supervisors provide correlated control, durable metadata-only registries, lifecycle events, crash-uncertain recovery, and idempotent retries without adding dependencies. Supervisor API v1 now provides the bounded tmux-independent client boundary; the next major phase is the richer shared Pi Deck TUI as its client, followed by extracting worker hosting from the tmux adapter.
+Current source package: `0.4.0`, technically publish-ready and MIT-licensed. The authoritative process/data plane lives in the modular `pi_tmux_orchestrator/` Python package; `bin/pi-tmux-agents` is only a launcher and the extension invokes its JSON mode with argument arrays. Worker transport is selectable: interactive Pi TUIs remain the default, while opt-in RPC supervisors provide correlated control, durable metadata-only registries, lifecycle events, crash-uncertain recovery, and idempotent retries without adding dependencies. Supervisor API v1 provides bounded retained-state reads without claiming a multiplexer-neutral worker host. This repository remains tmux-scoped; any neutral core, terminal adapters, or Pi Deck implementation belongs to the separate future architecture described above.
 
 A version in source, a tarball, and successful dry-runs do not prove npm-registry or Pi-gallery publication. This repository does not distribute credentials, model access, or provider configuration.

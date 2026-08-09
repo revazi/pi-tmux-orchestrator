@@ -22,6 +22,7 @@ Do not push feature work directly to `main` after the initial repository bootstr
 
 - Preserve a single-writer model: reviewer, probe, Playwright, and Django roles remain read-only.
 - Keep Python dependencies at zero unless a concrete requirement justifies one.
+- Preserve this package's tmux scope. Multiplexer-neutral hosting, Pi Deck orchestration, and terminal-client adapters require separately governed projects rather than generic host abstractions added here.
 - Keep target repository files separate from orchestration state.
 - Retain explicit confirmation for trust bypass, role restart, and session stop.
 - Keep human and schema-v1 JSON behavior aligned; errors, arrays, and status output must remain bounded and free of private payloads.
