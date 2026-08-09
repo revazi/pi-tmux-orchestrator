@@ -1,6 +1,6 @@
 # Pi Tmux Orchestrator
 
-A reusable [Pi](https://github.com/badlogic/pi-mono) extension, skill, and dependency-free Python CLI for coordinating coding agents in monitorable tmux grids. The source package is prepared as version `0.4.0`; that publish-ready state is not evidence that an npm release or Pi gallery entry exists.
+A reusable [Pi](https://github.com/badlogic/pi-mono) extension, skill, and dependency-free Python CLI with a persistent, project-neutral Pi controller for coordinating coding agents in monitorable tmux grids. The source package is prepared as version `0.4.0`; that publish-ready state is not evidence that an npm release or Pi gallery entry exists.
 
 It turns the recurring “implementer + reviewer + optional specialist” setup into one command, with durable handoffs and explicit safety boundaries.
 
@@ -18,6 +18,7 @@ It turns the recurring “implementer + reviewer + optional specialist” setup 
 - External coordination state that does not pollute project repositories
 - Model-free dry runs and functional smoke tests
 - An opt-in versioned JSON CLI boundary and thin Pi extension that delegates to it
+- One persistent, project-neutral controller Pi session with stable identity and private storage
 
 ## Default grid
 
@@ -99,6 +100,28 @@ rm -rf "$TEMP_PI_HOME"
 ```
 
 No npm-registry, Pi-gallery, Git-package update, or rollback acceptance is claimed by the local smokes.
+
+## Persistent controller session
+
+Start one detached controller Pi session independently of any target repository:
+
+```bash
+pi-tmux-agents controller start
+pi-tmux-agents controller status
+pi-tmux-agents controller attach
+```
+
+The controller has the stable Pi session ID `pi-tmux-orchestrator-controller-v1`, resumes the same Pi conversation after a confirmed stop/start, and runs in a neutral workspace under `~/.pi/agent/orchestrator-controller/`. Its state, workspace, prompt, and dedicated Pi session directory are private and external to target repositories. Set `PI_TMUX_CONTROLLER_HOME` to choose another controller root.
+
+The controller explicitly loads this package's extension and skill when they are colocated with the CLI, ignores project context files in its neutral workspace, omits `edit` and `write`, and requires an explicit target project for controller-mode starts. Existing orchestration grids remain independent and can outlive the controller. Tmux is currently the controller's attachable terminal host, not its persistent Pi identity or source of orchestration state.
+
+Stop only after explicit confirmation; the Pi conversation and controller state are retained:
+
+```bash
+pi-tmux-agents controller stop --confirm
+```
+
+The command refuses duplicate starts and never replaces an unrelated tmux session using the reserved `pi-orchestrator-controller` name. Controller mode also blocks Pi `/new`, `/resume`, `/fork`, and `/clone` transitions so the TUI cannot silently leave its fixed controller identity. Controller attach remains interactive-only and cannot be used through JSON mode.
 
 ## Start from Pi
 
@@ -194,6 +217,8 @@ Each role supports matching `--ROLE-provider`, `--ROLE-model`, and `--ROLE-think
 
 ## Manage grids
 
+The dedicated controller can manage grids through the `/orchestrator-*` commands, or use the same authoritative CLI directly:
+
 ```bash
 pi-tmux-agents list
 pi-tmux-agents status SESSION
@@ -235,6 +260,7 @@ They are created with private permissions and remain outside the target reposito
 - Child sessions read the target project's governing instructions before acting.
 - `--approve-project` is explicit because it bypasses child trust prompts.
 - Existing tmux sessions are never replaced; every operation on an existing session/window uses an exact target, so a vanished target cannot fall through to a prefix collision during attach, status, stop, or cleanup.
+- The controller uses a reserved exact tmux session, a stable Pi session ID, a neutral no-context workspace, and strict private state markers; duplicate or unmarked name collisions are refused.
 - State root, session, and run directories must be canonical non-symlink directories; state files must be regular non-symlink files.
 - Schema-v1 manifests are strictly validated before acting on an existing orchestration's panes or processes.
 - Ready markers remain pending until their report is valid and transport succeeds for every enabled recipient; successful recipients are not notified again during another recipient's retry.
@@ -255,7 +281,7 @@ Put `--json` before or after the command to emit exactly one JSON object on stdo
 {"schema_version":"1","command":"status","success":true,"data":{},"error":null}
 ```
 
-Failures return nonzero with `data: null` (or bounded diagnostic data for checks) and `error: {"code":"...","message":"..."}`. `doctor`, `list`, `status`, `start`, `send`, `restart`, and `stop` return structured metadata. `attach` fails with `interactive_only`. Task, prompt, report, provider, specialist, and message bodies are never returned; list/status expose bounded names, paths, role/pane records, and file sizes only.
+Failures return nonzero with `data: null` (or bounded diagnostic data for checks) and `error: {"code":"...","message":"..."}`. `doctor`, `controller`, `list`, `status`, `start`, `send`, `restart`, and `stop` return structured metadata. Grid attach and `controller attach` fail with `interactive_only`. Task, prompt, report, provider, specialist, and message bodies are never returned; list/status expose bounded names, paths, role/pane records, and file sizes only.
 
 ## Author and license
 
@@ -271,10 +297,10 @@ Run all local checks:
 scripts/test.sh
 ```
 
-The suite includes 39+ standard-library Python tests, Node extension tests for the exact nine-command surface and trust/private-message boundaries, deterministic manifest/pack verification, npm installation of the actual tarball, isolated Pi local-package installation plus package-provenance RPC discovery, an offline npm publication dry-run, and the existing six-pane tmux smoke. It sends no prompt or provider request and isolates Pi/npm configuration from real authentication files.
+The suite includes 50+ standard-library Python tests, Node extension tests for the exact nine-command surface plus controller/trust/private-message boundaries, deterministic manifest/pack verification, npm installation of the actual tarball, isolated Pi local-package installation plus package-provenance RPC discovery, an offline npm publication dry-run, and a model-free controller plus six-pane tmux smoke. It sends no prompt or provider request and isolates Pi/npm configuration from real authentication files.
 
 ## Project status
 
-Current source package: `0.4.0`, technically publish-ready and MIT-licensed. The Python/tmux CLI remains the authoritative process/data plane; the extension only invokes its JSON mode with argument arrays. Child Pi TUIs remain separate processes, with no SDK/RPC child bridge.
+Current source package: `0.4.0`, technically publish-ready and MIT-licensed. The Python/tmux CLI remains the authoritative process/data plane; the extension only invokes its JSON mode with argument arrays. The persistent controller and child Pi TUIs remain separate processes, with no SDK/RPC child bridge yet; this creates the stable control-session boundary for later Pi Deck work without claiming the later transport or TUI.
 
 A version in source, a tarball, and successful dry-runs do not prove npm-registry or Pi-gallery publication. This repository does not distribute credentials, model access, or provider configuration.

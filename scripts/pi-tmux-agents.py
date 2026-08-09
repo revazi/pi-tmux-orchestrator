@@ -30,6 +30,13 @@ STATE_ROOT = Path(
         str(Path.home() / ".pi" / "agent" / "orchestrations"),
     )
 ).expanduser()
+CONTROLLER_TMUX_SESSION = "pi-orchestrator-controller"
+CONTROLLER_WINDOW = "controller"
+CONTROLLER_PI_SESSION_ID = "pi-tmux-orchestrator-controller-v1"
+CONTROLLER_STATE_VERSION = 1
+CONTROLLER_OPTION_VERSION = "@pi_agents_controller_version"
+CONTROLLER_OPTION_ROOT = "@pi_agents_controller_root"
+CONTROLLER_OPTION_SESSION_ID = "@pi_agents_controller_session_id"
 VERSION = "0.4.0"
 JSON_SCHEMA_VERSION = "1"
 JSON_MODE = False
@@ -67,6 +74,7 @@ DEFAULT_MODELS = {
 READ_ONLY_TOOLS = "read,bash,grep,find,ls"
 MAX_TASK_BYTES = 64 * 1024
 MAX_MANIFEST_BYTES = 64 * 1024
+MAX_CONTROLLER_STATE_BYTES = 16 * 1024
 KNOWN_ROLES = frozenset(DEFAULT_MODELS)
 MANIFEST_FIELDS = frozenset(
     {
@@ -85,6 +93,19 @@ ROLE_FIELDS = frozenset(
     {"provider", "model", "thinking", "tools", "pane_id", "prompt_path", "session_dir"}
 )
 PANE_ID_PATTERN = re.compile(r"%[0-9]+")
+CONTROLLER_STATE_FIELDS = frozenset(
+    {
+        "version",
+        "created_at",
+        "last_started_at",
+        "session",
+        "window",
+        "pi_session_id",
+        "root",
+        "workspace",
+        "session_dir",
+    }
+)
 
 
 class OrchestrationError(RuntimeError):
@@ -202,6 +223,13 @@ def tmux(args: list[str], *, check: bool = True, capture: bool = False) -> subpr
 
 def absolute_path(path: Path) -> Path:
     return Path(os.path.abspath(os.fspath(path.expanduser())))
+
+
+def configured_controller_root() -> Path:
+    configured = os.environ.get("PI_TMUX_CONTROLLER_HOME")
+    if configured:
+        return absolute_path(Path(configured))
+    return absolute_path(STATE_ROOT).parent / "orchestrator-controller"
 
 
 def path_lstat(path: Path, label: str) -> os.stat_result:
@@ -516,20 +544,16 @@ def validate_manifest(
     return value
 
 
-def save_manifest(coord: Path, manifest: dict[str, Any]) -> None:
-    coord = validate_coordination_directory(coord)
-    validate_manifest(manifest, coord, expected_session=manifest.get("session"))
-    destination = coord / "manifest.json"
+def atomic_secure_write(path: Path, content: str, label: str) -> None:
+    path = absolute_path(path)
+    parent = ensure_private_directory(path.parent, parents=True)
+    destination = parent / path.name
     if destination.exists() or destination.is_symlink():
-        require_regular_file(destination, "orchestration manifest")
-    temporary = coord / f".manifest.json.{os.getpid()}.{secrets.token_hex(8)}.tmp"
+        require_regular_file(destination, label)
+    temporary = parent / f".{path.name}.{os.getpid()}.{secrets.token_hex(8)}.tmp"
     temporary_created = False
     try:
-        secure_write(
-            temporary,
-            json.dumps(manifest, indent=2, sort_keys=True) + "\n",
-            exclusive=True,
-        )
+        secure_write(temporary, content, exclusive=True)
         temporary_created = True
         os.replace(temporary, destination)
         temporary_created = False
@@ -542,7 +566,7 @@ def save_manifest(coord: Path, manifest: dict[str, Any]) -> None:
             os.fsync(destination_descriptor)
         finally:
             os.close(destination_descriptor)
-        directory_descriptor = open_directory(coord)
+        directory_descriptor = open_directory(parent)
         try:
             os.fsync(directory_descriptor)
         finally:
@@ -561,6 +585,16 @@ def save_manifest(coord: Path, manifest: dict[str, Any]) -> None:
                 temporary.unlink()
 
 
+def save_manifest(coord: Path, manifest: dict[str, Any]) -> None:
+    coord = validate_coordination_directory(coord)
+    validate_manifest(manifest, coord, expected_session=manifest.get("session"))
+    atomic_secure_write(
+        coord / "manifest.json",
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+        "orchestration manifest",
+    )
+
+
 def load_manifest(coord: Path, *, expected_session: str | None = None) -> dict[str, Any]:
     coord = validate_coordination_directory(coord)
     manifest_path = coord / "manifest.json"
@@ -572,6 +606,88 @@ def load_manifest(coord: Path, *, expected_session: str | None = None) -> dict[s
     except json.JSONDecodeError as error:
         raise OrchestrationError("Orchestration manifest is not valid JSON") from error
     return validate_manifest(value, coord, expected_session=expected_session)
+
+
+def controller_state_root(*, create: bool) -> Path:
+    root = configured_controller_root()
+    try:
+        metadata = root.lstat()
+    except FileNotFoundError:
+        if not create:
+            raise OrchestrationError("Controller state root does not exist")
+        return ensure_private_directory(root, parents=True)
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+        raise OrchestrationError("Controller state root must be a non-symlink directory")
+    return ensure_private_directory(root)
+
+
+def validate_controller_state(value: object, root: Path) -> dict[str, Any]:
+    configured_root = controller_state_root(create=False)
+    if absolute_path(root) != configured_root:
+        raise OrchestrationError("Controller state path is outside the configured root")
+    root = configured_root
+    if not isinstance(value, dict) or set(value) != CONTROLLER_STATE_FIELDS:
+        raise OrchestrationError("Controller state has missing or unknown fields")
+    if type(value["version"]) is not int or value["version"] != CONTROLLER_STATE_VERSION:
+        raise OrchestrationError("Unsupported controller state version")
+    for field in ("created_at", "last_started_at"):
+        timestamp = value[field]
+        if not isinstance(timestamp, str):
+            raise OrchestrationError(f"Controller {field} must be a timestamp string")
+        try:
+            parsed = dt.datetime.fromisoformat(timestamp)
+        except ValueError as error:
+            raise OrchestrationError(f"Controller {field} is invalid") from error
+        if parsed.tzinfo is None:
+            raise OrchestrationError(f"Controller {field} must include a timezone")
+    if value["session"] != CONTROLLER_TMUX_SESSION:
+        raise OrchestrationError("Controller tmux session is invalid")
+    if value["window"] != CONTROLLER_WINDOW:
+        raise OrchestrationError("Controller tmux window is invalid")
+    if value["pi_session_id"] != CONTROLLER_PI_SESSION_ID:
+        raise OrchestrationError("Controller Pi session ID is invalid")
+
+    expected_paths = {
+        "root": root,
+        "workspace": root / "workspace",
+        "session_dir": root / "sessions",
+    }
+    for field, expected in expected_paths.items():
+        raw_path = value[field]
+        if not isinstance(raw_path, str) or Path(raw_path) != expected:
+            raise OrchestrationError(f"Controller {field} path is invalid")
+        require_directory(expected, f"controller {field}")
+        if expected.resolve(strict=True) != expected:
+            raise OrchestrationError(f"Controller {field} path is not canonical")
+    return value
+
+
+def controller_state_path(root: Path) -> Path:
+    return root / "state.json"
+
+
+def load_controller_state(root: Path) -> dict[str, Any]:
+    try:
+        content = read_regular_file(
+            controller_state_path(root),
+            "controller state",
+            MAX_CONTROLLER_STATE_BYTES,
+        )
+        value = json.loads(content)
+    except UnicodeDecodeError as error:
+        raise OrchestrationError("Controller state is not valid UTF-8") from error
+    except json.JSONDecodeError as error:
+        raise OrchestrationError("Controller state is not valid JSON") from error
+    return validate_controller_state(value, root)
+
+
+def save_controller_state(root: Path, state: dict[str, Any]) -> None:
+    validate_controller_state(state, root)
+    atomic_secure_write(
+        controller_state_path(root),
+        json.dumps(state, indent=2, sort_keys=True) + "\n",
+        "controller state",
+    )
 
 
 def slugify(value: str) -> str:
@@ -623,6 +739,29 @@ def session_option(session: str, option: str) -> str | None:
         return None
     value = result.stdout.strip()
     return value or None
+
+
+def controller_window_target() -> str:
+    return f"{exact_session_target(CONTROLLER_TMUX_SESSION)}:={CONTROLLER_WINDOW}"
+
+
+def controller_session_option(option: str) -> str | None:
+    result = tmux(
+        ["show-options", "-qv", "-t", controller_window_target(), option],
+        check=False,
+        capture=True,
+    )
+    if result.returncode != 0:
+        return None
+    value = result.stdout.strip()
+    return value or None
+
+
+def controller_is_marked() -> bool:
+    return (
+        controller_session_option(CONTROLLER_OPTION_VERSION)
+        == str(CONTROLLER_STATE_VERSION)
+    )
 
 
 def orchestrated_sessions() -> list[tuple[str, Path]]:
@@ -1103,6 +1242,337 @@ def attach_session(session: str) -> None:
         tmux(["switch-client", "-t", target])
     else:
         os.execvp(command_path("tmux"), ["tmux", "attach", "-t", target])
+
+
+def controller_prompt_text(state_root: Path) -> str:
+    return textwrap.dedent(
+        f"""
+        # Dedicated Pi Tmux Orchestrator Controller
+
+        This is the persistent, project-neutral control session for Pi Tmux Orchestrator.
+        Manage orchestrations; do not implement target-project changes from this session.
+
+        - Always identify an explicit target project before starting an orchestration.
+        - Use the bundled orchestrator extension or the authoritative CLI at {SCRIPT_PATH}.
+        - Treat tmux as the current worker view/transport, not as controller identity.
+        - Keep task and message bodies out of argv, status, widgets, and notifications.
+        - Preserve one writer, independent review, project instructions, trust prompts, and
+          explicit stop/restart confirmations.
+        - Never inspect or copy Pi/provider credentials.
+        - External orchestration state is rooted at {state_root}.
+
+        Use /orchestrator-help for the available Pi commands. Attach and role restart remain
+        terminal-only operations.
+        """
+    ).strip() + "\n"
+
+
+def controller_pi_command(root: Path, prompt_path: Path) -> list[str]:
+    package_root = SCRIPT_PATH.parent.parent
+    extension_path = package_root / "extensions" / "tmux-orchestrator.js"
+    skill_path = package_root / "SKILL.md"
+    command = [
+        command_path("pi"),
+        "--session-dir",
+        str(root / "sessions"),
+        "--session-id",
+        CONTROLLER_PI_SESSION_ID,
+        "--name",
+        "Pi Tmux Orchestrator Controller",
+        "--no-context-files",
+        "--no-approve",
+        "--tools",
+        "tmux_orchestrator,read,bash,grep,find,ls",
+        "--append-system-prompt",
+        str(prompt_path),
+    ]
+    if extension_path.is_file():
+        command.extend(["--no-extensions", "--extension", str(extension_path)])
+    if skill_path.is_file():
+        command.extend(["--skill", str(skill_path)])
+    return command
+
+
+def controller_public_data(
+    state: dict[str, Any] | None,
+    pane: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if state is None:
+        root = configured_controller_root()
+        paths = {
+            "root": str(root),
+            "workspace": str(root / "workspace"),
+            "session_dir": str(root / "sessions"),
+        }
+        created_at = None
+        last_started_at = None
+    else:
+        paths = {
+            "root": state["root"],
+            "workspace": state["workspace"],
+            "session_dir": state["session_dir"],
+        }
+        created_at = state["created_at"]
+        last_started_at = state["last_started_at"]
+    return {
+        "session": CONTROLLER_TMUX_SESSION,
+        "window": CONTROLLER_WINDOW,
+        "pi_session_id": CONTROLLER_PI_SESSION_ID,
+        "tmux_session_exists": pane is not None,
+        "running": pane is not None and not pane["dead"],
+        "pane": pane,
+        "created_at": created_at,
+        "last_started_at": last_started_at,
+        "paths": paths,
+        "state_retained": state is not None,
+    }
+
+
+def retained_controller_state() -> dict[str, Any] | None:
+    root_path = configured_controller_root()
+    try:
+        root_path.lstat()
+    except FileNotFoundError:
+        return None
+    root = controller_state_root(create=False)
+    state_path = controller_state_path(root)
+    if not state_path.exists() and not state_path.is_symlink():
+        return None
+    return load_controller_state(root)
+
+
+def controller_details() -> dict[str, Any] | None:
+    if not session_exists(CONTROLLER_TMUX_SESSION):
+        return None
+    if not controller_is_marked():
+        raise OrchestrationError(
+            f"tmux session was not created by the controller: {CONTROLLER_TMUX_SESSION}",
+            "session_collision",
+        )
+    root = controller_state_root(create=False)
+    if controller_session_option(CONTROLLER_OPTION_ROOT) != str(root):
+        raise OrchestrationError("Controller tmux state root marker is invalid")
+    if (
+        controller_session_option(CONTROLLER_OPTION_SESSION_ID)
+        != CONTROLLER_PI_SESSION_ID
+    ):
+        raise OrchestrationError("Controller tmux Pi session marker is invalid")
+    state = load_controller_state(root)
+    result = tmux(
+        [
+            "list-panes",
+            "-t",
+            controller_window_target(),
+            "-F",
+            "#{pane_id}\t#{pane_pid}\t#{pane_current_command}\t#{pane_dead}\t#{pane_title}",
+        ],
+        capture=True,
+    )
+    lines = [line for line in result.stdout.splitlines() if line]
+    if len(lines) != 1:
+        raise OrchestrationError("Controller tmux window must contain exactly one pane")
+    columns = lines[0].split("\t", 4)
+    if len(columns) != 5 or not PANE_ID_PATTERN.fullmatch(columns[0]):
+        raise OrchestrationError("tmux returned invalid controller pane metadata")
+    pane_id, pid, current_command, dead, title = columns
+    try:
+        pane_pid = int(pid)
+    except ValueError as error:
+        raise OrchestrationError("tmux returned invalid controller pane metadata") from error
+    if dead not in {"0", "1"}:
+        raise OrchestrationError("tmux returned invalid controller pane metadata")
+    pane = {
+        "id": pane_id,
+        "pid": pane_pid,
+        "command": bounded_message(current_command, 128),
+        "dead": dead == "1",
+        "title": bounded_message(title, 256),
+    }
+    return controller_public_data(state, pane)
+
+
+def create_controller_tmux(
+    root: Path,
+    orchestration_root: Path,
+    prompt_path: Path,
+) -> str:
+    created = False
+    try:
+        tmux(
+            [
+                "new-session",
+                "-d",
+                "-x",
+                "180",
+                "-y",
+                "50",
+                "-s",
+                CONTROLLER_TMUX_SESSION,
+                "-n",
+                CONTROLLER_WINDOW,
+                "-c",
+                str(root / "workspace"),
+            ]
+        )
+        created = True
+        target = controller_window_target()
+        tmux(["set-window-option", "-t", target, "remain-on-exit", "on"])
+        pane_result = tmux(
+            ["list-panes", "-t", target, "-F", "#{pane_id}"],
+            capture=True,
+        )
+        pane_ids = [line.strip() for line in pane_result.stdout.splitlines() if line.strip()]
+        if len(pane_ids) != 1 or not PANE_ID_PATTERN.fullmatch(pane_ids[0]):
+            raise OrchestrationError("tmux created an invalid controller pane")
+        pane_id = pane_ids[0]
+        tmux(["select-pane", "-t", pane_id, "-T", "PI ORCHESTRATOR CONTROLLER"])
+        tmux(
+            [
+                "set-option",
+                "-q",
+                "-t",
+                target,
+                CONTROLLER_OPTION_VERSION,
+                str(CONTROLLER_STATE_VERSION),
+            ]
+        )
+        tmux(
+            ["set-option", "-q", "-t", target, CONTROLLER_OPTION_ROOT, str(root)]
+        )
+        tmux(
+            [
+                "set-option",
+                "-q",
+                "-t",
+                target,
+                CONTROLLER_OPTION_SESSION_ID,
+                CONTROLLER_PI_SESSION_ID,
+            ]
+        )
+        environment = {
+            "PI_TMUX_CONTROLLER": "1",
+            "PI_TMUX_CONTROLLER_HOME": str(root),
+            "PI_TMUX_AGENTS_HOME": str(orchestration_root),
+            "PI_SKIP_VERSION_CHECK": "1",
+            "PI_TELEMETRY": "0",
+        }
+        session_target = exact_session_target(CONTROLLER_TMUX_SESSION)
+        for name, value in environment.items():
+            tmux(["set-environment", "-t", session_target, name, value])
+        shell_command = f"umask 077; exec {shlex.join(controller_pi_command(root, prompt_path))}"
+        tmux(["respawn-pane", "-k", "-t", pane_id, shell_command])
+        return pane_id
+    except BaseException:
+        if created:
+            tmux(
+                ["kill-session", "-t", exact_session_target(CONTROLLER_TMUX_SESSION)],
+                check=False,
+                capture=True,
+            )
+        raise
+
+
+def controller_start_command(_: argparse.Namespace) -> CommandResult:
+    command_path("pi")
+    command_path("tmux")
+    if session_exists(CONTROLLER_TMUX_SESSION):
+        if controller_is_marked():
+            raise OrchestrationError(
+                "The dedicated orchestrator controller is already running",
+                "already_running",
+            )
+        raise OrchestrationError(
+            f"tmux session already exists and is not managed by the controller: "
+            f"{CONTROLLER_TMUX_SESSION}",
+            "session_collision",
+        )
+
+    orchestration_root = canonical_state_root(create=True)
+    root = controller_state_root(create=True)
+    workspace = ensure_private_directory(root / "workspace")
+    session_dir = ensure_private_directory(root / "sessions")
+    prompt_path = root / "controller.prompt.md"
+    secure_write(prompt_path, controller_prompt_text(orchestration_root))
+
+    state_file = controller_state_path(root)
+    now = dt.datetime.now(dt.timezone.utc).isoformat()
+    if state_file.exists() or state_file.is_symlink():
+        previous = load_controller_state(root)
+        created_at = previous["created_at"]
+    else:
+        created_at = now
+    state = {
+        "version": CONTROLLER_STATE_VERSION,
+        "created_at": created_at,
+        "last_started_at": now,
+        "session": CONTROLLER_TMUX_SESSION,
+        "window": CONTROLLER_WINDOW,
+        "pi_session_id": CONTROLLER_PI_SESSION_ID,
+        "root": str(root),
+        "workspace": str(workspace),
+        "session_dir": str(session_dir),
+    }
+    save_controller_state(root, state)
+    create_controller_tmux(root, orchestration_root, prompt_path)
+    details = controller_details()
+    if details is None:
+        raise OrchestrationError("Controller tmux session disappeared during startup")
+    human_print(f"Controller: {CONTROLLER_TMUX_SESSION}")
+    human_print(f"Pi session ID: {CONTROLLER_PI_SESSION_ID}")
+    human_print(f"Workspace: {workspace}")
+    human_print("Status: pi-tmux-agents controller status")
+    human_print("Attach: pi-tmux-agents controller attach")
+    human_print("Stop: pi-tmux-agents controller stop --confirm")
+    return CommandResult(data=details)
+
+
+def controller_status_command(_: argparse.Namespace) -> CommandResult:
+    details = controller_details()
+    if details is None:
+        human_print("The dedicated orchestrator controller is not running.")
+        return CommandResult(
+            data=controller_public_data(retained_controller_state(), None)
+        )
+    human_print(f"Controller: {details['session']}")
+    human_print(f"Pi session ID: {details['pi_session_id']}")
+    human_print(f"Running: {'yes' if details['running'] else 'no (pane exited)'}")
+    human_print(f"Workspace: {details['paths']['workspace']}")
+    return CommandResult(data=details)
+
+
+def controller_attach_command(args: argparse.Namespace) -> CommandResult:
+    if getattr(args, "json_output", False):
+        raise OrchestrationError(
+            "controller attach is interactive-only and cannot be used with --json",
+            "interactive_only",
+        )
+    details = controller_details()
+    if details is None:
+        raise OrchestrationError("The dedicated orchestrator controller is not running")
+    attach_session(CONTROLLER_TMUX_SESSION)
+    return CommandResult(data=details)
+
+
+def controller_stop_command(args: argparse.Namespace) -> CommandResult:
+    if not args.confirm:
+        raise OrchestrationError(
+            "controller stop terminates the dedicated controller process; pass --confirm"
+        )
+    details = controller_details()
+    if details is None:
+        raise OrchestrationError("The dedicated orchestrator controller is not running")
+    tmux(["kill-session", "-t", exact_session_target(CONTROLLER_TMUX_SESSION)])
+    human_print(f"Stopped controller {CONTROLLER_TMUX_SESSION}")
+    human_print(f"Controller conversation retained at {details['paths']['session_dir']}")
+    return CommandResult(
+        data={
+            **details,
+            "tmux_session_exists": False,
+            "running": False,
+            "pane": None,
+            "stopped": True,
+        }
+    )
 
 
 def start_command(args: argparse.Namespace) -> CommandResult:
@@ -1641,6 +2111,8 @@ def run_agent_command(args: argparse.Namespace) -> int:
         ]
     )
     environment = os.environ.copy()
+    environment.pop("PI_TMUX_CONTROLLER", None)
+    environment.pop("PI_TMUX_CONTROLLER_HOME", None)
     environment["PI_SKIP_VERSION_CHECK"] = "1"
     environment["PI_TELEMETRY"] = "0"
     os.chdir(project)
@@ -1954,6 +2426,8 @@ def build_parser() -> argparse.ArgumentParser:
             """
             Examples:
               pi-tmux-agents doctor
+              pi-tmux-agents controller start
+              pi-tmux-agents controller attach
               pi-tmux-agents start --project "$PWD" --task-file /tmp/task.md --approve-project
               pi-tmux-agents start --project "$PWD" --task-file /tmp/task.md --with-probe --attach
               pi-tmux-agents start --project "$PWD" --task-file /tmp/task.md \\
@@ -1972,6 +2446,36 @@ def build_parser() -> argparse.ArgumentParser:
         help="emit one versioned JSON object on stdout",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    controller = subparsers.add_parser(
+        "controller",
+        help="manage the persistent project-neutral Pi controller session",
+    )
+    controller_actions = controller.add_subparsers(
+        dest="controller_action",
+        required=True,
+    )
+    controller_start = controller_actions.add_parser(
+        "start",
+        help="start the detached controller Pi session",
+    )
+    controller_start.set_defaults(handler=controller_start_command)
+    controller_status = controller_actions.add_parser(
+        "status",
+        help="show controller process and persistence metadata",
+    )
+    controller_status.set_defaults(handler=controller_status_command)
+    controller_attach = controller_actions.add_parser(
+        "attach",
+        help="attach or switch to the controller Pi session",
+    )
+    controller_attach.set_defaults(handler=controller_attach_command)
+    controller_stop = controller_actions.add_parser(
+        "stop",
+        help="stop the controller while retaining its Pi conversation",
+    )
+    controller_stop.add_argument("--confirm", action="store_true")
+    controller_stop.set_defaults(handler=controller_stop_command)
 
     start = subparsers.add_parser("start", help="create and start an agent grid")
     start.add_argument("--project", default=os.getcwd())
@@ -2058,7 +2562,17 @@ def parse_internal_command(argv: list[str]) -> argparse.Namespace | None:
 
 
 def requested_command(argv: list[str]) -> str:
-    public_commands = {"doctor", "list", "status", "start", "attach", "send", "restart", "stop"}
+    public_commands = {
+        "doctor",
+        "controller",
+        "list",
+        "status",
+        "start",
+        "attach",
+        "send",
+        "restart",
+        "stop",
+    }
     for value in argv:
         if value == "--json":
             continue

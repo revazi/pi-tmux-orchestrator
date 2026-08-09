@@ -1,12 +1,12 @@
 ---
 name: tmux-agent-orchestrator
-description: Starts and coordinates multiple Pi coding agents in a monitorable tmux grid with one writer, an independent reviewer, optional technical probe, Playwright tester, and Django expert, file-based handoffs, model selection, status, messaging, restart, and cleanup commands. Use when the user asks to delegate work across Pi agents, run implementer/reviewer loops, request specialist Django or browser reviews, or monitor agents in tmux across any project.
+description: Starts and coordinates multiple Pi coding agents from an optional persistent project-neutral Pi controller into a monitorable tmux grid with one writer, an independent reviewer, optional technical probe, Playwright tester, and Django expert, file-based handoffs, model selection, status, messaging, restart, and cleanup commands. Use when the user asks to delegate work across Pi agents, run implementer/reviewer loops, request specialist Django or browser reviews, or monitor agents in tmux across any project.
 compatibility: Requires Pi, Python 3, and tmux. tmux 3.5+ with extended-keys csi-u is recommended.
 ---
 
 # Tmux Agent Orchestrator
 
-Prefer the package extension's canonical `/orchestrator-help`, `/orchestrator-doctor`, `/orchestrator-start`, `/orchestrator-list`, `/orchestrator-status`, `/orchestrator-send`, and `/orchestrator-stop` commands when available. `/orchestrate` and `/orchestrations` remain start/list aliases, and the `tmux_orchestrator` tool remains available for bounded model-driven actions. All delegate to the bundled Python JSON CLI and preserve its trust, confirmation, metadata-only, and private-file boundaries. Otherwise use the standalone `pi-tmux-agents` CLI fallback instead of hand-writing tmux panes, prompts, or relay scripts.
+Prefer the package extension's canonical `/orchestrator-help`, `/orchestrator-doctor`, `/orchestrator-start`, `/orchestrator-list`, `/orchestrator-status`, `/orchestrator-send`, and `/orchestrator-stop` commands when available. `/orchestrate` and `/orchestrations` remain start/list aliases, and the `tmux_orchestrator` tool remains available for bounded model-driven actions. All delegate to the bundled Python JSON CLI and preserve its trust, confirmation, metadata-only, and private-file boundaries. For ongoing cross-project management, use `pi-tmux-agents controller start|status|attach|stop` to host those controls in one persistent project-neutral Pi session. Otherwise use the standalone `pi-tmux-agents` CLI fallback instead of hand-writing tmux panes, prompts, or relay scripts.
 
 ## Operating rules
 
@@ -18,9 +18,20 @@ Prefer the package extension's canonical `/orchestrator-help`, `/orchestrator-do
 6. Never claim a probe is wire-equivalent to a production provider unless it actually exercises that exact boundary. Never treat a browser smoke as complete semantic, security, or adapter evidence.
 7. Do not push, merge, publish, spend provider credits outside the launched Pi sessions, or perform destructive cleanup unless explicitly approved.
 
+## Start the persistent controller
+
+When the user wants ongoing management independent of one target repository, use:
+
+```bash
+pi-tmux-agents controller start
+pi-tmux-agents controller attach
+```
+
+The controller has a stable Pi session identity and private neutral workspace outside repositories. It must receive an explicit target project for every start, never inherits trust into that project, and has no `edit`/`write` tools. Do not replace a duplicate or unrelated reserved-name tmux session. Stop only with explicit approval and `pi-tmux-agents controller stop --confirm`; the controller conversation and worker grids are retained independently.
+
 ## Start a grid
 
-With the extension, use `/orchestrator-start [task]` or call `tmux_orchestrator` with action `start`; both use private temporary files and confirm project, roles/models, external state retention, and child trust policy before delegation.
+With the extension, use `/orchestrator-start [task]` or call `tmux_orchestrator` with action `start`; both use private temporary files and confirm project, roles/models, external state retention, and child trust policy before delegation. Controller-mode starts additionally require the explicit target project.
 
 For the standalone fallback, write the agreed task to a mode-`0600` temporary file, then run:
 

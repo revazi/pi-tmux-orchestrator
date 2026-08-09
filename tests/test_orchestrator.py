@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import json
 import os
 import subprocess
 import sys
@@ -220,7 +221,17 @@ class UtilityTests(unittest.TestCase):
         help_text = ORCHESTRATOR.build_parser().format_help()
         self.assertNotIn("_run-agent", help_text)
         self.assertNotIn("_relay", help_text)
+        self.assertIn("controller", help_text)
         self.assertIn("restart", help_text)
+
+    def test_controller_parser_has_the_exact_confirmed_lifecycle_surface(self) -> None:
+        parser = ORCHESTRATOR.build_parser()
+        for action in ("start", "status", "attach"):
+            parsed = parser.parse_args(["controller", action])
+            self.assertEqual(parsed.command, "controller")
+            self.assertEqual(parsed.controller_action, action)
+        stopped = parser.parse_args(["controller", "stop", "--confirm"])
+        self.assertTrue(stopped.confirm)
 
     def test_version(self) -> None:
         self.assertEqual(ORCHESTRATOR.VERSION, "0.4.0")
@@ -331,6 +342,262 @@ class UtilityTests(unittest.TestCase):
         ):
             self.assertFalse(ORCHESTRATOR.relay_send(manifest, "reviewer", "notice"))
         self.assertFalse(ORCHESTRATOR.relay_send(manifest, "probe", "notice"))
+
+
+class ControllerTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.original_state_root = ORCHESTRATOR.STATE_ROOT
+        ORCHESTRATOR.STATE_ROOT = Path(self.temporary.name) / "orchestrations"
+        self.addCleanup(self.restore_state_root)
+        self.environment = mock.patch.dict(
+            os.environ,
+            {
+                "PI_TMUX_CONTROLLER_HOME": str(Path(self.temporary.name) / "controller"),
+            },
+        )
+        self.environment.start()
+        self.addCleanup(self.environment.stop)
+
+    def restore_state_root(self) -> None:
+        ORCHESTRATOR.STATE_ROOT = self.original_state_root
+
+    def valid_state(self) -> tuple[Path, dict[str, object]]:
+        root = ORCHESTRATOR.controller_state_root(create=True)
+        workspace = ORCHESTRATOR.ensure_private_directory(root / "workspace")
+        sessions = ORCHESTRATOR.ensure_private_directory(root / "sessions")
+        state: dict[str, object] = {
+            "version": ORCHESTRATOR.CONTROLLER_STATE_VERSION,
+            "created_at": "2026-08-07T12:00:00+00:00",
+            "last_started_at": "2026-08-07T12:01:00+00:00",
+            "session": ORCHESTRATOR.CONTROLLER_TMUX_SESSION,
+            "window": ORCHESTRATOR.CONTROLLER_WINDOW,
+            "pi_session_id": ORCHESTRATOR.CONTROLLER_PI_SESSION_ID,
+            "root": str(root),
+            "workspace": str(workspace),
+            "session_dir": str(sessions),
+        }
+        ORCHESTRATOR.save_controller_state(root, state)
+        return root, state
+
+    def test_controller_state_is_private_strict_and_symlink_safe(self) -> None:
+        root, state = self.valid_state()
+        state_path = ORCHESTRATOR.controller_state_path(root)
+        self.assertEqual(state_path.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(root.stat().st_mode & 0o777, 0o700)
+        self.assertEqual(ORCHESTRATOR.load_controller_state(root), state)
+
+        tampered = dict(state)
+        tampered["unknown"] = True
+        ORCHESTRATOR.secure_write(state_path, json.dumps(tampered))
+        with self.assertRaises(ORCHESTRATOR.OrchestrationError):
+            ORCHESTRATOR.load_controller_state(root)
+
+        outside = Path(self.temporary.name) / "outside.json"
+        outside.write_text(json.dumps(state), encoding="utf-8")
+        state_path.unlink()
+        state_path.symlink_to(outside)
+        with self.assertRaises(ORCHESTRATOR.OrchestrationError):
+            ORCHESTRATOR.load_controller_state(root)
+
+    def test_controller_start_launches_one_persistent_project_neutral_pi_session(self) -> None:
+        root_path = Path(self.temporary.name).resolve() / "controller"
+        orchestration_root = Path(self.temporary.name).resolve() / "orchestrations"
+        session_checks = iter((False, True))
+
+        def fake_tmux(arguments: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            stdout = ""
+            if arguments[0] == "list-panes" and arguments[-1] == "#{pane_id}":
+                stdout = "%71\n"
+            elif arguments[0] == "list-panes":
+                stdout = "%71\t4321\tnode\t0\tPI ORCHESTRATOR CONTROLLER\n"
+            elif arguments[0] == "show-options":
+                values = {
+                    ORCHESTRATOR.CONTROLLER_OPTION_VERSION: str(
+                        ORCHESTRATOR.CONTROLLER_STATE_VERSION
+                    ),
+                    ORCHESTRATOR.CONTROLLER_OPTION_ROOT: str(root_path),
+                    ORCHESTRATOR.CONTROLLER_OPTION_SESSION_ID: (
+                        ORCHESTRATOR.CONTROLLER_PI_SESSION_ID
+                    ),
+                }
+                stdout = values.get(arguments[-1], "") + "\n"
+            return subprocess.CompletedProcess(arguments, 0, stdout, "")
+
+        with (
+            mock.patch.object(
+                ORCHESTRATOR,
+                "command_path",
+                side_effect=lambda name: f"/usr/bin/{name}",
+            ),
+            mock.patch.object(
+                ORCHESTRATOR,
+                "session_exists",
+                side_effect=lambda _session: next(session_checks),
+            ),
+            mock.patch.object(ORCHESTRATOR, "tmux", side_effect=fake_tmux) as tmux,
+        ):
+            result = ORCHESTRATOR.controller_start_command(argparse.Namespace())
+
+        self.assertTrue(result.data["running"])
+        self.assertEqual(result.data["pane"]["id"], "%71")
+        self.assertEqual(result.data["paths"]["root"], str(root_path))
+        state = ORCHESTRATOR.load_controller_state(root_path)
+        self.assertEqual(state["pi_session_id"], ORCHESTRATOR.CONTROLLER_PI_SESSION_ID)
+        prompt = (root_path / "controller.prompt.md").read_text(encoding="utf-8")
+        self.assertIn("project-neutral control session", prompt)
+        self.assertIn(str(orchestration_root), prompt)
+
+        calls = [call.args[0] for call in tmux.call_args_list]
+        new_session = next(arguments for arguments in calls if arguments[0] == "new-session")
+        self.assertEqual(new_session[new_session.index("-c") + 1], str(root_path / "workspace"))
+        respawn = next(arguments for arguments in calls if arguments[0] == "respawn-pane")
+        shell_command = respawn[-1]
+        self.assertIn("umask 077; exec /usr/bin/pi", shell_command)
+        self.assertIn(f"--session-id {ORCHESTRATOR.CONTROLLER_PI_SESSION_ID}", shell_command)
+        self.assertIn(f"--session-dir {root_path / 'sessions'}", shell_command)
+        self.assertIn("--no-context-files", shell_command)
+        self.assertIn("--no-approve", shell_command)
+        self.assertNotIn(" --approve ", shell_command)
+        environment_names = {
+            arguments[-2]
+            for arguments in calls
+            if arguments[0] == "set-environment"
+        }
+        self.assertTrue(
+            {"PI_TMUX_CONTROLLER", "PI_TMUX_CONTROLLER_HOME", "PI_TMUX_AGENTS_HOME"}
+            .issubset(environment_names)
+        )
+
+    def test_controller_identity_is_not_inherited_by_worker_pi_processes(self) -> None:
+        role = {
+            "provider": "synthetic-provider",
+            "model": "synthetic-model",
+            "thinking": "low",
+            "tools": None,
+            "prompt_path": str(Path(self.temporary.name) / "implementer.prompt.md"),
+            "session_dir": str(Path(self.temporary.name) / "sessions"),
+        }
+        manifest = {
+            "project": self.temporary.name,
+            "approve_project": False,
+            "roles": {"implementer": role},
+        }
+        args = argparse.Namespace(
+            state_root=str(ORCHESTRATOR.STATE_ROOT),
+            coord=str(Path(self.temporary.name) / "coord"),
+            role="implementer",
+        )
+        with (
+            mock.patch.dict(
+                os.environ,
+                {
+                    "PI_TMUX_CONTROLLER": "1",
+                    "PI_TMUX_CONTROLLER_HOME": "/private/controller",
+                },
+            ),
+            mock.patch.object(ORCHESTRATOR, "load_manifest", return_value=manifest),
+            mock.patch.object(ORCHESTRATOR, "require_regular_file"),
+            mock.patch.object(ORCHESTRATOR, "ensure_private_directory"),
+            mock.patch.object(ORCHESTRATOR, "command_path", return_value="/usr/bin/pi"),
+            mock.patch.object(ORCHESTRATOR.os, "chdir"),
+            mock.patch.object(ORCHESTRATOR.os, "execvpe") as execvpe,
+        ):
+            self.assertEqual(ORCHESTRATOR.run_agent_command(args), 0)
+        environment = execvpe.call_args.args[2]
+        self.assertNotIn("PI_TMUX_CONTROLLER", environment)
+        self.assertNotIn("PI_TMUX_CONTROLLER_HOME", environment)
+        self.assertEqual(environment["PI_TELEMETRY"], "0")
+
+    def test_controller_launch_failure_kills_only_its_exact_partial_session(self) -> None:
+        root, _ = self.valid_state()
+        orchestration_root = ORCHESTRATOR.canonical_state_root(create=True)
+        prompt = root / "controller.prompt.md"
+        ORCHESTRATOR.secure_write(prompt, "Synthetic controller prompt.\n")
+        calls: list[list[str]] = []
+
+        def fake_tmux(arguments: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+            calls.append(arguments)
+            if arguments[0] == "list-panes":
+                return subprocess.CompletedProcess(arguments, 0, "%9\n", "")
+            if arguments[0] == "respawn-pane":
+                raise ORCHESTRATOR.OrchestrationError("synthetic launch failure")
+            return subprocess.CompletedProcess(arguments, 0, "", "")
+
+        with (
+            mock.patch.object(ORCHESTRATOR, "command_path", return_value="/usr/bin/pi"),
+            mock.patch.object(ORCHESTRATOR, "tmux", side_effect=fake_tmux),
+        ):
+            with self.assertRaises(ORCHESTRATOR.OrchestrationError):
+                ORCHESTRATOR.create_controller_tmux(root, orchestration_root, prompt)
+        self.assertIn(
+            [
+                "kill-session",
+                "-t",
+                f"={ORCHESTRATOR.CONTROLLER_TMUX_SESSION}",
+            ],
+            calls,
+        )
+
+    def test_controller_refuses_duplicates_and_unmanaged_name_collisions(self) -> None:
+        with (
+            mock.patch.object(ORCHESTRATOR, "command_path", return_value="/usr/bin/true"),
+            mock.patch.object(ORCHESTRATOR, "session_exists", return_value=True),
+            mock.patch.object(ORCHESTRATOR, "controller_is_marked", return_value=True),
+        ):
+            with self.assertRaises(ORCHESTRATOR.OrchestrationError) as raised:
+                ORCHESTRATOR.controller_start_command(argparse.Namespace())
+        self.assertEqual(raised.exception.code, "already_running")
+
+        with (
+            mock.patch.object(ORCHESTRATOR, "command_path", return_value="/usr/bin/true"),
+            mock.patch.object(ORCHESTRATOR, "session_exists", return_value=True),
+            mock.patch.object(ORCHESTRATOR, "controller_is_marked", return_value=False),
+        ):
+            with self.assertRaises(ORCHESTRATOR.OrchestrationError) as raised:
+                ORCHESTRATOR.controller_start_command(argparse.Namespace())
+        self.assertEqual(raised.exception.code, "session_collision")
+
+    def test_controller_status_is_noncreating_and_stop_is_exact_and_confirmed(self) -> None:
+        with mock.patch.object(ORCHESTRATOR, "session_exists", return_value=False):
+            result = ORCHESTRATOR.controller_status_command(argparse.Namespace())
+        self.assertFalse(result.data["running"])
+        self.assertFalse(result.data["state_retained"])
+        self.assertFalse(Path(result.data["paths"]["root"]).exists())
+
+        _, state = self.valid_state()
+        with mock.patch.object(ORCHESTRATOR, "session_exists", return_value=False):
+            retained = ORCHESTRATOR.controller_status_command(argparse.Namespace())
+        self.assertFalse(retained.data["running"])
+        self.assertTrue(retained.data["state_retained"])
+        self.assertEqual(retained.data["created_at"], state["created_at"])
+
+        details = ORCHESTRATOR.controller_public_data(
+            state,
+            {
+                "id": "%8",
+                "pid": 88,
+                "command": "node",
+                "dead": False,
+                "title": "controller",
+            },
+        )
+        with mock.patch.object(ORCHESTRATOR, "tmux") as tmux:
+            with self.assertRaises(ORCHESTRATOR.OrchestrationError):
+                ORCHESTRATOR.controller_stop_command(argparse.Namespace(confirm=False))
+            tmux.assert_not_called()
+
+        with (
+            mock.patch.object(ORCHESTRATOR, "controller_details", return_value=details),
+            mock.patch.object(ORCHESTRATOR, "tmux") as tmux,
+        ):
+            result = ORCHESTRATOR.controller_stop_command(argparse.Namespace(confirm=True))
+        tmux.assert_called_once_with(
+            ["kill-session", "-t", f"={ORCHESTRATOR.CONTROLLER_TMUX_SESSION}"]
+        )
+        self.assertTrue(result.data["stopped"])
+        self.assertFalse(result.data["running"])
 
 
 if __name__ == "__main__":

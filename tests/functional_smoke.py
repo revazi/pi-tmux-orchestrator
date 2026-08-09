@@ -30,7 +30,10 @@ def main() -> int:
 
     session = f"pi-orchestrator-smoke-{os.getpid()}"
     prefix_collision = f"{session}-prefix-collision"
-    for candidate in (session, prefix_collision):
+    controller_session = f"{session}-controller"
+    ORCHESTRATOR.CONTROLLER_TMUX_SESSION = controller_session
+    ORCHESTRATOR.CONTROLLER_PI_SESSION_ID = f"smoke-controller-{os.getpid()}"
+    for candidate in (session, prefix_collision, controller_session):
         subprocess.run(
             ["tmux", "kill-session", "-t", f"={candidate}"],
             check=False,
@@ -65,7 +68,7 @@ def main() -> int:
 
     temporary_root = Path(tempfile.mkdtemp(prefix="pi-tmux-orchestrator-smoke-"))
     fake_pi = temporary_root / "pi"
-    fake_pi.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    fake_pi.write_text("#!/usr/bin/env bash\nexec sleep 60\n", encoding="utf-8")
     fake_pi.chmod(0o700)
 
     wrapper = temporary_root / "fake-runtime.sh"
@@ -90,9 +93,10 @@ def main() -> int:
     ORCHESTRATOR.command_path = smoke_command_path
     ORCHESTRATOR.STATE_ROOT = temporary_root / "state"
     ORCHESTRATOR.SCRIPT_PATH = wrapper
+    os.environ["PI_TMUX_CONTROLLER_HOME"] = str(temporary_root / "controller")
 
     def cleanup() -> None:
-        for candidate in (session, prefix_collision):
+        for candidate in (session, prefix_collision, controller_session):
             subprocess.run(
                 ["tmux", "kill-session", "-t", f"={candidate}"],
                 check=False,
@@ -137,6 +141,24 @@ def main() -> int:
     )
 
     try:
+        controller = ORCHESTRATOR.controller_start_command(argparse.Namespace())
+        if not controller.data["running"] or controller.data["pane"]["dead"]:
+            raise AssertionError(f"controller did not stay healthy: {controller.data}")
+        controller_pid = controller.data["pane"]["pid"]
+        controller_status = ORCHESTRATOR.controller_status_command(argparse.Namespace())
+        if controller_status.data["pi_session_id"] != ORCHESTRATOR.CONTROLLER_PI_SESSION_ID:
+            raise AssertionError("controller status lost the stable Pi session identity")
+        try:
+            ORCHESTRATOR.controller_start_command(argparse.Namespace())
+        except ORCHESTRATOR.OrchestrationError as error:
+            if error.code != "already_running":
+                raise
+        else:
+            raise AssertionError("duplicate controller start was not refused")
+        ORCHESTRATOR.controller_stop_command(argparse.Namespace(confirm=True))
+        if ORCHESTRATOR.session_exists(controller_session):
+            raise AssertionError("controller tmux session survived confirmed stop")
+
         ORCHESTRATOR.start_command(arguments)
         coord_value = subprocess.run(
             [
@@ -175,7 +197,7 @@ def main() -> int:
         ).stdout.splitlines()
         if len(panes) != 6 or any(line.rsplit(" ", 1)[-1] != "0" for line in panes):
             raise AssertionError(f"unexpected pane state: {panes}")
-        pane_pids = [int(line.split()[-2]) for line in panes]
+        pane_pids = [controller_pid, *[int(line.split()[-2]) for line in panes]]
 
         reports = {
             "probe.md": "Synthetic probe complete.\n",
@@ -229,6 +251,7 @@ def main() -> int:
         if not ORCHESTRATOR.session_exists(prefix_collision):
             raise AssertionError("vanished exact target affected its prefix-collision control")
 
+        print("OK persistent project-neutral controller lifecycle and duplicate refusal")
         print("OK functional grid: all five roles plus monitor are healthy")
         print("OK exact targeting preserves a prefix session after the target disappears")
         print("OK private manifest, session options, and read-only specialist tools")
@@ -238,7 +261,7 @@ def main() -> int:
         )
         print("OK no Pi provider process was launched")
         cleanup()
-        for candidate in (session, prefix_collision):
+        for candidate in (session, prefix_collision, controller_session):
             residue = subprocess.run(
                 ["tmux", "has-session", "-t", f"={candidate}"],
                 check=False,

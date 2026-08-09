@@ -14,7 +14,7 @@ Pi Tmux Orchestrator:
 
 - launches local Pi processes under the current operating-system account
 - uses the current user's configured Pi providers without reading authentication files
-- stores orchestration state outside target repositories
+- stores orchestration and controller state outside target repositories
 - passes role prompts as file attachments rather than full command-line text
 - validates model availability with `pi --list-models`, which does not send a model request
 - exposes a thin extension that invokes only the bundled Python CLI through versioned JSON mode
@@ -33,7 +33,7 @@ Never put these values in task, handoff, review, probe, status, test, or issue c
 - private endpoints
 - unbounded raw errors
 
-Coordination directories are created with mode `0700` and files with mode `0600`. The configured state root and each session/run directory must be non-symlink directories, canonical coordination paths must remain under that root, and state files consumed by the orchestrator must be regular non-symlink files. Writes use no-follow opens where available, descriptor checks, and private permissions. Manifest updates use unique temporary files and atomic replacement.
+Coordination and controller directories are created with mode `0700` and orchestrator-owned files with mode `0600`. The configured roots and each session/run directory must be non-symlink directories, canonical coordination paths must remain under the orchestration root, and state files consumed by the orchestrator must be regular non-symlink files. Writes use no-follow opens where available, descriptor checks, and private permissions. Manifest and controller-state updates use unique temporary files and atomic replacement. The controller launches Pi under `umask 077`, so conversation files remain protected by both private file creation and their private parent directory.
 
 Schema-v1 manifests are bounded and strictly validated for required fields, known roles, role configuration types, pane IDs, trust type, canonical project/coordination paths, exact session/window identity, and contained prompt/session paths before an existing orchestration is acted upon. Validation inspects prompt metadata without reading prompt or report bodies.
 
@@ -43,7 +43,7 @@ The `0.4.0` source package declares no dependencies or peers, owns no runtime tr
 
 Extension tests use mocks plus package-provenance RPC `get_commands` discovery from a disposable installation of the actual tarball. The acceptance smoke npm-installs the tarball, points isolated `pi install <local-package-root>` at that package root, then launches RPC without `--extension` and requires exactly nine extension commands plus the root skill from that package path. It replaces Pi/npm homes and configuration, strips inherited credential environment variables from child processes, uses offline npm operations and a loopback dry-run registry, sends no prompt, and issues no provider request. These controls prevent test use of the configured Pi/npm authentication locations; they are not an operating-system sandbox or secure-erasure claim.
 
-Slash help runs without a subprocess; doctor/list/status expose only bounded metadata. Slash start preserves interactive preview, parent-trust checking, child-bypass confirmation, and final start confirmation. Slash send obtains session/role/message through Pi's built-in dialogs and transfers the message only through the existing unique mode-`0600` file path; message text is excluded from argv, status, details, notifications, and widgets and the temporary directory is removed in `finally`. Slash stop requires exact-session input and explicit confirmation before delegated `--yes`. Attach and restart remain terminal-only.
+Slash help runs without a subprocess; doctor/list/status expose only bounded metadata. Slash start preserves interactive preview, parent-trust checking, child-bypass confirmation, and final start confirmation. Controller-mode starts additionally require an explicit target project rather than defaulting to the controller's neutral workspace. Controller identity environment variables are removed before every worker Pi exec so controller-only session gates cannot leak into role sessions. Slash send obtains session/role/message through Pi's built-in dialogs and transfers the message only through the existing unique mode-`0600` file path; message text is excluded from argv, status, details, notifications, and widgets and the temporary directory is removed in `finally`. Slash stop requires exact-session input and explicit confirmation before delegated `--yes`. Attach and restart remain terminal-only.
 
 ## Relay delivery boundary
 
@@ -60,10 +60,11 @@ A successful tmux `send-keys` operation proves only that tmux accepted the keyst
 The CLI:
 
 - refuses to replace an existing tmux session
+- reserves one exact controller tmux name, verifies private controller markers/state before attach or stop, refuses duplicate or unrelated-name collisions, and blocks in-TUI session switching/forking away from the fixed controller ID
 - uses exact tmux targets for every operation on an existing session/window, including attach, status, stop, and failure cleanup
 - requires `--yes` to restart a role
-- requires `--yes` to stop a session
-- retains coordination records after session termination
+- requires `--yes` to stop a worker grid and `--confirm` to stop the controller
+- retains coordination records and the dedicated controller Pi conversation after session termination
 - kills a partially created tmux session after startup failure and leaves a private `FAILED` startup state when safe
 
 It does not push, merge, publish, deploy, or clean target repositories.

@@ -26,6 +26,23 @@ The extension imports no Pi core package, so the package declares no dependency 
 
 The `tmux_orchestrator` tool still exposes only `doctor`, `list`, `status`, `start`, and `send`. Slash start/send/stop require the interactive TUI. Message bodies never enter subprocess argv, status, details, notifications, or widgets. Attach and restart stay terminal-only: attach takes over the terminal, while restart requires explicit confirmation and provider/model/thinking configuration. Richer TUI/message behavior is intentionally deferred.
 
+## Dedicated controller
+
+Use a persistent Pi session as the project-neutral human-facing controller:
+
+```bash
+pi-tmux-agents controller start
+pi-tmux-agents controller status
+pi-tmux-agents controller attach
+pi-tmux-agents controller stop --confirm
+```
+
+`controller start` reserves exact tmux session `pi-orchestrator-controller`, creates a private neutral workspace and dedicated session directory under `~/.pi/agent/orchestrator-controller/`, and opens stable Pi session ID `pi-tmux-orchestrator-controller-v1`. A later start resumes that ID and its existing conversation. Override the controller root with `PI_TMUX_CONTROLLER_HOME`.
+
+The controller starts detached and sends no initial prompt/provider request. It explicitly loads the colocated package extension/skill when available, disables project context discovery and project approval in its neutral workspace, and omits `edit`/`write`. Controller-mode `/orchestrator-start` asks for an explicit target project; the model tool also rejects a controller start without one. This does not approve or trust that target for child agents.
+
+Duplicate starts and unrelated reserved-name collisions are refused. Controller mode cancels Pi `/new`, `/resume`, `/fork`, and `/clone` transitions to preserve the fixed Pi session identity. `controller attach` is interactive-only. `controller stop` requires `--confirm` and kills only the exact controller tmux session while retaining its state and Pi conversation. Worker grids are independent and continue when the controller stops.
+
 ## JSON boundary
 
 `pi-tmux-agents --json COMMAND ...` emits one schema-v1 JSON object on stdout on success or failure and uses a nonzero exit code for failure:
@@ -34,9 +51,13 @@ The `tmux_orchestrator` tool still exposes only `doctor`, `list`, `status`, `sta
 {"schema_version":"1","command":"list","success":true,"data":{"sessions":[]},"error":null}
 ```
 
-The envelope always has exactly `schema_version`, `command`, `success`, `data`, and `error`. Errors contain bounded `code` and `message` fields. Arrays are bounded and report truncation. Roles, panes, files, model checks, and paths are structured values. `list` and `status` remain metadata-only: no task, message, prompt, report, provider payload, or specialist body is included. `attach` returns `interactive_only` in JSON mode.
+The envelope always has exactly `schema_version`, `command`, `success`, `data`, and `error`. Errors contain bounded `code` and `message` fields. Arrays are bounded and report truncation. Roles, panes, files, model checks, controller lifecycle, and paths are structured values. `list`, `status`, and `controller status` remain metadata-only: no task, message, prompt, report, provider payload, or specialist body is included. Grid attach and `controller attach` return `interactive_only` in JSON mode.
 
 ## Commands
+
+### `controller start|status|attach|stop`
+
+Manages the one persistent project-neutral controller described above. Stop requires `--confirm`; attach cannot be automated through JSON mode. Controller state and conversation records are retained after stop.
 
 ### `start`
 
@@ -133,6 +154,7 @@ The relay transports file paths and state transitions, not source documents or p
 - Reviewer, technical probe, Playwright tester, and Django expert are launched without `edit` or `write`; they retain `bash` for tests, so role prompts also explicitly prohibit tracked modifications.
 - The Playwright tester may create browser caches, screenshots, traces, logs, and test databases only under ignored or external temporary paths and must clean up local servers/browser processes.
 - The orchestrator never reads or copies Pi authentication files.
+- Controller state uses private non-symlink directories/files outside target repositories; the Pi child runs with `umask 077`, a stable session ID, no discovered project context, and no `edit`/`write` tools.
 - Model validation uses `pi --list-models`, which checks configured availability but sends no model request.
 - State root, session, and run paths must resolve within the configured orchestration root and may not themselves be symlink directories. State files used by the orchestrator must be regular non-symlink files.
 - Schema-v1 manifests require exact structural, role, pane, trust, canonical path, and containment validation before actions on an existing orchestration.
@@ -179,4 +201,8 @@ Project agents continue running, but automatic notifications stop. Restarting re
 
 ### Child session asks for project trust
 
-Approve it interactively in each pane, or stop and restart with `--approve-project` after confirming the project is trusted.
+Approve it interactively in each pane, or stop and restart with `--approve-project` after confirming the project is trusted. The controller's neutral workspace and stable identity never count as trust for a target project.
+
+### Controller name already exists
+
+`controller start` never replaces the existing exact tmux session. If it is the managed controller, use `controller status`, `controller attach`, or `controller stop --confirm`. If it is unrelated, rename or stop it manually only after inspecting it.
