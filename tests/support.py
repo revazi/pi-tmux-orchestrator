@@ -17,6 +17,8 @@ from pi_tmux_orchestrator import (
     rpc_supervisor,
     runtime,
     storage,
+    supervisor_api,
+    supervisor_commands,
     tmux,
 )
 
@@ -39,6 +41,8 @@ class ModuleFacade:
                 rpc_store,
                 rpc_supervisor,
                 storage,
+                supervisor_api,
+                supervisor_commands,
                 tmux,
                 output,
                 prompts,

@@ -28,6 +28,8 @@ class SkillMetadataTests(unittest.TestCase):
             "rpc_store.py",
             "rpc_supervisor.py",
             "storage.py",
+            "supervisor_api.py",
+            "supervisor_commands.py",
             "tmux.py",
         }
         self.assertTrue(launcher.is_file())

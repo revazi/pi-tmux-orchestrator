@@ -89,23 +89,27 @@ The Playwright and Django roles wait for each implementer handoff and report bef
 
 ## Operate an existing grid
 
-Prefer `/orchestrator-list`, `/orchestrator-status [session]`, `/orchestrator-send [session]`, and `/orchestrator-stop [session]`; `/orchestrator-help` summarizes the surface and `/orchestrator-doctor` checks prerequisites. Send obtains its message through Pi's editor and delegates only through a unique private file. Attach, RPC events/abort, and restart remain CLI-only because attach takes over the terminal, events/abort are transport-specific, and restart requires explicit confirmation/configuration. Standalone fallback:
+Prefer `/orchestrator-list`, `/orchestrator-status [session]`, `/orchestrator-send [session]`, and `/orchestrator-stop [session]`; `/orchestrator-help` summarizes the surface and `/orchestrator-doctor` checks prerequisites. Send obtains its message through Pi's editor and delegates only through a unique private file. Attach, supervisor API reads, RPC events/abort, and restart remain CLI-only because attach takes over the terminal, durable supervisor operations are transport-specific, and restart requires explicit confirmation/configuration. Standalone fallback:
 
 ```bash
 pi-tmux-agents list
 pi-tmux-agents status SESSION
+pi-tmux-agents --json supervisor snapshot SESSION --run RUN_ID
+pi-tmux-agents --json supervisor events SESSION --run RUN_ID \
+  --cursor implementer=0 --cursor reviewer=0 --limit 50
 pi-tmux-agents attach SESSION
-pi-tmux-agents send SESSION --role implementer --message "Prioritize the failing regression."
-pi-tmux-agents send SESSION --role reviewer --delivery follow-up \
+pi-tmux-agents send SESSION --run RUN_ID --role implementer \
+  --message "Prioritize the failing regression."
+pi-tmux-agents send SESSION --run RUN_ID --role reviewer --delivery follow-up \
   --message "Review after the current RPC run settles."
-pi-tmux-agents abort SESSION --role implementer
+pi-tmux-agents abort SESSION --run RUN_ID --role implementer
 pi-tmux-agents events SESSION --role reviewer --after 0 --limit 50
 pi-tmux-agents restart SESSION --role implementer \
   --provider openai-codex --model gpt-5.6-sol --thinking xhigh --yes
 pi-tmux-agents stop SESSION --yes
 ```
 
-`restart` preserves filesystem changes and coordination state but starts a fresh Pi conversation for that role. `follow-up` and `abort` require an RPC-worker grid. An RPC acknowledgement proves that Pi accepted or queued the command, not that the requested work completed. Use an optional 32-character lowercase hexadecimal `--command-id` when a caller needs retry-safe send/abort delivery. Use `events` to observe accepted, started, completed, failed, aborted, rejected, or crash-uncertain metadata without requiring live tmux.
+`restart` preserves filesystem changes and coordination state but starts a fresh Pi conversation for that role. `follow-up` and `abort` require an RPC-worker grid. An RPC acknowledgement proves that Pi accepted or queued the command, not that the requested work completed. Use an optional 32-character lowercase hexadecimal `--command-id` when a caller needs retry-safe send/abort delivery. Supervisor API v1 lists retained sessions/runs, snapshots workers, pages independent per-role cursors, and polls exact command status without requiring live tmux; it reports host runtime as `not_observed` rather than inferring liveness from retained PIDs. Exact `send`/`abort --run` targets RPC state without tmux session resolution.
 
 ## Before launching
 

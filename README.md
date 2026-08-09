@@ -20,6 +20,7 @@ It turns the recurring “implementer + reviewer + optional specialist” setup 
 - An opt-in versioned JSON CLI boundary and thin Pi extension that delegates to it
 - One persistent, project-neutral controller Pi session with stable identity and private storage
 - Optional headless Pi RPC workers with private mailbox transport, idempotency keys, durable worker registries, lifecycle journals, follow-up delivery, and abort
+- A versioned, tmux-independent supervisor read API for retained sessions/runs, snapshots, per-role event cursors, and exact command status
 
 ## Default grid
 
@@ -43,7 +44,7 @@ The default grid has implementer, reviewer, and monitor panes. Optional roles ad
 
 ## Implementation architecture
 
-`bin/pi-tmux-agents` is only an executable launcher. The authoritative standard-library implementation lives in `pi_tmux_orchestrator/`, separated into CLI/commands, controller, tmux, storage/manifest validation, prompts, relay, and RPC protocol/store/supervisor modules. The JSON CLI remains the stable control-plane boundary used by the thin Pi extension. Tmux hosts panes and attachment; durable RPC command/session metadata lives in private external coordination state and can be queried independently through `events`.
+`bin/pi-tmux-agents` is only an executable launcher. The authoritative standard-library implementation lives in `pi_tmux_orchestrator/`, separated into CLI/commands, controller, tmux, storage/manifest validation, prompts, relay, RPC protocol/store/supervisor modules, the versioned `supervisor_api` service, and separate supervisor CLI handlers. The JSON CLI remains the stable control-plane boundary used by the thin Pi extension and future Pi Deck clients. Tmux currently hosts panes and attachment; the supervisor read API consumes only private durable state and never queries tmux for runtime truth.
 
 ## Requirements
 
@@ -92,7 +93,7 @@ Run the package acceptance in disposable homes before publication:
 scripts/package-smoke.sh
 ```
 
-The smoke builds the exact 27-file modular tarball, installs it with npm scripts disabled and an empty dependency tree, then uses isolated `pi install <local-package-root>` and launches Pi RPC without `--extension`. It requires package-provenance discovery of exactly nine extension commands plus the root skill, performs an offline `npm publish --dry-run` against a loopback registry, sends no prompt/provider request, and does not use configured Pi/npm homes or credentials.
+The smoke builds the exact 29-file modular tarball, installs it with npm scripts disabled and an empty dependency tree, then uses isolated `pi install <local-package-root>` and launches Pi RPC without `--extension`. It requires package-provenance discovery of exactly nine extension commands plus the root skill, performs an offline `npm publish --dry-run` against a loopback registry, sends no prompt/provider request, and does not use configured Pi/npm homes or credentials.
 
 The package imports no Pi core module, so it declares no dependencies or peers and owns no runtime tree. It is distributed under the MIT License in [LICENSE.md](LICENSE.md).
 
@@ -147,7 +148,7 @@ The installed extension exposes exactly these slash commands:
 
 The `tmux_orchestrator` model tool remains available for bounded `doctor`, `list`, `status`, `start`, and `send` actions; it intentionally excludes stop and restart. Start and slash-command send/stop require the interactive TUI. Parent trust is checked before an optional child `--approve`, a separate confirmation is required for every run, and parent trust is never treated as inherited by children. Message text never enters subprocess argv, status, details, notifications, or widgets.
 
-Attach, RPC events/abort, and restart remain terminal/CLI-only. Attach takes over the terminal; abort requires RPC workers; restart requires explicit confirmation and provider/model/thinking configuration. The extension uses Pi's existing dialogs; richer Pi Deck TUI work remains separate.
+Attach, the supervisor API, RPC events/abort, and restart remain terminal/CLI-only. Attach takes over the terminal; abort requires RPC workers; restart requires explicit confirmation and provider/model/thinking configuration. The extension uses Pi's existing dialogs; Pi Deck will consume the supervisor API in a separate phase.
 
 Without the extension, use the skill/CLI fallback in a new Pi session:
 
@@ -241,8 +242,16 @@ The dedicated controller can manage grids through the `/orchestrator-*` commands
 ```bash
 pi-tmux-agents list
 pi-tmux-agents status SESSION
+pi-tmux-agents --json supervisor capabilities
+pi-tmux-agents --json supervisor sessions
+pi-tmux-agents --json supervisor snapshot SESSION --run RUN_ID
+pi-tmux-agents --json supervisor events SESSION --run RUN_ID \
+  --cursor implementer=0 --cursor reviewer=0 --limit 50
+pi-tmux-agents --json supervisor command SESSION --run RUN_ID \
+  --role implementer --command-id 0123456789abcdef0123456789abcdef
 pi-tmux-agents attach SESSION
-pi-tmux-agents send SESSION --role implementer --message "Prioritize the failing regression."
+pi-tmux-agents send SESSION --run RUN_ID --role implementer \
+  --message "Prioritize the failing regression."
 pi-tmux-agents send SESSION --role reviewer --delivery follow-up \
   --command-id 0123456789abcdef0123456789abcdef \
   --message "Review this after the current run settles."
@@ -253,7 +262,9 @@ pi-tmux-agents restart SESSION --role implementer \
 pi-tmux-agents stop SESSION --yes
 ```
 
-A restart preserves project files and coordination state but starts a fresh Pi conversation for that role. Follow-up delivery and abort require an RPC-worker grid. `--command-id` accepts an optional 32-character lowercase hexadecimal idempotency key; a retry with the same role, command type, and delivery is acknowledged from the durable registry without forwarding the payload again. Reusing an ID with conflicting metadata is rejected; for matching metadata, the first accepted payload wins and later payload text is intentionally neither compared nor hashed. RPC send/abort success still means Pi accepted the command, while `events` distinguishes received, accepted, started, completed, failed, aborted, rejected, and crash-uncertain lifecycle states. Event cursors and exact retained run IDs work after tmux exits.
+A restart preserves project files and coordination state but starts a fresh Pi conversation for that role. Follow-up delivery and abort require an RPC-worker grid. `--command-id` accepts an optional 32-character lowercase hexadecimal idempotency key; a retry with the same role, command type, and delivery is acknowledged from the durable registry without forwarding the payload again. Reusing an ID with conflicting metadata is rejected; for matching metadata, the first accepted payload wins and later payload text is intentionally neither compared nor hashed. RPC send/abort success still means Pi accepted the command, while lifecycle events distinguish received, accepted, started, completed, failed, aborted, rejected, and crash-uncertain states.
+
+The supervisor API version is independent of the outer JSON envelope version. `supervisor capabilities` explicitly describes acceptance-versus-completion, crash-`uncertain`, and non-exactly-once semantics. `supervisor sessions` discovers bounded retained state, `runs` selects exact history, `snapshot` exposes durable worker/runtime metadata, `events` returns independent per-role pages using repeatable `--cursor ROLE=SEQUENCE`, and `command` polls one idempotency key without returning its payload. These reads do not inspect tmux and remain available after the host session exits. They intentionally report the tmux host runtime as `not_observed`; retained process metadata is not a liveness claim. `send` and `abort` accept `--run RUN_ID` so an API client can target an exact RPC run without resolving a tmux session.
 
 ## Handoff flow
 
@@ -291,6 +302,7 @@ They are created with private permissions and remain outside the target reposito
 - TUI-worker `tmux send-keys` success is transport-level only. RPC-worker mailbox delivery waits for Pi's correlated command response and reports an acknowledgement, but that acknowledgement proves acceptance/queueing rather than task completion.
 - RPC mailbox payloads use unique mode-`0600` files under the private coordination directory and are deleted after forwarding, rejection, or client timeout; cleanup is not a secure-erasure claim.
 - RPC registries and rotating event journals contain only bounded process/session/command metadata, never task or message bodies. A crash after forwarding but before Pi's response is recorded as `uncertain` and is never blindly redelivered under the same command ID.
+- Supervisor API scans, pages, cursors, issue lists, and command lookups are bounded. Its host status is explicitly `not_observed`, so stale retained PIDs or runtime records are never presented as proof that tmux or a worker is alive.
 - Failed starts retain a private `startup-state` diagnosis and kill any partial tmux session.
 - The orchestrator never reads or copies Pi authentication files.
 - `pi --list-models` validates availability without making a model request.
@@ -307,7 +319,7 @@ Put `--json` before or after the command to emit exactly one JSON object on stdo
 {"schema_version":"1","command":"status","success":true,"data":{},"error":null}
 ```
 
-Failures return nonzero with `data: null` (or bounded diagnostic data for checks) and `error: {"code":"...","message":"..."}`. `doctor`, `controller`, `list`, `status`, `events`, `start`, `send`, `abort`, `restart`, and `stop` return structured metadata. Grid attach and `controller attach` fail with `interactive_only`. Task, prompt, report, provider, specialist, and message bodies are never returned; list/status expose bounded names, paths, role/pane records, and file sizes only.
+Failures return nonzero with `data: null` (or bounded diagnostic data for checks) and `error: {"code":"...","message":"..."}`. `doctor`, `controller`, `supervisor`, `list`, `status`, `events`, `start`, `send`, `abort`, `restart`, and `stop` return structured metadata. Grid attach and `controller attach` fail with `interactive_only`. Task, prompt, report, provider, specialist, and message bodies are never returned; list/status expose bounded names, paths, role/pane records, and file sizes only.
 
 ## Author and license
 
@@ -324,10 +336,10 @@ python -m pip install ruff==0.11.11
 scripts/test.sh
 ```
 
-The suite includes 64+ standard-library Python tests, Node extension tests for the exact nine-command surface plus controller/RPC/trust/private-message boundaries, deterministic manifest/pack verification, npm installation of the actual tarball, isolated Pi local-package installation plus package-provenance RPC discovery, an offline npm publication dry-run, and a model-free controller plus default-TUI and acknowledged five-worker RPC/tmux smoke. It sends no real prompt or provider request and isolates Pi/npm configuration from real authentication files.
+The suite includes 79+ standard-library Python tests, Node extension tests for the exact nine-command surface plus controller/RPC/trust/private-message boundaries, deterministic manifest/pack verification, npm installation of the actual tarball, isolated Pi local-package installation plus package-provenance RPC discovery, an offline npm publication dry-run, and a model-free controller plus default-TUI and acknowledged five-worker RPC/tmux smoke. It sends no real prompt or provider request and isolates Pi/npm configuration from real authentication files.
 
 ## Project status
 
-Current source package: `0.4.0`, technically publish-ready and MIT-licensed. The authoritative process/data plane now lives in the modular `pi_tmux_orchestrator/` Python package; `bin/pi-tmux-agents` is only a launcher and the extension invokes its JSON mode with argument arrays. Worker transport is selectable: interactive Pi TUIs remain the default, while opt-in RPC supervisors provide correlated control, durable metadata-only registries, lifecycle events, crash-uncertain recovery, and idempotent retries without adding dependencies. The next major phase is the richer shared Pi Deck TUI over this supervisor API.
+Current source package: `0.4.0`, technically publish-ready and MIT-licensed. The authoritative process/data plane lives in the modular `pi_tmux_orchestrator/` Python package; `bin/pi-tmux-agents` is only a launcher and the extension invokes its JSON mode with argument arrays. Worker transport is selectable: interactive Pi TUIs remain the default, while opt-in RPC supervisors provide correlated control, durable metadata-only registries, lifecycle events, crash-uncertain recovery, and idempotent retries without adding dependencies. Supervisor API v1 now provides the bounded tmux-independent client boundary; the next major phase is the richer shared Pi Deck TUI as its client, followed by extracting worker hosting from the tmux adapter.
 
 A version in source, a tarball, and successful dry-runs do not prove npm-registry or Pi-gallery publication. This repository does not distribute credentials, model access, or provider configuration.

@@ -56,6 +56,7 @@ class JsonMainTests(unittest.TestCase):
         cases = {
             "doctor": ["doctor"],
             "controller": ["controller", "status"],
+            "supervisor": ["supervisor", "capabilities"],
             "list": ["list"],
             "status": ["status"],
             "events": ["events", "pi-test", "--role", "reviewer"],
@@ -71,6 +72,33 @@ class JsonMainTests(unittest.TestCase):
                 parsed = parser.parse_args(["--json", *arguments])
                 self.assertTrue(parsed.json_output)
                 self.assertEqual(parsed.command, command)
+
+    def test_supervisor_capabilities_keep_the_versioned_json_boundary(self) -> None:
+        code, envelope, raw, stderr = self.run_main(
+            ["--json", "supervisor", "capabilities"]
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(stderr, "")
+        self.assert_envelope(envelope, "supervisor", True)
+        self.assertEqual(envelope["data"]["api_version"], "1")
+        self.assertTrue(envelope["data"]["metadata_only"])
+        self.assertNotIn("tmux list", raw)
+
+    def test_supervisor_parser_failures_are_attributed_and_bounded(self) -> None:
+        code, envelope, _, stderr = self.run_main(
+            [
+                "--json",
+                "supervisor",
+                "events",
+                "pi-test",
+                "--cursor",
+                "reviewer=-1",
+            ]
+        )
+        self.assertEqual(code, 2)
+        self.assertEqual(stderr, "")
+        self.assert_envelope(envelope, "supervisor", False)
+        self.assertEqual(envelope["error"]["code"], "invalid_arguments")
 
     def test_start_dry_run_is_structured_and_redacts_task_body(self) -> None:
         canary = "PRIVATE_TASK_CANARY_JSON_21f3"

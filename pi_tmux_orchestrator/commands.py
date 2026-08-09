@@ -41,6 +41,7 @@ from .rpc import (
     run_rpc_agent,
     unlink_private_regular,
 )
+from .supervisor_api import rpc_event_page, resolve_supervisor_target
 from .storage import (
     absolute_path,
     canonical_state_root,
@@ -627,15 +628,12 @@ def events_command(args: argparse.Namespace) -> CommandResult:
         )
     events = load_rpc_events(coord, args.role)
     after = args.after
-    selected_candidates = [event for event in events if event["sequence"] > after]
-    selected = selected_candidates[: args.limit]
-    earliest = events[0]["sequence"] if events else None
-    latest = events[-1]["sequence"] if events else 0
-    gap = bool(after and earliest is not None and earliest > after + 1)
+    selected, cursor = rpc_event_page(events, after=after, limit=args.limit)
+    gap = cursor["gap"]
     registry = load_rpc_registry(coord, args.role)
     human_print(
         f"Events: {session}/{args.role} run={coord.name} "
-        f"after={after} returned={len(selected)} latest={latest}"
+        f"after={after} returned={len(selected)} latest={cursor['latest']}"
     )
     if gap:
         human_print("Warning: requested cursor predates the retained journal window")
@@ -652,14 +650,7 @@ def events_command(args: argparse.Namespace) -> CommandResult:
             "paths": {"coordination": str(coord)},
             "registry": public_rpc_registry(registry),
             "events": [public_rpc_event(event) for event in selected],
-            "cursor": {
-                "after": after,
-                "next": selected[-1]["sequence"] if selected else after,
-                "earliest_retained": earliest,
-                "latest": latest,
-                "gap": gap,
-                "truncated": len(selected_candidates) > len(selected),
-            },
+            "cursor": cursor,
         }
     )
 
@@ -681,9 +672,19 @@ def send_keys(pane_id: str, message: str) -> None:
     tmux(["send-keys", "-t", pane_id, "Enter"])
 
 
-def send_command(args: argparse.Namespace) -> CommandResult:
+def control_target(args: argparse.Namespace) -> tuple[str, Path, dict[str, Any]]:
+    run_id = getattr(args, "run", None)
+    if run_id is not None:
+        coord, manifest = resolve_supervisor_target(
+            args.session, run_id, require_rpc=True
+        )
+        return manifest["session"], coord, manifest
     session, coord = resolve_session(args.session)
-    manifest = load_manifest(coord, expected_session=session)
+    return session, coord, load_manifest(coord, expected_session=session)
+
+
+def send_command(args: argparse.Namespace) -> CommandResult:
+    session, coord, manifest = control_target(args)
     if args.role not in manifest["roles"]:
         available = ", ".join(manifest["roles"].keys())
         raise OrchestrationError(
@@ -719,6 +720,7 @@ def send_command(args: argparse.Namespace) -> CommandResult:
     return CommandResult(
         data={
             "session": session,
+            "run_id": coord.name,
             "role": args.role,
             "sent": True,
             "transport": transport,
@@ -735,8 +737,7 @@ def send_command(args: argparse.Namespace) -> CommandResult:
 
 
 def abort_command(args: argparse.Namespace) -> CommandResult:
-    session, coord = resolve_session(args.session)
-    manifest = load_manifest(coord, expected_session=session)
+    session, coord, manifest = control_target(args)
     if args.role not in manifest["roles"]:
         available = ", ".join(manifest["roles"].keys())
         raise OrchestrationError(
@@ -758,6 +759,7 @@ def abort_command(args: argparse.Namespace) -> CommandResult:
     return CommandResult(
         data={
             "session": session,
+            "run_id": coord.name,
             "role": args.role,
             "aborted": True,
             "transport": RPC_TRANSPORT,

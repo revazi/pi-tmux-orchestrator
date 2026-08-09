@@ -275,6 +275,7 @@ def main() -> int:
         sent = ORCHESTRATOR.send_command(
             argparse.Namespace(
                 session=session,
+                run=coord.name,
                 role="implementer",
                 message="Synthetic acknowledged steering message.",
                 message_file=None,
@@ -286,11 +287,13 @@ def main() -> int:
             not sent.data["acknowledged"]
             or sent.data["transport"] != "rpc"
             or sent.data["command_id"] != send_command_id
+            or sent.data["run_id"] != coord.name
         ):
             raise AssertionError(f"RPC send was not acknowledged: {sent.data}")
         duplicate = ORCHESTRATOR.send_command(
             argparse.Namespace(
                 session=session,
+                run=coord.name,
                 role="implementer",
                 message="Synthetic acknowledged steering message.",
                 message_file=None,
@@ -308,6 +311,7 @@ def main() -> int:
         aborted = ORCHESTRATOR.abort_command(
             argparse.Namespace(
                 session=session,
+                run=coord.name,
                 role="implementer",
                 command_id="4" * 32,
             )
@@ -445,7 +449,32 @@ def main() -> int:
             not retained_events.data["events"]
             or retained_events.data["run_id"] != coord.name
         ):
-            raise AssertionError("retained RPC events require a live tmux session")
+            raise AssertionError(
+                "retained RPC events could not be read after tmux exit"
+            )
+        supervisor_snapshot = ORCHESTRATOR.supervisor_snapshot(session, coord.name)
+        supervisor_batch = ORCHESTRATOR.supervisor_event_batch(
+            session,
+            coord.name,
+            requested_roles=["implementer", "reviewer"],
+            cursors={"implementer": 0, "reviewer": 0},
+            limit=5,
+        )
+        supervisor_command = ORCHESTRATOR.supervisor_command_status(
+            session,
+            coord.name,
+            role="implementer",
+            command_id=send_command_id,
+        )
+        supervisor_sessions = ORCHESTRATOR.retained_sessions()
+        if (
+            supervisor_snapshot["host_adapter"]["runtime_status"] != "not_observed"
+            or len(supervisor_batch["roles"]) != 2
+            or supervisor_command["command"]["status"] != "completed"
+            or session
+            not in {item["session"] for item in supervisor_sessions["sessions"]}
+        ):
+            raise AssertionError("supervisor API did not expose retained metadata")
 
         tui_arguments = argparse.Namespace(**vars(arguments))
         tui_arguments.session = tui_session
@@ -515,6 +544,9 @@ def main() -> int:
             "OK durable RPC registry, lifecycle events, cursors, and idempotent retry"
         )
         print("OK RPC steer/follow-up mailbox delivery and abort are acknowledged")
+        print(
+            "OK supervisor API reads retained snapshots, events, and commands without tmux"
+        )
         print(
             "OK exact targeting preserves a prefix session after the target disappears"
         )
