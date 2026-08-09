@@ -20,6 +20,7 @@ This checklist prepares a human-controlled release. It does not authorize public
   ```
 
 - [ ] Confirm `package.json`, `VERSION`, `pi_tmux_orchestrator/constants.py`, tests, documentation, and the intended `v0.4.0` tag all use `0.4.0`.
+- [ ] Confirm `CHANGELOG.md` has no pending release content: `[Unreleased]` is empty and every intended change appears under the dated `0.4.0` entry.
 - [ ] Confirm no unexpected prerelease strings remain: `git grep '0\.4\.0-dev'` should return no matches.
 
 ## 3. Full verification and artifact inspection
@@ -42,6 +43,7 @@ This checklist prepares a human-controlled release. It does not authorize public
 - [ ] Confirm documentation presents the package as intentionally tmux-scoped and does not imply that retained-state reads provide multiplexer-neutral worker hosting, bundled Pi Deck orchestration, or terminal-client integrations.
 - [ ] Confirm local-path and public Git package installation guidance is current, while npm installation remains explicitly conditional on verified registry availability.
 - [ ] Confirm the isolated offline `npm publish --dry-run` succeeds. It uses empty npm configuration, scripts disabled, offline mode, and a loopback registry; it is not a registry acceptance test.
+- [ ] Record the exact candidate tarball path, source commit, byte size, and SHA-256 digest for final owner approval. Publish that reviewed tarball rather than silently packing a different working tree.
 
 ## 4. Human npm checks
 
@@ -54,7 +56,16 @@ These checks intentionally are not automated because they use the maintainer's n
 
 ## 5. Authorized publication and tag consistency
 
-- [ ] Obtain a final explicit human approval for the exact commit and tarball.
-- [ ] Run any real `npm publish` only manually from that approved clean commit. Never run it from tests or CI in this repository.
-- [ ] Create/push `v0.4.0` only when authorized, and verify the tag points to the exact published source commit and matches all authoritative versions.
-- [ ] Only after registry verification describe `pi install npm:@revazi/pi-tmux-orchestrator@0.4.0` as available. Verify npm/Pi installation in a disposable home before making registry or gallery acceptance claims.
+- [ ] Obtain final explicit human approval for the exact commit, tarball path, byte size, and SHA-256 digest.
+- [ ] Publish only that approved tarball, manually and with the verified human npm identity. Never publish from tests or CI in this repository:
+
+  ```bash
+  npm publish /absolute/path/to/revazi-pi-tmux-orchestrator-0.4.0.tgz \
+    --access public --tag latest
+  ```
+
+- [ ] Verify the public registry reports exact name/version/license/repository metadata and record its `dist.integrity`; do not treat the local publish response alone as acceptance.
+- [ ] Install `@revazi/pi-tmux-orchestrator@0.4.0` into disposable npm and Pi homes, rerun CLI/version and package-provenance discovery, and confirm no real provider request is made.
+- [ ] Create and push annotated tag `v0.4.0` only after registry acceptance is verified. Confirm the tag points to the approved source commit and all authoritative versions match.
+- [ ] Create the GitHub release from `v0.4.0` using the matching changelog entry, and verify both the release and public tarball links without changing package contents.
+- [ ] Only after those checks describe `pi install npm:@revazi/pi-tmux-orchestrator@0.4.0` as available. npm publication does not by itself prove a separate Pi gallery listing.

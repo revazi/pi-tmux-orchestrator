@@ -4,62 +4,53 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
-### Added
+_No changes yet._
 
-- Added the owner-authorized canonical MIT license with 2026 Revaz Zakalashvili copyright
-- Added the canonical `/orchestrator-*` help/doctor/start/list/status/send/stop command family while retaining `/orchestrate` and `/orchestrations` as shared-handler aliases
-- Added `controller start|status|attach|stop` for one persistent project-neutral Pi controller with a stable session ID, private state/session storage, exact tmux identity, duplicate refusal, and confirmed termination
-- Added opt-in `--rpc-workers` with dependency-free per-role Pi RPC supervisors, private mailbox transport, correlated prompt/abort acknowledgements, steer/follow-up delivery, bounded queue/session state, and CLI `abort`
-- Added stable per-role worker registries, supervisor generations, rotating metadata-only lifecycle journals, idempotent send/abort command IDs, deterministic relay IDs, crash-uncertain recovery, and retained `events` cursors
-- Added supervisor API v1 with bounded tmux-independent retained session/run discovery, worker snapshots, independent per-role event pages, exact command status, and exact-run RPC control targeting
+## 0.4.0 - 2026-08-09
 
-### Changed
-
-- Added exact npm author name, public email, and GitHub profile metadata
-- Replaced the monolithic script with the authoritative modular `pi_tmux_orchestrator/` package and a thin `bin/pi-tmux-agents` launcher; repository Python lint/format checks now use pinned Ruff 0.11.11
-- Expanded deterministic package acceptance to enforce the MIT/author metadata and exact 29-file modular artifact without changing version or publication status
-- Changed Pi discovery acceptance to install the npm-installed tarball root through isolated `pi install`, launch RPC without `--extension`, and require exact package provenance for nine extension commands plus the root skill
-- Documented immediately usable local-path and public Git package installation while keeping npm installation conditional on verified registry publication
-- Added slash-command regressions for exact registration/aliases, delegated doctor/list/status, start/stop confirmation, private interactive send cancellation/cleanup/redaction, and bounded errors
-- Added controller-mode explicit-project enforcement, dedicated TUI identity, and strict state/lifecycle regressions
-- Expanded the model-free real tmux smoke to five synthetic RPC workers, relay acknowledgements, follow-up delivery, abort, private cleanup, and process-residue checks
-- Clarified that this package intentionally remains tmux-scoped; any terminal-independent orchestration authority, optional terminal adapters, or Pi Deck implementation belongs to separately governed future work
-
-## 0.4.0 - 2026-08-06
-
-This source release is technically publish-ready. The version entry does not assert that npm publication, a Pi gallery listing, or a Git tag has occurred.
+This is the first packaged public release of Pi Tmux Orchestrator. npm or Pi gallery availability must still be verified independently before using registry installation commands.
 
 ### Added
 
 - Added the `0.4.0` Pi package with one thin JavaScript extension, the existing root skill, the Python CLI bin, zero owned runtime dependencies, and deterministic tarball verification
+- Added the owner-authorized canonical MIT license with 2026 Revaz Zakalashvili copyright and exact npm author metadata
 - Added public scoped-package metadata, `pi-package` discovery, exact npm/Pi installation guidance, and a manual maintainer release checklist
-- Added schema-v1 `--json` output for doctor, list, status, start/dry-run, send, restart, and stop; attach now returns a clear `interactive_only` JSON error
-- Added `tmux_orchestrator` tool actions for doctor/list/status/start/send plus `/orchestrate`, `/orchestrations`, and confirmed `/orchestrator-stop` commands
-- Added model-free Node tests, actual-tarball inspection and installation, isolated Pi discovery from the installed artifact, an offline publication dry-run, and Node 22.19/24 CI coverage
+- Added schema-v1 `--json` output for doctor, list, status, start/dry-run, send, restart, and stop; attach returns a clear `interactive_only` JSON error
+- Added the canonical `/orchestrator-*` help/doctor/start/list/status/send/stop command family while retaining `/orchestrate` and `/orchestrations` as shared-handler aliases
+- Added `tmux_orchestrator` tool actions for bounded doctor/list/status/start/send operations
+- Added `controller start|status|attach|stop` for one persistent project-neutral Pi controller with a stable session ID, private state/session storage, exact tmux identity, duplicate refusal, and confirmed termination
+- Added opt-in `--rpc-workers` with dependency-free per-role Pi RPC supervisors, private mailbox transport, correlated prompt/abort acknowledgements, steer/follow-up delivery, bounded queue/session state, and CLI `abort`
+- Added stable per-role worker registries, supervisor generations, rotating metadata-only lifecycle journals, idempotent send/abort command IDs, deterministic relay IDs, crash-uncertain recovery, and retained `events` cursors
+- Added Supervisor API v1 with bounded tmux-independent retained session/run discovery, worker snapshots, independent per-role event pages, exact command status, and exact-run RPC control targeting
+- Added model-free Python and Node tests, actual-tarball inspection and installation, isolated Pi discovery from the installed artifact, an offline publication dry run, and Node 22.19/24 CI coverage
 
 ### Changed
 
+- Replaced the monolithic script with the authoritative modular `pi_tmux_orchestrator/` package and a thin `bin/pi-tmux-agents` launcher; repository Python lint/format checks now use pinned Ruff 0.11.11
 - Updated the skill to prefer extension controls when available while retaining the standalone CLI fallback
 - Kept the Python/tmux CLI authoritative; the extension delegates only through JSON and does not bridge child Pi TUIs
 - Removed the unnecessary Pi peer dependency because the zero-import extension requires no owned or peer dependency tree
-- Strengthened the disposable Pi smoke to use strict JSONL RPC `get_commands` discovery and assert the exact extension-command/root-skill surface without prompting a provider
+- Expanded deterministic package acceptance to enforce MIT/author metadata and an exact 29-file modular artifact
+- Changed Pi discovery acceptance to install the npm-installed tarball root through isolated `pi install`, launch RPC without `--extension`, and require exact package provenance for nine extension commands plus the root skill
+- Documented immediately usable local-path and public Git package installation while keeping npm installation conditional on verified registry publication
 - Made unexpected public JSON failures return one generic `internal_error` envelope, fixed command attribution on adversarial parser errors, clarified workflow-only read policy with retained bash, and returned custom tool rendering to Pi's safe fallback
 - Limited package OS metadata to tested macOS/Linux platforms, made verification enforce the exact public manifest/control surface and packed allowlist, and made successful Pi RPC discovery require exact installed-package source paths and empty stderr
 - Updated every CI action to a full commit SHA on its Node 24-compatible v7 release
-
 - Hardened private state creation and writes against symlink redirection without changing pre-existing ancestor permissions, added canonical state-root containment, and made manifest replacement atomic with unique private temporary files
 - Added strict schema-v1 manifest validation for fields, roles, pane IDs, trust, canonical project/coordination paths, and contained role paths before orchestration actions
 - Made relay delivery loss-resistant with report/marker validation, required specialist/review enums, per-recipient retry state, and global completion only after every enabled recipient succeeds
 - Changed status and monitor output to report coordination file names and byte sizes without content previews
 - Added diagnosable failed-start state and exact partial-session cleanup
 - Applied exact tmux session/window targets to all operations on existing orchestrations so a vanished target cannot fall through to a prefix match
+- Expanded the real tmux smoke to five synthetic RPC workers, relay acknowledgements, follow-up delivery, abort, private cleanup, process-residue checks, and Supervisor API coverage
+- Clarified that this package intentionally remains tmux-scoped; any terminal-independent orchestration authority, optional terminal adapters, or Pi Deck implementation belongs to separately governed future work
 
 ### Security
 
 - Added explicit parent-trust checks and per-run confirmation before child `--approve`; extension start is rejected when interactive confirmation is unavailable
 - Added mode-`0600` temporary-file transfer and `finally` cleanup for task, specialist, and message bodies so those bodies do not enter argv or tool-visible metadata
 - Added bounded JSON errors/arrays, subprocess-error sanitization, package exclusion checks, isolated Pi/npm homes and credential-free child environments for package acceptance, and full-SHA CI action pins
-- Added regressions for state symlinks and containment, manifest tampering, relay races and retry deduplication, metadata redaction, startup recovery, and provider-free six-pane cleanup
+- Added regressions for state symlinks and containment, manifest tampering, relay races and retry deduplication, metadata redaction, startup recovery, controller identity, RPC crash ambiguity, and provider-free six-pane cleanup
 
 ## 0.3.0 - 2026-08-04
 

@@ -4,7 +4,7 @@
 
 The source and local artifact are prepared as `0.4.0`, with public scoped-package access metadata and `pi-package` discovery. Install an inspected local checkout with `pi install /absolute/path/to/pi-tmux-orchestrator`, or install the public Git package with `pi install git:github.com/revazi/pi-tmux-orchestrator`. Use the matching `pi -e` forms for one temporary run. The unversioned Git form uses the default-branch source available at installation time; use an explicit tag/commit when available for reproducibility.
 
-npm publication is not verified. Keep `pi install npm:@revazi/pi-tmux-orchestrator@0.4.0` and `pi -e npm:@revazi/pi-tmux-orchestrator@0.4.0` conditional until a human confirms that exact registry version.
+Source metadata is not proof of npm publication. Keep `pi install npm:@revazi/pi-tmux-orchestrator@0.4.0` and `pi -e npm:@revazi/pi-tmux-orchestrator@0.4.0` conditional until a human confirms that exact registry version.
 
 Before publication, `scripts/package-smoke.sh` packs and npm-installs the exact 29-file modular artifact in disposable locations, validates its MIT/author metadata and empty owned dependency tree, installs that npm package root through isolated `pi install <local-package-root>`, launches Pi RPC without `--extension`, asserts package provenance for exactly nine extension commands plus the root skill, and performs an isolated offline npm publication dry-run.
 
