@@ -34,14 +34,14 @@ Do not push feature work directly to `main` after the initial repository bootstr
 
 - Ruff lint and format checks
 - Python syntax validation
-- Standard-library unit tests
+- Standard-library unit tests, including retained-state supervisor API cursors and tmux-independent reads
 - Skill frontmatter checks
 - Shell syntax checks
 - A model-free tmux functional smoke covering all roles, relay markers, and exact session targeting
 - CLI help and an all-role dry-run
 - Node built-in extension tests for the exact nine-command surface, shared aliases, delegation, trust/confirmation, bounded errors, and private send cancellation/cleanup/redaction
 - deterministic manifest and `npm pack --dry-run --json` checks
-- exact inspection and disposable installation of the actual 27-file modular tarball, including MIT/author metadata
+- exact inspection and disposable installation of the actual 29-file modular tarball, including MIT/author metadata
 - isolated `pi install` of the npm-installed package root followed by RPC `get_commands` discovery without `--extension`, requiring exact package provenance
 - an offline `npm publish --dry-run` with empty isolated npm configuration
 

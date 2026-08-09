@@ -19,7 +19,7 @@ const COMMAND_OVERVIEW = [
   "/orchestrator-stop [session] — confirm and stop one exact session",
   "/orchestrate — backward-compatible alias for /orchestrator-start",
   "/orchestrations — backward-compatible alias for /orchestrator-list",
-  "Attach, RPC events/abort, and restart remain terminal-only: attach takes over the terminal; events/abort require RPC workers; restart requires explicit CLI confirmation and configuration.",
+  "Attach, supervisor API reads, RPC events/abort, and restart remain terminal-only: attach takes over the terminal; supervisor/events/abort require RPC workers; restart requires explicit CLI confirmation and configuration.",
 ].join("\n");
 
 const parameters = {

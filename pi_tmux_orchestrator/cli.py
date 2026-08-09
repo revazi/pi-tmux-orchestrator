@@ -9,7 +9,13 @@ import sys
 import textwrap
 
 from . import runtime
-from .constants import MAX_RPC_EVENTS, THINKING_LEVELS, VERSION
+from .constants import (
+    MAX_JSON_ITEMS,
+    MAX_RPC_EVENTS,
+    RPC_TOKEN_PATTERN,
+    THINKING_LEVELS,
+    VERSION,
+)
 from .controller import (
     controller_attach_command,
     controller_start_command,
@@ -32,6 +38,14 @@ from .commands import (
 from .models import CommandResult, OrchestrationArgumentParser, OrchestrationError
 from .output import bounded_message, emit_json, eprint
 from .relay import relay_command
+from .supervisor_commands import (
+    capabilities_command,
+    supervisor_command_command,
+    supervisor_events_command,
+    supervisor_runs_command,
+    supervisor_sessions_command,
+    supervisor_snapshot_command,
+)
 
 
 def rpc_event_cursor(value: str) -> int:
@@ -54,6 +68,36 @@ def rpc_event_limit(value: str) -> int:
             f"event limit must be between 1 and {MAX_RPC_EVENTS}"
         )
     return parsed
+
+
+def supervisor_run_limit(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("run limit must be an integer") from error
+    if not 1 <= parsed <= MAX_JSON_ITEMS:
+        raise argparse.ArgumentTypeError(
+            f"run limit must be between 1 and {MAX_JSON_ITEMS}"
+        )
+    return parsed
+
+
+def rpc_command_id(value: str) -> str:
+    if not RPC_TOKEN_PATTERN.fullmatch(value):
+        raise argparse.ArgumentTypeError(
+            "command ID must be exactly 32 lowercase hexadecimal characters"
+        )
+    return value
+
+
+def supervisor_cursor(value: str) -> tuple[str, int]:
+    role, separator, sequence = value.partition("=")
+    roles = {"implementer", "reviewer", "probe", "playwright", "django"}
+    if separator != "=" or role not in roles or not sequence:
+        raise argparse.ArgumentTypeError(
+            "supervisor cursor must use ROLE=SEQUENCE for a known role"
+        )
+    return role, rpc_event_cursor(sequence)
 
 
 def add_model_arguments(parser: argparse.ArgumentParser, role: str) -> None:
@@ -151,6 +195,72 @@ def build_parser() -> argparse.ArgumentParser:
         add_model_arguments(start, role_name)
     start.set_defaults(handler=start_command)
 
+    supervisor = subparsers.add_parser(
+        "supervisor",
+        help="query the versioned durable supervisor API",
+    )
+    supervisor_actions = supervisor.add_subparsers(
+        dest="supervisor_action",
+        required=True,
+    )
+    supervisor_capabilities = supervisor_actions.add_parser(
+        "capabilities",
+        help="describe the stable supervisor API surface",
+    )
+    supervisor_capabilities.set_defaults(handler=capabilities_command)
+    supervisor_sessions = supervisor_actions.add_parser(
+        "sessions",
+        help="list newest retained runs without querying tmux",
+    )
+    supervisor_sessions.set_defaults(handler=supervisor_sessions_command)
+    supervisor_runs = supervisor_actions.add_parser(
+        "runs",
+        help="list retained runs for an exact orchestration session",
+    )
+    supervisor_runs.add_argument("session")
+    supervisor_runs.add_argument("--limit", type=supervisor_run_limit, default=100)
+    supervisor_runs.set_defaults(handler=supervisor_runs_command)
+    supervisor_snapshot = supervisor_actions.add_parser(
+        "snapshot",
+        help="read one retained run and its durable worker state",
+    )
+    supervisor_snapshot.add_argument("session")
+    supervisor_snapshot.add_argument("--run", help="exact retained coordination run ID")
+    supervisor_snapshot.set_defaults(handler=supervisor_snapshot_command)
+    supervisor_events = supervisor_actions.add_parser(
+        "events",
+        help="read per-role durable event pages with independent cursors",
+    )
+    supervisor_events.add_argument("session")
+    supervisor_events.add_argument("--run", help="exact retained coordination run ID")
+    supervisor_events.add_argument(
+        "--role",
+        action="append",
+        choices=("implementer", "reviewer", "probe", "playwright", "django"),
+        help="enabled role to include; repeat for multiple roles",
+    )
+    supervisor_events.add_argument(
+        "--cursor",
+        action="append",
+        type=supervisor_cursor,
+        help="per-role cursor in ROLE=SEQUENCE form; repeat for multiple roles",
+    )
+    supervisor_events.add_argument("--limit", type=rpc_event_limit, default=50)
+    supervisor_events.set_defaults(handler=supervisor_events_command)
+    supervisor_command = supervisor_actions.add_parser(
+        "command",
+        help="query one retained idempotent RPC command",
+    )
+    supervisor_command.add_argument("session")
+    supervisor_command.add_argument("--run", help="exact retained coordination run ID")
+    supervisor_command.add_argument(
+        "--role",
+        required=True,
+        choices=("implementer", "reviewer", "probe", "playwright", "django"),
+    )
+    supervisor_command.add_argument("--command-id", required=True, type=rpc_command_id)
+    supervisor_command.set_defaults(handler=supervisor_command_command)
+
     list_parser = subparsers.add_parser("list", help="list running orchestrations")
     list_parser.set_defaults(handler=list_command)
 
@@ -190,8 +300,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     send.add_argument("--message")
     send.add_argument("--message-file")
+    send.add_argument("--run", help="exact retained RPC coordination run ID")
     send.add_argument(
         "--command-id",
+        type=rpc_command_id,
         help="optional 32-character lowercase hexadecimal idempotency key for RPC delivery",
     )
     send.add_argument(
@@ -211,8 +323,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     abort.add_argument(
         "--command-id",
+        type=rpc_command_id,
         help="optional 32-character lowercase hexadecimal idempotency key",
     )
+    abort.add_argument("--run", help="exact retained RPC coordination run ID")
     abort.set_defaults(handler=abort_command)
 
     restart = subparsers.add_parser(
@@ -263,6 +377,7 @@ def requested_command(argv: list[str]) -> str:
     public_commands = {
         "doctor",
         "controller",
+        "supervisor",
         "abort",
         "list",
         "status",

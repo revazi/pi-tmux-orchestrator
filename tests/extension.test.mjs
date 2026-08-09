@@ -117,7 +117,7 @@ test("help is bounded, subprocess-free, and documents terminal-only operations",
   assert.ok(message.length <= 2400);
   assert.match(message, /\/orchestrator-start/);
   assert.match(message, /\/orchestrator-send/);
-  assert.match(message, /Attach, RPC events\/abort, and restart remain terminal-only/);
+  assert.match(message, /Attach, supervisor API reads, RPC events\/abort, and restart remain terminal-only/);
   assert.equal(message.includes("PRIVATE_HELP_ARGUMENT"), false);
 });
 

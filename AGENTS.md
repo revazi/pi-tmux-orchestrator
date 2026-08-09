@@ -12,6 +12,8 @@ Provide a small, reusable Pi skill and modular standard-library Python CLI/contr
 
 - `SKILL.md`: Pi Agent Skill entry point
 - `pi_tmux_orchestrator/`: authoritative dependency-free Python orchestration package
+- `pi_tmux_orchestrator/supervisor_api.py`: versioned tmux-independent durable-state client boundary
+- `pi_tmux_orchestrator/supervisor_commands.py`: thin CLI adapters for the supervisor API
 - `bin/pi-tmux-agents`: thin executable launcher
 - `references/usage.md`: detailed operator guidance
 - `install.sh`: global Pi skill installation
@@ -22,6 +24,7 @@ Provide a small, reusable Pi skill and modular standard-library Python CLI/contr
 - Keep the implementation dependency-free and inspectable.
 - Prefer one explicit writer and independent read-only reviewers.
 - Keep coordination state outside target repositories.
+- Keep supervisor reads independent from tmux runtime observation; never infer liveness from retained PIDs.
 - Treat project instructions and explicit trust as mandatory boundaries.
 - Never access or copy Pi/provider credentials.
 - Never put private project payloads in handoff or status output.

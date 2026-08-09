@@ -23,6 +23,8 @@ const pythonFiles = [
   "rpc_supervisor.py",
   "runtime.py",
   "storage.py",
+  "supervisor_api.py",
+  "supervisor_commands.py",
   "tmux.py",
 ].map((name) => `pi_tmux_orchestrator/${name}`);
 const expectedFiles = [

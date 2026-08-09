@@ -35,6 +35,8 @@ EXPECTED_FILES=(
   pi_tmux_orchestrator/rpc_supervisor.py
   pi_tmux_orchestrator/runtime.py
   pi_tmux_orchestrator/storage.py
+  pi_tmux_orchestrator/supervisor_api.py
+  pi_tmux_orchestrator/supervisor_commands.py
   pi_tmux_orchestrator/tmux.py
   references/usage.md
 )
@@ -163,4 +165,4 @@ if actual != sorted(expected):
     raise SystemExit("publication dry-run file allowlist mismatch")
 PY
 
-printf '%s\n' 'Actual 27-file modular tarball with MIT/author metadata, npm install, isolated Pi local-package install/RPC discovery, and offline npm publication dry-run passed (no owned dependency tree, real Pi/npm home, auth, or provider request).'
+printf '%s\n' 'Actual 29-file modular tarball with MIT/author metadata, npm install, isolated Pi local-package install/RPC discovery, and offline npm publication dry-run passed (no owned dependency tree, real Pi/npm home, auth, or provider request).'
