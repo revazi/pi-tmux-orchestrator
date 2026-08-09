@@ -1,0 +1,129 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  publish:
+    name: Publish npm package and GitHub release
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: npm
+
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+
+      - name: Set up Node.js and npm registry
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+          registry-url: https://registry.npmjs.org
+
+      - name: Install release tooling
+        run: |
+          python -m pip install --disable-pip-version-check ruff==0.11.11
+          npm install --global --ignore-scripts npm@11.6.2
+          sudo apt-get update
+          sudo apt-get install --yes tmux
+
+      - name: Verify tag, version, and changelog
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_version="$(node -p "require('./package.json').version")"
+          test "$GITHUB_REF_TYPE" = "tag"
+          test "$GITHUB_REF_NAME" = "v$package_version"
+          test "$(tr -d '\n' < VERSION)" = "$package_version"
+          test "$(python -c 'from pi_tmux_orchestrator.constants import VERSION; print(VERSION)')" = "$package_version"
+          grep -F "## $package_version - " CHANGELOG.md
+          test -z "$(git status --porcelain)"
+          test "$(npm --version)" = "11.6.2"
+
+      - name: Run release verification
+        run: scripts/test.sh
+
+      - name: Publish or verify npm package
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_name="$(node -p "require('./package.json').name")"
+          package_version="$(node -p "require('./package.json').version")"
+          package_spec="$package_name@$package_version"
+          lookup="$RUNNER_TEMP/npm-view.json"
+          lookup_error="$RUNNER_TEMP/npm-view.error"
+
+          verify_lookup() {
+            local require_integrity="$1"
+            node - "$lookup" "$package_name" "$package_version" "$GITHUB_SHA" \
+              "$require_integrity" <<'NODE'
+          const [path, expectedName, expectedVersion, expectedCommit, requireIntegrity] =
+            process.argv.slice(2);
+          const metadata = JSON.parse(require("node:fs").readFileSync(path, "utf8"));
+          if (
+            metadata.name !== expectedName ||
+            metadata.version !== expectedVersion ||
+            metadata.gitHead !== expectedCommit ||
+            (requireIntegrity === "yes" && !metadata.dist?.integrity)
+          ) {
+            process.exit(1);
+          }
+          NODE
+          }
+
+          if npm view "$package_spec" --registry=https://registry.npmjs.org/ --json \
+            >"$lookup" 2>"$lookup_error"; then
+            verify_lookup no
+            echo "$package_spec is already published from this exact tag; continuing."
+          else
+            if ! grep -Eq 'E404|Not Found|No match found' "$lookup" "$lookup_error"; then
+              cat "$lookup_error" >&2
+              exit 1
+            fi
+            npm publish --access public --provenance
+          fi
+
+          for attempt in 1 2 3 4 5; do
+            if npm view "$package_spec" --registry=https://registry.npmjs.org/ --json >"$lookup"; then
+              if verify_lookup yes; then
+                exit 0
+              fi
+            fi
+            sleep $((attempt * 3))
+          done
+          echo "npm registry did not confirm the exact release" >&2
+          exit 1
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "GitHub release $GITHUB_REF_NAME already exists; continuing."
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --repo "$GITHUB_REPOSITORY" \
+              --verify-tag \
+              --title "Pi Tmux Orchestrator $GITHUB_REF_NAME" \
+              --generate-notes \
+              --latest
+          fi
