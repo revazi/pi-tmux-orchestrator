@@ -1,18 +1,24 @@
 # Usage reference
 
-## Package distribution status
+## Installation
 
-The source and local artifact are prepared as `0.4.0`, with public scoped-package access metadata and `pi-package` discovery. Install an inspected local checkout with `pi install /absolute/path/to/pi-tmux-orchestrator`, or install the public Git package with `pi install git:github.com/revazi/pi-tmux-orchestrator`. Use the matching `pi -e` forms for one temporary run. The unversioned Git form uses the default-branch source available at installation time; use an explicit tag/commit when available for reproducibility.
+Install from npm:
 
-Source metadata is not proof of npm publication. Keep `pi install npm:@revazi/pi-tmux-orchestrator@0.4.0` and `pi -e npm:@revazi/pi-tmux-orchestrator@0.4.0` conditional until a human confirms that exact registry version.
+```bash
+pi install npm:@revazi/pi-tmux-orchestrator
+pi -e npm:@revazi/pi-tmux-orchestrator
+```
 
-Before publication, `scripts/package-smoke.sh` packs and npm-installs the exact 29-file modular artifact in disposable locations, validates its MIT/author metadata and empty owned dependency tree, installs that npm package root through isolated `pi install <local-package-root>`, launches Pi RPC without `--extension`, asserts package provenance for exactly nine extension commands plus the root skill, and performs an isolated offline npm publication dry-run.
+Install a reviewed Git commit or local checkout:
 
-The authoritative Python implementation is split across `pi_tmux_orchestrator/`; `supervisor_api.py` is the versioned tmux-independent durable-state read boundary, `supervisor_commands.py` contains its CLI adapters, and `bin/pi-tmux-agents` is a thin launcher shared by npm and the standalone installer. Worker/controller hosting and live-session operations remain intentionally tmux-specific; retained-state read independence is not a generic process-host abstraction. The extension imports no Pi core package, so the package declares no dependency or peer tree. The owner-authorized license is MIT; see [`LICENSE.md`](../LICENSE.md). The legacy `install.sh` installs only the standalone CLI/root skill, does not install the extension, and does not migrate an existing standalone installation. npm registry, Pi gallery, Git-package update, and rollback acceptance remain unclaimed unless separately exercised.
+```bash
+pi install git:github.com/revazi/pi-tmux-orchestrator@<reviewed-full-commit>
+pi install /absolute/path/to/pi-tmux-orchestrator
+```
 
-## Scope boundary
+Before release, `scripts/package-smoke.sh` packs and installs the exact 29-file artifact in disposable npm and Pi homes, verifies package provenance for nine extension commands plus the root skill, and performs an offline publication dry run without a provider request.
 
-This repository remains focused on orchestrations hosted and monitored through tmux. A future terminal-independent authority may live in a separately governed Pi Deck project, with tmux, Herdr, and other terminal integrations acting only as optional monitoring/focus/attachment adapters. That future direction does not authorize a package rename, state-format dependency, generic host abstraction, or Pi Deck implementation here.
+The authoritative Python implementation is split across `pi_tmux_orchestrator/`; `supervisor_api.py` provides retained-state reads, `supervisor_commands.py` contains its CLI adapters, and `bin/pi-tmux-agents` is the thin launcher shared by npm and the standalone installer. Worker/controller hosting and live-session operations remain tmux-specific. The extension imports no Pi core package, so the package declares no dependency or peer tree. See the [MIT License](../LICENSE.md).
 
 ## Extension slash commands
 
@@ -28,7 +34,7 @@ This repository remains focused on orchestrations hosted and monitored through t
 | `/orchestrate` | Alias for `/orchestrator-start`. |
 | `/orchestrations` | Alias for `/orchestrator-list`. |
 
-The `tmux_orchestrator` tool still exposes only `doctor`, `list`, `status`, `start`, and `send`. Slash start/send/stop require the interactive TUI. Start can select interactive TUI workers or opt-in RPC supervisors. Message bodies never enter subprocess argv, status, details, notifications, or widgets. Attach, the supervisor API, RPC events/abort, and restart stay terminal-only: attach takes over the terminal, abort is RPC-only, and restart requires explicit confirmation and provider/model/thinking configuration. Pi Deck and terminal-neutral adapters are outside this package's scope.
+The `tmux_orchestrator` tool exposes only `doctor`, `list`, `status`, `start`, and `send`. Slash start/send/stop require the interactive TUI. Start can select interactive TUI workers or opt-in RPC supervisors. Message bodies never enter subprocess argv, status, details, notifications, or widgets. Attach, the supervisor API, RPC events/abort, and restart stay terminal-only: attach takes over the terminal, abort is RPC-only, and restart requires explicit confirmation and provider/model/thinking configuration.
 
 ## Dedicated controller
 
@@ -80,7 +86,7 @@ pi-tmux-agents --json supervisor command SESSION [--run RUN_ID] \
 
 `capabilities` describes API v1, its bounds, acceptance-versus-completion semantics, crash-`uncertain` behavior, and the absence of an exactly-once claim. `sessions` lists each valid retained orchestration's newest run, while `runs` discovers exact history. `snapshot` returns manifest, worker registry, runtime record, and journal-cursor metadata without reading task/report bodies. TUI runs remain discoverable but have no durable worker/event surface. `events` pages one or more RPC roles independently; each repeated cursor is scoped to its role, and each page reports rotation gaps, truncation, and the next cursor. `command` returns the metadata-only lifecycle status for one exact idempotency key.
 
-All supervisor reads inspect only validated private retained state. They do not invoke tmux or claim that retained PIDs, sessions, or runtime records are live. Host runtime is reported as `not_observed`. State-directory scans, returned sessions/runs/issues, per-role event pages, and registry command counts are bounded. Starts, worker processes, controller sessions, panes, monitoring, attachment, restart, and stop remain tmux-hosted; this API is not a promise of multiplexer-neutral orchestration.
+All supervisor reads inspect only validated private retained state. They do not invoke tmux or claim that retained PIDs, sessions, or runtime records are live. Host runtime is reported as `not_observed`. State-directory scans, returned sessions/runs/issues, per-role event pages, and registry command counts are bounded. Starts, worker processes, controller sessions, panes, monitoring, attachment, restart, and stop remain tmux-hosted.
 
 ### `start`
 
