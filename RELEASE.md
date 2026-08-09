@@ -39,6 +39,7 @@ This checklist prepares a human-controlled release. It does not authorize public
 - [ ] Confirm package acceptance uses isolated `pi install <local-package-root>` on the npm-installed tarball root, launches RPC without `--extension`, and discovers exactly nine extension commands plus `skill:tmux-agent-orchestrator` with package provenance.
 - [ ] Confirm the slash surface omits attach/supervisor/restart, aliases share start/list handlers, start/stop confirmations remain mandatory, and interactive send never exposes message text outside its unique private file.
 - [ ] Confirm supervisor API v1 reads retained sessions/runs/snapshots/events/commands without tmux, preserves per-role cursor gaps and bounds, labels host runtime `not_observed`, and exact-run send/abort retains private mailbox semantics.
+- [ ] Confirm documentation presents the package as intentionally tmux-scoped and does not imply that retained-state reads provide multiplexer-neutral worker hosting, bundled Pi Deck orchestration, or terminal-client integrations.
 - [ ] Confirm local-path and public Git package installation guidance is current, while npm installation remains explicitly conditional on verified registry availability.
 - [ ] Confirm the isolated offline `npm publish --dry-run` succeeds. It uses empty npm configuration, scripts disabled, offline mode, and a loopback registry; it is not a registry acceptance test.
 

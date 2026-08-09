@@ -23,6 +23,7 @@ All notable changes to this project are documented here.
 - Added slash-command regressions for exact registration/aliases, delegated doctor/list/status, start/stop confirmation, private interactive send cancellation/cleanup/redaction, and bounded errors
 - Added controller-mode explicit-project enforcement, dedicated TUI identity, and strict state/lifecycle regressions
 - Expanded the model-free real tmux smoke to five synthetic RPC workers, relay acknowledgements, follow-up delivery, abort, private cleanup, and process-residue checks
+- Clarified that this package intentionally remains tmux-scoped; any terminal-independent orchestration authority, optional terminal adapters, or Pi Deck implementation belongs to separately governed future work
 
 ## 0.4.0 - 2026-08-06
 
