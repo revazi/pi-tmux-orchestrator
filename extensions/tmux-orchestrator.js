@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 
-const CLI_PATH = fileURLToPath(new URL("../scripts/pi-tmux-agents.py", import.meta.url));
+const CLI_PATH = fileURLToPath(new URL("../bin/pi-tmux-agents", import.meta.url));
 const STATUS_KEY = "tmux-orchestrator";
 const MAX_VISIBLE_CHARS = 12_000;
 const ACTIONS = ["doctor", "list", "status", "start", "send"];
@@ -19,7 +19,7 @@ const COMMAND_OVERVIEW = [
   "/orchestrator-stop [session] — confirm and stop one exact session",
   "/orchestrate — backward-compatible alias for /orchestrator-start",
   "/orchestrations — backward-compatible alias for /orchestrator-list",
-  "Attach, RPC abort, and restart remain terminal-only: attach takes over the terminal; abort requires RPC workers; restart requires explicit CLI confirmation and configuration.",
+  "Attach, RPC events/abort, and restart remain terminal-only: attach takes over the terminal; events/abort require RPC workers; restart requires explicit CLI confirmation and configuration.",
 ].join("\n");
 
 const parameters = {

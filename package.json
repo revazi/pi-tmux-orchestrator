@@ -37,7 +37,7 @@
     "linux"
   ],
   "bin": {
-    "pi-tmux-agents": "scripts/pi-tmux-agents.py"
+    "pi-tmux-agents": "bin/pi-tmux-agents"
   },
   "files": [
     "CHANGELOG.md",
@@ -48,7 +48,8 @@
     "VERSION",
     "extensions/tmux-orchestrator.js",
     "references/usage.md",
-    "scripts/pi-tmux-agents.py"
+    "bin/pi-tmux-agents",
+    "pi_tmux_orchestrator/*.py"
   ],
   "pi": {
     "extensions": [

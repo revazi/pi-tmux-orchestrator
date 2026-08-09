@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib.util
 import io
 import json
 import subprocess
@@ -11,13 +10,10 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
+from tests.support import ORCHESTRATOR
+
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "scripts" / "pi-tmux-agents.py"
-sys.dont_write_bytecode = True
-SPEC = importlib.util.spec_from_file_location("pi_tmux_orchestrator_json", SCRIPT)
-assert SPEC and SPEC.loader
-ORCHESTRATOR = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(ORCHESTRATOR)
+SCRIPT = ROOT / "bin" / "pi-tmux-agents"
 
 
 class JsonMainTests(unittest.TestCase):
@@ -37,7 +33,9 @@ class JsonMainTests(unittest.TestCase):
         self.assertEqual(len(lines), 1, stdout.getvalue())
         return code, json.loads(lines[0]), stdout.getvalue(), stderr.getvalue()
 
-    def assert_envelope(self, envelope: dict[str, object], command: str, success: bool) -> None:
+    def assert_envelope(
+        self, envelope: dict[str, object], command: str, success: bool
+    ) -> None:
         self.assertEqual(
             set(envelope),
             {"schema_version", "command", "success", "data", "error"},
@@ -49,7 +47,9 @@ class JsonMainTests(unittest.TestCase):
             self.assertIsNone(envelope["error"])
         else:
             self.assertIsInstance(envelope["error"], dict)
-            self.assertLessEqual(len(envelope["error"]["message"]), ORCHESTRATOR.MAX_ERROR_CHARS)
+            self.assertLessEqual(
+                len(envelope["error"]["message"]), ORCHESTRATOR.MAX_ERROR_CHARS
+            )
 
     def test_parser_accepts_json_for_every_public_command(self) -> None:
         parser = ORCHESTRATOR.build_parser()
@@ -58,6 +58,7 @@ class JsonMainTests(unittest.TestCase):
             "controller": ["controller", "status"],
             "list": ["list"],
             "status": ["status"],
+            "events": ["events", "pi-test", "--role", "reviewer"],
             "start": ["start", "--task", "synthetic"],
             "attach": ["attach"],
             "send": ["send", "session", "--role", "reviewer", "--message", "synthetic"],
@@ -74,7 +75,9 @@ class JsonMainTests(unittest.TestCase):
     def test_start_dry_run_is_structured_and_redacts_task_body(self) -> None:
         canary = "PRIVATE_TASK_CANARY_JSON_21f3"
         with (
-            mock.patch.object(ORCHESTRATOR, "command_path", return_value="/usr/bin/true"),
+            mock.patch.object(
+                ORCHESTRATOR, "command_path", return_value="/usr/bin/true"
+            ),
             mock.patch.object(ORCHESTRATOR, "session_exists", return_value=False),
         ):
             code, envelope, raw, stderr = self.run_main(
@@ -105,9 +108,10 @@ class JsonMainTests(unittest.TestCase):
             "saved-or-global-policy",
         )
         self.assertTrue(all(role["transport"] == "rpc" for role in data["roles"]))
-        self.assertEqual([role["name"] for role in data["roles"]], [
-            "implementer", "reviewer", "probe", "playwright", "django"
-        ])
+        self.assertEqual(
+            [role["name"] for role in data["roles"]],
+            ["implementer", "reviewer", "probe", "playwright", "django"],
+        )
         self.assertIsNone(data["paths"]["coordination"])
 
     def test_start_success_returns_paths_without_payload_bodies(self) -> None:
@@ -116,7 +120,9 @@ class JsonMainTests(unittest.TestCase):
             state_root = Path(directory) / "state"
             with (
                 mock.patch.object(ORCHESTRATOR, "STATE_ROOT", state_root),
-                mock.patch.object(ORCHESTRATOR, "command_path", return_value="/usr/bin/true"),
+                mock.patch.object(
+                    ORCHESTRATOR, "command_path", return_value="/usr/bin/true"
+                ),
                 mock.patch.object(ORCHESTRATOR, "session_exists", return_value=False),
                 mock.patch.object(ORCHESTRATOR, "create_tmux_grid"),
             ):
@@ -165,10 +171,16 @@ class JsonMainTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             coord = Path(directory)
             message_file = coord / "message.txt"
-            message_file.write_text("PRIVATE_MESSAGE_CANARY_JSON_7de1", encoding="utf-8")
+            message_file.write_text(
+                "PRIVATE_MESSAGE_CANARY_JSON_7de1", encoding="utf-8"
+            )
 
             with (
-                mock.patch.object(ORCHESTRATOR, "orchestrated_sessions", return_value=[("pi-test", coord)]),
+                mock.patch.object(
+                    ORCHESTRATOR,
+                    "orchestrated_sessions",
+                    return_value=[("pi-test", coord)],
+                ),
                 mock.patch.object(ORCHESTRATOR, "load_manifest", return_value=manifest),
             ):
                 code, envelope, _, stderr = self.run_main(["--json", "list"])
@@ -184,7 +196,9 @@ class JsonMainTests(unittest.TestCase):
             pane_output = "0\t%1\t123\tpython3\t0\tIMPLEMENTER\n1\t%2\t124\tpython3\t0\tREVIEWER\n"
             tmux_result = subprocess.CompletedProcess([], 0, pane_output, "")
             with (
-                mock.patch.object(ORCHESTRATOR, "resolve_session", return_value=("pi-test", coord)),
+                mock.patch.object(
+                    ORCHESTRATOR, "resolve_session", return_value=("pi-test", coord)
+                ),
                 mock.patch.object(ORCHESTRATOR, "load_manifest", return_value=manifest),
                 mock.patch.object(ORCHESTRATOR, "tmux", return_value=tmux_result),
                 mock.patch.object(ORCHESTRATOR, "coordination_files", return_value=[]),
@@ -196,12 +210,22 @@ class JsonMainTests(unittest.TestCase):
             self.assertEqual(envelope["data"]["files"], [])
 
             with (
-                mock.patch.object(ORCHESTRATOR, "resolve_session", return_value=("pi-test", coord)),
+                mock.patch.object(
+                    ORCHESTRATOR, "resolve_session", return_value=("pi-test", coord)
+                ),
                 mock.patch.object(ORCHESTRATOR, "load_manifest", return_value=manifest),
                 mock.patch.object(ORCHESTRATOR, "send_keys") as send_keys,
             ):
                 code, envelope, raw, _ = self.run_main(
-                    ["--json", "send", "pi-test", "--role", "reviewer", "--message-file", str(message_file)]
+                    [
+                        "--json",
+                        "send",
+                        "pi-test",
+                        "--role",
+                        "reviewer",
+                        "--message-file",
+                        str(message_file),
+                    ]
                 )
             self.assertEqual(code, 0)
             self.assert_envelope(envelope, "send", True)
@@ -209,24 +233,38 @@ class JsonMainTests(unittest.TestCase):
             send_keys.assert_called_once()
 
             with (
-                mock.patch.object(ORCHESTRATOR, "resolve_session", return_value=("pi-test", coord)),
+                mock.patch.object(
+                    ORCHESTRATOR, "resolve_session", return_value=("pi-test", coord)
+                ),
                 mock.patch.object(ORCHESTRATOR, "load_manifest", return_value=manifest),
                 mock.patch.object(ORCHESTRATOR, "save_manifest"),
                 mock.patch.object(ORCHESTRATOR, "tmux"),
             ):
                 code, envelope, _, _ = self.run_main(
-                    ["--json", "restart", "pi-test", "--role", "reviewer", "--yes", "--skip-model-check"]
+                    [
+                        "--json",
+                        "restart",
+                        "pi-test",
+                        "--role",
+                        "reviewer",
+                        "--yes",
+                        "--skip-model-check",
+                    ]
                 )
             self.assertEqual(code, 0)
             self.assert_envelope(envelope, "restart", True)
             self.assertTrue(envelope["data"]["restarted"])
 
             with (
-                mock.patch.object(ORCHESTRATOR, "resolve_session", return_value=("pi-test", coord)),
+                mock.patch.object(
+                    ORCHESTRATOR, "resolve_session", return_value=("pi-test", coord)
+                ),
                 mock.patch.object(ORCHESTRATOR, "load_manifest", return_value=manifest),
                 mock.patch.object(ORCHESTRATOR, "tmux"),
             ):
-                code, envelope, _, _ = self.run_main(["--json", "stop", "pi-test", "--yes"])
+                code, envelope, _, _ = self.run_main(
+                    ["--json", "stop", "pi-test", "--yes"]
+                )
             self.assertEqual(code, 0)
             self.assert_envelope(envelope, "stop", True)
             self.assertTrue(envelope["data"]["state_retained"])
@@ -245,7 +283,30 @@ class JsonMainTests(unittest.TestCase):
                 return_value=("pi-rpc", coord),
             ),
             mock.patch.object(ORCHESTRATOR, "load_manifest", return_value=manifest),
-            mock.patch.object(ORCHESTRATOR, "rpc_control_request") as rpc_request,
+            mock.patch.object(
+                ORCHESTRATOR,
+                "rpc_control_request",
+                side_effect=[
+                    {
+                        "version": 2,
+                        "id": "1" * 32,
+                        "command": "prompt",
+                        "success": True,
+                        "status": "accepted",
+                        "duplicate": False,
+                        "event_sequence": 4,
+                    },
+                    {
+                        "version": 2,
+                        "id": "2" * 32,
+                        "command": "abort",
+                        "success": True,
+                        "status": "completed",
+                        "duplicate": False,
+                        "event_sequence": 6,
+                    },
+                ],
+            ) as rpc_request,
         ):
             code, envelope, raw, stderr = self.run_main(
                 [
@@ -276,10 +337,107 @@ class JsonMainTests(unittest.TestCase):
             self.assertTrue(envelope["data"]["acknowledged"])
         self.assertEqual(rpc_request.call_count, 2)
 
+    def test_events_api_reads_retained_state_with_a_stable_cursor(self) -> None:
+        canary = "PRIVATE_EVENT_API_CANARY_d10c"
+        with tempfile.TemporaryDirectory() as directory:
+            state_root = Path(directory) / "state"
+            project = Path(directory) / "project"
+            project.mkdir()
+            with mock.patch.object(ORCHESTRATOR, "STATE_ROOT", state_root):
+                root = ORCHESTRATOR.canonical_state_root(create=True)
+                session = "pi-events-api"
+                session_root = ORCHESTRATOR.ensure_private_directory(root / session)
+                coord = ORCHESTRATOR.ensure_private_directory(session_root / "run-1")
+                prompt = coord / "implementer.prompt.md"
+                ORCHESTRATOR.secure_write(prompt, f"Synthetic prompt {canary}.\n")
+                session_dir = ORCHESTRATOR.ensure_private_directory(
+                    coord / "sessions" / "implementer",
+                    parents=True,
+                )
+                ORCHESTRATOR.secure_write(coord / "reviewer.prompt.md", "Review.\n")
+                reviewer_dir = ORCHESTRATOR.ensure_private_directory(
+                    coord / "sessions" / "reviewer"
+                )
+                manifest = {
+                    "version": 2,
+                    "created_at": "2026-08-09T12:00:00+00:00",
+                    "session": session,
+                    "window": ORCHESTRATOR.WINDOW,
+                    "project": str(project.resolve()),
+                    "coord": str(coord),
+                    "approve_project": False,
+                    "transport": ORCHESTRATOR.RPC_TRANSPORT,
+                    "monitor_pane_id": "%9",
+                    "roles": {
+                        "implementer": {
+                            "provider": "provider",
+                            "model": "model",
+                            "thinking": "high",
+                            "tools": None,
+                            "pane_id": "%1",
+                            "prompt_path": str(prompt),
+                            "session_dir": str(session_dir),
+                        },
+                        "reviewer": {
+                            "provider": "provider",
+                            "model": "model",
+                            "thinking": "high",
+                            "tools": ORCHESTRATOR.READ_ONLY_TOOLS,
+                            "pane_id": "%2",
+                            "prompt_path": str(coord / "reviewer.prompt.md"),
+                            "session_dir": str(reviewer_dir),
+                        },
+                    },
+                }
+                ORCHESTRATOR.save_manifest(coord, manifest)
+                paths = ORCHESTRATOR.rpc_role_paths(coord, "implementer", create=True)
+                registry = ORCHESTRATOR.initialize_rpc_registry(
+                    coord,
+                    paths,
+                    "implementer",
+                    456,
+                )
+                ORCHESTRATOR.record_rpc_event(
+                    paths,
+                    registry,
+                    "implementer",
+                    "command_received",
+                    command_id="c" * 32,
+                    command="prompt",
+                    delivery="steer",
+                )
+                code, envelope, raw, stderr = self.run_main(
+                    [
+                        "--json",
+                        "events",
+                        session,
+                        "--role",
+                        "implementer",
+                        "--run",
+                        "run-1",
+                        "--after",
+                        "0",
+                        "--limit",
+                        "1",
+                    ]
+                )
+        self.assertEqual(code, 0)
+        self.assertEqual(stderr, "")
+        self.assert_envelope(envelope, "events", True)
+        self.assertNotIn(canary, raw)
+        self.assertEqual(len(envelope["data"]["events"]), 1)
+        self.assertTrue(envelope["data"]["cursor"]["truncated"])
+        self.assertEqual(envelope["data"]["cursor"]["next"], 1)
+        self.assertEqual(
+            envelope["data"]["registry"]["worker_id"], registry["worker_id"]
+        )
+
     def test_controller_status_stop_and_attach_keep_the_json_contract(self) -> None:
         with (
             mock.patch.object(ORCHESTRATOR, "session_exists", return_value=False),
-            mock.patch.object(ORCHESTRATOR, "retained_controller_state", return_value=None),
+            mock.patch.object(
+                ORCHESTRATOR, "retained_controller_state", return_value=None
+            ),
         ):
             code, envelope, _, stderr = self.run_main(
                 ["--json", "controller", "status"]
@@ -294,17 +452,13 @@ class JsonMainTests(unittest.TestCase):
             ORCHESTRATOR.CONTROLLER_PI_SESSION_ID,
         )
 
-        code, envelope, _, stderr = self.run_main(
-            ["--json", "controller", "stop"]
-        )
+        code, envelope, _, stderr = self.run_main(["--json", "controller", "stop"])
         self.assertEqual(code, 2)
         self.assertEqual(stderr, "")
         self.assert_envelope(envelope, "controller", False)
         self.assertIn("--confirm", envelope["error"]["message"])
 
-        code, envelope, _, stderr = self.run_main(
-            ["--json", "controller", "attach"]
-        )
+        code, envelope, _, stderr = self.run_main(["--json", "controller", "attach"])
         self.assertEqual(code, 2)
         self.assertEqual(stderr, "")
         self.assert_envelope(envelope, "controller", False)
@@ -313,10 +467,14 @@ class JsonMainTests(unittest.TestCase):
     def test_doctor_has_structured_commands_models_and_paths(self) -> None:
         tmux_version = subprocess.CompletedProcess([], 0, "tmux 3.5\n", "")
         with (
-            mock.patch.object(ORCHESTRATOR.shutil, "which", side_effect=lambda name: f"/bin/{name}"),
+            mock.patch.object(
+                ORCHESTRATOR.shutil, "which", side_effect=lambda name: f"/bin/{name}"
+            ),
             mock.patch.object(ORCHESTRATOR, "run", return_value=tmux_version),
             mock.patch.object(ORCHESTRATOR, "list_tmux_sessions", return_value=[]),
-            mock.patch.object(ORCHESTRATOR, "model_available", return_value=(True, "available")),
+            mock.patch.object(
+                ORCHESTRATOR, "model_available", return_value=(True, "available")
+            ),
         ):
             code, envelope, _, stderr = self.run_main(["doctor", "--json"])
         self.assertEqual(code, 0)
@@ -371,9 +529,7 @@ class JsonMainTests(unittest.TestCase):
             ),
             "start",
         )
-        code, envelope, _, stderr = self.run_main(
-            ["--json", "--not-a-command", "stop"]
-        )
+        code, envelope, _, stderr = self.run_main(["--json", "--not-a-command", "stop"])
         self.assertEqual(code, 2)
         self.assertEqual(stderr, "")
         self.assert_envelope(envelope, "unknown", False)
@@ -410,7 +566,9 @@ class JsonMainTests(unittest.TestCase):
         canary = "PRIVATE_SUBPROCESS_STDERR_CANARY_4f80"
         manifest = {"window": ORCHESTRATOR.WINDOW, "roles": {}, "project": str(ROOT)}
         with (
-            mock.patch.object(ORCHESTRATOR, "resolve_session", return_value=("pi-test", ROOT)),
+            mock.patch.object(
+                ORCHESTRATOR, "resolve_session", return_value=("pi-test", ROOT)
+            ),
             mock.patch.object(ORCHESTRATOR, "load_manifest", return_value=manifest),
             mock.patch.object(
                 ORCHESTRATOR,

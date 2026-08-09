@@ -18,12 +18,24 @@ bash -n \
   "$ROOT/scripts/package-smoke.sh" \
   "$ROOT/scripts/pi-extension-smoke.sh"
 
+printf '%s\n' '==> Ruff lint and format'
+ruff check \
+  "$ROOT/pi_tmux_orchestrator" \
+  "$ROOT/tests" \
+  "$ROOT/bin/pi-tmux-agents"
+ruff format --check \
+  "$ROOT/pi_tmux_orchestrator" \
+  "$ROOT/tests" \
+  "$ROOT/bin/pi-tmux-agents"
+
 printf '%s\n' '==> Python syntax'
 python3 - <<PY
 import ast
 from pathlib import Path
 for path in (
-    Path("$ROOT/scripts/pi-tmux-agents.py"),
+    Path("$ROOT/bin/pi-tmux-agents"),
+    *sorted(Path("$ROOT/pi_tmux_orchestrator").glob("*.py")),
+    Path("$ROOT/tests/support.py"),
     Path("$ROOT/tests/test_orchestrator.py"),
     Path("$ROOT/tests/test_hardening.py"),
     Path("$ROOT/tests/functional_smoke.py"),
@@ -45,11 +57,11 @@ node "$ROOT/scripts/verify-package.mjs"
 "$ROOT/scripts/package-smoke.sh"
 
 printf '%s\n' '==> CLI help and provider-free dry run'
-"$ROOT/scripts/pi-tmux-agents.py" --help >/dev/null
+"$ROOT/bin/pi-tmux-agents" --help >/dev/null
 TEMP_BIN=$(mktemp -d "${TMPDIR:-/tmp}/pi-tmux-orchestrator-bin.XXXXXX")
 printf '#!/usr/bin/env bash\nexit 0\n' > "$TEMP_BIN/pi"
 chmod 700 "$TEMP_BIN/pi"
-PATH="$TEMP_BIN:$PATH" "$ROOT/scripts/pi-tmux-agents.py" start \
+PATH="$TEMP_BIN:$PATH" "$ROOT/bin/pi-tmux-agents" start \
   --project "$ROOT" \
   --task 'Synthetic dry-run only.' \
   --session pi-repository-dry-run \

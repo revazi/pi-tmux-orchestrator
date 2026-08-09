@@ -10,11 +10,13 @@ All notable changes to this project are documented here.
 - Added the canonical `/orchestrator-*` help/doctor/start/list/status/send/stop command family while retaining `/orchestrate` and `/orchestrations` as shared-handler aliases
 - Added `controller start|status|attach|stop` for one persistent project-neutral Pi controller with a stable session ID, private state/session storage, exact tmux identity, duplicate refusal, and confirmed termination
 - Added opt-in `--rpc-workers` with dependency-free per-role Pi RPC supervisors, private mailbox transport, correlated prompt/abort acknowledgements, steer/follow-up delivery, bounded queue/session state, and CLI `abort`
+- Added stable per-role worker registries, supervisor generations, rotating metadata-only lifecycle journals, idempotent send/abort command IDs, deterministic relay IDs, crash-uncertain recovery, and retained `events` cursors
 
 ### Changed
 
 - Added exact npm author name, public email, and GitHub profile metadata
-- Expanded deterministic package acceptance to enforce the MIT/author metadata and exact 10-file artifact without changing version or publication status
+- Replaced the monolithic script with the authoritative modular `pi_tmux_orchestrator/` package and a thin `bin/pi-tmux-agents` launcher; repository Python lint/format checks now use pinned Ruff 0.11.11
+- Expanded deterministic package acceptance to enforce the MIT/author metadata and exact 27-file modular artifact without changing version or publication status
 - Changed Pi discovery acceptance to install the npm-installed tarball root through isolated `pi install`, launch RPC without `--extension`, and require exact package provenance for nine extension commands plus the root skill
 - Documented immediately usable local-path and public Git package installation while keeping npm installation conditional on verified registry publication
 - Added slash-command regressions for exact registration/aliases, delegated doctor/list/status, start/stop confirmation, private interactive send cancellation/cleanup/redaction, and bounded errors

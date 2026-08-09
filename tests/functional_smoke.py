@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import os
 import shlex
 import shutil
@@ -15,12 +14,12 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "scripts" / "pi-tmux-agents.py"
-sys.dont_write_bytecode = True
-SPEC = importlib.util.spec_from_file_location("pi_tmux_orchestrator_smoke", SCRIPT)
-assert SPEC and SPEC.loader
-ORCHESTRATOR = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(ORCHESTRATOR)
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from tests.support import ORCHESTRATOR  # noqa: E402
+
+SCRIPT = ROOT / "bin" / "pi-tmux-agents"
 
 
 def main() -> int:
@@ -87,8 +86,14 @@ def main() -> int:
         "    print(json.dumps(response), flush=True)\n"
         "    if command == 'prompt':\n"
         "        print(json.dumps({'type': 'agent_start'}), flush=True)\n"
-        "        print(json.dumps({'type': 'message_update', 'assistantMessageEvent': "
-        "{'type': 'text_delta', 'delta': 'Synthetic RPC response.'}}), flush=True)\n"
+        "        if value.get('message') == 'Synthetic failed lifecycle message.':\n"
+        "            update = {'type': 'error', 'reason': 'error'}\n"
+        "        elif value.get('message') == 'Synthetic aborted lifecycle message.':\n"
+        "            update = {'type': 'error', 'reason': 'aborted'}\n"
+        "        else:\n"
+        "            update = {'type': 'text_delta', 'delta': 'Synthetic RPC response.'}\n"
+        "        print(json.dumps({'type': 'message_update', "
+        "'assistantMessageEvent': update}), flush=True)\n"
         "        print(json.dumps({'type': 'agent_settled'}), flush=True)\n",
         encoding="utf-8",
     )
@@ -100,7 +105,7 @@ def main() -> int:
         "set -euo pipefail\n"
         'if [[ "$1" == "_relay" || "$1" == "_run-agent" ]]; then\n'
         f"  export PATH={shlex.quote(str(temporary_root))}:$PATH\n"
-        f"  exec {shlex.quote(str(SCRIPT))} \"$@\"\n"
+        f'  exec {shlex.quote(str(SCRIPT))} "$@"\n'
         "fi\n"
         "exec sleep 60\n",
         encoding="utf-8",
@@ -171,8 +176,13 @@ def main() -> int:
             raise AssertionError(f"controller did not stay healthy: {controller.data}")
         controller_pid = controller.data["pane"]["pid"]
         controller_status = ORCHESTRATOR.controller_status_command(argparse.Namespace())
-        if controller_status.data["pi_session_id"] != ORCHESTRATOR.CONTROLLER_PI_SESSION_ID:
-            raise AssertionError("controller status lost the stable Pi session identity")
+        if (
+            controller_status.data["pi_session_id"]
+            != ORCHESTRATOR.CONTROLLER_PI_SESSION_ID
+        ):
+            raise AssertionError(
+                "controller status lost the stable Pi session identity"
+            )
         try:
             ORCHESTRATOR.controller_start_command(argparse.Namespace())
         except ORCHESTRATOR.OrchestrationError as error:
@@ -232,16 +242,36 @@ def main() -> int:
                 role: ORCHESTRATOR.load_rpc_state(coord, role)
                 for role in expected_roles
             }
-            if all(state and state["session_id"] == "synthetic-rpc-session" for state in states.values()):
+            if all(
+                state and state["session_id"] == "synthetic-rpc-session"
+                for state in states.values()
+            ):
                 break
             time.sleep(0.1)
         else:
-            raise AssertionError(f"RPC supervisors did not publish session state: {states}")
+            pane_output = subprocess.run(
+                [
+                    "tmux",
+                    "capture-pane",
+                    "-p",
+                    "-S",
+                    "-80",
+                    "-t",
+                    f"={session}:={ORCHESTRATOR.WINDOW}",
+                ],
+                check=False,
+                text=True,
+                capture_output=True,
+            ).stdout
+            raise AssertionError(
+                f"RPC supervisors did not publish session state: {states}; pane={pane_output!r}"
+            )
         pane_pids.extend(state["pid"] for state in states.values() if state)
         status = ORCHESTRATOR.status_command(argparse.Namespace(session=session))
         if not all(role["rpc_state"] for role in status.data["roles"]):
             raise AssertionError("status did not expose bounded RPC role metadata")
 
+        send_command_id = "3" * 32
         sent = ORCHESTRATOR.send_command(
             argparse.Namespace(
                 session=session,
@@ -249,15 +279,97 @@ def main() -> int:
                 message="Synthetic acknowledged steering message.",
                 message_file=None,
                 delivery="follow-up",
+                command_id=send_command_id,
             )
         )
-        if not sent.data["acknowledged"] or sent.data["transport"] != "rpc":
+        if (
+            not sent.data["acknowledged"]
+            or sent.data["transport"] != "rpc"
+            or sent.data["command_id"] != send_command_id
+        ):
             raise AssertionError(f"RPC send was not acknowledged: {sent.data}")
-        aborted = ORCHESTRATOR.abort_command(
-            argparse.Namespace(session=session, role="implementer")
+        duplicate = ORCHESTRATOR.send_command(
+            argparse.Namespace(
+                session=session,
+                role="implementer",
+                message="Synthetic acknowledged steering message.",
+                message_file=None,
+                delivery="follow-up",
+                command_id=send_command_id,
+            )
         )
-        if not aborted.data["acknowledged"]:
-            raise AssertionError("RPC abort was not acknowledged")
+        if (
+            not duplicate.data["duplicate"]
+            or duplicate.data["command_id"] != send_command_id
+        ):
+            raise AssertionError(
+                f"RPC idempotent retry was not deduplicated: {duplicate.data}"
+            )
+        aborted = ORCHESTRATOR.abort_command(
+            argparse.Namespace(
+                session=session,
+                role="implementer",
+                command_id="4" * 32,
+            )
+        )
+        if (
+            not aborted.data["acknowledged"]
+            or aborted.data["command_status"] != "completed"
+        ):
+            raise AssertionError("RPC abort was not durably acknowledged")
+        lifecycle_messages = (
+            ("5" * 32, "Synthetic failed lifecycle message."),
+            ("6" * 32, "Synthetic aborted lifecycle message."),
+        )
+        for command_id, message in lifecycle_messages:
+            result = ORCHESTRATOR.send_command(
+                argparse.Namespace(
+                    session=session,
+                    role="implementer",
+                    message=message,
+                    message_file=None,
+                    delivery="steer",
+                    command_id=command_id,
+                )
+            )
+            if not result.data["acknowledged"]:
+                raise AssertionError("synthetic lifecycle command was not accepted")
+
+        deadline = time.time() + 4
+        while time.time() < deadline:
+            event_page = ORCHESTRATOR.events_command(
+                argparse.Namespace(
+                    session=session,
+                    role="implementer",
+                    run=coord.name,
+                    after=0,
+                    limit=100,
+                )
+            )
+            event_names = {event["event"] for event in event_page.data["events"]}
+            if {
+                "command_received",
+                "command_accepted",
+                "agent_completed",
+                "agent_failed",
+                "agent_aborted",
+            }.issubset(event_names):
+                break
+            time.sleep(0.1)
+        else:
+            raise AssertionError(
+                f"durable RPC lifecycle events were not recorded: {event_names}"
+            )
+        if event_page.data["registry"]["worker_id"] is None:
+            raise AssertionError("durable worker registry omitted its stable identity")
+        duplicate_received_events = [
+            event
+            for event in event_page.data["events"]
+            if event["event"] == "command_received"
+            and event["command_id"] == send_command_id
+        ]
+        if len(duplicate_received_events) != 1:
+            raise AssertionError("idempotent retry was forwarded more than once")
 
         reports = {
             "probe.md": "Synthetic probe complete.\n",
@@ -285,14 +397,18 @@ def main() -> int:
 
         deadline = time.time() + 8
         seen = coord / ".relay-seen"
-        while time.time() < deadline and not all((seen / marker).exists() for marker in markers):
+        while time.time() < deadline and not all(
+            (seen / marker).exists() for marker in markers
+        ):
             time.sleep(0.25)
         missing = sorted(marker for marker in markers if not (seen / marker).exists())
         if missing:
             raise AssertionError(f"relay did not consume markers: {missing}")
 
         if not ORCHESTRATOR.session_exists(prefix_collision):
-            raise AssertionError("prefix-collision control session was unexpectedly replaced")
+            raise AssertionError(
+                "prefix-collision control session was unexpectedly replaced"
+            )
 
         subprocess.run(
             ["tmux", "kill-session", "-t", ORCHESTRATOR.exact_session_target(session)],
@@ -305,11 +421,31 @@ def main() -> int:
             stderr=subprocess.DEVNULL,
         )
         if vanished_target.returncode == 0:
-            raise AssertionError("an absent exact target unexpectedly matched another session")
+            raise AssertionError(
+                "an absent exact target unexpectedly matched another session"
+            )
         if ORCHESTRATOR.session_option(session, "@pi_agents_coord") is not None:
-            raise AssertionError("an absent option target matched its prefix-collision control")
+            raise AssertionError(
+                "an absent option target matched its prefix-collision control"
+            )
         if not ORCHESTRATOR.session_exists(prefix_collision):
-            raise AssertionError("vanished exact target affected its prefix-collision control")
+            raise AssertionError(
+                "vanished exact target affected its prefix-collision control"
+            )
+        retained_events = ORCHESTRATOR.events_command(
+            argparse.Namespace(
+                session=session,
+                role="implementer",
+                run=coord.name,
+                after=0,
+                limit=5,
+            )
+        )
+        if (
+            not retained_events.data["events"]
+            or retained_events.data["run_id"] != coord.name
+        ):
+            raise AssertionError("retained RPC events require a live tmux session")
 
         tui_arguments = argparse.Namespace(**vars(arguments))
         tui_arguments.session = tui_session
@@ -352,7 +488,9 @@ def main() -> int:
             text=True,
             capture_output=True,
         ).stdout.splitlines()
-        if len(tui_panes) != 3 or any(line.rsplit(" ", 1)[-1] != "0" for line in tui_panes):
+        if len(tui_panes) != 3 or any(
+            line.rsplit(" ", 1)[-1] != "0" for line in tui_panes
+        ):
             raise AssertionError(f"default TUI grid is unhealthy: {tui_panes}")
         pane_pids.extend(int(line.split()[0]) for line in tui_panes)
         tui_send = ORCHESTRATOR.send_command(
@@ -368,11 +506,18 @@ def main() -> int:
             raise AssertionError("default TUI send semantics changed")
         ORCHESTRATOR.stop_command(argparse.Namespace(session=tui_session, yes=True))
 
-        print("OK persistent project-neutral controller lifecycle and duplicate refusal")
+        print(
+            "OK persistent project-neutral controller lifecycle and duplicate refusal"
+        )
         print("OK default interactive TUI grid and transport remain compatible")
         print("OK functional grid: all five RPC roles plus monitor are healthy")
+        print(
+            "OK durable RPC registry, lifecycle events, cursors, and idempotent retry"
+        )
         print("OK RPC steer/follow-up mailbox delivery and abort are acknowledged")
-        print("OK exact targeting preserves a prefix session after the target disappears")
+        print(
+            "OK exact targeting preserves a prefix session after the target disappears"
+        )
         print("OK private manifest, session options, and read-only specialist tools")
         print(
             "OK relay consumed all handoff, specialist, probe, review, and "

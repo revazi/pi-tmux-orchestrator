@@ -6,7 +6,38 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const pythonFiles = [
+  "__init__.py",
+  "__main__.py",
+  "cli.py",
+  "commands.py",
+  "constants.py",
+  "controller.py",
+  "models.py",
+  "output.py",
+  "prompts.py",
+  "relay.py",
+  "rpc.py",
+  "rpc_protocol.py",
+  "rpc_store.py",
+  "rpc_supervisor.py",
+  "runtime.py",
+  "storage.py",
+  "tmux.py",
+].map((name) => `pi_tmux_orchestrator/${name}`);
 const expectedFiles = [
+  "CHANGELOG.md",
+  "LICENSE.md",
+  "README.md",
+  "SECURITY.md",
+  "SKILL.md",
+  "VERSION",
+  "bin/pi-tmux-agents",
+  "extensions/tmux-orchestrator.js",
+  "references/usage.md",
+  ...pythonFiles,
+];
+const declaredFiles = [
   "CHANGELOG.md",
   "LICENSE.md",
   "README.md",
@@ -15,7 +46,8 @@ const expectedFiles = [
   "VERSION",
   "extensions/tmux-orchestrator.js",
   "references/usage.md",
-  "scripts/pi-tmux-agents.py",
+  "bin/pi-tmux-agents",
+  "pi_tmux_orchestrator/*.py",
 ];
 const expectedManifest = {
   name: "@revazi/pi-tmux-orchestrator",
@@ -46,8 +78,8 @@ const expectedManifest = {
   type: "module",
   engines: { node: ">=22.19" },
   os: ["darwin", "linux"],
-  bin: { "pi-tmux-agents": "scripts/pi-tmux-agents.py" },
-  files: expectedFiles,
+  bin: { "pi-tmux-agents": "bin/pi-tmux-agents" },
+  files: declaredFiles,
   pi: {
     extensions: ["./extensions/tmux-orchestrator.js"],
     skills: ["./SKILL.md"],
@@ -116,7 +148,7 @@ if (license !== expectedLicense) {
 }
 
 const version = (await readFile(resolve(root, "VERSION"), "utf8")).trim();
-const python = await readFile(resolve(root, "scripts/pi-tmux-agents.py"), "utf8");
+const python = await readFile(resolve(root, "pi_tmux_orchestrator/constants.py"), "utf8");
 const pythonVersion = python.match(/^VERSION = "([^"]+)"$/m)?.[1];
 if (version !== expectedManifest.version || pythonVersion !== expectedManifest.version) {
   throw new Error("VERSION and Python CLI must match the exact package version");
