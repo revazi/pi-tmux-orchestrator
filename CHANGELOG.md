@@ -6,6 +6,16 @@ All notable changes to this project are documented here.
 
 _No changes yet._
 
+## 0.4.2 - 2026-08-09
+
+Package-identity migration; orchestration behavior and the 29-file artifact surface are unchanged.
+
+### Changed
+
+- Renamed the canonical npm package from `@revazi/pi-tmux-orchestrator` to the consistent unscoped name `pi-tmux-orchestrator`
+- Updated npm badges, Pi installation and migration commands, deterministic package verification, and installed-artifact acceptance for the new package identity
+- Retained the 0.4.0 and 0.4.1 Git tags and GitHub Releases as source history while retiring the obsolete scoped npm publication
+
 ## 0.4.1 - 2026-08-09
 
 Documentation-only patch release; orchestration runtime, package name, license, and author metadata are unchanged.

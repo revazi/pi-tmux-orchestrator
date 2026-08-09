@@ -1,7 +1,7 @@
 # Pi Tmux Orchestrator
 
-[![npm version](https://img.shields.io/npm/v/@revazi/pi-tmux-orchestrator.svg)](https://www.npmjs.com/package/@revazi/pi-tmux-orchestrator)
-[![npm downloads](https://img.shields.io/npm/dm/@revazi/pi-tmux-orchestrator.svg)](https://www.npmjs.com/package/@revazi/pi-tmux-orchestrator)
+[![npm version](https://img.shields.io/npm/v/pi-tmux-orchestrator.svg)](https://www.npmjs.com/package/pi-tmux-orchestrator)
+[![npm downloads](https://img.shields.io/npm/dm/pi-tmux-orchestrator.svg)](https://www.npmjs.com/package/pi-tmux-orchestrator)
 [![CI](https://github.com/revazi/pi-tmux-orchestrator/actions/workflows/ci.yml/badge.svg)](https://github.com/revazi/pi-tmux-orchestrator/actions/workflows/ci.yml)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.md)
 
@@ -72,13 +72,13 @@ set -g extended-keys-format csi-u
 Install from npm:
 
 ```bash
-pi install npm:@revazi/pi-tmux-orchestrator
+pi install npm:pi-tmux-orchestrator
 ```
 
 Try it for one Pi run without installing:
 
 ```bash
-pi -e npm:@revazi/pi-tmux-orchestrator
+pi -e npm:pi-tmux-orchestrator
 ```
 
 Install a reviewed Git commit or local checkout:
@@ -89,6 +89,13 @@ pi install /absolute/path/to/pi-tmux-orchestrator
 ```
 
 Pi packages execute with the current user's permissions, so inspect the source before installation. The package imports no Pi core module, declares no dependencies or peers, and is distributed under the [MIT License](LICENSE.md).
+
+Versions 0.4.0 and 0.4.1 briefly used the scoped npm name `@revazi/pi-tmux-orchestrator`. Replace that package source with the canonical unscoped name:
+
+```bash
+pi remove npm:@revazi/pi-tmux-orchestrator
+pi install npm:pi-tmux-orchestrator
+```
 
 The legacy `install.sh` remains available as a standalone CLI/root-skill fallback. It does not install the extension or migrate an existing installation.
 

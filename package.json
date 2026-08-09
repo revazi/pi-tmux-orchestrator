@@ -1,6 +1,6 @@
 {
-  "name": "@revazi/pi-tmux-orchestrator",
-  "version": "0.4.1",
+  "name": "pi-tmux-orchestrator",
+  "version": "0.4.2",
   "description": "Pi extension, skill, and dependency-free Python CLI for coordinating coding agents in tmux",
   "license": "MIT",
   "author": {
