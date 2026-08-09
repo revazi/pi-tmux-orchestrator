@@ -19,12 +19,12 @@ This checklist prepares a human-controlled release. It does not authorize public
   test -z "$(git status --porcelain)"
   ```
 
-- [ ] Confirm `package.json`, `VERSION`, `scripts/pi-tmux-agents.py`, tests, documentation, and the intended `v0.4.0` tag all use `0.4.0`.
+- [ ] Confirm `package.json`, `VERSION`, `pi_tmux_orchestrator/constants.py`, tests, documentation, and the intended `v0.4.0` tag all use `0.4.0`.
 - [ ] Confirm no unexpected prerelease strings remain: `git grep '0\.4\.0-dev'` should return no matches.
 
 ## 3. Full verification and artifact inspection
 
-- [ ] Run `scripts/test.sh` on supported Node/Python versions and require CI success.
+- [ ] Run `scripts/test.sh` with Ruff 0.11.11 on supported Node/Python versions and require CI success.
 - [ ] Run `node scripts/verify-package.mjs` and `scripts/package-smoke.sh`.
 - [ ] Retain and manually inspect a fresh tarball:
 
@@ -34,7 +34,7 @@ This checklist prepares a human-controlled release. It does not authorize public
   tar -tzf "$ARTIFACT_DIR"/*.tgz
   ```
 
-- [ ] Confirm it contains exactly 10 files: the manifest, `LICENSE.md`, runtime resources, and operator documentation; no tests, CI, state, sessions, credentials, caches, generated sessions, private task content, or unrelated development files. Remove the disposable artifact directory after review.
+- [ ] Confirm it contains exactly 27 files: the manifest, `LICENSE.md`, modular Python runtime, launcher, extension/skill resources, and operator documentation; no tests, CI, state, sessions, credentials, caches, generated sessions, private task content, or unrelated development files. Remove the disposable artifact directory after review.
 - [ ] Confirm the packed/installed manifest reports the exact MIT/author metadata, the installed CLI reports `pi-tmux-agents 0.4.0`, and the owned npm dependency tree is empty.
 - [ ] Confirm package acceptance uses isolated `pi install <local-package-root>` on the npm-installed tarball root, launches RPC without `--extension`, and discovers exactly nine extension commands plus `skill:tmux-agent-orchestrator` with package provenance.
 - [ ] Confirm the slash surface omits attach/restart, aliases share start/list handlers, start/stop confirmations remain mandatory, and interactive send never exposes message text outside its unique private file.

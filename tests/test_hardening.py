@@ -2,13 +2,11 @@ from __future__ import annotations
 
 import argparse
 import copy
-import importlib.util
 import io
 import json
 import os
 import queue
 import subprocess
-import sys
 import tempfile
 import threading
 import time
@@ -17,13 +15,9 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
+from tests.support import ORCHESTRATOR
+
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "scripts" / "pi-tmux-agents.py"
-sys.dont_write_bytecode = True
-SPEC = importlib.util.spec_from_file_location("pi_tmux_orchestrator_hardening", SCRIPT)
-assert SPEC and SPEC.loader
-ORCHESTRATOR = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(ORCHESTRATOR)
 
 
 class PrivateStateFixture(unittest.TestCase):
@@ -35,7 +29,9 @@ class PrivateStateFixture(unittest.TestCase):
         ORCHESTRATOR.STATE_ROOT = Path(self.temporary.name) / "state"
         self.root = ORCHESTRATOR.canonical_state_root(create=True)
         self.session = "pi-fixture-agents"
-        self.session_root = ORCHESTRATOR.ensure_private_directory(self.root / self.session)
+        self.session_root = ORCHESTRATOR.ensure_private_directory(
+            self.root / self.session
+        )
         self.coord = ORCHESTRATOR.ensure_private_directory(self.session_root / "run-1")
         self.project = Path(self.temporary.name).resolve() / "project"
         self.project.mkdir()
@@ -43,7 +39,9 @@ class PrivateStateFixture(unittest.TestCase):
     def restore_state_root(self) -> None:
         ORCHESTRATOR.STATE_ROOT = self.original_state_root
 
-    def manifest(self, roles: tuple[str, ...] = ("implementer", "reviewer")) -> dict[str, object]:
+    def manifest(
+        self, roles: tuple[str, ...] = ("implementer", "reviewer")
+    ) -> dict[str, object]:
         role_values: dict[str, object] = {}
         for index, role in enumerate(roles, start=1):
             prompt = self.coord / f"{role}.prompt.md"
@@ -53,7 +51,9 @@ class PrivateStateFixture(unittest.TestCase):
                 "provider": defaults["provider"],
                 "model": defaults["model"],
                 "thinking": defaults["thinking"],
-                "tools": None if role == "implementer" else ORCHESTRATOR.READ_ONLY_TOOLS,
+                "tools": None
+                if role == "implementer"
+                else ORCHESTRATOR.READ_ONLY_TOOLS,
                 "pane_id": f"%{index}",
                 "prompt_path": str(prompt),
                 "session_dir": str(self.coord / "sessions" / role),
@@ -135,11 +135,15 @@ class PrivateStateSafetyTests(PrivateStateFixture):
         with self.assertRaises(ORCHESTRATOR.OrchestrationError):
             ORCHESTRATOR.validate_coordination_directory(outside)
 
-    def test_manifest_write_is_atomic_and_cleans_unique_temporary_on_failure(self) -> None:
+    def test_manifest_write_is_atomic_and_cleans_unique_temporary_on_failure(
+        self,
+    ) -> None:
         manifest = self.manifest()
         ORCHESTRATOR.save_manifest(self.coord, manifest)
         original = (self.coord / "manifest.json").read_bytes()
-        with mock.patch.object(ORCHESTRATOR.os, "replace", side_effect=OSError("synthetic")):
+        with mock.patch.object(
+            ORCHESTRATOR.os, "replace", side_effect=OSError("synthetic")
+        ):
             with self.assertRaises(OSError):
                 ORCHESTRATOR.save_manifest(self.coord, manifest)
         self.assertEqual((self.coord / "manifest.json").read_bytes(), original)
@@ -188,7 +192,9 @@ class ManifestValidationTests(PrivateStateFixture):
         cases.append(("prompt tampering", wrong_prompt))
 
         wrong_session_dir = copy.deepcopy(base)
-        wrong_session_dir["roles"]["reviewer"]["session_dir"] = str(self.root / "elsewhere")
+        wrong_session_dir["roles"]["reviewer"]["session_dir"] = str(
+            self.root / "elsewhere"
+        )
         cases.append(("session path tampering", wrong_session_dir))
 
         unknown_role = copy.deepcopy(base)
@@ -201,7 +207,9 @@ class ManifestValidationTests(PrivateStateFixture):
             with self.subTest(label=label):
                 self.write_raw_manifest(manifest)
                 with self.assertRaises(ORCHESTRATOR.OrchestrationError):
-                    ORCHESTRATOR.load_manifest(self.coord, expected_session=self.session)
+                    ORCHESTRATOR.load_manifest(
+                        self.coord, expected_session=self.session
+                    )
 
     def test_symlinked_or_non_regular_manifest_and_prompt_are_rejected(self) -> None:
         manifest = self.manifest()
@@ -275,7 +283,9 @@ class RpcTransportHardeningTests(PrivateStateFixture):
         with self.assertRaises(ORCHESTRATOR.OrchestrationError):
             ORCHESTRATOR.load_rpc_state(self.coord, "implementer")
 
-    def test_rpc_mailbox_acknowledges_without_leaving_private_payload_files(self) -> None:
+    def test_rpc_mailbox_acknowledges_without_leaving_private_payload_files(
+        self,
+    ) -> None:
         manifest = self.rpc_manifest()
         paths = ORCHESTRATOR.rpc_role_paths(self.coord, "implementer", create=True)
         canary = "PRIVATE_RPC_MESSAGE_CANARY_f81c"
@@ -320,6 +330,149 @@ class RpcTransportHardeningTests(PrivateStateFixture):
         self.assertEqual(list(paths["inbox"].iterdir()), [])
         self.assertEqual(list(paths["acks"].iterdir()), [])
 
+    def test_durable_rpc_registry_and_event_journal_are_metadata_only(self) -> None:
+        paths = ORCHESTRATOR.rpc_role_paths(self.coord, "implementer", create=True)
+        registry = ORCHESTRATOR.initialize_rpc_registry(
+            self.coord,
+            paths,
+            "implementer",
+            123,
+        )
+        worker_id = registry["worker_id"]
+        command_id = "a" * 32
+        canary = "PRIVATE_EVENT_PAYLOAD_CANARY_7b2e"
+        ORCHESTRATOR.record_rpc_event(
+            paths,
+            registry,
+            "implementer",
+            "command_received",
+            command_id=command_id,
+            command="prompt",
+            delivery="follow-up",
+        )
+        for status in ("accepted", "started", "completed"):
+            ORCHESTRATOR.transition_rpc_command(
+                paths,
+                registry,
+                "implementer",
+                command_id,
+                status,
+            )
+        ORCHESTRATOR.record_rpc_event(
+            paths,
+            registry,
+            "implementer",
+            "agent_completed",
+        )
+
+        loaded = ORCHESTRATOR.load_rpc_registry(self.coord, "implementer")
+        self.assertEqual(loaded["worker_id"], worker_id)
+        self.assertEqual(loaded["commands"][0]["status"], "completed")
+        self.assertEqual(loaded["active_command_ids"], [])
+        public = ORCHESTRATOR.public_rpc_registry(loaded)
+        self.assertEqual(public["command_status_counts"]["completed"], 1)
+        events = ORCHESTRATOR.load_rpc_events(self.coord, "implementer")
+        self.assertEqual([event["sequence"] for event in events], list(range(1, 7)))
+        self.assertNotIn(canary, json.dumps(events))
+        for path in (paths["registry"], paths["events"], paths["event_lock"]):
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
+    def test_rpc_supervisor_recovery_marks_inflight_command_uncertain(self) -> None:
+        paths = ORCHESTRATOR.rpc_role_paths(self.coord, "reviewer", create=True)
+        registry = ORCHESTRATOR.initialize_rpc_registry(
+            self.coord,
+            paths,
+            "reviewer",
+            111,
+        )
+        worker_id = registry["worker_id"]
+        command_id = "b" * 32
+        ORCHESTRATOR.record_rpc_event(
+            paths,
+            registry,
+            "reviewer",
+            "command_received",
+            command_id=command_id,
+            command="prompt",
+            delivery="steer",
+        )
+        ORCHESTRATOR.transition_rpc_command(
+            paths,
+            registry,
+            "reviewer",
+            command_id,
+            "accepted",
+        )
+
+        recovered = ORCHESTRATOR.initialize_rpc_registry(
+            self.coord,
+            paths,
+            "reviewer",
+            222,
+        )
+        self.assertEqual(recovered["worker_id"], worker_id)
+        self.assertEqual(recovered["generation"], 2)
+        self.assertEqual(recovered["pid"], 222)
+        self.assertEqual(recovered["commands"][0]["status"], "uncertain")
+        self.assertEqual(recovered["active_command_ids"], [])
+        self.assertEqual(
+            ORCHESTRATOR.load_rpc_events(self.coord, "reviewer")[-1]["event"],
+            "command_uncertain",
+        )
+
+    def test_rpc_event_journal_rotates_with_a_contiguous_retained_window(self) -> None:
+        paths = ORCHESTRATOR.rpc_role_paths(self.coord, "django", create=True)
+        with mock.patch.object(ORCHESTRATOR, "MAX_RPC_EVENT_SEGMENT_BYTES", 700):
+            registry = ORCHESTRATOR.initialize_rpc_registry(
+                self.coord,
+                paths,
+                "django",
+                654,
+            )
+            for index in range(6):
+                command_id = f"{index:032x}"
+                ORCHESTRATOR.record_rpc_event(
+                    paths,
+                    registry,
+                    "django",
+                    "command_received",
+                    command_id=command_id,
+                    command="prompt",
+                    delivery="steer",
+                )
+                ORCHESTRATOR.transition_rpc_command(
+                    paths,
+                    registry,
+                    "django",
+                    command_id,
+                    "rejected",
+                )
+            events = ORCHESTRATOR.load_rpc_events(self.coord, "django")
+        sequences = [event["sequence"] for event in events]
+        self.assertTrue(paths["events_archive"].is_file())
+        self.assertGreater(sequences[0], 1)
+        self.assertEqual(
+            sequences,
+            list(range(sequences[0], registry["last_event_sequence"] + 1)),
+        )
+
+    def test_rpc_event_journal_rejects_payload_fields_and_sequence_tampering(
+        self,
+    ) -> None:
+        paths = ORCHESTRATOR.rpc_role_paths(self.coord, "probe", create=True)
+        registry = ORCHESTRATOR.initialize_rpc_registry(
+            self.coord,
+            paths,
+            "probe",
+            321,
+        )
+        event = ORCHESTRATOR.load_rpc_events(self.coord, "probe")[0]
+        event["private_payload"] = "must not be accepted"
+        ORCHESTRATOR.secure_write(paths["events"], json.dumps(event) + "\n")
+        with self.assertRaises(ORCHESTRATOR.OrchestrationError):
+            ORCHESTRATOR.load_rpc_events(self.coord, "probe")
+        self.assertEqual(registry["last_event_sequence"], 1)
+
     def test_rpc_reader_uses_lf_only_and_preserves_unicode_separators(self) -> None:
         read_fd, write_fd = os.pipe()
         records: queue.Queue[tuple[str, object]] = queue.Queue()
@@ -339,6 +492,47 @@ class RpcTransportHardeningTests(PrivateStateFixture):
         channel, payload = records.get_nowait()
         self.assertEqual(channel, "stdout")
         self.assertIn("left\u2028right".encode("utf-8"), payload)
+
+    def test_rpc_uncertain_acknowledgement_fails_closed_with_stable_command_id(
+        self,
+    ) -> None:
+        manifest = self.rpc_manifest()
+        paths = ORCHESTRATOR.rpc_role_paths(self.coord, "reviewer", create=True)
+        command_id = "d" * 32
+
+        def acknowledge_uncertain() -> None:
+            deadline = time.time() + 2
+            request_path = paths["inbox"] / f"{command_id}.json"
+            while time.time() < deadline and not request_path.exists():
+                time.sleep(0.01)
+            ORCHESTRATOR.unlink_private_regular(request_path, "RPC request")
+            ORCHESTRATOR.rpc_acknowledge(
+                paths["acks"] / f"{command_id}.json",
+                command_id,
+                "prompt",
+                False,
+                status="uncertain",
+                duplicate=True,
+                event_sequence=9,
+            )
+
+        worker = threading.Thread(target=acknowledge_uncertain)
+        worker.start()
+        with self.assertRaises(ORCHESTRATOR.OrchestrationError) as raised:
+            ORCHESTRATOR.rpc_control_request(
+                self.coord,
+                manifest,
+                "reviewer",
+                "prompt",
+                message="Synthetic uncertain delivery",
+                command_id=command_id,
+                timeout=2,
+            )
+        worker.join(timeout=2)
+        self.assertEqual(raised.exception.code, "rpc_uncertain")
+        self.assertIn(command_id, str(raised.exception))
+        self.assertEqual(list(paths["inbox"].iterdir()), [])
+        self.assertEqual(list(paths["acks"].iterdir()), [])
 
     def test_rpc_timeout_removes_undelivered_message_file(self) -> None:
         manifest = self.rpc_manifest()
@@ -372,7 +566,10 @@ class RelayHardeningTests(PrivateStateFixture):
         pairs = {
             "probe.ready": ("probe.md", "Synthetic probe complete.\n"),
             "handoff-1.ready": ("handoff-1.md", "Synthetic handoff.\n"),
-            "playwright-1.ready": ("playwright-1.md", "PASS\nSynthetic browser report.\n"),
+            "playwright-1.ready": (
+                "playwright-1.md",
+                "PASS\nSynthetic browser report.\n",
+            ),
             "django-review-1.ready": (
                 "django-review-1.md",
                 "ADVISORY_APPROVED\nSynthetic Django report.\n",
@@ -386,7 +583,9 @@ class RelayHardeningTests(PrivateStateFixture):
             encoding="utf-8",
         )
 
-        with mock.patch.object(ORCHESTRATOR, "relay_send", return_value=True) as relay_send:
+        with mock.patch.object(
+            ORCHESTRATOR, "relay_send", return_value=True
+        ) as relay_send:
             ORCHESTRATOR.relay_once(self.coord, self.relay_manifest, self.seen)
 
         destinations = [call.args[1] for call in relay_send.call_args_list]
@@ -403,7 +602,9 @@ class RelayHardeningTests(PrivateStateFixture):
     def test_report_before_marker_race_stays_pending_until_report_exists(self) -> None:
         marker = self.coord / "handoff-2.ready"
         marker.touch()
-        with mock.patch.object(ORCHESTRATOR, "relay_send", return_value=True) as relay_send:
+        with mock.patch.object(
+            ORCHESTRATOR, "relay_send", return_value=True
+        ) as relay_send:
             ORCHESTRATOR.relay_once(self.coord, self.relay_manifest, self.seen)
             relay_send.assert_not_called()
             self.assertFalse((self.seen / marker.name).exists())
@@ -422,7 +623,9 @@ class RelayHardeningTests(PrivateStateFixture):
             self.write_report_and_marker(report, content, marker)
         (self.coord / "handoff-3.md").touch()
         (self.coord / "handoff-3.ready").touch()
-        with mock.patch.object(ORCHESTRATOR, "relay_send", return_value=True) as relay_send:
+        with mock.patch.object(
+            ORCHESTRATOR, "relay_send", return_value=True
+        ) as relay_send:
             ORCHESTRATOR.relay_once(self.coord, self.relay_manifest, self.seen)
         relay_send.assert_not_called()
         for _, _, marker in invalid_reports:
@@ -453,9 +656,13 @@ class RelayHardeningTests(PrivateStateFixture):
         self.assertTrue((self.seen / "playwright-4.ready--implementer").exists())
         self.assertFalse((self.seen / "playwright-4.ready").exists())
 
-        with mock.patch.object(ORCHESTRATOR, "relay_send", return_value=True) as relay_send:
+        with mock.patch.object(
+            ORCHESTRATOR, "relay_send", return_value=True
+        ) as relay_send:
             ORCHESTRATOR.relay_once(self.coord, manifest, self.seen)
-        self.assertEqual([call.args[1] for call in relay_send.call_args_list], ["reviewer"])
+        self.assertEqual(
+            [call.args[1] for call in relay_send.call_args_list], ["reviewer"]
+        )
         self.assertTrue((self.seen / "playwright-4.ready").exists())
 
 
@@ -551,12 +758,16 @@ class StartupRecoveryTests(PrivateStateFixture):
             **values,
         )
         with (
-            mock.patch.object(ORCHESTRATOR, "command_path", return_value="/usr/bin/true"),
+            mock.patch.object(
+                ORCHESTRATOR, "command_path", return_value="/usr/bin/true"
+            ),
             mock.patch.object(ORCHESTRATOR, "session_exists", return_value=False),
             mock.patch.object(
                 ORCHESTRATOR,
                 "create_tmux_grid",
-                side_effect=ORCHESTRATOR.OrchestrationError("synthetic startup failure"),
+                side_effect=ORCHESTRATOR.OrchestrationError(
+                    "synthetic startup failure"
+                ),
             ),
             mock.patch.object(ORCHESTRATOR, "tmux") as tmux,
         ):
@@ -569,7 +780,9 @@ class StartupRecoveryTests(PrivateStateFixture):
         )
         runs = list((self.root / session).iterdir())
         self.assertEqual(len(runs), 1)
-        self.assertEqual((runs[0] / "startup-state").read_text(encoding="utf-8"), "FAILED\n")
+        self.assertEqual(
+            (runs[0] / "startup-state").read_text(encoding="utf-8"), "FAILED\n"
+        )
 
 
 if __name__ == "__main__":

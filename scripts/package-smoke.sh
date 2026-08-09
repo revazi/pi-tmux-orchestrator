@@ -16,10 +16,27 @@ EXPECTED_FILES=(
   SECURITY.md
   SKILL.md
   VERSION
+  bin/pi-tmux-agents
   extensions/tmux-orchestrator.js
   package.json
+  pi_tmux_orchestrator/__init__.py
+  pi_tmux_orchestrator/__main__.py
+  pi_tmux_orchestrator/cli.py
+  pi_tmux_orchestrator/commands.py
+  pi_tmux_orchestrator/constants.py
+  pi_tmux_orchestrator/controller.py
+  pi_tmux_orchestrator/models.py
+  pi_tmux_orchestrator/output.py
+  pi_tmux_orchestrator/prompts.py
+  pi_tmux_orchestrator/relay.py
+  pi_tmux_orchestrator/rpc.py
+  pi_tmux_orchestrator/rpc_protocol.py
+  pi_tmux_orchestrator/rpc_store.py
+  pi_tmux_orchestrator/rpc_supervisor.py
+  pi_tmux_orchestrator/runtime.py
+  pi_tmux_orchestrator/storage.py
+  pi_tmux_orchestrator/tmux.py
   references/usage.md
-  scripts/pi-tmux-agents.py
 )
 
 mkdir -p "$TEMP/npm-home" "$TEMP/npm-cache" "$TEMP/npm-tmp"
@@ -146,4 +163,4 @@ if actual != sorted(expected):
     raise SystemExit("publication dry-run file allowlist mismatch")
 PY
 
-printf '%s\n' 'Actual 10-file tarball with MIT/author metadata, npm install, isolated Pi local-package install/RPC discovery, and offline npm publication dry-run passed (no owned dependency tree, real Pi/npm home, auth, or provider request).'
+printf '%s\n' 'Actual 27-file modular tarball with MIT/author metadata, npm install, isolated Pi local-package install/RPC discovery, and offline npm publication dry-run passed (no owned dependency tree, real Pi/npm home, auth, or provider request).'

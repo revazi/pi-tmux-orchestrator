@@ -1,26 +1,42 @@
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
 import os
 import subprocess
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
+from tests.support import ORCHESTRATOR
+
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "scripts" / "pi-tmux-agents.py"
-sys.dont_write_bytecode = True
-SPEC = importlib.util.spec_from_file_location("pi_tmux_orchestrator", SCRIPT)
-assert SPEC and SPEC.loader
-ORCHESTRATOR = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(ORCHESTRATOR)
 
 
 class SkillMetadataTests(unittest.TestCase):
+    def test_python_cli_is_a_modular_package_with_a_thin_launcher(self) -> None:
+        launcher = ROOT / "bin" / "pi-tmux-agents"
+        package = ROOT / "pi_tmux_orchestrator"
+        expected_modules = {
+            "cli.py",
+            "commands.py",
+            "controller.py",
+            "prompts.py",
+            "relay.py",
+            "rpc_protocol.py",
+            "rpc_store.py",
+            "rpc_supervisor.py",
+            "storage.py",
+            "tmux.py",
+        }
+        self.assertTrue(launcher.is_file())
+        self.assertLessEqual(len(launcher.read_text(encoding="utf-8").splitlines()), 20)
+        self.assertTrue(
+            expected_modules.issubset({path.name for path in package.glob("*.py")})
+        )
+        self.assertFalse((ROOT / "scripts" / "pi-tmux-agents.py").exists())
+
     def test_skill_frontmatter_is_valid(self) -> None:
         content = (ROOT / "SKILL.md").read_text(encoding="utf-8")
         self.assertTrue(content.startswith("---\n"))
@@ -165,9 +181,7 @@ class UtilityTests(unittest.TestCase):
             mock.patch.object(ORCHESTRATOR, "tmux") as tmux,
         ):
             ORCHESTRATOR.attach_session("pi-project-agents")
-        tmux.assert_called_once_with(
-            ["switch-client", "-t", "=pi-project-agents"]
-        )
+        tmux.assert_called_once_with(["switch-client", "-t", "=pi-project-agents"])
 
         with (
             mock.patch.object(
@@ -181,14 +195,14 @@ class UtilityTests(unittest.TestCase):
             ORCHESTRATOR.stop_command(
                 argparse.Namespace(session="pi-project-agents", yes=True)
             )
-        tmux.assert_called_once_with(
-            ["kill-session", "-t", "=pi-project-agents"]
-        )
+        tmux.assert_called_once_with(["kill-session", "-t", "=pi-project-agents"])
 
     def test_external_attach_exec_uses_exact_session_target(self) -> None:
         with (
             mock.patch.dict(os.environ, {}, clear=True),
-            mock.patch.object(ORCHESTRATOR, "command_path", return_value="/usr/bin/tmux"),
+            mock.patch.object(
+                ORCHESTRATOR, "command_path", return_value="/usr/bin/tmux"
+            ),
             mock.patch.object(ORCHESTRATOR.os, "execvp") as execvp,
         ):
             ORCHESTRATOR.attach_session("pi-project-agents")
@@ -327,7 +341,9 @@ class UtilityTests(unittest.TestCase):
                 {key: config[key] for key in ("provider", "model", "thinking")},
                 defaults,
             )
-            expected_tools = None if role == "implementer" else ORCHESTRATOR.READ_ONLY_TOOLS
+            expected_tools = (
+                None if role == "implementer" else ORCHESTRATOR.READ_ONLY_TOOLS
+            )
             self.assertEqual(config["tools"], expected_tools)
 
     def test_relay_send_reports_transport_result(self) -> None:
@@ -355,9 +371,10 @@ class UtilityTests(unittest.TestCase):
             return_value={"success": True},
         ) as rpc_request:
             self.assertTrue(ORCHESTRATOR.relay_send(rpc_manifest, "reviewer", "notice"))
-        self.assertEqual(rpc_request.call_args.args[:4], (
-            Path("/private/run"), rpc_manifest, "reviewer", "prompt"
-        ))
+        self.assertEqual(
+            rpc_request.call_args.args[:4],
+            (Path("/private/run"), rpc_manifest, "reviewer", "prompt"),
+        )
         self.assertEqual(rpc_request.call_args.kwargs["delivery"], "steer")
 
 
@@ -371,7 +388,9 @@ class ControllerTests(unittest.TestCase):
         self.environment = mock.patch.dict(
             os.environ,
             {
-                "PI_TMUX_CONTROLLER_HOME": str(Path(self.temporary.name) / "controller"),
+                "PI_TMUX_CONTROLLER_HOME": str(
+                    Path(self.temporary.name) / "controller"
+                ),
             },
         )
         self.environment.start()
@@ -418,12 +437,16 @@ class ControllerTests(unittest.TestCase):
         with self.assertRaises(ORCHESTRATOR.OrchestrationError):
             ORCHESTRATOR.load_controller_state(root)
 
-    def test_controller_start_launches_one_persistent_project_neutral_pi_session(self) -> None:
+    def test_controller_start_launches_one_persistent_project_neutral_pi_session(
+        self,
+    ) -> None:
         root_path = Path(self.temporary.name).resolve() / "controller"
         orchestration_root = Path(self.temporary.name).resolve() / "orchestrations"
         session_checks = iter((False, True))
 
-        def fake_tmux(arguments: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        def fake_tmux(
+            arguments: list[str], **_: object
+        ) -> subprocess.CompletedProcess[str]:
             stdout = ""
             if arguments[0] == "list-panes" and arguments[-1] == "#{pane_id}":
                 stdout = "%71\n"
@@ -467,24 +490,33 @@ class ControllerTests(unittest.TestCase):
         self.assertIn(str(orchestration_root), prompt)
 
         calls = [call.args[0] for call in tmux.call_args_list]
-        new_session = next(arguments for arguments in calls if arguments[0] == "new-session")
-        self.assertEqual(new_session[new_session.index("-c") + 1], str(root_path / "workspace"))
-        respawn = next(arguments for arguments in calls if arguments[0] == "respawn-pane")
+        new_session = next(
+            arguments for arguments in calls if arguments[0] == "new-session"
+        )
+        self.assertEqual(
+            new_session[new_session.index("-c") + 1], str(root_path / "workspace")
+        )
+        respawn = next(
+            arguments for arguments in calls if arguments[0] == "respawn-pane"
+        )
         shell_command = respawn[-1]
         self.assertIn("umask 077; exec /usr/bin/pi", shell_command)
-        self.assertIn(f"--session-id {ORCHESTRATOR.CONTROLLER_PI_SESSION_ID}", shell_command)
+        self.assertIn(
+            f"--session-id {ORCHESTRATOR.CONTROLLER_PI_SESSION_ID}", shell_command
+        )
         self.assertIn(f"--session-dir {root_path / 'sessions'}", shell_command)
         self.assertIn("--no-context-files", shell_command)
         self.assertIn("--no-approve", shell_command)
         self.assertNotIn(" --approve ", shell_command)
         environment_names = {
-            arguments[-2]
-            for arguments in calls
-            if arguments[0] == "set-environment"
+            arguments[-2] for arguments in calls if arguments[0] == "set-environment"
         }
         self.assertTrue(
-            {"PI_TMUX_CONTROLLER", "PI_TMUX_CONTROLLER_HOME", "PI_TMUX_AGENTS_HOME"}
-            .issubset(environment_names)
+            {
+                "PI_TMUX_CONTROLLER",
+                "PI_TMUX_CONTROLLER_HOME",
+                "PI_TMUX_AGENTS_HOME",
+            }.issubset(environment_names)
         )
 
     def test_controller_identity_is_not_inherited_by_worker_pi_processes(self) -> None:
@@ -527,14 +559,18 @@ class ControllerTests(unittest.TestCase):
         self.assertNotIn("PI_TMUX_CONTROLLER_HOME", environment)
         self.assertEqual(environment["PI_TELEMETRY"], "0")
 
-    def test_controller_launch_failure_kills_only_its_exact_partial_session(self) -> None:
+    def test_controller_launch_failure_kills_only_its_exact_partial_session(
+        self,
+    ) -> None:
         root, _ = self.valid_state()
         orchestration_root = ORCHESTRATOR.canonical_state_root(create=True)
         prompt = root / "controller.prompt.md"
         ORCHESTRATOR.secure_write(prompt, "Synthetic controller prompt.\n")
         calls: list[list[str]] = []
 
-        def fake_tmux(arguments: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        def fake_tmux(
+            arguments: list[str], **_: object
+        ) -> subprocess.CompletedProcess[str]:
             calls.append(arguments)
             if arguments[0] == "list-panes":
                 return subprocess.CompletedProcess(arguments, 0, "%9\n", "")
@@ -559,7 +595,9 @@ class ControllerTests(unittest.TestCase):
 
     def test_controller_refuses_duplicates_and_unmanaged_name_collisions(self) -> None:
         with (
-            mock.patch.object(ORCHESTRATOR, "command_path", return_value="/usr/bin/true"),
+            mock.patch.object(
+                ORCHESTRATOR, "command_path", return_value="/usr/bin/true"
+            ),
             mock.patch.object(ORCHESTRATOR, "session_exists", return_value=True),
             mock.patch.object(ORCHESTRATOR, "controller_is_marked", return_value=True),
         ):
@@ -568,7 +606,9 @@ class ControllerTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, "already_running")
 
         with (
-            mock.patch.object(ORCHESTRATOR, "command_path", return_value="/usr/bin/true"),
+            mock.patch.object(
+                ORCHESTRATOR, "command_path", return_value="/usr/bin/true"
+            ),
             mock.patch.object(ORCHESTRATOR, "session_exists", return_value=True),
             mock.patch.object(ORCHESTRATOR, "controller_is_marked", return_value=False),
         ):
@@ -576,7 +616,9 @@ class ControllerTests(unittest.TestCase):
                 ORCHESTRATOR.controller_start_command(argparse.Namespace())
         self.assertEqual(raised.exception.code, "session_collision")
 
-    def test_controller_status_is_noncreating_and_stop_is_exact_and_confirmed(self) -> None:
+    def test_controller_status_is_noncreating_and_stop_is_exact_and_confirmed(
+        self,
+    ) -> None:
         with mock.patch.object(ORCHESTRATOR, "session_exists", return_value=False):
             result = ORCHESTRATOR.controller_status_command(argparse.Namespace())
         self.assertFalse(result.data["running"])
@@ -609,7 +651,9 @@ class ControllerTests(unittest.TestCase):
             mock.patch.object(ORCHESTRATOR, "controller_details", return_value=details),
             mock.patch.object(ORCHESTRATOR, "tmux") as tmux,
         ):
-            result = ORCHESTRATOR.controller_stop_command(argparse.Namespace(confirm=True))
+            result = ORCHESTRATOR.controller_stop_command(
+                argparse.Namespace(confirm=True)
+            )
         tmux.assert_called_once_with(
             ["kill-session", "-t", f"={ORCHESTRATOR.CONTROLLER_TMUX_SESSION}"]
         )

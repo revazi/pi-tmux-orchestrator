@@ -6,12 +6,13 @@ Pi Tmux Orchestrator
 
 ## Goal
 
-Provide a small, reusable Pi skill and standard-library Python CLI for launching and coordinating coding agents in tmux across unrelated projects.
+Provide a small, reusable Pi skill and modular standard-library Python CLI/control plane for launching and coordinating coding agents in tmux across unrelated projects.
 
 ## Architecture
 
 - `SKILL.md`: Pi Agent Skill entry point
-- `scripts/pi-tmux-agents.py`: authoritative orchestration CLI and relay
+- `pi_tmux_orchestrator/`: authoritative dependency-free Python orchestration package
+- `bin/pi-tmux-agents`: thin executable launcher
 - `references/usage.md`: detailed operator guidance
 - `install.sh`: global Pi skill installation
 - `tests/`: model-free regressions
