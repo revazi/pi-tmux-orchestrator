@@ -61,6 +61,7 @@ class JsonMainTests(unittest.TestCase):
             "start": ["start", "--task", "synthetic"],
             "attach": ["attach"],
             "send": ["send", "session", "--role", "reviewer", "--message", "synthetic"],
+            "abort": ["abort", "session", "--role", "reviewer"],
             "restart": ["restart", "session", "--role", "reviewer", "--yes"],
             "stop": ["stop", "session", "--yes"],
         }
@@ -86,6 +87,7 @@ class JsonMainTests(unittest.TestCase):
                     canary,
                     "--skip-model-check",
                     "--dry-run",
+                    "--rpc-workers",
                     "--with-probe",
                     "--with-playwright",
                     "--with-django-expert",
@@ -97,6 +99,12 @@ class JsonMainTests(unittest.TestCase):
         self.assertNotIn(canary, raw)
         data = envelope["data"]
         self.assertTrue(data["dry_run"])
+        self.assertEqual(data["transport"], "rpc")
+        self.assertEqual(
+            data["trust"]["policy"],
+            "saved-or-global-policy",
+        )
+        self.assertTrue(all(role["transport"] == "rpc" for role in data["roles"]))
         self.assertEqual([role["name"] for role in data["roles"]], [
             "implementer", "reviewer", "probe", "playwright", "django"
         ])
@@ -222,6 +230,51 @@ class JsonMainTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assert_envelope(envelope, "stop", True)
             self.assertTrue(envelope["data"]["state_retained"])
+
+    def test_rpc_send_and_abort_return_acknowledged_metadata(self) -> None:
+        manifest = {
+            "version": 2,
+            "transport": ORCHESTRATOR.RPC_TRANSPORT,
+            "roles": {"implementer": {"pane_id": "%1"}},
+        }
+        coord = ROOT
+        with (
+            mock.patch.object(
+                ORCHESTRATOR,
+                "resolve_session",
+                return_value=("pi-rpc", coord),
+            ),
+            mock.patch.object(ORCHESTRATOR, "load_manifest", return_value=manifest),
+            mock.patch.object(ORCHESTRATOR, "rpc_control_request") as rpc_request,
+        ):
+            code, envelope, raw, stderr = self.run_main(
+                [
+                    "--json",
+                    "send",
+                    "pi-rpc",
+                    "--role",
+                    "implementer",
+                    "--message",
+                    "PRIVATE_RPC_JSON_MESSAGE",
+                    "--delivery",
+                    "follow-up",
+                ]
+            )
+            self.assertEqual(code, 0)
+            self.assertEqual(stderr, "")
+            self.assertNotIn("PRIVATE_RPC_JSON_MESSAGE", raw)
+            self.assert_envelope(envelope, "send", True)
+            self.assertTrue(envelope["data"]["acknowledged"])
+            self.assertEqual(envelope["data"]["delivery"], "follow-up")
+
+            code, envelope, _, stderr = self.run_main(
+                ["--json", "abort", "pi-rpc", "--role", "implementer"]
+            )
+            self.assertEqual(code, 0)
+            self.assertEqual(stderr, "")
+            self.assert_envelope(envelope, "abort", True)
+            self.assertTrue(envelope["data"]["acknowledged"])
+        self.assertEqual(rpc_request.call_count, 2)
 
     def test_controller_status_stop_and_attach_keep_the_json_contract(self) -> None:
         with (

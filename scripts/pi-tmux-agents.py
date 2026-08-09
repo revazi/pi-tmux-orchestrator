@@ -11,6 +11,7 @@ import argparse
 import datetime as dt
 import json
 import os
+import queue
 import re
 import secrets
 import shlex
@@ -19,6 +20,7 @@ import stat
 import subprocess
 import sys
 import textwrap
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -75,8 +77,14 @@ READ_ONLY_TOOLS = "read,bash,grep,find,ls"
 MAX_TASK_BYTES = 64 * 1024
 MAX_MANIFEST_BYTES = 64 * 1024
 MAX_CONTROLLER_STATE_BYTES = 16 * 1024
+MAX_RPC_PROMPT_BYTES = 256 * 1024
+MAX_RPC_RECORD_BYTES = 2 * 1024 * 1024
+MAX_RPC_ACK_BYTES = 4 * 1024
+RPC_ACK_TIMEOUT_SECONDS = 10.0
+RPC_TRANSPORT = "rpc"
+TUI_TRANSPORT = "tui"
 KNOWN_ROLES = frozenset(DEFAULT_MODELS)
-MANIFEST_FIELDS = frozenset(
+MANIFEST_V1_FIELDS = frozenset(
     {
         "version",
         "created_at",
@@ -89,10 +97,26 @@ MANIFEST_FIELDS = frozenset(
         "roles",
     }
 )
+MANIFEST_FIELDS = MANIFEST_V1_FIELDS | {"transport"}
 ROLE_FIELDS = frozenset(
     {"provider", "model", "thinking", "tools", "pane_id", "prompt_path", "session_dir"}
 )
 PANE_ID_PATTERN = re.compile(r"%[0-9]+")
+RPC_STATE_FIELDS = frozenset(
+    {
+        "version",
+        "role",
+        "pid",
+        "status",
+        "is_streaming",
+        "steering_count",
+        "follow_up_count",
+        "session_id",
+        "updated_at",
+    }
+)
+RPC_STATUSES = frozenset({"starting", "idle", "streaming", "settled", "error", "exited"})
+RPC_TOKEN_PATTERN = re.compile(r"[a-f0-9]{32}")
 CONTROLLER_STATE_FIELDS = frozenset(
     {
         "version",
@@ -175,9 +199,14 @@ def emit_json(command: str, result: CommandResult) -> None:
     print(json.dumps(envelope, separators=(",", ":"), sort_keys=True))
 
 
-def public_role(role: str, config: dict[str, Any]) -> dict[str, Any]:
+def public_role(
+    role: str,
+    config: dict[str, Any],
+    transport: str = TUI_TRANSPORT,
+) -> dict[str, Any]:
     value: dict[str, Any] = {
         "name": role,
+        "transport": transport,
         "provider": config["provider"],
         "model": config["model"],
         "thinking": config["thinking"],
@@ -455,10 +484,12 @@ def validate_manifest(
     coord = validate_coordination_directory(coord)
     if not isinstance(value, dict):
         raise OrchestrationError("Orchestration manifest must be a JSON object")
-    if set(value) != MANIFEST_FIELDS:
-        raise OrchestrationError("Orchestration manifest has missing or unknown top-level fields")
-    if type(value["version"]) is not int or value["version"] != 1:
+    version = value.get("version")
+    if type(version) is not int or version not in {1, 2}:
         raise OrchestrationError("Unsupported orchestration manifest version")
+    expected_fields = MANIFEST_V1_FIELDS if version == 1 else MANIFEST_FIELDS
+    if set(value) != expected_fields:
+        raise OrchestrationError("Orchestration manifest has missing or unknown top-level fields")
     if not isinstance(value["created_at"], str):
         raise OrchestrationError("Manifest created_at must be a timestamp string")
     try:
@@ -480,6 +511,8 @@ def validate_manifest(
         raise OrchestrationError("Manifest coordination path is not canonical")
     if type(value["approve_project"]) is not bool:
         raise OrchestrationError("Manifest approve_project must be a boolean")
+    if version == 2 and value["transport"] not in {TUI_TRANSPORT, RPC_TRANSPORT}:
+        raise OrchestrationError("Manifest transport is invalid")
 
     project_value = value["project"]
     if not isinstance(project_value, str):
@@ -606,6 +639,10 @@ def load_manifest(coord: Path, *, expected_session: str | None = None) -> dict[s
     except json.JSONDecodeError as error:
         raise OrchestrationError("Orchestration manifest is not valid JSON") from error
     return validate_manifest(value, coord, expected_session=expected_session)
+
+
+def manifest_transport(manifest: dict[str, Any]) -> str:
+    return manifest.get("transport", TUI_TRANSPORT)
 
 
 def controller_state_root(*, create: bool) -> Path:
@@ -1201,7 +1238,16 @@ def create_tmux_grid(
 
         tmux(["set-option", "-q", "-t", window_target, "@pi_agents_coord", str(coord)])
         tmux(["set-option", "-q", "-t", window_target, "@pi_agents_project", str(project)])
-        tmux(["set-option", "-q", "-t", window_target, "@pi_agents_version", "1"])
+        tmux(
+            [
+                "set-option",
+                "-q",
+                "-t",
+                window_target,
+                "@pi_agents_version",
+                str(manifest["version"]),
+            ]
+        )
         save_manifest(coord, manifest)
 
         for role_name in roles:
@@ -1254,7 +1300,8 @@ def controller_prompt_text(state_root: Path) -> str:
 
         - Always identify an explicit target project before starting an orchestration.
         - Use the bundled orchestrator extension or the authoritative CLI at {SCRIPT_PATH}.
-        - Treat tmux as the current worker view/transport, not as controller identity.
+        - Treat tmux as the current worker view host, not as controller identity; select
+          interactive TUI or acknowledged RPC control per orchestration.
         - Keep task and message bodies out of argv, status, widgets, and notifications.
         - Preserve one writer, independent review, project instructions, trust prompts, and
           explicit stop/restart confirmations.
@@ -1586,6 +1633,7 @@ def start_command(args: argparse.Namespace) -> CommandResult:
     project = Path(args.project).expanduser().resolve()
     if not project.is_dir():
         raise OrchestrationError(f"Project directory does not exist: {project}")
+    transport = RPC_TRANSPORT if getattr(args, "rpc_workers", False) else TUI_TRANSPORT
 
     task = read_text_argument(args.task, args.task_file, "task")
     if args.with_probe:
@@ -1659,11 +1707,27 @@ def start_command(args: argparse.Namespace) -> CommandResult:
     data: dict[str, Any] = {
         "project": str(project),
         "session": session,
-        "roles": [public_role(role, configs[role]) for role in roles],
+        "roles": [
+            public_role(
+                role,
+                configs[role],
+                transport,
+            )
+            for role in roles
+        ],
         "monitor": {"kind": "relay/status"},
+        "transport": transport,
         "trust": {
             "child_bypass": bool(args.approve_project),
-            "policy": "approve" if args.approve_project else "native-prompts",
+            "policy": (
+                "approve"
+                if args.approve_project
+                else (
+                    "saved-or-global-policy"
+                    if transport == RPC_TRANSPORT
+                    else "native-prompts"
+                )
+            ),
         },
         "dry_run": bool(args.dry_run),
         "paths": {
@@ -1682,7 +1746,13 @@ def start_command(args: argparse.Namespace) -> CommandResult:
             f"thinking={config['thinking']}"
         )
     human_print("  monitor: relay/status")
+    human_print(f"Worker transport: {transport}")
     human_print(f"Child project trust bypass: {'enabled' if args.approve_project else 'disabled'}")
+    if transport == RPC_TRANSPORT and not args.approve_project:
+        human_print(
+            "RPC trust: saved decision or global defaultProjectTrust applies; "
+            "ask/never ignores project-local executable resources without a prompt"
+        )
     if args.dry_run:
         human_print("Dry run complete; no files, sessions, or model requests were created.")
         return CommandResult(data=data)
@@ -1725,13 +1795,14 @@ def start_command(args: argparse.Namespace) -> CommandResult:
             )
 
         manifest: dict[str, Any] = {
-            "version": 1,
+            "version": 2,
             "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
             "session": session,
             "window": WINDOW,
             "project": str(project),
             "coord": str(coord),
             "approve_project": bool(args.approve_project),
+            "transport": transport,
             "monitor_pane_id": None,
             "roles": {},
         }
@@ -1741,6 +1812,12 @@ def start_command(args: argparse.Namespace) -> CommandResult:
             config["session_dir"] = str(coord / "sessions" / role)
             manifest["roles"][role] = config
 
+        ensure_private_directory(coord / "sessions")
+        for role in roles:
+            ensure_private_directory(Path(manifest["roles"][role]["session_dir"]))
+        if transport == RPC_TRANSPORT:
+            for role in roles:
+                rpc_role_paths(coord, role, create=True)
         create_tmux_grid(session, project, coord, roles, manifest)
         secure_write(coord / "startup-state", "RUNNING\n")
     except BaseException:
@@ -1780,7 +1857,8 @@ def list_command(_: argparse.Namespace) -> CommandResult:
         try:
             manifest = load_manifest(coord, expected_session=session)
             role_values = [
-                public_role(role, config) for role, config in manifest["roles"].items()
+                public_role(role, config, manifest_transport(manifest))
+                for role, config in manifest["roles"].items()
             ]
             values.append(
                 {
@@ -1836,6 +1914,17 @@ def coordination_files(coord: Path) -> list[tuple[Path, os.stat_result]]:
     return sorted(metadata, key=lambda item: (item[1].st_mtime, item[0].name))
 
 
+def status_roles(coord: Path, manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    values: list[dict[str, Any]] = []
+    transport = manifest_transport(manifest)
+    for role, config in manifest["roles"].items():
+        value = public_role(role, config, transport)
+        if transport == RPC_TRANSPORT:
+            value["rpc_state"] = public_rpc_state(load_rpc_state(coord, role))
+        values.append(value)
+    return values
+
+
 def status_command(args: argparse.Namespace) -> CommandResult:
     session, coord = resolve_session(args.session)
     manifest = load_manifest(coord, expected_session=session)
@@ -1885,14 +1974,25 @@ def status_command(args: argparse.Namespace) -> CommandResult:
         human_print("  waiting for agent status")
     for path, metadata in files:
         human_print(f"  {path.name}: {metadata.st_size} bytes")
+    role_values = status_roles(coord, manifest)
+    if manifest_transport(manifest) == RPC_TRANSPORT:
+        human_print("RPC workers:")
+        for role_value in role_values:
+            rpc_state = role_value.get("rpc_state")
+            if rpc_state is None:
+                human_print(f"  {role_value['name']}: starting/unavailable")
+            else:
+                human_print(
+                    f"  {role_value['name']}: {rpc_state['status']} "
+                    f"streaming={rpc_state['is_streaming']} "
+                    f"queue={rpc_state['steering_count']}+{rpc_state['follow_up_count']}"
+                )
     return CommandResult(
         data={
             "session": session,
             "project": manifest["project"],
             "paths": {"coordination": str(coord)},
-            "roles": [
-                public_role(role, config) for role, config in manifest["roles"].items()
-            ],
+            "roles": role_values,
             "panes": panes,
             "files": file_values,
             "truncated": {
@@ -1927,9 +2027,59 @@ def send_command(args: argparse.Namespace) -> CommandResult:
         available = ", ".join(manifest["roles"].keys())
         raise OrchestrationError(f"Role {args.role!r} is not in {session}; available: {available}")
     message = read_text_argument(args.message, args.message_file, "message").strip()
-    send_keys(manifest["roles"][args.role]["pane_id"], message)
-    human_print(f"Sent message to {session}/{args.role}")
-    return CommandResult(data={"session": session, "role": args.role, "sent": True})
+    transport = manifest_transport(manifest)
+    if transport == RPC_TRANSPORT:
+        rpc_control_request(
+            coord,
+            manifest,
+            args.role,
+            "prompt",
+            message=message,
+            delivery=args.delivery,
+        )
+        acknowledged = True
+    else:
+        if args.delivery != "steer":
+            raise OrchestrationError("follow-up delivery requires RPC workers")
+        send_keys(manifest["roles"][args.role]["pane_id"], message)
+        acknowledged = False
+    human_print(
+        f"Sent message to {session}/{args.role} via {transport}"
+        + (" (acknowledged)" if acknowledged else "")
+    )
+    return CommandResult(
+        data={
+            "session": session,
+            "role": args.role,
+            "sent": True,
+            "transport": transport,
+            "delivery": args.delivery,
+            "acknowledged": acknowledged,
+        }
+    )
+
+
+def abort_command(args: argparse.Namespace) -> CommandResult:
+    session, coord = resolve_session(args.session)
+    manifest = load_manifest(coord, expected_session=session)
+    if args.role not in manifest["roles"]:
+        available = ", ".join(manifest["roles"].keys())
+        raise OrchestrationError(
+            f"Role {args.role!r} is not in {session}; available: {available}"
+        )
+    if manifest_transport(manifest) != RPC_TRANSPORT:
+        raise OrchestrationError("abort requires an orchestration using RPC workers")
+    rpc_control_request(coord, manifest, args.role, "abort")
+    human_print(f"Abort acknowledged by {session}/{args.role}")
+    return CommandResult(
+        data={
+            "session": session,
+            "role": args.role,
+            "aborted": True,
+            "transport": RPC_TRANSPORT,
+            "acknowledged": True,
+        }
+    )
 
 
 def restart_command(args: argparse.Namespace) -> CommandResult:
@@ -1954,6 +2104,9 @@ def restart_command(args: argparse.Namespace) -> CommandResult:
     if started.exists() or started.is_symlink():
         require_regular_file(started, f"{args.role} started state")
         started.unlink()
+    if manifest_transport(manifest) == RPC_TRANSPORT:
+        rpc_paths = rpc_role_paths(coord, args.role, create=True)
+        unlink_private_regular(rpc_paths["state"], f"{args.role} RPC state")
     command = shlex.join(
         [
             str(SCRIPT_PATH),
@@ -1972,7 +2125,11 @@ def restart_command(args: argparse.Namespace) -> CommandResult:
         f"{role['provider']}/{role['model']} thinking={role['thinking']}"
     )
     return CommandResult(
-        data={"session": session, "role": public_role(args.role, role), "restarted": True}
+        data={
+            "session": session,
+            "role": public_role(args.role, role, manifest_transport(manifest)),
+            "restarted": True,
+        }
     )
 
 
@@ -2075,6 +2232,609 @@ def doctor_command(_: argparse.Namespace) -> CommandResult:
     )
 
 
+def rpc_role_paths(
+    coord: Path,
+    role: str,
+    *,
+    create: bool,
+) -> dict[str, Path]:
+    coord = validate_coordination_directory(coord)
+    if role not in KNOWN_ROLES:
+        raise OrchestrationError(f"Unknown RPC role: {role}")
+    root = coord / ".rpc" / role
+    if create:
+        ensure_private_directory(coord / ".rpc")
+        root = ensure_private_directory(root)
+        inbox = ensure_private_directory(root / "inbox")
+        acks = ensure_private_directory(root / "acks")
+    else:
+        require_directory(coord / ".rpc", "RPC transport directory")
+        root = absolute_path(root)
+        require_directory(root, f"{role} RPC directory")
+        if root.resolve(strict=True) != root:
+            raise OrchestrationError(f"{role} RPC directory is not canonical")
+        inbox = root / "inbox"
+        acks = root / "acks"
+        require_directory(inbox, f"{role} RPC inbox")
+        require_directory(acks, f"{role} RPC acknowledgements")
+    return {
+        "root": root,
+        "inbox": inbox,
+        "acks": acks,
+        "state": root / "state.json",
+    }
+
+
+def validate_rpc_state(value: object, role: str) -> dict[str, Any]:
+    if not isinstance(value, dict) or set(value) != RPC_STATE_FIELDS:
+        raise OrchestrationError("RPC role state has missing or unknown fields")
+    if type(value["version"]) is not int or value["version"] != 1:
+        raise OrchestrationError("Unsupported RPC role state version")
+    if value["role"] != role:
+        raise OrchestrationError("RPC role state identity is invalid")
+    if type(value["pid"]) is not int or value["pid"] <= 0:
+        raise OrchestrationError("RPC role state PID is invalid")
+    if value["status"] not in RPC_STATUSES:
+        raise OrchestrationError("RPC role state status is invalid")
+    if type(value["is_streaming"]) is not bool:
+        raise OrchestrationError("RPC role streaming state is invalid")
+    for field in ("steering_count", "follow_up_count"):
+        if type(value[field]) is not int or value[field] < 0:
+            raise OrchestrationError("RPC role queue state is invalid")
+    session_id = value["session_id"]
+    if session_id is not None and (
+        not isinstance(session_id, str) or not session_id or len(session_id) > 256
+    ):
+        raise OrchestrationError("RPC role session ID is invalid")
+    updated_at = value["updated_at"]
+    if not isinstance(updated_at, str):
+        raise OrchestrationError("RPC role update timestamp is invalid")
+    try:
+        parsed = dt.datetime.fromisoformat(updated_at)
+    except ValueError as error:
+        raise OrchestrationError("RPC role update timestamp is invalid") from error
+    if parsed.tzinfo is None:
+        raise OrchestrationError("RPC role update timestamp must include a timezone")
+    return value
+
+
+def save_rpc_state(path: Path, state: dict[str, Any], role: str) -> None:
+    validate_rpc_state(state, role)
+    atomic_secure_write(
+        path,
+        json.dumps(state, indent=2, sort_keys=True) + "\n",
+        f"{role} RPC state",
+    )
+
+
+def load_rpc_state(coord: Path, role: str) -> dict[str, Any] | None:
+    coord = validate_coordination_directory(coord)
+    role_root = coord / ".rpc" / role
+    if not role_root.exists() and not role_root.is_symlink():
+        return None
+    paths = rpc_role_paths(coord, role, create=False)
+    state_path = paths["state"]
+    if not state_path.exists() and not state_path.is_symlink():
+        return None
+    try:
+        value = json.loads(
+            read_regular_file(
+                state_path,
+                f"{role} RPC state",
+                MAX_RPC_ACK_BYTES,
+            )
+        )
+    except UnicodeDecodeError as error:
+        raise OrchestrationError(f"{role} RPC state is not valid UTF-8") from error
+    except json.JSONDecodeError as error:
+        raise OrchestrationError(f"{role} RPC state is not valid JSON") from error
+    return validate_rpc_state(value, role)
+
+
+def public_rpc_state(state: dict[str, Any] | None) -> dict[str, Any] | None:
+    if state is None:
+        return None
+    return {
+        "status": state["status"],
+        "pid": state["pid"],
+        "is_streaming": state["is_streaming"],
+        "steering_count": state["steering_count"],
+        "follow_up_count": state["follow_up_count"],
+        "session_id": state["session_id"],
+        "updated_at": state["updated_at"],
+    }
+
+
+def unlink_private_regular(path: Path, label: str) -> None:
+    if not path.exists() and not path.is_symlink():
+        return
+    require_regular_file(path, label)
+    path.unlink()
+
+
+def rpc_control_request(
+    coord: Path,
+    manifest: dict[str, Any],
+    role: str,
+    command_type: str,
+    *,
+    message: str | None = None,
+    delivery: str = "steer",
+    timeout: float = RPC_ACK_TIMEOUT_SECONDS,
+) -> dict[str, Any]:
+    if manifest_transport(manifest) != RPC_TRANSPORT:
+        raise OrchestrationError("Selected orchestration does not use RPC workers")
+    if role not in manifest["roles"]:
+        raise OrchestrationError(f"Role {role!r} is not enabled")
+    try:
+        paths = rpc_role_paths(coord, role, create=False)
+    except (FileNotFoundError, OrchestrationError) as error:
+        raise OrchestrationError(
+            f"RPC supervisor is not ready for {role}",
+            "rpc_not_ready",
+        ) from error
+    token = secrets.token_hex(16)
+    request_path = paths["inbox"] / f"{token}.json"
+    ack_path = paths["acks"] / f"{token}.json"
+    if command_type == "prompt":
+        if message is None or not message.strip():
+            raise OrchestrationError("RPC message cannot be empty")
+        if len(message.encode("utf-8")) > MAX_TASK_BYTES:
+            raise OrchestrationError("RPC message exceeds the safety limit")
+        if delivery not in {"steer", "follow-up"}:
+            raise OrchestrationError("RPC delivery must be steer or follow-up")
+        request = {
+            "version": 1,
+            "id": token,
+            "type": "prompt",
+            "delivery": delivery,
+            "message": message,
+        }
+    elif command_type == "abort":
+        request = {"version": 1, "id": token, "type": "abort"}
+    else:
+        raise OrchestrationError("Unsupported RPC control command")
+    atomic_secure_write(
+        request_path,
+        json.dumps(request, separators=(",", ":"), sort_keys=True) + "\n",
+        "RPC request",
+    )
+    deadline = time.monotonic() + timeout
+    try:
+        while time.monotonic() < deadline:
+            if ack_path.exists() or ack_path.is_symlink():
+                try:
+                    value = json.loads(
+                        read_regular_file(
+                            ack_path,
+                            "RPC acknowledgement",
+                            MAX_RPC_ACK_BYTES,
+                        )
+                    )
+                except (UnicodeDecodeError, json.JSONDecodeError) as error:
+                    raise OrchestrationError(
+                        "RPC acknowledgement is invalid",
+                        "invalid_rpc_ack",
+                    ) from error
+                if (
+                    not isinstance(value, dict)
+                    or set(value) != {"version", "id", "command", "success"}
+                    or type(value.get("version")) is not int
+                    or value.get("version") != 1
+                    or value.get("id") != token
+                    or value.get("command") != command_type
+                    or type(value.get("success")) is not bool
+                ):
+                    raise OrchestrationError(
+                        "RPC acknowledgement is invalid",
+                        "invalid_rpc_ack",
+                    )
+                if not value["success"]:
+                    raise OrchestrationError(
+                        f"RPC worker rejected {command_type}",
+                        "rpc_rejected",
+                    )
+                return value
+            time.sleep(0.05)
+        raise OrchestrationError(
+            f"Timed out waiting for {role} RPC acknowledgement",
+            "rpc_timeout",
+        )
+    finally:
+        unlink_private_regular(request_path, "RPC request")
+        unlink_private_regular(ack_path, "RPC acknowledgement")
+
+
+def write_rpc_record(stream: Any, value: dict[str, Any]) -> None:
+    payload = json.dumps(value, separators=(",", ":"), ensure_ascii=True).encode("utf-8") + b"\n"
+    if len(payload) > MAX_RPC_RECORD_BYTES:
+        raise OrchestrationError("RPC command exceeds the safety limit")
+    stream.write(payload)
+    stream.flush()
+
+
+def strict_rpc_reader(stream: Any, channel: str, records: queue.Queue[tuple[str, Any]]) -> None:
+    buffer = b""
+    try:
+        while True:
+            chunk = os.read(stream.fileno(), 8192)
+            if not chunk:
+                break
+            buffer += chunk
+            if len(buffer) > MAX_RPC_RECORD_BYTES and b"\n" not in buffer:
+                records.put(("protocol_error", "RPC record exceeds the safety limit"))
+                return
+            while b"\n" in buffer:
+                line, buffer = buffer.split(b"\n", 1)
+                if line.endswith(b"\r"):
+                    line = line[:-1]
+                if len(line) > MAX_RPC_RECORD_BYTES:
+                    records.put(("protocol_error", "RPC record exceeds the safety limit"))
+                    return
+                records.put((channel, line))
+        if buffer:
+            if buffer.endswith(b"\r"):
+                buffer = buffer[:-1]
+            records.put((channel, buffer))
+    except OSError as error:
+        records.put(("reader_error", bounded_message(error, 160)))
+    finally:
+        records.put((f"{channel}_eof", None))
+
+
+def rpc_acknowledge(path: Path, token: str, command: str, success: bool) -> None:
+    atomic_secure_write(
+        path,
+        json.dumps(
+            {
+                "version": 1,
+                "id": token,
+                "command": command,
+                "success": success,
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        + "\n",
+        "RPC acknowledgement",
+    )
+
+
+def read_rpc_mailbox_request(path: Path, token: str) -> dict[str, Any]:
+    try:
+        value = json.loads(
+            read_regular_file(path, "RPC mailbox request", MAX_RPC_RECORD_BYTES)
+        )
+    except UnicodeDecodeError as error:
+        raise OrchestrationError("RPC mailbox request is not valid UTF-8") from error
+    except json.JSONDecodeError as error:
+        raise OrchestrationError("RPC mailbox request is not valid JSON") from error
+    if (
+        not isinstance(value, dict)
+        or type(value.get("version")) is not int
+        or value.get("version") != 1
+        or value.get("id") != token
+    ):
+        raise OrchestrationError("RPC mailbox request has invalid identity")
+    request_type = value.get("type")
+    expected = (
+        {"version", "id", "type", "delivery", "message"}
+        if request_type == "prompt"
+        else {"version", "id", "type"}
+    )
+    if set(value) != expected or request_type not in {"prompt", "abort"}:
+        raise OrchestrationError("RPC mailbox request has invalid fields")
+    if request_type == "prompt":
+        message = value["message"]
+        if (
+            not isinstance(message, str)
+            or not message.strip()
+            or len(message.encode("utf-8")) > MAX_TASK_BYTES
+        ):
+            raise OrchestrationError("RPC mailbox message is invalid")
+        if value["delivery"] not in {"steer", "follow-up"}:
+            raise OrchestrationError("RPC mailbox delivery is invalid")
+    return value
+
+
+def run_rpc_agent(
+    coord: Path,
+    manifest: dict[str, Any],
+    role_name: str,
+    role: dict[str, Any],
+) -> int:
+    paths = rpc_role_paths(coord, role_name, create=True)
+    prompt_path = Path(role["prompt_path"])
+    prompt_bytes = read_regular_file(prompt_path, "role prompt", MAX_RPC_PROMPT_BYTES)
+    try:
+        initial_message = prompt_bytes.decode("utf-8").strip() + (
+            "\n\nFollow the attached role instructions and begin."
+        )
+    except UnicodeDecodeError as error:
+        raise OrchestrationError("Role prompt is not valid UTF-8") from error
+    ensure_private_directory(Path(role["session_dir"]), parents=True)
+    command = [
+        command_path("pi"),
+        "--mode",
+        "rpc",
+        "--session-dir",
+        role["session_dir"],
+        "--name",
+        f"{Path(manifest['project']).name} {role_name}",
+        "--provider",
+        role["provider"],
+        "--model",
+        role["model"],
+        "--thinking",
+        role["thinking"],
+    ]
+    if manifest["approve_project"]:
+        command.append("--approve")
+    if role.get("tools"):
+        command.extend(["--tools", role["tools"]])
+    environment = os.environ.copy()
+    environment.pop("PI_TMUX_CONTROLLER", None)
+    environment.pop("PI_TMUX_CONTROLLER_HOME", None)
+    environment["PI_SKIP_VERSION_CHECK"] = "1"
+    environment["PI_TELEMETRY"] = "0"
+
+    previous_umask = os.umask(0o077)
+    try:
+        try:
+            child = subprocess.Popen(
+                command,
+                cwd=manifest["project"],
+                env=environment,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                bufsize=0,
+            )
+        except OSError as error:
+            raise OrchestrationError("Cannot start Pi RPC worker") from error
+    finally:
+        os.umask(previous_umask)
+    if child.stdin is None or child.stdout is None or child.stderr is None:
+        child.kill()
+        child.wait(timeout=3)
+        raise OrchestrationError("Cannot create Pi RPC pipes")
+    state: dict[str, Any] = {
+        "version": 1,
+        "role": role_name,
+        "pid": child.pid,
+        "status": "starting",
+        "is_streaming": False,
+        "steering_count": 0,
+        "follow_up_count": 0,
+        "session_id": None,
+        "updated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+    }
+
+    def persist_state(**changes: Any) -> None:
+        state.update(changes)
+        state["updated_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
+        save_rpc_state(paths["state"], state, role_name)
+
+    records: queue.Queue[tuple[str, Any]] = queue.Queue(maxsize=64)
+    stdout_thread = threading.Thread(
+        target=strict_rpc_reader,
+        args=(child.stdout, "stdout", records),
+        daemon=True,
+    )
+    stderr_thread = threading.Thread(
+        target=strict_rpc_reader,
+        args=(child.stderr, "stderr", records),
+        daemon=True,
+    )
+    try:
+        stdout_thread.start()
+        stderr_thread.start()
+    except BaseException:
+        child.terminate()
+        child.wait(timeout=3)
+        raise
+    pending: dict[str, tuple[str, str, Path]] = {}
+    eof_channels: set[str] = set()
+    fatal = False
+
+    def process_mailbox() -> None:
+        for request_path in sorted(paths["inbox"].glob("*.json"))[:MAX_JSON_ITEMS]:
+            token = request_path.stem
+            if not RPC_TOKEN_PATTERN.fullmatch(token):
+                continue
+            ack_path = paths["acks"] / f"{token}.json"
+            command_name = "prompt"
+            try:
+                request = read_rpc_mailbox_request(request_path, token)
+                command_name = request["type"]
+                if request["type"] == "prompt":
+                    behavior = "steer" if request["delivery"] == "steer" else "followUp"
+                    rpc_value = {
+                        "id": f"orchestrator-mailbox-{token}",
+                        "type": "prompt",
+                        "message": request["message"],
+                        "streamingBehavior": behavior,
+                    }
+                else:
+                    rpc_value = {
+                        "id": f"orchestrator-mailbox-{token}",
+                        "type": "abort",
+                    }
+                write_rpc_record(child.stdin, rpc_value)
+                pending[rpc_value["id"]] = (token, command_name, ack_path)
+            except (OrchestrationError, BrokenPipeError, OSError):
+                if not ack_path.exists() and not ack_path.is_symlink():
+                    rpc_acknowledge(ack_path, token, command_name, False)
+            finally:
+                unlink_private_regular(request_path, "RPC mailbox request")
+
+    try:
+        persist_state()
+        human_print(
+            f"Pi RPC supervisor: {role_name} · {role['provider']}/{role['model']} · "
+            f"thinking={role['thinking']}"
+        )
+        write_rpc_record(
+            child.stdin,
+            {
+                "id": "orchestrator-initial",
+                "type": "prompt",
+                "message": initial_message,
+            },
+        )
+        while True:
+            process_mailbox()
+            try:
+                channel, payload = records.get(timeout=0.1)
+            except queue.Empty:
+                if child.poll() is not None and eof_channels == {"stdout", "stderr"}:
+                    break
+                continue
+            if channel == "stderr":
+                if payload:
+                    try:
+                        stderr_line = payload.decode("utf-8")
+                    except UnicodeDecodeError:
+                        stderr_line = "non-UTF-8 stderr"
+                    human_print(f"[pi stderr] {bounded_message(stderr_line, 400)}")
+                continue
+            if channel in {"protocol_error", "reader_error"}:
+                human_print(f"[rpc error] {bounded_message(payload, 240)}")
+                fatal = True
+                break
+            if channel in {"stdout_eof", "stderr_eof"}:
+                eof_channels.add(channel.removesuffix("_eof"))
+                if (
+                    child.poll() is not None
+                    and eof_channels == {"stdout", "stderr"}
+                    and records.empty()
+                ):
+                    break
+                continue
+            if channel != "stdout" or not payload:
+                continue
+            try:
+                event = json.loads(payload)
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                human_print("[rpc error] invalid JSON record from Pi")
+                fatal = True
+                break
+            if not isinstance(event, dict) or not isinstance(event.get("type"), str):
+                human_print("[rpc error] invalid event from Pi")
+                fatal = True
+                break
+            event_type = event["type"]
+            if event_type == "response":
+                rpc_id = event.get("id")
+                if rpc_id == "orchestrator-initial":
+                    if event.get("success") is not True:
+                        human_print("[rpc error] Pi rejected the initial role prompt")
+                        persist_state(status="error", is_streaming=False)
+                        fatal = True
+                        break
+                    write_rpc_record(
+                        child.stdin,
+                        {"id": "orchestrator-state", "type": "get_state"},
+                    )
+                elif rpc_id == "orchestrator-state" and event.get("success") is True:
+                    data = event.get("data")
+                    if isinstance(data, dict):
+                        session_id = data.get("sessionId")
+                        if not isinstance(session_id, str):
+                            session_id = None
+                        persist_state(session_id=session_id)
+                elif isinstance(rpc_id, str) and rpc_id in pending:
+                    token, command_name, ack_path = pending.pop(rpc_id)
+                    rpc_acknowledge(
+                        ack_path,
+                        token,
+                        command_name,
+                        event.get("success") is True,
+                    )
+                continue
+            if event_type == "agent_start":
+                persist_state(status="streaming", is_streaming=True)
+                human_print("\n[agent working]")
+            elif event_type == "agent_settled":
+                persist_state(status="settled", is_streaming=False)
+                human_print("\n[agent settled]")
+            elif event_type == "queue_update":
+                steering = event.get("steering")
+                follow_up = event.get("followUp")
+                steering_count = len(steering) if isinstance(steering, list) else 0
+                follow_up_count = len(follow_up) if isinstance(follow_up, list) else 0
+                persist_state(
+                    steering_count=steering_count,
+                    follow_up_count=follow_up_count,
+                )
+                human_print(
+                    f"\n[queue steering={steering_count} follow-up={follow_up_count}]"
+                )
+            elif event_type == "message_update":
+                update = event.get("assistantMessageEvent")
+                if isinstance(update, dict) and update.get("type") == "text_delta":
+                    delta = update.get("delta")
+                    if isinstance(delta, str):
+                        print(delta, end="", flush=True)
+            elif event_type == "tool_execution_start":
+                human_print(f"\n[tool {bounded_message(event.get('toolName'), 80)}]")
+            elif event_type == "extension_ui_request":
+                method = event.get("method")
+                request_id = event.get("id")
+                if method in {"select", "confirm", "input", "editor"} and isinstance(
+                    request_id, str
+                ):
+                    write_rpc_record(
+                        child.stdin,
+                        {
+                            "type": "extension_ui_response",
+                            "id": request_id,
+                            "cancelled": True,
+                        },
+                    )
+                    human_print(f"\n[headless UI request cancelled: {method}]")
+            elif event_type == "extension_error":
+                human_print("\n[extension error]")
+    except KeyboardInterrupt:
+        try:
+            write_rpc_record(child.stdin, {"type": "abort"})
+        except (BrokenPipeError, OSError):
+            pass
+    except (BrokenPipeError, OSError):
+        human_print("[rpc error] Pi RPC transport closed unexpectedly")
+        fatal = True
+    finally:
+        for token, command_name, ack_path in pending.values():
+            if not ack_path.exists() and not ack_path.is_symlink():
+                try:
+                    rpc_acknowledge(ack_path, token, command_name, False)
+                except OrchestrationError:
+                    pass
+        if child.poll() is None:
+            child.terminate()
+            try:
+                child.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                child.kill()
+                child.wait(timeout=3)
+        try:
+            persist_state(
+                status=(
+                    "error"
+                    if fatal or child.returncode not in {None, 0}
+                    else "exited"
+                ),
+                is_streaming=False,
+                steering_count=0,
+                follow_up_count=0,
+            )
+        except OrchestrationError:
+            pass
+    if fatal:
+        return 1
+    return child.returncode or 0
+
+
 def run_agent_command(args: argparse.Namespace) -> int:
     global STATE_ROOT
     STATE_ROOT = Path(args.state_root)
@@ -2083,6 +2843,8 @@ def run_agent_command(args: argparse.Namespace) -> int:
     role = manifest["roles"].get(args.role)
     if role is None:
         raise OrchestrationError(f"Unknown role in manifest: {args.role}")
+    if manifest_transport(manifest) == RPC_TRANSPORT:
+        return run_rpc_agent(coord, manifest, args.role, role)
     project = manifest["project"]
     prompt_path = Path(role["prompt_path"])
     require_regular_file(prompt_path, "role prompt", nonempty=True)
@@ -2125,7 +2887,18 @@ def relay_send(manifest: dict[str, Any], role: str, message: str) -> bool:
     if not role_config_value:
         return False
     try:
-        send_keys(role_config_value["pane_id"], message)
+        if manifest_transport(manifest) == RPC_TRANSPORT:
+            rpc_control_request(
+                Path(manifest["coord"]),
+                manifest,
+                role,
+                "prompt",
+                message=message,
+                delivery="steer",
+                timeout=5.0,
+            )
+        else:
+            send_keys(role_config_value["pane_id"], message)
     except (OrchestrationError, subprocess.CalledProcessError):
         return False
     return True
@@ -2362,6 +3135,7 @@ def render_monitor(coord: Path, manifest: dict[str, Any]) -> None:
     print("Pi + tmux agent orchestration")
     print(f"Session: {session}")
     print(f"Project: {manifest['project']}")
+    print(f"Transport: {manifest_transport(manifest)}")
     print(f"Coordination: {coord}\n")
     result = tmux(
         [
@@ -2420,7 +3194,10 @@ def add_model_arguments(parser: argparse.ArgumentParser, role: str) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = OrchestrationArgumentParser(
         prog="pi-tmux-agents",
-        description="Run coordinated Pi implementer/reviewer/probe agents in a tmux grid.",
+        description=(
+            "Run coordinated Pi implementer/reviewer/probe agents with TUI or RPC workers "
+            "in a tmux grid."
+        ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=textwrap.dedent(
             """
@@ -2430,6 +3207,7 @@ def build_parser() -> argparse.ArgumentParser:
               pi-tmux-agents controller attach
               pi-tmux-agents start --project "$PWD" --task-file /tmp/task.md --approve-project
               pi-tmux-agents start --project "$PWD" --task-file /tmp/task.md --with-probe --attach
+              pi-tmux-agents start --project "$PWD" --task-file /tmp/task.md --rpc-workers
               pi-tmux-agents start --project "$PWD" --task-file /tmp/task.md \\
                 --with-probe --with-playwright
               pi-tmux-agents status pi-my-project-agents
@@ -2492,6 +3270,11 @@ def build_parser() -> argparse.ArgumentParser:
     start.add_argument("--django-task")
     start.add_argument("--django-task-file")
     start.add_argument("--approve-project", action="store_true")
+    start.add_argument(
+        "--rpc-workers",
+        action="store_true",
+        help="run workers behind acknowledged Pi RPC supervisors",
+    )
     start.add_argument("--attach", action="store_true")
     start.add_argument("--dry-run", action="store_true")
     start.add_argument("--skip-model-check", action="store_true")
@@ -2510,7 +3293,7 @@ def build_parser() -> argparse.ArgumentParser:
     attach.add_argument("session", nargs="?")
     attach.set_defaults(handler=attach_command)
 
-    send = subparsers.add_parser("send", help="send a steering message to a role")
+    send = subparsers.add_parser("send", help="send a steer/follow-up message to a role")
     send.add_argument("session")
     send.add_argument(
         "--role",
@@ -2519,7 +3302,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
     send.add_argument("--message")
     send.add_argument("--message-file")
+    send.add_argument(
+        "--delivery",
+        choices=("steer", "follow-up"),
+        default="steer",
+        help="RPC queue behavior; follow-up requires --rpc-workers",
+    )
     send.set_defaults(handler=send_command)
+
+    abort = subparsers.add_parser("abort", help="abort one active RPC worker operation")
+    abort.add_argument("session")
+    abort.add_argument(
+        "--role",
+        required=True,
+        choices=("implementer", "reviewer", "probe", "playwright", "django"),
+    )
+    abort.set_defaults(handler=abort_command)
 
     restart = subparsers.add_parser("restart", help="restart one role, optionally changing model")
     restart.add_argument("session")
@@ -2565,6 +3363,7 @@ def requested_command(argv: list[str]) -> str:
     public_commands = {
         "doctor",
         "controller",
+        "abort",
         "list",
         "status",
         "start",

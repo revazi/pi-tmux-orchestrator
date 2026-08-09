@@ -117,7 +117,7 @@ test("help is bounded, subprocess-free, and documents terminal-only operations",
   assert.ok(message.length <= 2400);
   assert.match(message, /\/orchestrator-start/);
   assert.match(message, /\/orchestrator-send/);
-  assert.match(message, /Attach and restart remain terminal-only/);
+  assert.match(message, /Attach, RPC abort, and restart remain terminal-only/);
   assert.equal(message.includes("PRIVATE_HELP_ARGUMENT"), false);
 });
 
@@ -198,7 +198,13 @@ test("start previews CLI policy, keeps private text out of argv, and cleans mode
         { name: "implementer", provider: "provider", model: "writer", thinking: "high" },
         { name: "reviewer", provider: "provider", model: "reviewer", thinking: "high" },
       ],
-      trust: { child_bypass: false, policy: "native-prompts" },
+      transport: args.includes("--rpc-workers") ? "rpc" : "tui",
+      trust: {
+        child_bypass: false,
+        policy: args.includes("--rpc-workers")
+          ? "saved-or-global-policy"
+          : "native-prompts",
+      },
       dry_run: dryRun,
       paths: { state_root: "/tmp/external-state", coordination: dryRun ? null : "/tmp/external-state/run" },
     };
@@ -206,9 +212,16 @@ test("start previews CLI policy, keeps private text out of argv, and cleans mode
   });
   const signal = new AbortController().signal;
   const ctx = context({ confirmations: [true], signal });
-  const result = await tool.execute("call", { action: "start", task: canary }, signal, undefined, ctx);
+  const result = await tool.execute(
+    "call",
+    { action: "start", task: canary, rpcWorkers: true },
+    signal,
+    undefined,
+    ctx,
+  );
   assert.equal(calls, 2);
-  assert.match(ctx.calls.confirmations[0].message, /Native child trust prompts/);
+  assert.match(ctx.calls.confirmations[0].message, /ignores project executable resources/);
+  assert.match(ctx.calls.confirmations[0].message, /Worker transport: rpc/);
   assert.match(ctx.calls.confirmations[0].message, /provider\/writer/);
   assert.equal(JSON.stringify(result).includes(canary), false);
   for (const path of paths) await assert.rejects(access(path));
@@ -245,7 +258,7 @@ test("controller mode requires and collects an explicit target project", async (
 
     const ctx = context({
       input: process.cwd(),
-      confirmations: [false, false, false, true],
+      confirmations: [false, false, false, false, true],
     });
     await commands.get("orchestrator-start").handler("synthetic", ctx);
     assert.equal(calls, 2);
@@ -371,7 +384,7 @@ test("canonical start command reuses private preview and explicit confirmation f
       })),
     };
   });
-  const ctx = context({ confirmations: [false, false, false, true] });
+  const ctx = context({ confirmations: [false, false, false, false, true] });
   await commands.get("orchestrator-start").handler(task, ctx);
   assert.equal(execCalls, 2);
   assert.equal(ctx.calls.confirmations.at(-1).title, "Start tmux orchestration?");
@@ -419,12 +432,13 @@ test("probe and specialist bodies also use unique private files and file-only ar
       assert.equal(await readFile(path, "utf8"), bodies[name]);
     }
     const argv = testHooks.buildStartArgs(
-      { withProbe: true, withPlaywright: true, withDjangoExpert: true },
+      { withProbe: true, withPlaywright: true, withDjangoExpert: true, rpcWorkers: true },
       process.cwd(),
       paths,
     );
     for (const body of Object.values(bodies)) assert.equal(argv.includes(body), false);
     for (const path of created) assert.ok(argv.includes(path));
+    assert.ok(argv.includes("--rpc-workers"));
   });
   for (const path of created) await assert.rejects(access(path));
 });

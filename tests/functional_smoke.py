@@ -31,9 +31,10 @@ def main() -> int:
     session = f"pi-orchestrator-smoke-{os.getpid()}"
     prefix_collision = f"{session}-prefix-collision"
     controller_session = f"{session}-controller"
+    tui_session = f"{session}-tui"
     ORCHESTRATOR.CONTROLLER_TMUX_SESSION = controller_session
     ORCHESTRATOR.CONTROLLER_PI_SESSION_ID = f"smoke-controller-{os.getpid()}"
-    for candidate in (session, prefix_collision, controller_session):
+    for candidate in (session, prefix_collision, controller_session, tui_session):
         subprocess.run(
             ["tmux", "kill-session", "-t", f"={candidate}"],
             check=False,
@@ -68,14 +69,37 @@ def main() -> int:
 
     temporary_root = Path(tempfile.mkdtemp(prefix="pi-tmux-orchestrator-smoke-"))
     fake_pi = temporary_root / "pi"
-    fake_pi.write_text("#!/usr/bin/env bash\nexec sleep 60\n", encoding="utf-8")
+    fake_pi.write_text(
+        "#!/usr/bin/env python3\n"
+        "import json, sys, time\n"
+        "if '--mode' not in sys.argv or sys.argv[sys.argv.index('--mode') + 1] != 'rpc':\n"
+        "    time.sleep(60)\n"
+        "    raise SystemExit(0)\n"
+        "for line in sys.stdin:\n"
+        "    value = json.loads(line)\n"
+        "    request_id = value.get('id')\n"
+        "    command = value.get('type')\n"
+        "    response = {'type': 'response', 'command': command, 'success': True}\n"
+        "    if request_id is not None:\n"
+        "        response['id'] = request_id\n"
+        "    if command == 'get_state':\n"
+        "        response['data'] = {'sessionId': 'synthetic-rpc-session', 'isStreaming': False}\n"
+        "    print(json.dumps(response), flush=True)\n"
+        "    if command == 'prompt':\n"
+        "        print(json.dumps({'type': 'agent_start'}), flush=True)\n"
+        "        print(json.dumps({'type': 'message_update', 'assistantMessageEvent': "
+        "{'type': 'text_delta', 'delta': 'Synthetic RPC response.'}}), flush=True)\n"
+        "        print(json.dumps({'type': 'agent_settled'}), flush=True)\n",
+        encoding="utf-8",
+    )
     fake_pi.chmod(0o700)
 
     wrapper = temporary_root / "fake-runtime.sh"
     wrapper.write_text(
         "#!/usr/bin/env bash\n"
         "set -euo pipefail\n"
-        'if [[ "$1" == "_relay" ]]; then\n'
+        'if [[ "$1" == "_relay" || "$1" == "_run-agent" ]]; then\n'
+        f"  export PATH={shlex.quote(str(temporary_root))}:$PATH\n"
         f"  exec {shlex.quote(str(SCRIPT))} \"$@\"\n"
         "fi\n"
         "exec sleep 60\n",
@@ -96,7 +120,7 @@ def main() -> int:
     os.environ["PI_TMUX_CONTROLLER_HOME"] = str(temporary_root / "controller")
 
     def cleanup() -> None:
-        for candidate in (session, prefix_collision, controller_session):
+        for candidate in (session, prefix_collision, controller_session, tui_session):
             subprocess.run(
                 ["tmux", "kill-session", "-t", f"={candidate}"],
                 check=False,
@@ -120,6 +144,7 @@ def main() -> int:
         django_task="Exercise synthetic Django marker routing only.",
         django_task_file=None,
         approve_project=False,
+        rpc_workers=True,
         attach=False,
         dry_run=False,
         skip_model_check=True,
@@ -178,6 +203,8 @@ def main() -> int:
         expected_roles = {"implementer", "reviewer", "probe", "playwright", "django"}
         if set(manifest["roles"]) != expected_roles:
             raise AssertionError(f"unexpected roles: {manifest['roles'].keys()}")
+        if ORCHESTRATOR.manifest_transport(manifest) != ORCHESTRATOR.RPC_TRANSPORT:
+            raise AssertionError("functional grid did not use RPC worker transport")
         for role in expected_roles - {"implementer"}:
             if manifest["roles"][role]["tools"] != ORCHESTRATOR.READ_ONLY_TOOLS:
                 raise AssertionError(f"{role} did not receive the read-only tool set")
@@ -198,6 +225,39 @@ def main() -> int:
         if len(panes) != 6 or any(line.rsplit(" ", 1)[-1] != "0" for line in panes):
             raise AssertionError(f"unexpected pane state: {panes}")
         pane_pids = [controller_pid, *[int(line.split()[-2]) for line in panes]]
+
+        deadline = time.time() + 8
+        while time.time() < deadline:
+            states = {
+                role: ORCHESTRATOR.load_rpc_state(coord, role)
+                for role in expected_roles
+            }
+            if all(state and state["session_id"] == "synthetic-rpc-session" for state in states.values()):
+                break
+            time.sleep(0.1)
+        else:
+            raise AssertionError(f"RPC supervisors did not publish session state: {states}")
+        pane_pids.extend(state["pid"] for state in states.values() if state)
+        status = ORCHESTRATOR.status_command(argparse.Namespace(session=session))
+        if not all(role["rpc_state"] for role in status.data["roles"]):
+            raise AssertionError("status did not expose bounded RPC role metadata")
+
+        sent = ORCHESTRATOR.send_command(
+            argparse.Namespace(
+                session=session,
+                role="implementer",
+                message="Synthetic acknowledged steering message.",
+                message_file=None,
+                delivery="follow-up",
+            )
+        )
+        if not sent.data["acknowledged"] or sent.data["transport"] != "rpc":
+            raise AssertionError(f"RPC send was not acknowledged: {sent.data}")
+        aborted = ORCHESTRATOR.abort_command(
+            argparse.Namespace(session=session, role="implementer")
+        )
+        if not aborted.data["acknowledged"]:
+            raise AssertionError("RPC abort was not acknowledged")
 
         reports = {
             "probe.md": "Synthetic probe complete.\n",
@@ -251,8 +311,67 @@ def main() -> int:
         if not ORCHESTRATOR.session_exists(prefix_collision):
             raise AssertionError("vanished exact target affected its prefix-collision control")
 
+        tui_arguments = argparse.Namespace(**vars(arguments))
+        tui_arguments.session = tui_session
+        tui_arguments.rpc_workers = False
+        tui_arguments.with_probe = False
+        tui_arguments.probe_task = None
+        tui_arguments.with_playwright = False
+        tui_arguments.playwright_task = None
+        tui_arguments.with_django_expert = False
+        tui_arguments.django_task = None
+        ORCHESTRATOR.start_command(tui_arguments)
+        tui_manifest_coord = Path(
+            subprocess.run(
+                [
+                    "tmux",
+                    "show-options",
+                    "-qv",
+                    "-t",
+                    ORCHESTRATOR.exact_window_target(tui_session),
+                    "@pi_agents_coord",
+                ],
+                check=True,
+                text=True,
+                capture_output=True,
+            ).stdout.strip()
+        )
+        tui_manifest = ORCHESTRATOR.load_manifest(tui_manifest_coord)
+        if ORCHESTRATOR.manifest_transport(tui_manifest) != ORCHESTRATOR.TUI_TRANSPORT:
+            raise AssertionError("default TUI transport was not preserved")
+        tui_panes = subprocess.run(
+            [
+                "tmux",
+                "list-panes",
+                "-t",
+                f"{tui_session}:agents",
+                "-F",
+                "#{pane_pid} #{pane_dead}",
+            ],
+            check=True,
+            text=True,
+            capture_output=True,
+        ).stdout.splitlines()
+        if len(tui_panes) != 3 or any(line.rsplit(" ", 1)[-1] != "0" for line in tui_panes):
+            raise AssertionError(f"default TUI grid is unhealthy: {tui_panes}")
+        pane_pids.extend(int(line.split()[0]) for line in tui_panes)
+        tui_send = ORCHESTRATOR.send_command(
+            argparse.Namespace(
+                session=tui_session,
+                role="implementer",
+                message="Synthetic TUI transport message.",
+                message_file=None,
+                delivery="steer",
+            )
+        )
+        if tui_send.data["acknowledged"] or tui_send.data["transport"] != "tui":
+            raise AssertionError("default TUI send semantics changed")
+        ORCHESTRATOR.stop_command(argparse.Namespace(session=tui_session, yes=True))
+
         print("OK persistent project-neutral controller lifecycle and duplicate refusal")
-        print("OK functional grid: all five roles plus monitor are healthy")
+        print("OK default interactive TUI grid and transport remain compatible")
+        print("OK functional grid: all five RPC roles plus monitor are healthy")
+        print("OK RPC steer/follow-up mailbox delivery and abort are acknowledged")
         print("OK exact targeting preserves a prefix session after the target disappears")
         print("OK private manifest, session options, and read-only specialist tools")
         print(
@@ -261,7 +380,7 @@ def main() -> int:
         )
         print("OK no Pi provider process was launched")
         cleanup()
-        for candidate in (session, prefix_collision, controller_session):
+        for candidate in (session, prefix_collision, controller_session, tui_session):
             residue = subprocess.run(
                 ["tmux", "has-session", "-t", f"={candidate}"],
                 check=False,

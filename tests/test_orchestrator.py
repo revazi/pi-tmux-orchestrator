@@ -305,7 +305,7 @@ class UtilityTests(unittest.TestCase):
         self.assertEqual(start.django_provider, "synthetic-django-provider")
         self.assertEqual(start.django_model, "synthetic-django-model")
         self.assertEqual(start.django_thinking, "max")
-        for command in ("send", "restart"):
+        for command in ("send", "abort", "restart"):
             arguments = [command, "session", "--role", "playwright"]
             if command == "restart":
                 arguments.append("--yes")
@@ -342,6 +342,23 @@ class UtilityTests(unittest.TestCase):
         ):
             self.assertFalse(ORCHESTRATOR.relay_send(manifest, "reviewer", "notice"))
         self.assertFalse(ORCHESTRATOR.relay_send(manifest, "probe", "notice"))
+
+        rpc_manifest = {
+            "version": 2,
+            "transport": ORCHESTRATOR.RPC_TRANSPORT,
+            "coord": "/private/run",
+            "roles": {"reviewer": {"pane_id": "%2"}},
+        }
+        with mock.patch.object(
+            ORCHESTRATOR,
+            "rpc_control_request",
+            return_value={"success": True},
+        ) as rpc_request:
+            self.assertTrue(ORCHESTRATOR.relay_send(rpc_manifest, "reviewer", "notice"))
+        self.assertEqual(rpc_request.call_args.args[:4], (
+            Path("/private/run"), rpc_manifest, "reviewer", "prompt"
+        ))
+        self.assertEqual(rpc_request.call_args.kwargs["delivery"], "steer")
 
 
 class ControllerTests(unittest.TestCase):

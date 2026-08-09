@@ -9,6 +9,7 @@ All notable changes to this project are documented here.
 - Added the owner-authorized canonical MIT license with 2026 Revaz Zakalashvili copyright
 - Added the canonical `/orchestrator-*` help/doctor/start/list/status/send/stop command family while retaining `/orchestrate` and `/orchestrations` as shared-handler aliases
 - Added `controller start|status|attach|stop` for one persistent project-neutral Pi controller with a stable session ID, private state/session storage, exact tmux identity, duplicate refusal, and confirmed termination
+- Added opt-in `--rpc-workers` with dependency-free per-role Pi RPC supervisors, private mailbox transport, correlated prompt/abort acknowledgements, steer/follow-up delivery, bounded queue/session state, and CLI `abort`
 
 ### Changed
 
@@ -17,7 +18,8 @@ All notable changes to this project are documented here.
 - Changed Pi discovery acceptance to install the npm-installed tarball root through isolated `pi install`, launch RPC without `--extension`, and require exact package provenance for nine extension commands plus the root skill
 - Documented immediately usable local-path and public Git package installation while keeping npm installation conditional on verified registry publication
 - Added slash-command regressions for exact registration/aliases, delegated doctor/list/status, start/stop confirmation, private interactive send cancellation/cleanup/redaction, and bounded errors
-- Added controller-mode explicit-project enforcement, dedicated TUI identity, strict state/lifecycle regressions, and a model-free real tmux controller smoke without adding an SDK/RPC child bridge
+- Added controller-mode explicit-project enforcement, dedicated TUI identity, and strict state/lifecycle regressions
+- Expanded the model-free real tmux smoke to five synthetic RPC workers, relay acknowledgements, follow-up delivery, abort, private cleanup, and process-residue checks
 
 ## 0.4.0 - 2026-08-06
 

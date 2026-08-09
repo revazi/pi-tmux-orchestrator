@@ -19,7 +19,7 @@ const COMMAND_OVERVIEW = [
   "/orchestrator-stop [session] — confirm and stop one exact session",
   "/orchestrate — backward-compatible alias for /orchestrator-start",
   "/orchestrations — backward-compatible alias for /orchestrator-list",
-  "Attach and restart remain terminal-only: attach takes over the terminal; restart requires explicit CLI confirmation and configuration.",
+  "Attach, RPC abort, and restart remain terminal-only: attach takes over the terminal; abort requires RPC workers; restart requires explicit CLI confirmation and configuration.",
 ].join("\n");
 
 const parameters = {
@@ -43,6 +43,10 @@ const parameters = {
     playwrightTask: { type: "string", maxLength: 65536 },
     withDjangoExpert: { type: "boolean" },
     djangoTask: { type: "string", maxLength: 65536 },
+    rpcWorkers: {
+      type: "boolean",
+      description: "Run workers behind acknowledged Pi RPC supervisors instead of interactive Pi TUIs",
+    },
     approveProject: {
       type: "boolean",
       description: "Request child --approve; allowed only after parent trust and explicit per-run confirmation",
@@ -137,6 +141,7 @@ function buildStartArgs(input, project, paths, { dryRun = false } = {}) {
   if (input.withDjangoExpert) args.push("--with-django-expert");
   if (paths.django) args.push("--django-task-file", paths.django);
   if (input.approveProject) args.push("--approve-project");
+  if (input.rpcWorkers) args.push("--rpc-workers");
   if (dryRun) args.push("--dry-run", "--skip-model-check");
   return args;
 }
@@ -145,12 +150,16 @@ function startConfirmation(preview) {
   const roles = (preview.data?.roles || [])
     .map((role) => `${role.name}: ${role.provider}/${role.model} (${role.thinking})`)
     .join("\n");
+  const trustPolicy = preview.data?.trust?.policy;
   const trust = preview.data?.trust?.child_bypass
     ? "Child --approve requested after a separate confirmation"
-    : "Native child trust prompts (parent trust is not inherited)";
+    : trustPolicy === "saved-or-global-policy"
+      ? "RPC workers use saved trust or global defaultProjectTrust; ask/never ignores project executable resources without a prompt"
+      : "Native child trust prompts (parent trust is not inherited)";
   return [
     `Project: ${preview.data?.project}`,
     `Session: ${preview.data?.session}`,
+    `Worker transport: ${preview.data?.transport || "tui"}`,
     `Roles/models (CLI policy):\n${roles}`,
     `External state: ${preview.data?.paths?.state_root}`,
     "Coordination state is retained when the tmux session stops.",
@@ -217,7 +226,9 @@ const successSummaries = {
     return data.dry_run ? `Validated ${data.session}` : `Started ${data.session}`;
   },
   send(data) {
-    return `Sent to ${data.session}/${data.role}`;
+    return data.acknowledged
+      ? `Acknowledged by ${data.session}/${data.role}`
+      : `Sent to ${data.session}/${data.role}`;
   },
   doctor(data) {
     const failed = (data.commands || []).filter((item) => item.status === "fail").length;
@@ -344,6 +355,10 @@ function createCommandHandlers(pi) {
     const withProbe = await ctx.ui.confirm("Optional role", "Add the independent technical probe?");
     const withPlaywright = await ctx.ui.confirm("Optional role", "Add the read-only Playwright tester?");
     const withDjangoExpert = await ctx.ui.confirm("Optional role", "Add the read-only Django expert?");
+    const rpcWorkers = await ctx.ui.confirm(
+      "Worker transport",
+      "Use acknowledged headless Pi RPC workers? No keeps interactive Pi TUIs and tmux key transport.",
+    );
     let approveProject = false;
     if (ctx.isProjectTrusted()) {
       approveProject = await ctx.ui.confirm(
@@ -354,7 +369,15 @@ function createCommandHandlers(pi) {
     try {
       const envelope = await runStart(
         pi,
-        { task, project, withProbe, withPlaywright, withDjangoExpert, approveProject },
+        {
+          task,
+          project,
+          withProbe,
+          withPlaywright,
+          withDjangoExpert,
+          rpcWorkers,
+          approveProject,
+        },
         ctx.signal,
         ctx,
       );
@@ -413,10 +436,10 @@ export default function tmuxOrchestratorExtension(pi) {
   pi.registerTool({
     name: "tmux_orchestrator",
     label: "Tmux Orchestrator",
-    description: "Delegate bounded doctor, list, status, start, or send actions to the bundled Python tmux orchestrator. Start always requires interactive confirmation. Output is metadata-only and bounded.",
+    description: "Delegate bounded doctor, list, status, start, or send actions to the bundled Python tmux orchestrator. Start can select TUI or acknowledged RPC workers and always requires interactive confirmation. Output is metadata-only and bounded.",
     promptSnippet: "Inspect or operate local Pi tmux orchestrations through the authoritative Python CLI",
     promptGuidelines: [
-      "Use tmux_orchestrator instead of rebuilding tmux orchestration state; never claim parent project trust automatically applies to child Pi sessions.",
+      "Use tmux_orchestrator instead of rebuilding tmux orchestration state; never claim parent project trust automatically applies to child Pi sessions or that an RPC command acknowledgement proves task completion.",
     ],
     parameters,
     execute(_toolCallId, input, signal, _onUpdate, ctx) {
