@@ -12,7 +12,7 @@ Provide a small, reusable, intentionally tmux-scoped Pi skill and modular standa
 
 - `SKILL.md`: Pi Agent Skill entry point
 - `pi_tmux_orchestrator/`: authoritative dependency-free Python orchestration package
-- `pi_tmux_orchestrator/supervisor_api.py`: versioned tmux-independent durable-state read boundary; not a multiplexer-neutral worker host
+- `pi_tmux_orchestrator/supervisor_api.py`: versioned durable-state read boundary
 - `pi_tmux_orchestrator/supervisor_commands.py`: thin CLI adapters for the supervisor API
 - `bin/pi-tmux-agents`: thin executable launcher
 - `references/usage.md`: detailed operator guidance
@@ -58,6 +58,4 @@ Provide a small, reusable, intentionally tmux-scoped Pi skill and modular standa
 - Autonomous merging or deployment
 - Multiple concurrent writers in one worktree
 - Provider-specific production API emulation
-- Multiplexer-neutral worker hosting or a generic process-host framework
-- Pi Deck or another terminal-independent orchestration authority
-- Herdr or other terminal-client integrations
+- Worker or controller hosting outside tmux

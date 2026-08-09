@@ -22,7 +22,7 @@ Do not push feature work directly to `main` after the initial repository bootstr
 
 - Preserve a single-writer model: reviewer, probe, Playwright, and Django roles remain read-only.
 - Keep Python dependencies at zero unless a concrete requirement justifies one.
-- Preserve this package's tmux scope. Multiplexer-neutral hosting, Pi Deck orchestration, and terminal-client adapters require separately governed projects rather than generic host abstractions added here.
+- Preserve tmux ownership of worker/controller hosting and live-session operations.
 - Keep target repository files separate from orchestration state.
 - Retain explicit confirmation for trust bypass, role restart, and session stop.
 - Keep human and schema-v1 JSON behavior aligned; errors, arrays, and status output must remain bounded and free of private payloads.
@@ -50,7 +50,7 @@ The test suite must never issue a provider request or inspect real Pi/npm authen
 
 ## Release preparation
 
-Follow [RELEASE.md](RELEASE.md) for the human-controlled release checklist. A `0.4.0` source tree, tarball, CI pass, or publication dry-run means publish-ready, not actually published. The MIT license and Revaz Zakalashvili author metadata are explicitly owner-authorized; do not change the license or public identity/contact metadata without another explicit owner decision.
+Follow [RELEASE.md](RELEASE.md) for the human-controlled release checklist. Local package checks and publication dry-runs never publish the package. The MIT license and Revaz Zakalashvili author metadata are explicitly owner-authorized; do not change the license or public identity/contact metadata without another explicit owner decision.
 
 ## Security reports
 

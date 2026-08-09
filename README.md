@@ -1,6 +1,11 @@
 # Pi Tmux Orchestrator
 
-An intentionally tmux-scoped [Pi](https://github.com/badlogic/pi-mono) extension, skill, and dependency-free Python CLI with a persistent, project-neutral Pi controller for coordinating coding agents in monitorable tmux grids. The source package is prepared as version `0.4.0`; that publish-ready state is not evidence that an npm release or Pi gallery entry exists.
+[![npm version](https://img.shields.io/npm/v/@revazi/pi-tmux-orchestrator.svg)](https://www.npmjs.com/package/@revazi/pi-tmux-orchestrator)
+[![npm downloads](https://img.shields.io/npm/dm/@revazi/pi-tmux-orchestrator.svg)](https://www.npmjs.com/package/@revazi/pi-tmux-orchestrator)
+[![CI](https://github.com/revazi/pi-tmux-orchestrator/actions/workflows/ci.yml/badge.svg)](https://github.com/revazi/pi-tmux-orchestrator/actions/workflows/ci.yml)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.md)
+
+A [Pi](https://github.com/earendil-works/pi) extension, skill, and dependency-free Python CLI for coordinating coding agents in monitorable tmux grids.
 
 It turns the recurring “implementer + reviewer + optional specialist” setup into one command, with durable handoffs and explicit safety boundaries.
 
@@ -44,20 +49,7 @@ The default grid has implementer, reviewer, and monitor panes. Optional roles ad
 
 ## Implementation architecture
 
-`bin/pi-tmux-agents` is only an executable launcher. The authoritative standard-library implementation lives in `pi_tmux_orchestrator/`, separated into CLI/commands, controller, tmux, storage/manifest validation, prompts, relay, RPC protocol/store/supervisor modules, the versioned `supervisor_api` service, and separate supervisor CLI handlers. The JSON CLI remains the stable control-plane boundary used by the thin Pi extension and package-local clients. Tmux owns worker/controller hosting, panes, monitoring, attachment, and live-session operations. Supervisor reads consume only private durable state and can outlive tmux, but that read independence does not make this package a multiplexer-neutral process host.
-
-## Scope and future architecture
-
-This package will remain **Pi Tmux Orchestrator**. Maintenance here may improve its tmux workflows, compatibility, safety, and documented APIs, but it will not absorb a generic process-host framework, Pi Deck, or terminal-client-specific integrations.
-
-A future multiplexer-neutral effort should be a separate project with its own package identity, runtime contracts, versioning, and release decisions:
-
-1. Define a terminal-independent orchestration authority that owns detached local RPC workers and contains no pane IDs or tmux assumptions. That authority could live inside a separately governed Pi Deck project rather than requiring another standalone package.
-2. Prove its domain and process-host contracts with lifecycle, trust, privacy, idempotency, crash-recovery, and residue conformance tests.
-3. Keep tmux, Herdr, and other terminal integrations optional: add them as thin monitoring, focus, or attachment adapters only after inspecting their real contracts.
-4. Layer Pi Deck's CLI/TUI and other clients over the neutral authority without allowing any terminal adapter to become the source of orchestration identity or state transitions.
-
-The durable command/event semantics in this repository are useful reference behavior, not a commitment that a future project will import this package or preserve its private state format. No extraction, rename, new package, or Pi Deck implementation is part of this repository's current roadmap.
+`bin/pi-tmux-agents` is only an executable launcher. The authoritative standard-library implementation lives in `pi_tmux_orchestrator/`, separated into CLI/commands, controller, tmux, storage/manifest validation, prompts, relay, RPC protocol/store/supervisor modules, the versioned `supervisor_api` service, and separate supervisor CLI handlers. The JSON CLI remains the stable control-plane boundary used by the thin Pi extension and package-local clients. Tmux owns worker/controller hosting, panes, monitoring, attachment, and live-session operations. Supervisor reads consume only private durable state and remain available after a tmux session exits.
 
 ## Requirements
 
@@ -75,51 +67,30 @@ set -g extended-keys on
 set -g extended-keys-format csi-u
 ```
 
-## Package installation and evaluation
+## Installation
 
-Version `0.4.0` is a real Pi package in this repository. After inspecting the source, install a local checkout in place or install the public Git package:
+Install from npm:
 
 ```bash
+pi install npm:@revazi/pi-tmux-orchestrator
+```
+
+Try it for one Pi run without installing:
+
+```bash
+pi -e npm:@revazi/pi-tmux-orchestrator
+```
+
+Install a reviewed Git commit or local checkout:
+
+```bash
+pi install git:github.com/revazi/pi-tmux-orchestrator@<reviewed-full-commit>
 pi install /absolute/path/to/pi-tmux-orchestrator
-pi install git:github.com/revazi/pi-tmux-orchestrator
 ```
 
-For a temporary run that does not add the package to settings, use:
+Pi packages execute with the current user's permissions, so inspect the source before installation. The package imports no Pi core module, declares no dependencies or peers, and is distributed under the [MIT License](LICENSE.md).
 
-```bash
-pi -e /absolute/path/to/pi-tmux-orchestrator
-pi -e git:github.com/revazi/pi-tmux-orchestrator
-```
-
-The unversioned Git form uses the public repository's current default-branch source at installation time; use an explicit tag or commit when one is available and reproducibility is required. Pi packages execute with the current user's full permissions, so inspect the source before installation.
-
-The scoped npm manifest is configured for public publication, but source metadata is not proof of registry availability. Verify that the exact registry version exists before using or recommending these commands:
-
-```bash
-pi install npm:@revazi/pi-tmux-orchestrator@0.4.0
-pi -e npm:@revazi/pi-tmux-orchestrator@0.4.0
-```
-
-Run the package acceptance in disposable homes before publication:
-
-```bash
-scripts/package-smoke.sh
-```
-
-The smoke builds the exact 29-file modular tarball, installs it with npm scripts disabled and an empty dependency tree, then uses isolated `pi install <local-package-root>` and launches Pi RPC without `--extension`. It requires package-provenance discovery of exactly nine extension commands plus the root skill, performs an offline `npm publish --dry-run` against a loopback registry, sends no prompt/provider request, and does not use configured Pi/npm homes or credentials.
-
-The package imports no Pi core module, so it declares no dependencies or peers and owns no runtime tree. It is distributed under the MIT License in [LICENSE.md](LICENSE.md).
-
-The legacy `install.sh` remains a standalone CLI/root-skill fallback and does not install the extension. Existing standalone installations are not migrated automatically. Evaluate the installer only with a disposable destination:
-
-```bash
-TEMP_PI_HOME=$(mktemp -d)
-PI_AGENT_HOME="$TEMP_PI_HOME" ./install.sh
-PATH="$TEMP_PI_HOME/bin:$PATH" pi-tmux-agents --version
-rm -rf "$TEMP_PI_HOME"
-```
-
-No npm-registry, Pi-gallery, Git-package update, or rollback acceptance is claimed by the local smokes.
+The legacy `install.sh` remains available as a standalone CLI/root-skill fallback. It does not install the extension or migrate an existing installation.
 
 ## Persistent controller session
 
@@ -161,7 +132,7 @@ The installed extension exposes exactly these slash commands:
 
 The `tmux_orchestrator` model tool remains available for bounded `doctor`, `list`, `status`, `start`, and `send` actions; it intentionally excludes stop and restart. Start and slash-command send/stop require the interactive TUI. Parent trust is checked before an optional child `--approve`, a separate confirmation is required for every run, and parent trust is never treated as inherited by children. Message text never enters subprocess argv, status, details, notifications, or widgets.
 
-Attach, the supervisor API, RPC events/abort, and restart remain terminal/CLI-only. Attach takes over the terminal; abort requires RPC workers; restart requires explicit confirmation and provider/model/thinking configuration. The extension uses Pi's existing dialogs; richer terminal-neutral clients are outside this package's scope.
+Attach, the supervisor API, RPC events/abort, and restart remain terminal/CLI-only. Attach takes over the terminal; abort requires RPC workers; restart requires explicit confirmation and provider/model/thinking configuration. The extension uses Pi's existing dialogs.
 
 Without the extension, use the skill/CLI fallback in a new Pi session:
 
@@ -350,9 +321,3 @@ scripts/test.sh
 ```
 
 The suite includes 79+ standard-library Python tests, Node extension tests for the exact nine-command surface plus controller/RPC/trust/private-message boundaries, deterministic manifest/pack verification, npm installation of the actual tarball, isolated Pi local-package installation plus package-provenance RPC discovery, an offline npm publication dry-run, and a model-free controller plus default-TUI and acknowledged five-worker RPC/tmux smoke. It sends no real prompt or provider request and isolates Pi/npm configuration from real authentication files.
-
-## Project status
-
-Current source package: `0.4.0`, technically publish-ready and MIT-licensed. The authoritative process/data plane lives in the modular `pi_tmux_orchestrator/` Python package; `bin/pi-tmux-agents` is only a launcher and the extension invokes its JSON mode with argument arrays. Worker transport is selectable: interactive Pi TUIs remain the default, while opt-in RPC supervisors provide correlated control, durable metadata-only registries, lifecycle events, crash-uncertain recovery, and idempotent retries without adding dependencies. Supervisor API v1 provides bounded retained-state reads without claiming a multiplexer-neutral worker host. This repository remains tmux-scoped; any neutral core, terminal adapters, or Pi Deck implementation belongs to the separate future architecture described above.
-
-A version in source, a tarball, and successful dry-runs do not prove npm-registry or Pi-gallery publication. This repository does not distribute credentials, model access, or provider configuration.

@@ -6,9 +6,19 @@ All notable changes to this project are documented here.
 
 _No changes yet._
 
+## 0.4.1 - 2026-08-09
+
+Documentation-only patch release; orchestration runtime, package name, license, and author metadata are unchanged.
+
+### Changed
+
+- Added the standard npm version, npm downloads, CI, and MIT license badges
+- Focused the README and packaged usage/security documentation exclusively on Pi Tmux Orchestrator
+- Simplified installation guidance and restored the normal clean-repository `npm publish --access public` maintainer workflow
+
 ## 0.4.0 - 2026-08-09
 
-This is the first packaged public release of Pi Tmux Orchestrator. npm or Pi gallery availability must still be verified independently before using registry installation commands.
+This is the first npm-published release of Pi Tmux Orchestrator.
 
 ### Added
 
@@ -43,7 +53,7 @@ This is the first packaged public release of Pi Tmux Orchestrator. npm or Pi gal
 - Added diagnosable failed-start state and exact partial-session cleanup
 - Applied exact tmux session/window targets to all operations on existing orchestrations so a vanished target cannot fall through to a prefix match
 - Expanded the real tmux smoke to five synthetic RPC workers, relay acknowledgements, follow-up delivery, abort, private cleanup, process-residue checks, and Supervisor API coverage
-- Clarified that this package intentionally remains tmux-scoped; any terminal-independent orchestration authority, optional terminal adapters, or Pi Deck implementation belongs to separately governed future work
+- Documented tmux ownership of worker/controller hosting and the durable Supervisor API read boundary
 
 ### Security
 

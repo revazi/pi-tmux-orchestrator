@@ -53,7 +53,7 @@ const declaredFiles = [
 ];
 const expectedManifest = {
   name: "@revazi/pi-tmux-orchestrator",
-  version: "0.4.0",
+  version: "0.4.1",
   description: "Pi extension, skill, and dependency-free Python CLI for coordinating coding agents in tmux",
   license: "MIT",
   author: {
@@ -147,6 +147,25 @@ assertExact("package.json", manifest, expectedManifest);
 const license = await readFile(resolve(root, "LICENSE.md"), "utf8");
 if (license !== expectedLicense) {
   throw new Error("LICENSE.md drifted from the canonical MIT license contract");
+}
+
+const readme = await readFile(resolve(root, "README.md"), "utf8");
+const requiredBadges = [
+  "https://img.shields.io/npm/v/@revazi/pi-tmux-orchestrator.svg",
+  "https://img.shields.io/npm/dm/@revazi/pi-tmux-orchestrator.svg",
+  "https://github.com/revazi/pi-tmux-orchestrator/actions/workflows/ci.yml/badge.svg",
+  "https://img.shields.io/badge/license-MIT-blue.svg",
+];
+for (const badge of requiredBadges) {
+  if (!readme.includes(badge)) throw new Error(`README.md omitted required badge: ${badge}`);
+}
+const packagedDocs = ["README.md", "CHANGELOG.md", "SECURITY.md", "references/usage.md"];
+const unrelatedRoadmap = /\b(?:Pi Deck|Herdr|future architecture|neutral core|multiplexer-neutral|terminal-neutral|terminal-independent|terminal-client|process-host)\b/i;
+for (const path of packagedDocs) {
+  const content = await readFile(resolve(root, path), "utf8");
+  if (unrelatedRoadmap.test(content)) {
+    throw new Error(`${path} contains unrelated product or roadmap language`);
+  }
 }
 
 const version = (await readFile(resolve(root, "VERSION"), "utf8")).trim();
