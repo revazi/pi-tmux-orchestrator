@@ -93,7 +93,7 @@ pi -e git:github.com/revazi/pi-tmux-orchestrator
 
 The unversioned Git form uses the public repository's current default-branch source at installation time; use an explicit tag or commit when one is available and reproducibility is required. Pi packages execute with the current user's full permissions, so inspect the source before installation.
 
-The scoped npm manifest is publish-ready, but npm availability is still unverified. Only after an operator confirms that exact registry version exists should these commands be described as usable:
+The scoped npm manifest is configured for public publication, but source metadata is not proof of registry availability. Verify that the exact registry version exists before using or recommending these commands:
 
 ```bash
 pi install npm:@revazi/pi-tmux-orchestrator@0.4.0
