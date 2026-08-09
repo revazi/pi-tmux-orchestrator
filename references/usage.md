@@ -24,7 +24,7 @@ The extension imports no Pi core package, so the package declares no dependency 
 | `/orchestrate` | Alias for `/orchestrator-start`. |
 | `/orchestrations` | Alias for `/orchestrator-list`. |
 
-The `tmux_orchestrator` tool still exposes only `doctor`, `list`, `status`, `start`, and `send`. Slash start/send/stop require the interactive TUI. Message bodies never enter subprocess argv, status, details, notifications, or widgets. Attach and restart stay terminal-only: attach takes over the terminal, while restart requires explicit confirmation and provider/model/thinking configuration. Richer TUI/message behavior is intentionally deferred.
+The `tmux_orchestrator` tool still exposes only `doctor`, `list`, `status`, `start`, and `send`. Slash start/send/stop require the interactive TUI. Start can select interactive TUI workers or opt-in RPC supervisors. Message bodies never enter subprocess argv, status, details, notifications, or widgets. Attach, RPC abort, and restart stay terminal-only: attach takes over the terminal, abort is RPC-only, and restart requires explicit confirmation and provider/model/thinking configuration. Richer Pi Deck TUI behavior is intentionally deferred.
 
 ## Dedicated controller
 
@@ -41,7 +41,7 @@ pi-tmux-agents controller stop --confirm
 
 The controller starts detached and sends no initial prompt/provider request. It explicitly loads the colocated package extension/skill when available, disables project context discovery and project approval in its neutral workspace, and omits `edit`/`write`. Controller-mode `/orchestrator-start` asks for an explicit target project; the model tool also rejects a controller start without one. This does not approve or trust that target for child agents.
 
-Duplicate starts and unrelated reserved-name collisions are refused. Controller mode cancels Pi `/new`, `/resume`, `/fork`, and `/clone` transitions to preserve the fixed Pi session identity. `controller attach` is interactive-only. `controller stop` requires `--confirm` and kills only the exact controller tmux session while retaining its state and Pi conversation. Worker grids are independent and continue when the controller stops.
+Duplicate starts and unrelated reserved-name collisions are refused. Controller mode cancels Pi `/new`, `/resume`, `/fork`, and `/clone` transitions to preserve the fixed Pi session identity. `controller attach` is interactive-only. `controller stop` requires `--confirm` and kills only the exact controller tmux session while retaining its state and Pi conversation. Worker grids, including RPC supervisors, are independent and continue when the controller stops.
 
 ## JSON boundary
 
@@ -51,7 +51,7 @@ Duplicate starts and unrelated reserved-name collisions are refused. Controller 
 {"schema_version":"1","command":"list","success":true,"data":{"sessions":[]},"error":null}
 ```
 
-The envelope always has exactly `schema_version`, `command`, `success`, `data`, and `error`. Errors contain bounded `code` and `message` fields. Arrays are bounded and report truncation. Roles, panes, files, model checks, controller lifecycle, and paths are structured values. `list`, `status`, and `controller status` remain metadata-only: no task, message, prompt, report, provider payload, or specialist body is included. Grid attach and `controller attach` return `interactive_only` in JSON mode.
+The envelope always has exactly `schema_version`, `command`, `success`, `data`, and `error`. Errors contain bounded `code` and `message` fields. Arrays are bounded and report truncation. Roles, RPC queue/runtime state, panes, files, model checks, controller lifecycle, and paths are structured values. `list`, `status`, and `controller status` remain metadata-only: no task, message, prompt, report, provider payload, or specialist body is included. Grid attach and `controller attach` return `interactive_only` in JSON mode.
 
 ## Commands
 
@@ -72,6 +72,7 @@ Common options:
 - `--project PATH`: defaults to the current directory
 - `--session NAME`: defaults to `pi-<project>-agents`
 - `--approve-project`: passes Pi's `--approve` flag to child sessions; use only after project trust is established
+- `--rpc-workers`: replaces interactive child Pi TUIs with headless Pi RPC supervisors and acknowledged private-mailbox control; their panes are read-only event streams controlled through `send`/`abort`
 - `--with-probe`: adds the optional read-only technical probe pane
 - `--probe-task TEXT` or `--probe-task-file PATH`: focused technical probe instructions
 - `--with-playwright`: adds an optional read-only Playwright test pane
@@ -116,9 +117,15 @@ Shows role panes, process state, project path, coordination directory, and bound
 
 Inside tmux, switches the current client. Outside tmux, attaches normally.
 
-### `send SESSION --role ROLE --message TEXT`
+### `send SESSION --role ROLE --message TEXT [--delivery steer|follow-up]`
 
-Sends a steering message to an agent. Prefer a mode-`0600` `--message-file` for sensitive or longer instructions. The extension always uses a unique private temporary file and removes it in `finally`; message bodies are never put in child process arguments or returned JSON. The message is submitted immediately; Pi queues it safely if the agent is currently working.
+Sends a message to an agent. Prefer a mode-`0600` `--message-file` for sensitive or longer instructions. The extension always uses a unique private temporary file and removes it in `finally`; message bodies are never put in child process arguments or returned JSON.
+
+TUI workers use the existing immediate tmux-key submission and support only `steer`. RPC workers transfer the message through a unique mode-`0600` coordination mailbox file, remove it after forwarding/rejection/timeout, correlate Pi's `prompt` response, and support `steer` or `follow-up`. A successful RPC response acknowledges acceptance or queueing, not completion.
+
+### `abort SESSION --role ROLE`
+
+Sends Pi's RPC `abort` command to one RPC worker and waits for its correlated acknowledgement. It is rejected for TUI-worker grids. Abort does not stop the tmux grid or delete state.
 
 ### `restart SESSION --role ROLE ... --yes`
 
@@ -146,7 +153,7 @@ The coordination directory is external to the repository and mode `0700`.
 8. Approval causes the implementer to write `implementation-ready.md` and stop before push/merge unless the task and repository workflow explicitly authorize more.
 9. Optional technical probe writes `probe.md` and `probe.ready`; relay informs both implementation and review agents.
 
-The relay transports file paths and state transitions, not source documents or provider payloads. A missing, empty, symlinked, non-regular, or invalid-enum report leaves its marker pending. Delivery is recorded per marker and recipient; a successful recipient is not duplicated while another recipient retries, and global completion is recorded only after every enabled intended recipient succeeds. Tmux `send-keys` success is transport-level only and is not a Pi acknowledgement.
+The relay transports file paths and state transitions, not source documents or provider payloads. A missing, empty, symlinked, non-regular, or invalid-enum report leaves its marker pending. Delivery is recorded per marker and recipient; a successful recipient is not duplicated while another recipient retries, and global completion is recorded only after every enabled intended recipient succeeds. TUI `send-keys` success remains transport-level only. RPC relay delivery is recorded only after Pi returns the correlated prompt-acceptance response, although acceptance still does not prove task completion.
 
 ## Security boundaries
 
@@ -157,11 +164,13 @@ The relay transports file paths and state transitions, not source documents or p
 - Controller state uses private non-symlink directories/files outside target repositories; the Pi child runs with `umask 077`, a stable session ID, no discovered project context, and no `edit`/`write` tools.
 - Model validation uses `pi --list-models`, which checks configured availability but sends no model request.
 - State root, session, and run paths must resolve within the configured orchestration root and may not themselves be symlink directories. State files used by the orchestrator must be regular non-symlink files.
-- Schema-v1 manifests require exact structural, role, pane, trust, canonical path, and containment validation before actions on an existing orchestration.
+- Schema-v1 TUI manifests and schema-v2 transport-aware manifests require exact structural, role, pane, trust, transport, canonical path, and containment validation before actions on an existing orchestration.
+- RPC control/state directories and files are private, role-scoped, bounded, non-symlink paths under the coordination run. Status stores queue counts and session/process metadata, never queued message bodies.
 - Manifest updates use unique mode-`0600` temporary files and atomic replacement. Failed starts kill partial sessions and retain a private `startup-state` diagnosis when safe.
 - Avoid task text on the command line when it contains sensitive project information; use `--task-file`.
 - Never place credentials, raw career documents, private customer data, prompts, provider responses, or raw provider errors in coordination files.
 - `--approve-project` bypasses child-session trust prompts and must be limited to a project already inspected and trusted. The extension additionally requires `ctx.isProjectTrusted()` and explicit per-run UI confirmation; parent trust is never automatically inherited by children.
+- RPC mode is non-interactive for project trust. Without `--approve-project`, an applicable saved decision or global `defaultProjectTrust` is used. `ask`/`never` still loads context instructions but ignores project-local executable resources without prompting; `always` trusts them.
 - Extension start/probe/specialist/message bodies use unique mode-`0600` temporary files, are passed only via `--*-file`, and are removed in `finally`.
 - The extension starts no background poller or resource in its factory; status/widget refresh occurs only on command, tool, or session lifecycle points.
 
@@ -201,7 +210,7 @@ Project agents continue running, but automatic notifications stop. Restarting re
 
 ### Child session asks for project trust
 
-Approve it interactively in each pane, or stop and restart with `--approve-project` after confirming the project is trusted. The controller's neutral workspace and stable identity never count as trust for a target project.
+For TUI workers, approve interactively in each pane or stop and restart with `--approve-project` after confirming the project is trusted. RPC workers cannot prompt: save a Pi trust decision, intentionally configure global `defaultProjectTrust`, or use a separately confirmed `--approve-project`; under `ask`/`never`, project-local executable resources are ignored. The controller's neutral workspace and stable identity never count as trust for a target project.
 
 ### Controller name already exists
 

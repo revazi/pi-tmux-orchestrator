@@ -1,6 +1,6 @@
 ---
 name: tmux-agent-orchestrator
-description: Starts and coordinates multiple Pi coding agents from an optional persistent project-neutral Pi controller into a monitorable tmux grid with one writer, an independent reviewer, optional technical probe, Playwright tester, and Django expert, file-based handoffs, model selection, status, messaging, restart, and cleanup commands. Use when the user asks to delegate work across Pi agents, run implementer/reviewer loops, request specialist Django or browser reviews, or monitor agents in tmux across any project.
+description: Starts and coordinates multiple Pi coding agents from an optional persistent project-neutral Pi controller into a monitorable tmux grid with interactive TUI or acknowledged RPC workers, one writer, an independent reviewer, optional technical probe, Playwright tester, and Django expert, file-based handoffs, model selection, status, messaging, abort, restart, and cleanup commands. Use when the user asks to delegate work across Pi agents, run implementer/reviewer loops, request specialist Django or browser reviews, or monitor agents in tmux across any project.
 compatibility: Requires Pi, Python 3, and tmux. tmux 3.5+ with extended-keys csi-u is recommended.
 ---
 
@@ -31,9 +31,9 @@ The controller has a stable Pi session identity and private neutral workspace ou
 
 ## Start a grid
 
-With the extension, use `/orchestrator-start [task]` or call `tmux_orchestrator` with action `start`; both use private temporary files and confirm project, roles/models, external state retention, and child trust policy before delegation. Controller-mode starts additionally require the explicit target project.
+With the extension, use `/orchestrator-start [task]` or call `tmux_orchestrator` with action `start`; both use private temporary files and confirm project, roles/models, TUI versus RPC worker transport, external state retention, and child trust policy before delegation. Controller-mode starts additionally require the explicit target project.
 
-For the standalone fallback, write the agreed task to a mode-`0600` temporary file, then run:
+Choose `--rpc-workers` when the user wants correlated prompt acceptance, steering/follow-up queues, abort, and bounded RPC state instead of interactive child Pi TUIs. RPC mode cannot show startup trust prompts: use a saved Pi trust decision, an intentional global `defaultProjectTrust`, or separately confirmed `--approve-project`; the default `ask`/`never` policy loads context instructions but ignores project-local executable resources. For the standalone fallback, write the agreed task to a mode-`0600` temporary file, then run:
 
 ```bash
 pi-tmux-agents start \
@@ -89,23 +89,26 @@ The Playwright and Django roles wait for each implementer handoff and report bef
 
 ## Operate an existing grid
 
-Prefer `/orchestrator-list`, `/orchestrator-status [session]`, `/orchestrator-send [session]`, and `/orchestrator-stop [session]`; `/orchestrator-help` summarizes the surface and `/orchestrator-doctor` checks prerequisites. Send obtains its message through Pi's editor and delegates only through a unique private file. Attach and restart remain CLI-only because attach takes over the terminal and restart requires explicit confirmation/configuration. Standalone fallback:
+Prefer `/orchestrator-list`, `/orchestrator-status [session]`, `/orchestrator-send [session]`, and `/orchestrator-stop [session]`; `/orchestrator-help` summarizes the surface and `/orchestrator-doctor` checks prerequisites. Send obtains its message through Pi's editor and delegates only through a unique private file. Attach, RPC abort, and restart remain CLI-only because attach takes over the terminal, abort is transport-specific, and restart requires explicit confirmation/configuration. Standalone fallback:
 
 ```bash
 pi-tmux-agents list
 pi-tmux-agents status SESSION
 pi-tmux-agents attach SESSION
 pi-tmux-agents send SESSION --role implementer --message "Prioritize the failing regression."
+pi-tmux-agents send SESSION --role reviewer --delivery follow-up \
+  --message "Review after the current RPC run settles."
+pi-tmux-agents abort SESSION --role implementer
 pi-tmux-agents restart SESSION --role implementer \
   --provider openai-codex --model gpt-5.6-sol --thinking xhigh --yes
 pi-tmux-agents stop SESSION --yes
 ```
 
-`restart` preserves filesystem changes and coordination state but starts a fresh Pi conversation for that role.
+`restart` preserves filesystem changes and coordination state but starts a fresh Pi conversation for that role. `follow-up` and `abort` require an RPC-worker grid. An RPC acknowledgement proves that Pi accepted or queued the command, not that the requested work completed.
 
 ## Before launching
 
-The parent Pi trust decision never automatically applies to children. The extension permits `--approve-project` only for a parent-trusted project after a separate per-run confirmation; otherwise children use native trust prompts.
+The parent Pi trust decision never automatically applies to children. The extension permits `--approve-project` only for a parent-trusted project after a separate per-run confirmation. Otherwise TUI workers use native trust prompts; RPC workers use saved/global trust policy; the default `ask`/`never` policy safely ignores untrusted project-local executable resources without prompting while still loading context instructions.
 
 Run a safe preview when model availability or layout is uncertain:
 

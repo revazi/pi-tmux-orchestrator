@@ -19,6 +19,7 @@ It turns the recurring “implementer + reviewer + optional specialist” setup 
 - Model-free dry runs and functional smoke tests
 - An opt-in versioned JSON CLI boundary and thin Pi extension that delegates to it
 - One persistent, project-neutral controller Pi session with stable identity and private storage
+- Optional headless Pi RPC workers with private mailbox transport, prompt-acceptance acknowledgements, queue metadata, follow-up delivery, and abort
 
 ## Default grid
 
@@ -131,7 +132,7 @@ The installed extension exposes exactly these slash commands:
 | --- | --- |
 | `/orchestrator-help` | Show a bounded command overview without a subprocess. |
 | `/orchestrator-doctor` | Run the authoritative JSON CLI prerequisite checks without a provider request. |
-| `/orchestrator-start [task]` | Collect a task when omitted, select optional roles, enforce parent/child trust boundaries, preview, and confirm before start. |
+| `/orchestrator-start [task]` | Collect a task when omitted, select optional roles and TUI/RPC worker transport, enforce parent/child trust boundaries, preview, and confirm before start. |
 | `/orchestrator-list` | List running orchestrations and refresh the bounded metadata-only widget. |
 | `/orchestrator-status [session]` | Show metadata-only status for an exact session, or use safe unambiguous current-project resolution when omitted. |
 | `/orchestrator-send [session]` | Collect an exact session when omitted, select one of five roles, edit a non-empty private message, and send it through a unique mode-`0600` file. |
@@ -141,7 +142,7 @@ The installed extension exposes exactly these slash commands:
 
 The `tmux_orchestrator` model tool remains available for bounded `doctor`, `list`, `status`, `start`, and `send` actions; it intentionally excludes stop and restart. Start and slash-command send/stop require the interactive TUI. Parent trust is checked before an optional child `--approve`, a separate confirmation is required for every run, and parent trust is never treated as inherited by children. Message text never enters subprocess argv, status, details, notifications, or widgets.
 
-Attach and restart remain terminal/CLI-only. Attach takes over the terminal; restart requires explicit confirmation and provider/model/thinking configuration. This extension uses Pi's existing dialogs and does not redesign richer TUI or inter-agent message behavior.
+Attach, RPC abort, and restart remain terminal/CLI-only. Attach takes over the terminal; abort requires RPC workers; restart requires explicit confirmation and provider/model/thinking configuration. The extension uses Pi's existing dialogs; richer Pi Deck TUI work remains separate.
 
 Without the extension, use the skill/CLI fallback in a new Pi session:
 
@@ -199,6 +200,19 @@ pi-tmux-agents start \
   --attach
 ```
 
+Use acknowledged headless RPC workers instead of interactive child Pi TUIs when desired:
+
+```bash
+pi-tmux-agents start \
+  --project "$PWD" \
+  --task-file /tmp/pi-agent-task.md \
+  --rpc-workers \
+  --approve-project \
+  --attach
+```
+
+Without `--approve-project`, non-interactive RPC workers apply an existing saved Pi trust decision or global `defaultProjectTrust`. The default `ask` and `never` policies load context instructions but ignore project-local executable resources without prompting; `always` trusts them. Interactive TUI workers remain the default. RPC panes are read-only event streams; steer them with `send`, queue later work with `--delivery follow-up`, and interrupt active work with `abort` rather than typing into the pane.
+
 Add browser and Django specialists with focused task files:
 
 ```bash
@@ -224,12 +238,15 @@ pi-tmux-agents list
 pi-tmux-agents status SESSION
 pi-tmux-agents attach SESSION
 pi-tmux-agents send SESSION --role implementer --message "Prioritize the failing regression."
+pi-tmux-agents send SESSION --role reviewer --delivery follow-up \
+  --message "Review this after the current run settles."
+pi-tmux-agents abort SESSION --role implementer
 pi-tmux-agents restart SESSION --role implementer \
   --provider openai-codex --model gpt-5.6-sol --thinking xhigh --yes
 pi-tmux-agents stop SESSION --yes
 ```
 
-A restart preserves project files and coordination state but starts a fresh Pi conversation for that role.
+A restart preserves project files and coordination state but starts a fresh Pi conversation for that role. Follow-up delivery and abort require an RPC-worker grid. RPC send/abort success acknowledges that Pi accepted the command; completion remains observable through status, handoffs, and `agent_settled` state rather than the command acknowledgement itself.
 
 ## Handoff flow
 
@@ -264,7 +281,8 @@ They are created with private permissions and remain outside the target reposito
 - State root, session, and run directories must be canonical non-symlink directories; state files must be regular non-symlink files.
 - Schema-v1 manifests are strictly validated before acting on an existing orchestration's panes or processes.
 - Ready markers remain pending until their report is valid and transport succeeds for every enabled recipient; successful recipients are not notified again during another recipient's retry.
-- Tmux `send-keys` success is transport-level only. It does not prove that Pi processed or acknowledged a notice.
+- TUI-worker `tmux send-keys` success is transport-level only. RPC-worker mailbox delivery waits for Pi's correlated command response and reports an acknowledgement, but that acknowledgement proves acceptance/queueing rather than task completion.
+- RPC mailbox payloads use unique mode-`0600` files under the private coordination directory and are deleted after forwarding, rejection, or client timeout; cleanup is not a secure-erasure claim.
 - Failed starts retain a private `startup-state` diagnosis and kill any partial tmux session.
 - The orchestrator never reads or copies Pi authentication files.
 - `pi --list-models` validates availability without making a model request.
@@ -281,7 +299,7 @@ Put `--json` before or after the command to emit exactly one JSON object on stdo
 {"schema_version":"1","command":"status","success":true,"data":{},"error":null}
 ```
 
-Failures return nonzero with `data: null` (or bounded diagnostic data for checks) and `error: {"code":"...","message":"..."}`. `doctor`, `controller`, `list`, `status`, `start`, `send`, `restart`, and `stop` return structured metadata. Grid attach and `controller attach` fail with `interactive_only`. Task, prompt, report, provider, specialist, and message bodies are never returned; list/status expose bounded names, paths, role/pane records, and file sizes only.
+Failures return nonzero with `data: null` (or bounded diagnostic data for checks) and `error: {"code":"...","message":"..."}`. `doctor`, `controller`, `list`, `status`, `start`, `send`, `abort`, `restart`, and `stop` return structured metadata. Grid attach and `controller attach` fail with `interactive_only`. Task, prompt, report, provider, specialist, and message bodies are never returned; list/status expose bounded names, paths, role/pane records, and file sizes only.
 
 ## Author and license
 
@@ -297,10 +315,10 @@ Run all local checks:
 scripts/test.sh
 ```
 
-The suite includes 50+ standard-library Python tests, Node extension tests for the exact nine-command surface plus controller/trust/private-message boundaries, deterministic manifest/pack verification, npm installation of the actual tarball, isolated Pi local-package installation plus package-provenance RPC discovery, an offline npm publication dry-run, and a model-free controller plus six-pane tmux smoke. It sends no prompt or provider request and isolates Pi/npm configuration from real authentication files.
+The suite includes 57+ standard-library Python tests, Node extension tests for the exact nine-command surface plus controller/RPC/trust/private-message boundaries, deterministic manifest/pack verification, npm installation of the actual tarball, isolated Pi local-package installation plus package-provenance RPC discovery, an offline npm publication dry-run, and a model-free controller plus default-TUI and acknowledged five-worker RPC/tmux smoke. It sends no real prompt or provider request and isolates Pi/npm configuration from real authentication files.
 
 ## Project status
 
-Current source package: `0.4.0`, technically publish-ready and MIT-licensed. The Python/tmux CLI remains the authoritative process/data plane; the extension only invokes its JSON mode with argument arrays. The persistent controller and child Pi TUIs remain separate processes, with no SDK/RPC child bridge yet; this creates the stable control-session boundary for later Pi Deck work without claiming the later transport or TUI.
+Current source package: `0.4.0`, technically publish-ready and MIT-licensed. The Python/tmux CLI remains the authoritative process/data plane; the extension only invokes its JSON mode with argument arrays. Worker transport is selectable: existing interactive Pi TUIs remain the default, while opt-in RPC supervisors provide correlated control acknowledgements and bounded state without adding Node dependencies. A richer shared Pi Deck TUI and durable event journal remain later work.
 
 A version in source, a tarball, and successful dry-runs do not prove npm-registry or Pi-gallery publication. This repository does not distribute credentials, model access, or provider configuration.

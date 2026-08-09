@@ -5,9 +5,13 @@ import copy
 import importlib.util
 import io
 import json
+import os
+import queue
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -221,6 +225,136 @@ class ManifestValidationTests(PrivateStateFixture):
         prompt.symlink_to(outside)
         with self.assertRaises(ORCHESTRATOR.OrchestrationError):
             ORCHESTRATOR.load_manifest(self.coord)
+
+
+class RpcTransportHardeningTests(PrivateStateFixture):
+    def rpc_manifest(self) -> dict[str, object]:
+        manifest = self.manifest()
+        manifest["version"] = 2
+        manifest["transport"] = ORCHESTRATOR.RPC_TRANSPORT
+        return manifest
+
+    def test_v2_rpc_manifest_round_trip_and_transport_validation(self) -> None:
+        manifest = self.rpc_manifest()
+        ORCHESTRATOR.save_manifest(self.coord, manifest)
+        loaded = ORCHESTRATOR.load_manifest(self.coord, expected_session=self.session)
+        self.assertEqual(ORCHESTRATOR.manifest_transport(loaded), "rpc")
+
+        invalid = copy.deepcopy(manifest)
+        invalid["transport"] = "raw-tmux"
+        self.write_raw_manifest(invalid)
+        with self.assertRaises(ORCHESTRATOR.OrchestrationError):
+            ORCHESTRATOR.load_manifest(self.coord, expected_session=self.session)
+
+    def test_rpc_state_is_private_strict_and_metadata_only(self) -> None:
+        paths = ORCHESTRATOR.rpc_role_paths(self.coord, "implementer", create=True)
+        state = {
+            "version": 1,
+            "role": "implementer",
+            "pid": 123,
+            "status": "streaming",
+            "is_streaming": True,
+            "steering_count": 1,
+            "follow_up_count": 2,
+            "session_id": "synthetic-session",
+            "updated_at": "2026-08-09T12:00:00+00:00",
+        }
+        ORCHESTRATOR.save_rpc_state(paths["state"], state, "implementer")
+        self.assertEqual(paths["state"].stat().st_mode & 0o777, 0o600)
+        self.assertEqual(
+            ORCHESTRATOR.load_rpc_state(self.coord, "implementer"),
+            state,
+        )
+        public = ORCHESTRATOR.public_rpc_state(state)
+        self.assertNotIn("message", public)
+        self.assertNotIn("prompt", public)
+
+        tampered = dict(state)
+        tampered["steering_count"] = -1
+        ORCHESTRATOR.secure_write(paths["state"], json.dumps(tampered))
+        with self.assertRaises(ORCHESTRATOR.OrchestrationError):
+            ORCHESTRATOR.load_rpc_state(self.coord, "implementer")
+
+    def test_rpc_mailbox_acknowledges_without_leaving_private_payload_files(self) -> None:
+        manifest = self.rpc_manifest()
+        paths = ORCHESTRATOR.rpc_role_paths(self.coord, "implementer", create=True)
+        canary = "PRIVATE_RPC_MESSAGE_CANARY_f81c"
+        observed: list[dict[str, object]] = []
+
+        def acknowledge() -> None:
+            deadline = time.time() + 2
+            while time.time() < deadline:
+                requests = list(paths["inbox"].glob("*.json"))
+                if requests:
+                    request_path = requests[0]
+                    token = request_path.stem
+                    request = ORCHESTRATOR.read_rpc_mailbox_request(request_path, token)
+                    observed.append(request)
+                    ORCHESTRATOR.unlink_private_regular(request_path, "RPC request")
+                    ORCHESTRATOR.rpc_acknowledge(
+                        paths["acks"] / f"{token}.json",
+                        token,
+                        "prompt",
+                        True,
+                    )
+                    return
+                time.sleep(0.01)
+            raise AssertionError("RPC request did not appear")
+
+        worker = threading.Thread(target=acknowledge)
+        worker.start()
+        ack = ORCHESTRATOR.rpc_control_request(
+            self.coord,
+            manifest,
+            "implementer",
+            "prompt",
+            message=canary,
+            delivery="follow-up",
+            timeout=2,
+        )
+        worker.join(timeout=2)
+        self.assertFalse(worker.is_alive())
+        self.assertTrue(ack["success"])
+        self.assertEqual(observed[0]["message"], canary)
+        self.assertEqual(observed[0]["delivery"], "follow-up")
+        self.assertEqual(list(paths["inbox"].iterdir()), [])
+        self.assertEqual(list(paths["acks"].iterdir()), [])
+
+    def test_rpc_reader_uses_lf_only_and_preserves_unicode_separators(self) -> None:
+        read_fd, write_fd = os.pipe()
+        records: queue.Queue[tuple[str, object]] = queue.Queue()
+        with os.fdopen(read_fd, "rb", closefd=True) as reader:
+            worker = threading.Thread(
+                target=ORCHESTRATOR.strict_rpc_reader,
+                args=(reader, "stdout", records),
+            )
+            worker.start()
+            os.write(
+                write_fd,
+                '{"type":"message_update","delta":"left\u2028right"}\n'.encode("utf-8"),
+            )
+            os.close(write_fd)
+            worker.join(timeout=2)
+        self.assertFalse(worker.is_alive())
+        channel, payload = records.get_nowait()
+        self.assertEqual(channel, "stdout")
+        self.assertIn("left\u2028right".encode("utf-8"), payload)
+
+    def test_rpc_timeout_removes_undelivered_message_file(self) -> None:
+        manifest = self.rpc_manifest()
+        paths = ORCHESTRATOR.rpc_role_paths(self.coord, "reviewer", create=True)
+        with self.assertRaises(ORCHESTRATOR.OrchestrationError) as raised:
+            ORCHESTRATOR.rpc_control_request(
+                self.coord,
+                manifest,
+                "reviewer",
+                "prompt",
+                message="Synthetic timeout message",
+                timeout=0.05,
+            )
+        self.assertEqual(raised.exception.code, "rpc_timeout")
+        self.assertEqual(list(paths["inbox"].iterdir()), [])
+        self.assertEqual(list(paths["acks"].iterdir()), [])
 
 
 class RelayHardeningTests(PrivateStateFixture):
