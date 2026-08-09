@@ -5,9 +5,11 @@
 Install from npm:
 
 ```bash
-pi install npm:@revazi/pi-tmux-orchestrator
-pi -e npm:@revazi/pi-tmux-orchestrator
+pi install npm:pi-tmux-orchestrator
+pi -e npm:pi-tmux-orchestrator
 ```
+
+Versions 0.4.0 and 0.4.1 briefly used `@revazi/pi-tmux-orchestrator`. Migrate an installation with `pi remove npm:@revazi/pi-tmux-orchestrator` followed by `pi install npm:pi-tmux-orchestrator`.
 
 Install a reviewed Git commit or local checkout:
 

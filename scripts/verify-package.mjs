@@ -52,8 +52,8 @@ const declaredFiles = [
   "pi_tmux_orchestrator/*.py",
 ];
 const expectedManifest = {
-  name: "@revazi/pi-tmux-orchestrator",
-  version: "0.4.1",
+  name: "pi-tmux-orchestrator",
+  version: "0.4.2",
   description: "Pi extension, skill, and dependency-free Python CLI for coordinating coding agents in tmux",
   license: "MIT",
   author: {
@@ -151,8 +151,8 @@ if (license !== expectedLicense) {
 
 const readme = await readFile(resolve(root, "README.md"), "utf8");
 const requiredBadges = [
-  "https://img.shields.io/npm/v/@revazi/pi-tmux-orchestrator.svg",
-  "https://img.shields.io/npm/dm/@revazi/pi-tmux-orchestrator.svg",
+  "https://img.shields.io/npm/v/pi-tmux-orchestrator.svg",
+  "https://img.shields.io/npm/dm/pi-tmux-orchestrator.svg",
   "https://github.com/revazi/pi-tmux-orchestrator/actions/workflows/ci.yml/badge.svg",
   "https://img.shields.io/badge/license-MIT-blue.svg",
 ];
