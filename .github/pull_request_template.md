@@ -5,7 +5,7 @@
 ## Verification
 
 - [ ] `scripts/test.sh`
-- [ ] Actual tarball allowlist/install/Pi discovery and isolated offline publication dry-run passed
+- [ ] Actual tarball allowlist/npm install/isolated Pi local-package install + RPC discovery and offline publication dry-run passed
 - [ ] No provider request or real Pi/npm auth-home access was issued by tests
 
 ## Safety and compatibility

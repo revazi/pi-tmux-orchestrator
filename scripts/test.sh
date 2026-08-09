@@ -40,7 +40,7 @@ printf '%s\n' '==> Extension syntax and unit tests'
 node --check "$ROOT/extensions/tmux-orchestrator.js"
 node --test "$ROOT/tests/extension.test.mjs"
 
-printf '%s\n' '==> Publish-ready package verification, artifact install/discovery, and offline publication dry run'
+printf '%s\n' '==> Package verification, npm/Pi local-package install + RPC discovery, and offline publication dry run'
 node "$ROOT/scripts/verify-package.mjs"
 "$ROOT/scripts/package-smoke.sh"
 

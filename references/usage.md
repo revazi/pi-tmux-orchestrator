@@ -2,13 +2,29 @@
 
 ## Package distribution status
 
-The source and local artifact are prepared as `0.4.0`, with public scoped-package access metadata and `pi-package` discovery. That does not prove the version has been published to npm or listed in a Pi gallery. Once a human verifies publication, use `pi install npm:@revazi/pi-tmux-orchestrator@0.4.0` for a pinned persistent install or `pi -e npm:@revazi/pi-tmux-orchestrator@0.4.0` for one temporary run.
+The source and local artifact are prepared as `0.4.0`, with public scoped-package access metadata and `pi-package` discovery. Install an inspected local checkout with `pi install /absolute/path/to/pi-tmux-orchestrator`, or install the public Git package with `pi install git:github.com/revazi/pi-tmux-orchestrator`. Use the matching `pi -e` forms for one temporary run. The unversioned Git form uses the default-branch source available at installation time; use an explicit tag/commit when available for reproducibility.
 
-Before publication, `scripts/package-smoke.sh` packs and installs the exact 10-file artifact in disposable locations, validates its MIT/author metadata and empty owned dependency tree, runs isolated Pi RPC `get_commands` against the installed package, and performs an isolated offline npm publication dry-run. Local-path evaluation is also available with `pi --no-session -e /absolute/path/to/pi-tmux-orchestrator`; use a disposable `PI_CODING_AGENT_DIR` when the real Pi home must remain untouched. Persistent inspected-source fallbacks are `pi install /absolute/path/to/pi-tmux-orchestrator` and, only after the tag exists, `pi install git:github.com/revazi/pi-tmux-orchestrator@v0.4.0`.
+npm publication is not verified. Keep `pi install npm:@revazi/pi-tmux-orchestrator@0.4.0` and `pi -e npm:@revazi/pi-tmux-orchestrator@0.4.0` conditional until a human confirms that exact registry version.
+
+Before publication, `scripts/package-smoke.sh` packs and npm-installs the exact 10-file artifact in disposable locations, validates its MIT/author metadata and empty owned dependency tree, installs that npm package root through isolated `pi install <local-package-root>`, launches Pi RPC without `--extension`, asserts package provenance for exactly nine extension commands plus the root skill, and performs an isolated offline npm publication dry-run.
 
 The extension imports no Pi core package, so the package declares no dependency or peer tree. The owner-authorized license is MIT; see [`LICENSE.md`](../LICENSE.md). The legacy `install.sh` installs only the standalone CLI/root skill, does not install the extension, and does not migrate an existing standalone installation. npm registry, Pi gallery, Git-package update, and rollback acceptance remain unclaimed unless separately exercised.
 
-When available, prefer tool `tmux_orchestrator` (`doctor`, `list`, `status`, `start`, `send`) and commands `/orchestrate`, `/orchestrations`, and `/orchestrator-stop`. Restart remains CLI-only, stop is command-only with UI confirmation, and start requires the interactive TUI.
+## Extension slash commands
+
+| Command | Contract |
+| --- | --- |
+| `/orchestrator-help` | Bounded overview; no subprocess. |
+| `/orchestrator-doctor` | Delegated JSON CLI prerequisite checks. |
+| `/orchestrator-start [task]` | Interactive optional-role/trust preview and confirmed start. |
+| `/orchestrator-list` | Bounded metadata list and widget refresh. |
+| `/orchestrator-status [session]` | Exact-session or safe unambiguous current-project metadata status. |
+| `/orchestrator-send [session]` | Interactive exact session, five-role selection, editor message, and unique mode-`0600` file delegation. |
+| `/orchestrator-stop [session]` | Exact session and explicit confirmation before `--yes`. |
+| `/orchestrate` | Alias for `/orchestrator-start`. |
+| `/orchestrations` | Alias for `/orchestrator-list`. |
+
+The `tmux_orchestrator` tool still exposes only `doctor`, `list`, `status`, `start`, and `send`. Slash start/send/stop require the interactive TUI. Message bodies never enter subprocess argv, status, details, notifications, or widgets. Attach and restart stay terminal-only: attach takes over the terminal, while restart requires explicit confirmation and provider/model/thinking configuration. Richer TUI/message behavior is intentionally deferred.
 
 ## JSON boundary
 

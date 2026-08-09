@@ -24,7 +24,7 @@ Do not push feature work directly to `main` after the initial repository bootstr
 - Keep target repository files separate from orchestration state.
 - Retain explicit confirmation for trust bypass, role restart, and session stop.
 - Keep human and schema-v1 JSON behavior aligned; errors, arrays, and status output must remain bounded and free of private payloads.
-- Keep the Pi extension thin: it may delegate to the bundled Python CLI but must not duplicate state transitions or bridge child Pi TUIs.
+- Keep the Pi extension thin: it may delegate to the bundled Python CLI but must not duplicate state transitions or bridge child Pi TUIs. Canonical slash commands and compatibility aliases must share handlers.
 - Add tests that reproduce the behavior being corrected.
 
 ## Testing
@@ -37,10 +37,10 @@ Do not push feature work directly to `main` after the initial repository bootstr
 - Shell syntax checks
 - A model-free tmux functional smoke covering all roles, relay markers, and exact session targeting
 - CLI help and an all-role dry-run
-- Node built-in extension tests for registration, trust, confirmation, cancellation, and private-file cleanup
+- Node built-in extension tests for the exact nine-command surface, shared aliases, delegation, trust/confirmation, bounded errors, and private send cancellation/cleanup/redaction
 - deterministic manifest and `npm pack --dry-run --json` checks
 - exact inspection and disposable installation of the actual 10-file tarball, including MIT/author metadata
-- isolated Pi RPC `get_commands` discovery from that installed artifact
+- isolated `pi install` of the npm-installed package root followed by RPC `get_commands` discovery without `--extension`, requiring exact package provenance
 - an offline `npm publish --dry-run` with empty isolated npm configuration
 
 The test suite must never issue a provider request or inspect real Pi/npm authentication files. Never run `install.sh` against the real home while developing; use `PI_AGENT_HOME` or `PI_CODING_AGENT_DIR` pointing at a temporary directory. Tests must not publish, tag, or claim npm-registry, Pi-gallery, Git-package update, or rollback acceptance.
