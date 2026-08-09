@@ -30,6 +30,7 @@ function context(overrides = {}) {
     confirmations: [],
     notifications: [],
     statuses: [],
+    titles: [],
     widgets: [],
     selections: [],
     editors: [],
@@ -49,6 +50,7 @@ function context(overrides = {}) {
       },
       notify: (message, level) => calls.notifications.push({ message, level }),
       setStatus: (key, value) => calls.statuses.push({ key, value }),
+      setTitle: (value) => calls.titles.push(value),
       setWidget: (key, value) => calls.widgets.push({ key, value }),
       select: async (title, options) => {
         calls.selections.push({ title, options });
@@ -96,6 +98,8 @@ test("registers one bounded model tool and the exact canonical/alias command sur
   assert.equal(commands.get("orchestrator-start").handler, commands.get("orchestrate").handler);
   assert.equal(commands.get("orchestrator-list").handler, commands.get("orchestrations").handler);
   assert.ok(events.has("session_start"));
+  assert.ok(events.has("session_before_switch"));
+  assert.ok(events.has("session_before_fork"));
   assert.ok(events.has("session_shutdown"));
 });
 
@@ -208,6 +212,76 @@ test("start previews CLI policy, keeps private text out of argv, and cleans mode
   assert.match(ctx.calls.confirmations[0].message, /provider\/writer/);
   assert.equal(JSON.stringify(result).includes(canary), false);
   for (const path of paths) await assert.rejects(access(path));
+});
+
+test("controller mode requires and collects an explicit target project", async () => {
+  const previous = process.env.PI_TMUX_CONTROLLER;
+  process.env.PI_TMUX_CONTROLLER = "1";
+  try {
+    let calls = 0;
+    const { tool, commands } = harness(async (_command, args) => {
+      calls += 1;
+      assert.equal(args[args.indexOf("--project") + 1], process.cwd());
+      return {
+        code: 0,
+        stdout: JSON.stringify(success("start", {
+          project: process.cwd(), session: "pi-controller-test", roles: [],
+          trust: { child_bypass: false }, dry_run: args.includes("--dry-run"),
+          paths: { state_root: "/tmp/state", coordination: null },
+        })),
+      };
+    });
+    await assert.rejects(
+      tool.execute(
+        "call",
+        { action: "start", task: "synthetic" },
+        undefined,
+        undefined,
+        context(),
+      ),
+      /explicit_project/,
+    );
+    assert.equal(calls, 0);
+
+    const ctx = context({
+      input: process.cwd(),
+      confirmations: [false, false, false, true],
+    });
+    await commands.get("orchestrator-start").handler("synthetic", ctx);
+    assert.equal(calls, 2);
+    assert.equal(ctx.calls.inputs[0].title, "Target project directory");
+  } finally {
+    if (previous === undefined) delete process.env.PI_TMUX_CONTROLLER;
+    else process.env.PI_TMUX_CONTROLLER = previous;
+  }
+});
+
+test("controller session lifecycle advertises its dedicated identity without a subprocess", async () => {
+  const previous = process.env.PI_TMUX_CONTROLLER;
+  process.env.PI_TMUX_CONTROLLER = "1";
+  try {
+    let calls = 0;
+    const { events } = harness(async () => {
+      calls += 1;
+      return { code: 0, stdout: "" };
+    });
+    const ctx = context();
+    await events.get("session_start")({}, ctx);
+    assert.equal(calls, 0);
+    assert.deepEqual(ctx.calls.titles, ["Pi Tmux Orchestrator Controller"]);
+    assert.deepEqual(ctx.calls.statuses.at(-1), {
+      key: "tmux-orchestrator",
+      value: "tmux: controller",
+    });
+    assert.match(ctx.calls.widgets.at(-1).value.join("\n"), /Target projects must be explicit/);
+    assert.deepEqual(await events.get("session_before_switch")({}, ctx), { cancel: true });
+    assert.deepEqual(await events.get("session_before_fork")({}, ctx), { cancel: true });
+    assert.match(ctx.calls.notifications.at(-2).message, /fixed persistent Pi session/);
+    assert.match(ctx.calls.notifications.at(-1).message, /disabled/);
+  } finally {
+    if (previous === undefined) delete process.env.PI_TMUX_CONTROLLER;
+    else process.env.PI_TMUX_CONTROLLER = previous;
+  }
 });
 
 test("start cancellation propagates and still cleans its private file", async () => {

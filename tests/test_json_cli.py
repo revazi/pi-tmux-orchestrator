@@ -55,6 +55,7 @@ class JsonMainTests(unittest.TestCase):
         parser = ORCHESTRATOR.build_parser()
         cases = {
             "doctor": ["doctor"],
+            "controller": ["controller", "status"],
             "list": ["list"],
             "status": ["status"],
             "start": ["start", "--task", "synthetic"],
@@ -221,6 +222,40 @@ class JsonMainTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assert_envelope(envelope, "stop", True)
             self.assertTrue(envelope["data"]["state_retained"])
+
+    def test_controller_status_stop_and_attach_keep_the_json_contract(self) -> None:
+        with (
+            mock.patch.object(ORCHESTRATOR, "session_exists", return_value=False),
+            mock.patch.object(ORCHESTRATOR, "retained_controller_state", return_value=None),
+        ):
+            code, envelope, _, stderr = self.run_main(
+                ["--json", "controller", "status"]
+            )
+        self.assertEqual(code, 0)
+        self.assertEqual(stderr, "")
+        self.assert_envelope(envelope, "controller", True)
+        self.assertFalse(envelope["data"]["running"])
+        self.assertFalse(envelope["data"]["state_retained"])
+        self.assertEqual(
+            envelope["data"]["pi_session_id"],
+            ORCHESTRATOR.CONTROLLER_PI_SESSION_ID,
+        )
+
+        code, envelope, _, stderr = self.run_main(
+            ["--json", "controller", "stop"]
+        )
+        self.assertEqual(code, 2)
+        self.assertEqual(stderr, "")
+        self.assert_envelope(envelope, "controller", False)
+        self.assertIn("--confirm", envelope["error"]["message"])
+
+        code, envelope, _, stderr = self.run_main(
+            ["--json", "controller", "attach"]
+        )
+        self.assertEqual(code, 2)
+        self.assertEqual(stderr, "")
+        self.assert_envelope(envelope, "controller", False)
+        self.assertEqual(envelope["error"]["code"], "interactive_only")
 
     def test_doctor_has_structured_commands_models_and_paths(self) -> None:
         tmux_version = subprocess.CompletedProcess([], 0, "tmux 3.5\n", "")

@@ -55,6 +55,10 @@ function bounded(value, limit = MAX_VISIBLE_CHARS) {
   return text.length <= limit ? text : `${text.slice(0, Math.max(0, limit - 1)).trimEnd()}…`;
 }
 
+function isControllerMode() {
+  return process.env.PI_TMUX_CONTROLLER === "1";
+}
+
 function oneLineJson(stdout) {
   if (Buffer.byteLength(stdout, "utf8") > 256 * 1024) {
     throw new Error("orchestrator_output_too_large");
@@ -162,6 +166,9 @@ async function runStart(pi, input, signal, ctx) {
   if (input.probeTask && !input.withProbe) throw new Error("probe_task_requires_role");
   if (input.playwrightTask && !input.withPlaywright) throw new Error("playwright_task_requires_role");
   if (input.djangoTask && !input.withDjangoExpert) throw new Error("django_task_requires_role");
+  if (isControllerMode() && !String(input.project || "").trim()) {
+    throw new Error("controller_start_requires_explicit_project");
+  }
 
   const project = await canonicalProject(input.project, ctx.cwd);
   if (input.approveProject) {
@@ -329,6 +336,11 @@ function createCommandHandlers(pi) {
     if (!requireInteractiveTui(ctx, "orchestrator-start")) return;
     const task = String(args || "").trim() || await ctx.ui.editor("Orchestration task", "");
     if (!task?.trim()) return;
+    let project;
+    if (isControllerMode()) {
+      project = await ctx.ui.input("Target project directory", "/absolute/path/to/project");
+      if (!String(project || "").trim()) return;
+    }
     const withProbe = await ctx.ui.confirm("Optional role", "Add the independent technical probe?");
     const withPlaywright = await ctx.ui.confirm("Optional role", "Add the read-only Playwright tester?");
     const withDjangoExpert = await ctx.ui.confirm("Optional role", "Add the read-only Django expert?");
@@ -342,7 +354,7 @@ function createCommandHandlers(pi) {
     try {
       const envelope = await runStart(
         pi,
-        { task, withProbe, withPlaywright, withDjangoExpert, approveProject },
+        { task, project, withProbe, withPlaywright, withDjangoExpert, approveProject },
         ctx.signal,
         ctx,
       );
@@ -451,7 +463,26 @@ export default function tmuxOrchestratorExtension(pi) {
   });
 
   pi.on("session_start", (_event, ctx) => {
+    if (isControllerMode()) {
+      ctx.ui.setTitle?.("Pi Tmux Orchestrator Controller");
+      ctx.ui.setStatus(STATUS_KEY, "tmux: controller");
+      ctx.ui.setWidget(STATUS_KEY, [
+        "Dedicated orchestrator controller",
+        "Use /orchestrator-list or /orchestrator-start. Target projects must be explicit.",
+      ]);
+      return;
+    }
     ctx.ui.setStatus(STATUS_KEY, "tmux: ready");
+  });
+  pi.on("session_before_switch", async (_event, ctx) => {
+    if (!isControllerMode()) return undefined;
+    ctx.ui.notify("The controller uses one fixed persistent Pi session; stop it from the terminal to leave.", "warning");
+    return { cancel: true };
+  });
+  pi.on("session_before_fork", async (_event, ctx) => {
+    if (!isControllerMode()) return undefined;
+    ctx.ui.notify("Fork and clone are disabled in the fixed controller session.", "warning");
+    return { cancel: true };
   });
   pi.on("session_shutdown", (_event, ctx) => {
     ctx.ui.setStatus(STATUS_KEY, undefined);
@@ -464,6 +495,7 @@ export const testHooks = {
   buildStartArgs,
   canonicalProject,
   executeAction,
+  isControllerMode,
   oneLineJson,
   runCli,
   runStart,
