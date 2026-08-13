@@ -9,9 +9,9 @@ CONTROLLER_STATE_VERSION = 1
 CONTROLLER_OPTION_VERSION = "@pi_agents_controller_version"
 CONTROLLER_OPTION_ROOT = "@pi_agents_controller_root"
 CONTROLLER_OPTION_SESSION_ID = "@pi_agents_controller_session_id"
-VERSION = "0.4.2"
+VERSION = "0.5.0"
 JSON_SCHEMA_VERSION = "1"
-SUPERVISOR_API_VERSION = "1"
+SUPERVISOR_API_VERSION = "2"
 MAX_ERROR_CHARS = 512
 MAX_JSON_ITEMS = 100
 WINDOW = "agents"
@@ -44,6 +44,7 @@ DEFAULT_MODELS = {
     },
 }
 READ_ONLY_TOOLS = "read,bash,grep,find,ls"
+BROKER_READ_ONLY_TOOLS = f"{READ_ONLY_TOOLS},orchestrator_report"
 MAX_TASK_BYTES = 64 * 1024
 MAX_MANIFEST_BYTES = 64 * 1024
 MAX_CONTROLLER_STATE_BYTES = 16 * 1024
@@ -57,6 +58,16 @@ MAX_RPC_COMMANDS = 4096
 MAX_RPC_EVENTS = 100
 MAX_SUPERVISOR_SCAN_ENTRIES = 4096
 RPC_ACK_TIMEOUT_SECONDS = 10.0
+MAX_BROKER_FRAME_BYTES = 256 * 1024
+MAX_REPORT_BYTES = 32 * 1024
+MAX_REPORT_SUMMARY_CHARS = 2000
+MAX_REPORT_ITEMS = 50
+MAX_REPORT_ITEM_CHARS = 500
+MAX_BROKER_EVENTS = 4096
+BROKER_PROTOCOL_VERSION = 1
+BROKER_COORDINATION = "broker-v1"
+DEFAULT_SOFT_ROLE_TOKENS = 200_000
+DEFAULT_SOFT_TOTAL_TOKENS = 600_000
 RPC_TRANSPORT = "rpc"
 TUI_TRANSPORT = "tui"
 KNOWN_ROLES = frozenset(DEFAULT_MODELS)
@@ -74,8 +85,12 @@ MANIFEST_V1_FIELDS = frozenset(
     }
 )
 MANIFEST_FIELDS = MANIFEST_V1_FIELDS | {"transport"}
+MANIFEST_V3_FIELDS = MANIFEST_FIELDS | {"coordination", "protocol_version"}
 ROLE_FIELDS = frozenset(
     {"provider", "model", "thinking", "tools", "pane_id", "prompt_path", "session_dir"}
+)
+ROLE_V3_FIELDS = frozenset(
+    {"provider", "model", "thinking", "tools", "pane_id", "session_dir", "session_id"}
 )
 PANE_ID_PATTERN = re.compile(r"%[0-9]+")
 RPC_STATE_FIELDS = frozenset(

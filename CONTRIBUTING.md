@@ -22,11 +22,11 @@ Do not push feature work directly to `main` after the initial repository bootstr
 
 - Preserve a single-writer model: reviewer, probe, Playwright, and Django roles remain read-only.
 - Keep Python dependencies at zero unless a concrete requirement justifies one.
-- Preserve tmux ownership of worker/controller hosting and live-session operations.
-- Keep target repository files separate from orchestration state.
+- Preserve tmux ownership of worker/controller hosting and live-session operations; use the private broker/bridge rather than tmux as workflow transport.
+- Keep target repository files separate from orchestration state and keep workflow payloads out of durable coordination metadata.
 - Retain explicit confirmation for trust bypass, role restart, and session stop.
 - Keep human and schema-v1 JSON behavior aligned; errors, arrays, and status output must remain bounded and free of private payloads.
-- Keep the Pi extension thin: it may delegate to the bundled Python CLI but must not duplicate state transitions or bridge child Pi TUIs. Canonical slash commands and compatibility aliases must share handlers.
+- Keep the package extension thin. The explicit worker bridge may adapt Pi lifecycle/tools/messages to the authoritative broker but must not own workflow transitions. Canonical slash commands and compatibility aliases must share handlers.
 - Add tests that reproduce the behavior being corrected.
 
 ## Testing
@@ -38,11 +38,11 @@ Do not push feature work directly to `main` after the initial repository bootstr
 - Standard-library unit tests, including retained-state supervisor API cursors and tmux-independent reads
 - Skill frontmatter checks
 - Shell syntax checks
-- A model-free tmux functional smoke covering all roles, relay markers, and exact session targeting
+- A model-free tmux functional smoke covering all roles, broker/bridge lifecycle, and exact session targeting
 - CLI help and an all-role dry-run
 - Node built-in extension tests for the exact nine-command surface, shared aliases, delegation, trust/confirmation, bounded errors, and private send cancellation/cleanup/redaction
 - deterministic manifest and `npm pack --dry-run --json` checks
-- exact inspection and disposable installation of the actual 29-file modular tarball, including MIT/author metadata
+- exact inspection and disposable installation of the deterministic modular tarball, including broker/bridge and MIT/author metadata
 - isolated `pi install` of the npm-installed package root followed by RPC `get_commands` discovery without `--extension`, requiring exact package provenance
 - an offline `npm publish --dry-run` with empty isolated npm configuration
 

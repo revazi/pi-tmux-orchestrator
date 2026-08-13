@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from .constants import (
+    BROKER_READ_ONLY_TOOLS,
     MAX_JSON_ITEMS,
     MAX_RPC_COMMANDS,
     MAX_RPC_PROMPT_BYTES,
@@ -48,14 +49,20 @@ def run_rpc_agent(
     role: dict[str, Any],
 ) -> int:
     paths = rpc_role_paths(coord, role_name, create=True)
-    prompt_path = Path(role["prompt_path"])
-    prompt_bytes = read_regular_file(prompt_path, "role prompt", MAX_RPC_PROMPT_BYTES)
-    try:
-        initial_message = prompt_bytes.decode("utf-8").strip() + (
-            "\n\nFollow the attached role instructions and begin."
+    brokered = manifest.get("version") == 3
+    if brokered:
+        initial_message = None
+    else:
+        prompt_path = Path(role["prompt_path"])
+        prompt_bytes = read_regular_file(
+            prompt_path, "role prompt", MAX_RPC_PROMPT_BYTES
         )
-    except UnicodeDecodeError as error:
-        raise OrchestrationError("Role prompt is not valid UTF-8") from error
+        try:
+            initial_message = prompt_bytes.decode("utf-8").strip() + (
+                "\n\nFollow the attached role instructions and begin."
+            )
+        except UnicodeDecodeError as error:
+            raise OrchestrationError("Role prompt is not valid UTF-8") from error
     ensure_private_directory(Path(role["session_dir"]), parents=True)
     command = [
         command_path("pi"),
@@ -65,22 +72,60 @@ def run_rpc_agent(
         role["session_dir"],
         "--name",
         f"{Path(manifest['project']).name} {role_name}",
-        "--provider",
-        role["provider"],
-        "--model",
-        role["model"],
-        "--thinking",
-        role["thinking"],
     ]
+    if brokered:
+        command.extend(["--session-id", role["session_id"]])
+    command.extend(
+        [
+            "--provider",
+            role["provider"],
+            "--model",
+            role["model"],
+            "--thinking",
+            role["thinking"],
+        ]
+    )
     if manifest["approve_project"]:
         command.append("--approve")
     if role.get("tools"):
-        command.extend(["--tools", role["tools"]])
+        command.extend(
+            ["--tools", BROKER_READ_ONLY_TOOLS if brokered else role["tools"]]
+        )
+    elif brokered:
+        command.extend(
+            ["--tools", "read,bash,edit,write,grep,find,ls,orchestrator_report"]
+        )
+    if brokered:
+        from . import runtime
+        from .broker_store import broker_paths
+        from .prompts import role_system_prompt
+        from .storage import require_regular_file, secure_write
+
+        token_path = coord / f"{role_name}.token"
+        require_regular_file(token_path, "worker broker token", nonempty=True)
+        token = token_path.read_text(encoding="utf-8").strip()
+        system_prompt_path = coord / f"{role_name}.system.md"
+        secure_write(
+            system_prompt_path,
+            role_system_prompt(Path(manifest["project"]), role_name),
+        )
+        command.extend(
+            [
+                "--extension",
+                str(runtime.WORKER_EXTENSION_PATH),
+                "--append-system-prompt",
+                str(system_prompt_path),
+            ]
+        )
     environment = os.environ.copy()
     environment.pop("PI_TMUX_CONTROLLER", None)
     environment.pop("PI_TMUX_CONTROLLER_HOME", None)
     environment["PI_SKIP_VERSION_CHECK"] = "1"
     environment["PI_TELEMETRY"] = "0"
+    if brokered:
+        environment["PI_TMUX_ORCHESTRATOR_ROLE"] = role_name
+        environment["PI_TMUX_ORCHESTRATOR_TOKEN"] = token
+        environment["PI_TMUX_ORCHESTRATOR_SOCKET"] = str(broker_paths(coord)["socket"])
 
     previous_umask = os.umask(0o077)
     try:
@@ -275,31 +320,40 @@ def run_rpc_agent(
             f"Pi RPC supervisor: {role_name} · {role['provider']}/{role['model']} · "
             f"thinking={role['thinking']}"
         )
-        initial_token = deterministic_rpc_token(
-            "initial",
-            registry["worker_id"],
-            str(registry["generation"]),
-        )
-        record_rpc_event(
-            paths,
-            registry,
-            role_name,
-            "command_received",
-            command_id=initial_token,
-            command="prompt",
-            delivery="steer",
-        )
-        initial_rpc_id = f"orchestrator-initial-{initial_token}"
-        write_rpc_record(
-            child.stdin,
-            {
-                "id": initial_rpc_id,
-                "type": "prompt",
-                "message": initial_message,
-            },
-        )
+        if brokered:
+            initial_token = None
+            initial_rpc_id = None
+            write_rpc_record(
+                child.stdin,
+                {"id": "orchestrator-state", "type": "get_state"},
+            )
+        else:
+            initial_token = deterministic_rpc_token(
+                "initial",
+                registry["worker_id"],
+                str(registry["generation"]),
+            )
+            record_rpc_event(
+                paths,
+                registry,
+                role_name,
+                "command_received",
+                command_id=initial_token,
+                command="prompt",
+                delivery="steer",
+            )
+            initial_rpc_id = f"orchestrator-initial-{initial_token}"
+            write_rpc_record(
+                child.stdin,
+                {
+                    "id": initial_rpc_id,
+                    "type": "prompt",
+                    "message": initial_message,
+                },
+            )
         while True:
-            process_mailbox()
+            if not brokered:
+                process_mailbox()
             try:
                 channel, payload = records.get(timeout=0.1)
             except queue.Empty:
@@ -342,7 +396,7 @@ def run_rpc_agent(
             event_type = event["type"]
             if event_type == "response":
                 rpc_id = event.get("id")
-                if rpc_id == initial_rpc_id:
+                if initial_rpc_id is not None and rpc_id == initial_rpc_id:
                     initial_status = (
                         "accepted" if event.get("success") is True else "rejected"
                     )

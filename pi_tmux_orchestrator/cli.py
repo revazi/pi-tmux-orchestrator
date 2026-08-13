@@ -16,6 +16,7 @@ from .constants import (
     THINKING_LEVELS,
     VERSION,
 )
+from .broker import broker_command
 from .controller import (
     controller_attach_command,
     controller_start_command,
@@ -264,7 +265,7 @@ def build_parser() -> argparse.ArgumentParser:
     list_parser = subparsers.add_parser("list", help="list running orchestrations")
     list_parser.set_defaults(handler=list_command)
 
-    status = subparsers.add_parser("status", help="show pane and handoff status")
+    status = subparsers.add_parser("status", help="show pane and workflow status")
     status.add_argument("session", nargs="?")
     status.set_defaults(handler=status_command)
 
@@ -359,7 +360,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def parse_internal_command(argv: list[str]) -> argparse.Namespace | None:
-    if not argv or argv[0] not in {"_run-agent", "_relay"}:
+    if not argv or argv[0] not in {"_run-agent", "_broker", "_relay"}:
         return None
     command = argv[0]
     parser = argparse.ArgumentParser(prog=f"pi-tmux-agents {command}")
@@ -368,7 +369,10 @@ def parse_internal_command(argv: list[str]) -> argparse.Namespace | None:
     if command == "_run-agent":
         parser.add_argument("--role", required=True)
         parser.set_defaults(handler=run_agent_command)
+    elif command == "_broker":
+        parser.set_defaults(handler=broker_command)
     else:
+        # Retained 0.4.x sessions may still respawn their legacy relay. New runs never use it.
         parser.set_defaults(handler=relay_command)
     return parser.parse_args(argv[1:])
 

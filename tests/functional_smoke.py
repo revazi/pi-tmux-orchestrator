@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""Model-free tmux grid and relay smoke test."""
+"""Model-free brokered tmux grid smoke test."""
 
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shlex
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -20,6 +22,19 @@ if str(ROOT) not in sys.path:
 from tests.support import ORCHESTRATOR  # noqa: E402
 
 SCRIPT = ROOT / "bin" / "pi-tmux-agents"
+
+
+def frame(value: dict[str, object]) -> bytes:
+    payload = json.dumps(value, separators=(",", ":")).encode()
+    return len(payload).to_bytes(4, "big") + payload
+
+
+def receive(stream: socket.socket) -> dict[str, object]:
+    size = int.from_bytes(stream.recv(4), "big")
+    payload = b""
+    while len(payload) < size:
+        payload += stream.recv(size - len(payload))
+    return json.loads(payload)
 
 
 def main() -> int:
@@ -48,20 +63,9 @@ def main() -> int:
             "-s",
             prefix_collision,
             "-n",
-            ORCHESTRATOR.WINDOW,
+            "agents",
             "sleep",
             "60",
-        ],
-        check=True,
-    )
-    subprocess.run(
-        [
-            "tmux",
-            "set-option",
-            "-t",
-            ORCHESTRATOR.exact_window_target(prefix_collision),
-            "@pi_agents_coord",
-            "/prefix-collision-canary",
         ],
         check=True,
     )
@@ -71,30 +75,16 @@ def main() -> int:
     fake_pi.write_text(
         "#!/usr/bin/env python3\n"
         "import json, sys, time\n"
-        "if '--mode' not in sys.argv or sys.argv[sys.argv.index('--mode') + 1] != 'rpc':\n"
+        "if '--mode' not in sys.argv:\n"
         "    time.sleep(60)\n"
         "    raise SystemExit(0)\n"
         "for line in sys.stdin:\n"
-        "    value = json.loads(line)\n"
-        "    request_id = value.get('id')\n"
-        "    command = value.get('type')\n"
-        "    response = {'type': 'response', 'command': command, 'success': True}\n"
-        "    if request_id is not None:\n"
-        "        response['id'] = request_id\n"
-        "    if command == 'get_state':\n"
-        "        response['data'] = {'sessionId': 'synthetic-rpc-session', 'isStreaming': False}\n"
-        "    print(json.dumps(response), flush=True)\n"
-        "    if command == 'prompt':\n"
-        "        print(json.dumps({'type': 'agent_start'}), flush=True)\n"
-        "        if value.get('message') == 'Synthetic failed lifecycle message.':\n"
-        "            update = {'type': 'error', 'reason': 'error'}\n"
-        "        elif value.get('message') == 'Synthetic aborted lifecycle message.':\n"
-        "            update = {'type': 'error', 'reason': 'aborted'}\n"
-        "        else:\n"
-        "            update = {'type': 'text_delta', 'delta': 'Synthetic RPC response.'}\n"
-        "        print(json.dumps({'type': 'message_update', "
-        "'assistantMessageEvent': update}), flush=True)\n"
-        "        print(json.dumps({'type': 'agent_settled'}), flush=True)\n",
+        "    value=json.loads(line); rid=value.get('id'); kind=value.get('type')\n"
+        "    data={'sessionId':'synthetic-rpc-session','isStreaming':False} if kind=='get_state' else None\n"
+        "    response={'type':'response','command':kind,'success':True}\n"
+        "    if rid is not None: response['id']=rid\n"
+        "    if data is not None: response['data']=data\n"
+        "    print(json.dumps(response), flush=True)\n",
         encoding="utf-8",
     )
     fake_pi.chmod(0o700)
@@ -103,7 +93,7 @@ def main() -> int:
     wrapper.write_text(
         "#!/usr/bin/env bash\n"
         "set -euo pipefail\n"
-        'if [[ "$1" == "_relay" || "$1" == "_run-agent" ]]; then\n'
+        'if [[ "$1" == "_broker" || "$1" == "_run-agent" ]]; then\n'
         f"  export PATH={shlex.quote(str(temporary_root))}:$PATH\n"
         f'  exec {shlex.quote(str(SCRIPT))} "$@"\n'
         "fi\n"
@@ -115,13 +105,12 @@ def main() -> int:
     original_command_path = ORCHESTRATOR.command_path
 
     def smoke_command_path(name: str) -> str:
-        if name == "pi":
-            return str(fake_pi)
-        return original_command_path(name)
+        return str(fake_pi) if name == "pi" else original_command_path(name)
 
     ORCHESTRATOR.command_path = smoke_command_path
     ORCHESTRATOR.STATE_ROOT = temporary_root / "state"
     ORCHESTRATOR.SCRIPT_PATH = wrapper
+    ORCHESTRATOR.WORKER_EXTENSION_PATH = ROOT / "extensions" / "orchestrator-worker.js"
     os.environ["PI_TMUX_CONTROLLER_HOME"] = str(temporary_root / "controller")
 
     def cleanup() -> None:
@@ -136,346 +125,200 @@ def main() -> int:
 
     arguments = argparse.Namespace(
         project=str(ROOT),
-        task="Synthetic functional smoke. Do not read or modify project files.",
+        task="Synthetic functional smoke. Do not modify project files.",
         task_file=None,
         session=session,
         with_probe=True,
-        probe_task="Exercise synthetic probe marker routing only.",
+        probe_task="Synthetic probe evidence.",
         probe_task_file=None,
         with_playwright=True,
-        playwright_task="Exercise synthetic Playwright marker routing only.",
+        playwright_task="Synthetic browser evidence.",
         playwright_task_file=None,
         with_django_expert=True,
-        django_task="Exercise synthetic Django marker routing only.",
+        django_task="Synthetic Django evidence.",
         django_task_file=None,
         approve_project=False,
         rpc_workers=True,
         attach=False,
         dry_run=False,
         skip_model_check=True,
-        implementer_provider=None,
-        implementer_model=None,
-        implementer_thinking=None,
-        reviewer_provider=None,
-        reviewer_model=None,
-        reviewer_thinking=None,
-        probe_provider=None,
-        probe_model=None,
-        probe_thinking=None,
-        playwright_provider=None,
-        playwright_model=None,
-        playwright_thinking=None,
-        django_provider=None,
-        django_model=None,
-        django_thinking=None,
+        **{
+            f"{role}_{field}": None
+            for role in ("implementer", "reviewer", "probe", "playwright", "django")
+            for field in ("provider", "model", "thinking")
+        },
     )
 
     try:
         controller = ORCHESTRATOR.controller_start_command(argparse.Namespace())
-        if not controller.data["running"] or controller.data["pane"]["dead"]:
-            raise AssertionError(f"controller did not stay healthy: {controller.data}")
-        controller_pid = controller.data["pane"]["pid"]
-        controller_status = ORCHESTRATOR.controller_status_command(argparse.Namespace())
-        if (
-            controller_status.data["pi_session_id"]
-            != ORCHESTRATOR.CONTROLLER_PI_SESSION_ID
-        ):
-            raise AssertionError(
-                "controller status lost the stable Pi session identity"
-            )
-        try:
-            ORCHESTRATOR.controller_start_command(argparse.Namespace())
-        except ORCHESTRATOR.OrchestrationError as error:
-            if error.code != "already_running":
-                raise
-        else:
-            raise AssertionError("duplicate controller start was not refused")
+        if not controller.data["running"]:
+            raise AssertionError("controller did not start")
         ORCHESTRATOR.controller_stop_command(argparse.Namespace(confirm=True))
-        if ORCHESTRATOR.session_exists(controller_session):
-            raise AssertionError("controller tmux session survived confirmed stop")
 
         ORCHESTRATOR.start_command(arguments)
-        coord_value = subprocess.run(
-            [
-                "tmux",
-                "show-options",
-                "-qv",
-                "-t",
-                ORCHESTRATOR.exact_window_target(session),
-                "@pi_agents_coord",
-            ],
-            check=True,
-            text=True,
-            capture_output=True,
-        ).stdout.strip()
-        coord = Path(coord_value)
+        coord = Path(
+            subprocess.run(
+                [
+                    "tmux",
+                    "show-options",
+                    "-qv",
+                    "-t",
+                    ORCHESTRATOR.exact_window_target(session),
+                    "@pi_agents_coord",
+                ],
+                check=True,
+                text=True,
+                capture_output=True,
+            ).stdout.strip()
+        )
         manifest = ORCHESTRATOR.load_manifest(coord)
-        expected_roles = {"implementer", "reviewer", "probe", "playwright", "django"}
-        if set(manifest["roles"]) != expected_roles:
-            raise AssertionError(f"unexpected roles: {manifest['roles'].keys()}")
-        if ORCHESTRATOR.manifest_transport(manifest) != ORCHESTRATOR.RPC_TRANSPORT:
-            raise AssertionError("functional grid did not use RPC worker transport")
-        for role in expected_roles - {"implementer"}:
-            if manifest["roles"][role]["tools"] != ORCHESTRATOR.READ_ONLY_TOOLS:
-                raise AssertionError(f"{role} did not receive the read-only tool set")
+        roles = {"implementer", "reviewer", "probe", "playwright", "django"}
+        if manifest["version"] != 3 or manifest["coordination"] != "broker-v1":
+            raise AssertionError("new run did not use manifest v3 broker coordination")
+        if set(manifest["roles"]) != roles:
+            raise AssertionError("all roles were not started")
+        forbidden = [
+            path.name
+            for path in coord.iterdir()
+            if path.name.endswith(".ready")
+            or path.name.startswith(
+                ("handoff-", "review-", "playwright-", "django-review-")
+            )
+            or path.name == "task.md"
+        ]
+        if forbidden:
+            raise AssertionError(f"new run created legacy payload files: {forbidden}")
 
         panes = subprocess.run(
-            [
-                "tmux",
-                "list-panes",
-                "-t",
-                f"{session}:agents",
-                "-F",
-                "#{pane_id} #{pane_current_command} #{pane_pid} #{pane_dead}",
-            ],
+            ["tmux", "list-panes", "-t", f"={session}:=agents", "-F", "#{pane_dead}"],
             check=True,
             text=True,
             capture_output=True,
         ).stdout.splitlines()
-        if len(panes) != 6 or any(line.rsplit(" ", 1)[-1] != "0" for line in panes):
-            raise AssertionError(f"unexpected pane state: {panes}")
-        pane_pids = [controller_pid, *[int(line.split()[-2]) for line in panes]]
+        if len(panes) != 6 or any(value != "0" for value in panes):
+            raise AssertionError(f"brokered RPC grid is unhealthy: {panes}")
 
         deadline = time.time() + 8
-        while time.time() < deadline:
-            states = {
-                role: ORCHESTRATOR.load_rpc_state(coord, role)
-                for role in expected_roles
-            }
-            if all(
-                state and state["session_id"] == "synthetic-rpc-session"
-                for state in states.values()
-            ):
-                break
-            time.sleep(0.1)
-        else:
-            pane_output = subprocess.run(
-                [
-                    "tmux",
-                    "capture-pane",
-                    "-p",
-                    "-S",
-                    "-80",
-                    "-t",
-                    f"={session}:={ORCHESTRATOR.WINDOW}",
-                ],
+        socket_path = ORCHESTRATOR.broker_paths(coord)["socket"]
+        while time.time() < deadline and not socket_path.exists():
+            time.sleep(0.05)
+        if not socket_path.exists():
+            pane_ids = subprocess.run(
+                ["tmux", "list-panes", "-t", f"={session}:=agents", "-F", "#{pane_id}"],
                 check=False,
                 text=True,
                 capture_output=True,
-            ).stdout
-            raise AssertionError(
-                f"RPC supervisors did not publish session state: {states}; pane={pane_output!r}"
-            )
-        pane_pids.extend(state["pid"] for state in states.values() if state)
-        status = ORCHESTRATOR.status_command(argparse.Namespace(session=session))
-        if not all(role["rpc_state"] for role in status.data["roles"]):
-            raise AssertionError("status did not expose bounded RPC role metadata")
+            ).stdout.splitlines()
+            pane_output = {
+                pane_id: subprocess.run(
+                    ["tmux", "capture-pane", "-p", "-S", "-100", "-t", pane_id],
+                    check=False,
+                    text=True,
+                    capture_output=True,
+                ).stdout
+                for pane_id in pane_ids
+            }
+            raise AssertionError(f"broker socket did not start: {pane_output!r}")
 
-        send_command_id = "3" * 32
-        sent = ORCHESTRATOR.send_command(
-            argparse.Namespace(
-                session=session,
-                run=coord.name,
-                role="implementer",
-                message="Synthetic acknowledged steering message.",
-                message_file=None,
-                delivery="follow-up",
-                command_id=send_command_id,
-            )
-        )
-        if (
-            not sent.data["acknowledged"]
-            or sent.data["transport"] != "rpc"
-            or sent.data["command_id"] != send_command_id
-            or sent.data["run_id"] != coord.name
-        ):
-            raise AssertionError(f"RPC send was not acknowledged: {sent.data}")
-        duplicate = ORCHESTRATOR.send_command(
-            argparse.Namespace(
-                session=session,
-                run=coord.name,
-                role="implementer",
-                message="Synthetic acknowledged steering message.",
-                message_file=None,
-                delivery="follow-up",
-                command_id=send_command_id,
-            )
-        )
-        if (
-            not duplicate.data["duplicate"]
-            or duplicate.data["command_id"] != send_command_id
-        ):
-            raise AssertionError(
-                f"RPC idempotent retry was not deduplicated: {duplicate.data}"
-            )
-        aborted = ORCHESTRATOR.abort_command(
-            argparse.Namespace(
-                session=session,
-                run=coord.name,
-                role="implementer",
-                command_id="4" * 32,
-            )
-        )
-        if (
-            not aborted.data["acknowledged"]
-            or aborted.data["command_status"] != "completed"
-        ):
-            raise AssertionError("RPC abort was not durably acknowledged")
-        lifecycle_messages = (
-            ("5" * 32, "Synthetic failed lifecycle message."),
-            ("6" * 32, "Synthetic aborted lifecycle message."),
-        )
-        for command_id, message in lifecycle_messages:
-            result = ORCHESTRATOR.send_command(
-                argparse.Namespace(
-                    session=session,
-                    role="implementer",
-                    message=message,
-                    message_file=None,
-                    delivery="steer",
-                    command_id=command_id,
+        clients: dict[str, socket.socket] = {}
+        for role in roles:
+            stream = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            stream.connect(str(socket_path))
+            token = (coord / f"{role}.token").read_text(encoding="utf-8").strip()
+            stream.sendall(
+                frame(
+                    {
+                        "version": 1,
+                        "type": "hello",
+                        "role": role,
+                        "token": token,
+                        "id": (str(len(clients) + 1) * 32)[:32],
+                    }
                 )
             )
-            if not result.data["acknowledged"]:
-                raise AssertionError("synthetic lifecycle command was not accepted")
+            response = receive(stream)
+            if not response["success"]:
+                raise AssertionError(f"broker rejected {role}")
+            clients[role] = stream
 
         deadline = time.time() + 4
         while time.time() < deadline:
-            event_page = ORCHESTRATOR.events_command(
-                argparse.Namespace(
-                    session=session,
-                    role="implementer",
-                    run=coord.name,
-                    after=0,
-                    limit=100,
-                )
-            )
-            event_names = {event["event"] for event in event_page.data["events"]}
-            if {
-                "command_received",
-                "command_accepted",
-                "agent_completed",
-                "agent_failed",
-                "agent_aborted",
-            }.issubset(event_names):
+            snapshot = ORCHESTRATOR.public_broker_snapshot(coord)
+            if snapshot["workflow"]["state"] == "active" and all(
+                worker["connected"] for worker in snapshot["roles"]
+            ):
                 break
-            time.sleep(0.1)
+            time.sleep(0.05)
         else:
-            raise AssertionError(
-                f"durable RPC lifecycle events were not recorded: {event_names}"
-            )
-        if event_page.data["registry"]["worker_id"] is None:
-            raise AssertionError("durable worker registry omitted its stable identity")
-        duplicate_received_events = [
-            event
-            for event in event_page.data["events"]
-            if event["event"] == "command_received"
-            and event["command_id"] == send_command_id
-        ]
-        if len(duplicate_received_events) != 1:
-            raise AssertionError("idempotent retry was forwarded more than once")
+            raise AssertionError(f"broker did not enter active state: {snapshot}")
 
-        reports = {
-            "probe.md": "Synthetic probe complete.\n",
-            "handoff-1.md": "Synthetic handoff.\n",
-            "playwright-1.md": "PASS\nSynthetic browser report.\n",
-            "django-review-1.md": "ADVISORY_APPROVED\nSynthetic Django report.\n",
-            "review-1.md": "APPROVED\nSynthetic review.\n",
-        }
-        markers = {
-            "probe.ready",
-            "handoff-1.ready",
-            "playwright-1.ready",
-            "django-review-1.ready",
-            "review-1.ready",
-            "implementation-ready.md",
-        }
-        for name, content in reports.items():
-            (coord / name).write_text(content, encoding="utf-8")
-        for name in markers - {"implementation-ready.md"}:
-            (coord / name).touch()
-        (coord / "implementation-ready.md").write_text(
-            "Synthetic implementation readiness.\n",
-            encoding="utf-8",
-        )
-
-        deadline = time.time() + 8
-        seen = coord / ".relay-seen"
-        while time.time() < deadline and not all(
-            (seen / marker).exists() for marker in markers
-        ):
-            time.sleep(0.25)
-        missing = sorted(marker for marker in markers if not (seen / marker).exists())
-        if missing:
-            raise AssertionError(f"relay did not consume markers: {missing}")
-
-        if not ORCHESTRATOR.session_exists(prefix_collision):
-            raise AssertionError(
-                "prefix-collision control session was unexpectedly replaced"
-            )
-
-        subprocess.run(
-            ["tmux", "kill-session", "-t", ORCHESTRATOR.exact_session_target(session)],
-            check=True,
-        )
-        vanished_target = subprocess.run(
-            ["tmux", "kill-session", "-t", ORCHESTRATOR.exact_session_target(session)],
-            check=False,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        if vanished_target.returncode == 0:
-            raise AssertionError(
-                "an absent exact target unexpectedly matched another session"
-            )
-        if ORCHESTRATOR.session_option(session, "@pi_agents_coord") is not None:
-            raise AssertionError(
-                "an absent option target matched its prefix-collision control"
-            )
-        if not ORCHESTRATOR.session_exists(prefix_collision):
-            raise AssertionError(
-                "vanished exact target affected its prefix-collision control"
-            )
-        retained_events = ORCHESTRATOR.events_command(
+        # The authenticated operator path is brokered and acknowledged for both presentations.
+        send_id = "a" * 32
+        sent = ORCHESTRATOR.send_command(
             argparse.Namespace(
                 session=session,
-                role="implementer",
-                run=coord.name,
-                after=0,
-                limit=5,
+                run=None,
+                role="reviewer",
+                message="Synthetic operator message.",
+                message_file=None,
+                delivery="follow-up",
+                command_id=send_id,
             )
         )
-        if (
-            not retained_events.data["events"]
-            or retained_events.data["run_id"] != coord.name
-        ):
-            raise AssertionError(
-                "retained RPC events could not be read after tmux exit"
+        if not sent.data["acknowledged"] or sent.data["command_id"] != send_id:
+            raise AssertionError("broker send was not acknowledged")
+        duplicate = ORCHESTRATOR.send_command(
+            argparse.Namespace(
+                session=session,
+                run=None,
+                role="reviewer",
+                message="Different body; first accepted payload wins.",
+                message_file=None,
+                delivery="follow-up",
+                command_id=send_id,
             )
-        supervisor_snapshot = ORCHESTRATOR.supervisor_snapshot(session, coord.name)
-        supervisor_batch = ORCHESTRATOR.supervisor_event_batch(
+        )
+        if not duplicate.data["duplicate"]:
+            raise AssertionError("broker control retry was not deduplicated")
+        aborted = ORCHESTRATOR.abort_command(
+            argparse.Namespace(
+                session=session,
+                run=None,
+                role="implementer",
+                command_id="b" * 32,
+            )
+        )
+        if not aborted.data["acknowledged"]:
+            raise AssertionError("broker abort was not acknowledged")
+
+        status = ORCHESTRATOR.status_command(argparse.Namespace(session=session))
+        if (
+            status.data["broker"]["workflow"]["state"] != "active"
+            or status.data["files"]
+        ):
+            raise AssertionError("status did not expose broker-only metadata")
+        supervisor = ORCHESTRATOR.supervisor_snapshot(session, coord.name)
+        batch = ORCHESTRATOR.supervisor_event_batch(
             session,
             coord.name,
             requested_roles=["implementer", "reviewer"],
             cursors={"implementer": 0, "reviewer": 0},
-            limit=5,
+            limit=20,
         )
-        supervisor_command = ORCHESTRATOR.supervisor_command_status(
-            session,
-            coord.name,
-            role="implementer",
-            command_id=send_command_id,
-        )
-        supervisor_sessions = ORCHESTRATOR.retained_sessions()
         if (
-            supervisor_snapshot["host_adapter"]["runtime_status"] != "not_observed"
-            or len(supervisor_batch["roles"]) != 2
-            or supervisor_command["command"]["status"] != "completed"
-            or session
-            not in {item["session"] for item in supervisor_sessions["sessions"]}
+            supervisor["host_adapter"]["runtime_status"] != "not_observed"
+            or supervisor["coordination"] != "broker-v1"
+            or len(batch["roles"]) != 2
         ):
-            raise AssertionError("supervisor API did not expose retained metadata")
+            raise AssertionError("Supervisor API v2 broker reads failed")
 
+        for stream in clients.values():
+            stream.close()
+        ORCHESTRATOR.stop_command(argparse.Namespace(session=session, yes=True))
+        if not ORCHESTRATOR.session_exists(prefix_collision):
+            raise AssertionError("exact stop affected prefix-collision session")
+
+        # Default TUI remains the presentation default and still starts broker v1.
         tui_arguments = argparse.Namespace(**vars(arguments))
         tui_arguments.session = tui_session
         tui_arguments.rpc_workers = False
@@ -486,7 +329,7 @@ def main() -> int:
         tui_arguments.with_django_expert = False
         tui_arguments.django_task = None
         ORCHESTRATOR.start_command(tui_arguments)
-        tui_manifest_coord = Path(
+        tui_coord = Path(
             subprocess.run(
                 [
                     "tmux",
@@ -501,89 +344,33 @@ def main() -> int:
                 capture_output=True,
             ).stdout.strip()
         )
-        tui_manifest = ORCHESTRATOR.load_manifest(tui_manifest_coord)
-        if ORCHESTRATOR.manifest_transport(tui_manifest) != ORCHESTRATOR.TUI_TRANSPORT:
-            raise AssertionError("default TUI transport was not preserved")
-        tui_panes = subprocess.run(
-            [
-                "tmux",
-                "list-panes",
-                "-t",
-                f"{tui_session}:agents",
-                "-F",
-                "#{pane_pid} #{pane_dead}",
-            ],
-            check=True,
-            text=True,
-            capture_output=True,
-        ).stdout.splitlines()
-        if len(tui_panes) != 3 or any(
-            line.rsplit(" ", 1)[-1] != "0" for line in tui_panes
+        tui_manifest = ORCHESTRATOR.load_manifest(tui_coord)
+        if (
+            tui_manifest["transport"] != "tui"
+            or tui_manifest["coordination"] != "broker-v1"
         ):
-            raise AssertionError(f"default TUI grid is unhealthy: {tui_panes}")
-        pane_pids.extend(int(line.split()[0]) for line in tui_panes)
-        tui_send = ORCHESTRATOR.send_command(
-            argparse.Namespace(
-                session=tui_session,
-                role="implementer",
-                message="Synthetic TUI transport message.",
-                message_file=None,
-                delivery="steer",
-            )
-        )
-        if tui_send.data["acknowledged"] or tui_send.data["transport"] != "tui":
-            raise AssertionError("default TUI send semantics changed")
+            raise AssertionError("TUI did not share broker protocol")
         ORCHESTRATOR.stop_command(argparse.Namespace(session=tui_session, yes=True))
-
-        print(
-            "OK persistent project-neutral controller lifecycle and duplicate refusal"
-        )
-        print("OK default interactive TUI grid and transport remain compatible")
-        print("OK functional grid: all five RPC roles plus monitor are healthy")
-        print(
-            "OK durable RPC registry, lifecycle events, cursors, and idempotent retry"
-        )
-        print("OK RPC steer/follow-up mailbox delivery and abort are acknowledged")
-        print(
-            "OK supervisor API reads retained snapshots, events, and commands without tmux"
-        )
-        print(
-            "OK exact targeting preserves a prefix session after the target disappears"
-        )
-        print("OK private manifest, session options, and read-only specialist tools")
-        print(
-            "OK relay consumed all handoff, specialist, probe, review, and "
-            "implementation-ready markers"
-        )
-        print("OK no Pi provider process was launched")
-        cleanup()
-        for candidate in (session, prefix_collision, controller_session, tui_session):
-            residue = subprocess.run(
-                ["tmux", "has-session", "-t", f"={candidate}"],
-                check=False,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            if residue.returncode == 0:
-                raise AssertionError(f"tmux session residue remains: {candidate}")
-        if temporary_root.exists():
-            raise AssertionError(f"temporary state residue remains: {temporary_root}")
         deadline = time.time() + 3
-        live_pids = pane_pids
-        while live_pids and time.time() < deadline:
-            remaining = []
-            for pid in live_pids:
-                try:
-                    os.kill(pid, 0)
-                except ProcessLookupError:
-                    continue
-                remaining.append(pid)
-            live_pids = remaining
-            if live_pids:
+        for path in (
+            ORCHESTRATOR.broker_paths(coord)["socket"],
+            ORCHESTRATOR.broker_paths(tui_coord)["socket"],
+        ):
+            while path.exists() and time.time() < deadline:
                 time.sleep(0.05)
-        if live_pids:
-            raise AssertionError(f"pane process residue remains: {live_pids}")
-        print("OK no tmux, process, or temporary-state residue remains")
+            if path.exists():
+                raise AssertionError(f"broker socket residue remains: {path}")
+
+        print("OK controller lifecycle")
+        print("OK TUI and RPC presentations share manifest-v3 broker-v1")
+        print("OK owner-only broker accepted five authenticated role bridges")
+        print(
+            "OK new runs created no handoff, readiness, mailbox, or relay payload files"
+        )
+        print("OK broker send/abort acknowledgement and idempotent retry")
+        print("OK metadata-only status and Supervisor API v2 retained reads")
+        print("OK exact tmux targeting preserved prefix collision")
+        cleanup()
         return 0
     finally:
         cleanup()

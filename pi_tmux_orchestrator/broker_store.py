@@ -1,0 +1,300 @@
+"""Private metadata-only SQLite state for brokered orchestration."""
+
+from __future__ import annotations
+
+import datetime as dt
+import hashlib
+import json
+import os
+import sqlite3
+from pathlib import Path
+from typing import Any
+
+from .constants import BROKER_PROTOCOL_VERSION, MAX_BROKER_EVENTS
+from .models import OrchestrationError
+from .storage import ensure_private_directory, validate_coordination_directory
+
+SCHEMA_VERSION = 1
+
+
+def utc_now() -> str:
+    return dt.datetime.now(dt.timezone.utc).isoformat()
+
+
+def broker_paths(coord: Path) -> dict[str, Path]:
+    coord = validate_coordination_directory(coord)
+    socket_name = hashlib.sha256(os.fsencode(coord)).hexdigest()[:24] + ".sock"
+    socket_root = Path(f"/tmp/pi-tmux-orchestrator-{os.getuid()}")
+    return {
+        "database": coord / "broker.sqlite3",
+        "socket": socket_root / socket_name,
+    }
+
+
+def connect_broker_database(
+    coord: Path, *, readonly: bool = False
+) -> sqlite3.Connection:
+    paths = broker_paths(coord)
+    database = paths["database"]
+    if readonly:
+        if not database.is_file() or database.is_symlink():
+            raise OrchestrationError("Broker state is unavailable", "broker_not_ready")
+        uri = f"file:{database}?mode=ro"
+        connection = sqlite3.connect(uri, uri=True, timeout=2.0)
+    else:
+        ensure_private_directory(database.parent)
+        if database.exists() and (database.is_symlink() or not database.is_file()):
+            raise OrchestrationError("Broker database path is unsafe")
+        previous_umask = os.umask(0o077)
+        try:
+            connection = sqlite3.connect(database, timeout=5.0)
+        finally:
+            os.umask(previous_umask)
+        os.chmod(database, 0o600)
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA foreign_keys = ON")
+    if not readonly:
+        connection.execute("PRAGMA journal_mode = DELETE")
+        connection.execute("PRAGMA synchronous = FULL")
+    return connection
+
+
+def initialize_broker_database(
+    coord: Path,
+    manifest: dict[str, Any],
+    tokens: dict[str, str],
+    control_token: str,
+    *,
+    soft_role_tokens: int,
+    soft_total_tokens: int,
+) -> None:
+    with connect_broker_database(coord) as database:
+        database.executescript("""
+            CREATE TABLE IF NOT EXISTS meta (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS roles (
+                role TEXT PRIMARY KEY,
+                auth_token TEXT NOT NULL,
+                state TEXT NOT NULL,
+                connected INTEGER NOT NULL DEFAULT 0,
+                active_assignment_id TEXT,
+                generation INTEGER NOT NULL DEFAULT 1,
+                input_tokens INTEGER NOT NULL DEFAULT 0,
+                output_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+                cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+                reasoning_tokens INTEGER,
+                cost_total REAL NOT NULL DEFAULT 0,
+                context_tokens INTEGER,
+                context_window INTEGER,
+                context_percent REAL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS assignments (
+                id TEXT PRIMARY KEY,
+                role TEXT NOT NULL REFERENCES roles(role),
+                round INTEGER NOT NULL,
+                kind TEXT NOT NULL,
+                state TEXT NOT NULL,
+                delivery_id TEXT NOT NULL UNIQUE,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS reports (
+                id TEXT PRIMARY KEY,
+                assignment_id TEXT NOT NULL UNIQUE REFERENCES assignments(id),
+                role TEXT NOT NULL REFERENCES roles(role),
+                round INTEGER NOT NULL,
+                kind TEXT NOT NULL,
+                verdict TEXT,
+                summary_chars INTEGER NOT NULL,
+                changed_path_count INTEGER NOT NULL,
+                check_count INTEGER NOT NULL,
+                finding_count INTEGER NOT NULL,
+                risk_count INTEGER NOT NULL,
+                limitation_count INTEGER NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS control_commands (
+                id TEXT PRIMARY KEY,
+                action TEXT NOT NULL,
+                role TEXT NOT NULL REFERENCES roles(role),
+                delivery TEXT,
+                status TEXT NOT NULL,
+                received_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS events (
+                sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT NOT NULL,
+                event TEXT NOT NULL,
+                role TEXT,
+                round INTEGER,
+                assignment_id TEXT,
+                delivery_id TEXT,
+                status TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS events_role_sequence ON events(role, sequence);
+        """)
+        existing = database.execute(
+            "SELECT value FROM meta WHERE key='schema_version'"
+        ).fetchone()
+        if existing is not None:
+            raise OrchestrationError("Broker database already exists")
+        now = utc_now()
+        metadata = {
+            "schema_version": str(SCHEMA_VERSION),
+            "protocol_version": str(BROKER_PROTOCOL_VERSION),
+            "workflow_state": "starting",
+            "round": "1",
+            "control_token": control_token,
+            "soft_role_tokens": str(soft_role_tokens),
+            "soft_total_tokens": str(soft_total_tokens),
+            "created_at": now,
+            "updated_at": now,
+        }
+        database.executemany(
+            "INSERT INTO meta(key, value) VALUES (?, ?)", metadata.items()
+        )
+        database.executemany(
+            "INSERT INTO roles(role, auth_token, state, updated_at) VALUES (?, ?, 'disconnected', ?)",
+            [(role, tokens[role], now) for role in manifest["roles"]],
+        )
+        record_event(database, "broker_initialized", status="starting")
+
+
+def record_event(
+    database: sqlite3.Connection,
+    event: str,
+    *,
+    role: str | None = None,
+    round_number: int | None = None,
+    assignment_id: str | None = None,
+    delivery_id: str | None = None,
+    status: str,
+) -> int:
+    cursor = database.execute(
+        "INSERT INTO events(timestamp,event,role,round,assignment_id,delivery_id,status) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (utc_now(), event, role, round_number, assignment_id, delivery_id, status),
+    )
+    database.execute(
+        "DELETE FROM events WHERE sequence <= "
+        "(SELECT COALESCE(MAX(sequence), 0) - ? FROM events)",
+        (MAX_BROKER_EVENTS,),
+    )
+    return int(cursor.lastrowid)
+
+
+def set_meta(database: sqlite3.Connection, key: str, value: str) -> None:
+    database.execute("UPDATE meta SET value=? WHERE key=?", (value, key))
+    database.execute("UPDATE meta SET value=? WHERE key='updated_at'", (utc_now(),))
+
+
+def public_broker_snapshot(coord: Path) -> dict[str, Any]:
+    with connect_broker_database(coord, readonly=True) as database:
+        meta = {
+            row["key"]: row["value"]
+            for row in database.execute("SELECT key,value FROM meta")
+        }
+        roles = []
+        for row in database.execute(
+            "SELECT role,state,connected,generation,input_tokens,output_tokens,"
+            "cache_read_tokens,cache_write_tokens,reasoning_tokens,cost_total,"
+            "context_tokens,context_window,context_percent,updated_at FROM roles ORDER BY role"
+        ):
+            value = dict(row)
+            value["connected"] = bool(value["connected"])
+            roles.append(value)
+        event_bounds = database.execute(
+            "SELECT MIN(sequence) AS earliest, MAX(sequence) AS latest FROM events"
+        ).fetchone()
+        total_tokens = sum(
+            role["input_tokens"]
+            + role["output_tokens"]
+            + role["cache_read_tokens"]
+            + role["cache_write_tokens"]
+            for role in roles
+        )
+        role_budget = int(meta.get("soft_role_tokens", "0"))
+        total_budget = int(meta.get("soft_total_tokens", "0"))
+        for role in roles:
+            role["total_tokens"] = (
+                role["input_tokens"]
+                + role["output_tokens"]
+                + role["cache_read_tokens"]
+                + role["cache_write_tokens"]
+            )
+            role["soft_budget_exceeded"] = (
+                role_budget > 0 and role["total_tokens"] >= role_budget
+            )
+        return {
+            "workflow": {
+                "state": meta.get("workflow_state", "unknown"),
+                "round": int(meta.get("round", "0")),
+                "updated_at": meta.get("updated_at"),
+            },
+            "roles": roles,
+            "usage": {
+                "total_tokens": total_tokens,
+                "soft_role_tokens": role_budget,
+                "soft_total_tokens": total_budget,
+                "soft_total_budget_exceeded": total_budget > 0
+                and total_tokens >= total_budget,
+                "actual_provider_usage_only": True,
+            },
+            "event_cursor": {
+                "earliest_retained": event_bounds["earliest"],
+                "latest": event_bounds["latest"] or 0,
+            },
+        }
+
+
+def public_broker_events(
+    coord: Path, *, after: int, limit: int, role: str | None = None
+) -> dict[str, Any]:
+    if (
+        type(after) is not int
+        or after < 0
+        or type(limit) is not int
+        or not 1 <= limit <= 100
+    ):
+        raise OrchestrationError(
+            "Broker event cursor or limit is invalid", "invalid_arguments"
+        )
+    with connect_broker_database(coord, readonly=True) as database:
+        where = "WHERE sequence > ?"
+        values: list[Any] = [after]
+        if role is not None:
+            where += " AND role = ?"
+            values.append(role)
+        rows = list(
+            database.execute(
+                f"SELECT sequence,timestamp,event,role,round,assignment_id,delivery_id,status "
+                f"FROM events {where} ORDER BY sequence LIMIT ?",
+                (*values, limit + 1),
+            )
+        )
+        bounds = database.execute(
+            "SELECT MIN(sequence) AS earliest, MAX(sequence) AS latest FROM events"
+        ).fetchone()
+    selected = [dict(row) for row in rows[:limit]]
+    earliest = bounds["earliest"]
+    return {
+        "events": selected,
+        "cursor": {
+            "after": after,
+            "next": selected[-1]["sequence"] if selected else after,
+            "earliest_retained": earliest,
+            "latest": bounds["latest"] or 0,
+            "gap": earliest is not None and earliest > after + 1,
+            "truncated": len(rows) > limit,
+        },
+    }
+
+
+def metadata_json(value: object) -> str:
+    """Canonical compact JSON for metadata fields only."""
+    return json.dumps(value, separators=(",", ":"), sort_keys=True)

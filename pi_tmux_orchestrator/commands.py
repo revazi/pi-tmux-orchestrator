@@ -7,11 +7,18 @@ import datetime as dt
 import os
 import shlex
 import shutil
+import stat
 from pathlib import Path
 from typing import Any
 
 from . import runtime
+from .broker import initialize_broker_run
+from .broker_client import broker_control_request
+from .broker_store import broker_paths, public_broker_snapshot
 from .constants import (
+    BROKER_COORDINATION,
+    BROKER_PROTOCOL_VERSION,
+    BROKER_READ_ONLY_TOOLS,
     DEFAULT_MODELS,
     MAX_JSON_ITEMS,
     READ_ONLY_TOOLS,
@@ -21,13 +28,7 @@ from .constants import (
 )
 from .models import CommandResult, OrchestrationError
 from .output import bounded_message, human_print, public_role
-from .prompts import (
-    django_expert_prompt,
-    implementer_prompt,
-    playwright_prompt,
-    probe_prompt,
-    reviewer_prompt,
-)
+from .prompts import role_system_prompt
 from .rpc import (
     load_rpc_events,
     load_rpc_registry,
@@ -149,7 +150,7 @@ def create_tmux_grid(
         for label, (_, pane_id) in zip(labels, panes, strict=True):
             if label == "monitor":
                 manifest["monitor_pane_id"] = pane_id
-                title = "RELAY + STATUS"
+                title = "BROKER + STATUS"
             else:
                 manifest["roles"][label]["pane_id"] = pane_id
                 role = manifest["roles"][label]
@@ -195,17 +196,17 @@ def create_tmux_grid(
             )
             tmux(["respawn-pane", "-k", "-t", pane_id, command])
 
-        relay_command = shlex.join(
+        broker_command = shlex.join(
             [
                 str(runtime.SCRIPT_PATH),
-                "_relay",
+                "_broker",
                 "--state-root",
                 str(coord.parent.parent),
                 "--coord",
                 str(coord),
             ]
         )
-        tmux(["respawn-pane", "-k", "-t", manifest["monitor_pane_id"], relay_command])
+        tmux(["respawn-pane", "-k", "-t", manifest["monitor_pane_id"], broker_command])
     except Exception:
         tmux(["kill-session", "-t", session_target], check=False)
         raise
@@ -245,8 +246,9 @@ def start_command(args: argparse.Namespace) -> CommandResult:
         if args.playwright_task is None and args.playwright_task_file is None:
             playwright_task = (
                 "Run an independent browser smoke against the actual local test application "
-                "after each implementer handoff. Verify the task's user-visible behavior and "
-                "a relevant failure path with synthetic data, then report limitations.\n"
+                "after each brokered implementation report. Verify the task's user-visible "
+                "behavior and a relevant failure path with synthetic data, then report "
+                "limitations.\n"
             )
         else:
             playwright_task = read_text_argument(
@@ -262,9 +264,9 @@ def start_command(args: argparse.Namespace) -> CommandResult:
     if args.with_django_expert:
         if args.django_task is None and args.django_task_file is None:
             django_task = (
-                "Independently review each handoff for Django ORM, settings, lifecycle, "
-                "database, security, testing, and operational best practices. Separate "
-                "blocking findings from optional future improvements.\n"
+                "Independently review each brokered implementation report for Django ORM, "
+                "settings, lifecycle, database, security, testing, and operational best "
+                "practices. Separate blocking findings from optional future improvements.\n"
             )
         else:
             django_task = read_text_argument(
@@ -308,8 +310,14 @@ def start_command(args: argparse.Namespace) -> CommandResult:
             )
             for role in roles
         ],
-        "monitor": {"kind": "relay/status"},
+        "monitor": {"kind": "broker/status"},
         "transport": transport,
+        "coordination_protocol": {
+            "name": BROKER_COORDINATION,
+            "version": BROKER_PROTOCOL_VERSION,
+            "payload_files": False,
+            "polling": False,
+        },
         "trust": {
             "child_bypass": bool(args.approve_project),
             "policy": (
@@ -338,7 +346,7 @@ def start_command(args: argparse.Namespace) -> CommandResult:
             f"  {role}: {config['provider']}/{config['model']} "
             f"thinking={config['thinking']}"
         )
-    human_print("  monitor: relay/status")
+    human_print("  monitor: broker/status")
     human_print(f"Worker transport: {transport}")
     human_print(
         f"Child project trust bypass: {'enabled' if args.approve_project else 'disabled'}"
@@ -361,42 +369,8 @@ def start_command(args: argparse.Namespace) -> CommandResult:
 
     try:
         secure_write(coord / "startup-state", "STARTING\n")
-        secure_write(coord / "task.md", task)
-        if probe_task is not None:
-            secure_write(coord / "probe-task.md", probe_task)
-        if playwright_task is not None:
-            secure_write(coord / "playwright-task.md", playwright_task)
-        if django_task is not None:
-            secure_write(coord / "django-task.md", django_task)
-
-        prompt_paths = {
-            "implementer": coord / "implementer.prompt.md",
-            "reviewer": coord / "reviewer.prompt.md",
-        }
-        secure_write(
-            prompt_paths["implementer"], implementer_prompt(project, coord, task)
-        )
-        secure_write(prompt_paths["reviewer"], reviewer_prompt(project, coord, task))
-        if probe_task is not None:
-            prompt_paths["probe"] = coord / "probe.prompt.md"
-            secure_write(
-                prompt_paths["probe"], probe_prompt(project, coord, task, probe_task)
-            )
-        if playwright_task is not None:
-            prompt_paths["playwright"] = coord / "playwright.prompt.md"
-            secure_write(
-                prompt_paths["playwright"],
-                playwright_prompt(project, coord, task, playwright_task),
-            )
-        if django_task is not None:
-            prompt_paths["django"] = coord / "django.prompt.md"
-            secure_write(
-                prompt_paths["django"],
-                django_expert_prompt(project, coord, task, django_task),
-            )
-
         manifest: dict[str, Any] = {
-            "version": 2,
+            "version": 3,
             "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
             "session": session,
             "window": WINDOW,
@@ -404,13 +378,15 @@ def start_command(args: argparse.Namespace) -> CommandResult:
             "coord": str(coord),
             "approve_project": bool(args.approve_project),
             "transport": transport,
+            "coordination": BROKER_COORDINATION,
+            "protocol_version": BROKER_PROTOCOL_VERSION,
             "monitor_pane_id": None,
             "roles": {},
         }
         for role in roles:
             config = configs[role]
-            config["prompt_path"] = str(prompt_paths[role])
             config["session_dir"] = str(coord / "sessions" / role)
+            config["session_id"] = f"{coord.name}-{role}"
             manifest["roles"][role] = config
 
         ensure_private_directory(coord / "sessions")
@@ -419,6 +395,16 @@ def start_command(args: argparse.Namespace) -> CommandResult:
         if transport == RPC_TRANSPORT:
             for role in roles:
                 rpc_role_paths(coord, role, create=True)
+        role_tasks = {
+            role: value
+            for role, value in {
+                "probe": probe_task,
+                "playwright": playwright_task,
+                "django": django_task,
+            }.items()
+            if value is not None
+        }
+        initialize_broker_run(coord, manifest, task, role_tasks)
         create_tmux_grid(session, project, coord, roles, manifest)
         secure_write(coord / "startup-state", "RUNNING\n")
     except BaseException:
@@ -495,6 +481,7 @@ def list_command(_: argparse.Namespace) -> CommandResult:
 
 
 def coordination_files(coord: Path) -> list[tuple[Path, os.stat_result]]:
+    """List legacy 0.4.x report files for retained-run compatibility only."""
     coord = validate_coordination_directory(coord)
     patterns = (
         "*.started.md",
@@ -518,8 +505,15 @@ def coordination_files(coord: Path) -> list[tuple[Path, os.stat_result]]:
 def status_roles(coord: Path, manifest: dict[str, Any]) -> list[dict[str, Any]]:
     values: list[dict[str, Any]] = []
     transport = manifest_transport(manifest)
+    broker_roles: dict[str, dict[str, Any]] = {}
+    if manifest.get("version") == 3:
+        broker_roles = {
+            value["role"]: value for value in public_broker_snapshot(coord)["roles"]
+        }
     for role, config in manifest["roles"].items():
         value = public_role(role, config, transport)
+        if role in broker_roles:
+            value["broker_state"] = broker_roles[role]
         if transport == RPC_TRANSPORT:
             value["rpc_state"] = public_rpc_state(load_rpc_state(coord, role))
             value["rpc_registry"] = public_rpc_registry(load_rpc_registry(coord, role))
@@ -567,17 +561,36 @@ def status_command(args: argparse.Namespace) -> CommandResult:
             f"  pane={index} id={pane_id} pid={pid} cmd={current_command} "
             f"dead={dead} title={title}"
         )
-    human_print("Coordination files:")
-    files = coordination_files(coord)
-    selected_files = files[:MAX_JSON_ITEMS] if runtime.JSON_MODE else files
-    file_values = [
-        {"name": path.name, "size_bytes": metadata.st_size}
-        for path, metadata in selected_files
-    ]
-    if not files:
-        human_print("  waiting for agent status")
-    for path, metadata in files:
-        human_print(f"  {path.name}: {metadata.st_size} bytes")
+    broker_snapshot: dict[str, Any] | None = None
+    files: list[tuple[Path, os.stat_result]] = []
+    file_values: list[dict[str, Any]] = []
+    if manifest.get("version") == 3:
+        broker_snapshot = public_broker_snapshot(coord)
+        workflow = broker_snapshot["workflow"]
+        usage = broker_snapshot["usage"]
+        total_warning = " budget=warning" if usage["soft_total_budget_exceeded"] else ""
+        human_print(
+            f"Workflow: {workflow['state']} round={workflow['round']} "
+            f"tokens={usage['total_tokens']}{total_warning}"
+        )
+        for worker in broker_snapshot["roles"]:
+            human_print(
+                f"  {worker['role']}: {worker['state']} connected={worker['connected']} "
+                f"tokens={worker['total_tokens']}"
+                f"{' budget=warning' if worker['soft_budget_exceeded'] else ''}"
+            )
+    else:
+        human_print("Legacy coordination files:")
+        files = coordination_files(coord)
+        selected_files = files[:MAX_JSON_ITEMS] if runtime.JSON_MODE else files
+        file_values = [
+            {"name": path.name, "size_bytes": metadata.st_size}
+            for path, metadata in selected_files
+        ]
+        if not files:
+            human_print("  waiting for legacy agent status")
+        for path, metadata in files:
+            human_print(f"  {path.name}: {metadata.st_size} bytes")
     role_values = status_roles(coord, manifest)
     if manifest_transport(manifest) == RPC_TRANSPORT:
         human_print("RPC workers:")
@@ -605,11 +618,12 @@ def status_command(args: argparse.Namespace) -> CommandResult:
             "paths": {"coordination": str(coord)},
             "roles": role_values,
             "panes": panes,
+            "broker": broker_snapshot,
             "files": file_values,
             "truncated": {
                 "panes": runtime.JSON_MODE
                 and len(result.stdout.splitlines()) > len(panes),
-                "files": runtime.JSON_MODE and len(files) > len(selected_files),
+                "files": False,
             },
         }
     )
@@ -668,6 +682,7 @@ def attach_command(args: argparse.Namespace) -> CommandResult:
 
 
 def send_keys(pane_id: str, message: str) -> None:
+    """Legacy 0.4.x retained-run transport; v0.5.0 runs never call this."""
     tmux(["send-keys", "-t", pane_id, "-l", "--", message])
     tmux(["send-keys", "-t", pane_id, "Enter"])
 
@@ -693,7 +708,24 @@ def send_command(args: argparse.Namespace) -> CommandResult:
     message = read_text_argument(args.message, args.message_file, "message").strip()
     transport = manifest_transport(manifest)
     acknowledgement: dict[str, Any] | None = None
-    if transport == RPC_TRANSPORT:
+    if manifest.get("version") == 3:
+        if getattr(args, "run", None) is not None:
+            _session, live_coord = resolve_session(args.session)
+            if live_coord != coord:
+                raise OrchestrationError(
+                    "Broker control requires the exact run to be hosted by the live tmux session",
+                    "broker_not_live",
+                )
+        acknowledgement = broker_control_request(
+            coord,
+            args.role,
+            "send",
+            message=message,
+            delivery=args.delivery,
+            command_id=getattr(args, "command_id", None),
+        )
+        acknowledged = True
+    elif transport == RPC_TRANSPORT:
         acknowledgement = rpc_control_request(
             coord,
             manifest,
@@ -709,6 +741,7 @@ def send_command(args: argparse.Namespace) -> CommandResult:
             raise OrchestrationError("follow-up delivery requires RPC workers")
         if getattr(args, "command_id", None) is not None:
             raise OrchestrationError("command IDs require RPC workers")
+        # Retained 0.4.x runs remain operable. Manifest v3 runs are rejected above.
         send_keys(manifest["roles"][args.role]["pane_id"], message)
         acknowledged = False
     suffix = (
@@ -730,7 +763,7 @@ def send_command(args: argparse.Namespace) -> CommandResult:
             "command_status": acknowledgement["status"] if acknowledgement else None,
             "duplicate": acknowledgement["duplicate"] if acknowledgement else False,
             "event_sequence": (
-                acknowledgement["event_sequence"] if acknowledgement else None
+                acknowledgement.get("event_sequence") if acknowledgement else None
             ),
         }
     )
@@ -743,15 +776,32 @@ def abort_command(args: argparse.Namespace) -> CommandResult:
         raise OrchestrationError(
             f"Role {args.role!r} is not in {session}; available: {available}"
         )
-    if manifest_transport(manifest) != RPC_TRANSPORT:
-        raise OrchestrationError("abort requires an orchestration using RPC workers")
-    acknowledgement = rpc_control_request(
-        coord,
-        manifest,
-        args.role,
-        "abort",
-        command_id=getattr(args, "command_id", None),
-    )
+    if manifest.get("version") == 3:
+        if getattr(args, "run", None) is not None:
+            _session, live_coord = resolve_session(args.session)
+            if live_coord != coord:
+                raise OrchestrationError(
+                    "Broker control requires the exact run to be hosted by the live tmux session",
+                    "broker_not_live",
+                )
+        acknowledgement = broker_control_request(
+            coord,
+            args.role,
+            "abort",
+            command_id=getattr(args, "command_id", None),
+        )
+    else:
+        if manifest_transport(manifest) != RPC_TRANSPORT:
+            raise OrchestrationError(
+                "abort requires a brokered or RPC-worker orchestration"
+            )
+        acknowledgement = rpc_control_request(
+            coord,
+            manifest,
+            args.role,
+            "abort",
+            command_id=getattr(args, "command_id", None),
+        )
     human_print(
         f"Abort acknowledged by {session}/{args.role} "
         f"(status={acknowledgement['status']} id={acknowledgement['id']})"
@@ -762,12 +812,12 @@ def abort_command(args: argparse.Namespace) -> CommandResult:
             "run_id": coord.name,
             "role": args.role,
             "aborted": True,
-            "transport": RPC_TRANSPORT,
+            "transport": manifest_transport(manifest),
             "acknowledged": True,
             "command_id": acknowledgement["id"],
             "command_status": acknowledgement["status"],
             "duplicate": acknowledgement["duplicate"],
-            "event_sequence": acknowledgement["event_sequence"],
+            "event_sequence": acknowledgement.get("event_sequence"),
         }
     )
 
@@ -794,10 +844,6 @@ def restart_command(args: argparse.Namespace) -> CommandResult:
     if not args.skip_model_check:
         validate_model(args.role, role)
     save_manifest(coord, manifest)
-    started = coord / f"{args.role}.started.md"
-    if started.exists() or started.is_symlink():
-        require_regular_file(started, f"{args.role} started state")
-        started.unlink()
     if manifest_transport(manifest) == RPC_TRANSPORT:
         rpc_paths = rpc_role_paths(coord, args.role, create=True)
         unlink_private_regular(rpc_paths["state"], f"{args.role} RPC state")
@@ -833,6 +879,15 @@ def stop_command(args: argparse.Namespace) -> CommandResult:
     session, coord = resolve_session(args.session)
     manifest = load_manifest(coord, expected_session=session)
     tmux(["kill-session", "-t", exact_session_target(session)])
+    if manifest.get("version") == 3:
+        socket_path = broker_paths(coord)["socket"]
+        try:
+            metadata = socket_path.lstat()
+        except FileNotFoundError:
+            pass
+        else:
+            if stat.S_ISSOCK(metadata.st_mode):
+                socket_path.unlink()
     registry_finalization_failures: list[str] = []
     if manifest_transport(manifest) == RPC_TRANSPORT:
         for role in manifest["roles"]:
@@ -963,37 +1018,70 @@ def run_agent_command(args: argparse.Namespace) -> int:
     if manifest_transport(manifest) == RPC_TRANSPORT:
         return run_rpc_agent(coord, manifest, args.role, role)
     project = manifest["project"]
-    prompt_path = Path(role["prompt_path"])
-    require_regular_file(prompt_path, "role prompt", nonempty=True)
     ensure_private_directory(Path(role["session_dir"]), parents=True)
+    if manifest.get("version") != 3:
+        prompt_path = Path(role["prompt_path"])
+        require_regular_file(prompt_path, "role prompt", nonempty=True)
     command = [
         command_path("pi"),
         "--session-dir",
         role["session_dir"],
         "--name",
         f"{Path(project).name} {args.role}",
-        "--provider",
-        role["provider"],
-        "--model",
-        role["model"],
-        "--thinking",
-        role["thinking"],
     ]
+    if manifest.get("version") == 3:
+        command.extend(["--session-id", role["session_id"]])
+    command.extend(
+        [
+            "--provider",
+            role["provider"],
+            "--model",
+            role["model"],
+            "--thinking",
+            role["thinking"],
+        ]
+    )
     if manifest["approve_project"]:
         command.append("--approve")
     if role.get("tools"):
-        command.extend(["--tools", role["tools"]])
-    command.extend(
-        [
-            f"@{prompt_path}",
-            "Follow the attached role instructions and begin.",
-        ]
-    )
+        tools = (
+            BROKER_READ_ONLY_TOOLS if manifest.get("version") == 3 else role["tools"]
+        )
+        command.extend(["--tools", tools])
+    elif manifest.get("version") == 3:
+        command.extend(
+            ["--tools", "read,bash,edit,write,grep,find,ls,orchestrator_report"]
+        )
+    if manifest.get("version") == 3:
+        token_path = coord / f"{args.role}.token"
+        require_regular_file(token_path, "worker broker token", nonempty=True)
+        token = token_path.read_text(encoding="utf-8").strip()
+        system_prompt_path = coord / f"{args.role}.system.md"
+        secure_write(system_prompt_path, role_system_prompt(Path(project), args.role))
+        command.extend(
+            [
+                "--extension",
+                str(runtime.WORKER_EXTENSION_PATH),
+                "--append-system-prompt",
+                str(system_prompt_path),
+            ]
+        )
+    else:
+        command.extend(
+            [
+                f"@{prompt_path}",
+                "Follow the attached role instructions and begin.",
+            ]
+        )
     environment = os.environ.copy()
     environment.pop("PI_TMUX_CONTROLLER", None)
     environment.pop("PI_TMUX_CONTROLLER_HOME", None)
     environment["PI_SKIP_VERSION_CHECK"] = "1"
     environment["PI_TELEMETRY"] = "0"
+    if manifest.get("version") == 3:
+        environment["PI_TMUX_ORCHESTRATOR_ROLE"] = args.role
+        environment["PI_TMUX_ORCHESTRATOR_TOKEN"] = token
+        environment["PI_TMUX_ORCHESTRATOR_SOCKET"] = str(broker_paths(coord)["socket"])
     os.chdir(project)
     os.execvpe(command[0], command, environment)
     return 0

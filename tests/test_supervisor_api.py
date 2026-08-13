@@ -106,7 +106,7 @@ class SupervisorApiFixture(unittest.TestCase):
 class SupervisorApiTests(SupervisorApiFixture):
     def test_capabilities_define_versioned_tmux_independent_read_surface(self) -> None:
         capabilities = ORCHESTRATOR.supervisor_capabilities()
-        self.assertEqual(capabilities["api_version"], "1")
+        self.assertEqual(capabilities["api_version"], "2")
         self.assertEqual(
             capabilities["read_operations"],
             ["capabilities", "sessions", "runs", "snapshot", "events", "command"],
@@ -170,7 +170,7 @@ class SupervisorApiTests(SupervisorApiFixture):
         self.assertEqual(
             ORCHESTRATOR.retained_sessions(),
             {
-                "api_version": "1",
+                "api_version": "2",
                 "sessions": [],
                 "issues": [],
                 "truncated": False,

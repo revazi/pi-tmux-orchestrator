@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from pi_tmux_orchestrator import (
+    broker,
+    broker_client,
+    broker_store,
     cli,
     commands,
     constants,
@@ -10,6 +13,7 @@ from pi_tmux_orchestrator import (
     models,
     output,
     prompts,
+    protocol,
     relay,
     rpc,
     rpc_protocol,
@@ -32,6 +36,9 @@ class ModuleFacade:
             self,
             "_modules",
             (
+                broker,
+                broker_client,
+                broker_store,
                 cli,
                 commands,
                 controller,
@@ -46,6 +53,7 @@ class ModuleFacade:
                 tmux,
                 output,
                 prompts,
+                protocol,
                 models,
                 constants,
                 runtime,
