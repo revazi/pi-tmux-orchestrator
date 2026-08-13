@@ -1,6 +1,6 @@
 {
   "name": "pi-tmux-orchestrator",
-  "version": "0.4.2",
+  "version": "0.5.0",
   "description": "Pi extension, skill, and dependency-free Python CLI for coordinating coding agents in tmux",
   "license": "MIT",
   "author": {
@@ -47,7 +47,9 @@
     "SKILL.md",
     "VERSION",
     "extensions/tmux-orchestrator.js",
+    "extensions/orchestrator-worker.js",
     "references/usage.md",
+    "references/protocol-v1.md",
     "bin/pi-tmux-agents",
     "pi_tmux_orchestrator/*.py"
   ],

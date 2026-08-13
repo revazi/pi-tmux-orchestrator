@@ -19,10 +19,14 @@ class SkillMetadataTests(unittest.TestCase):
         launcher = ROOT / "bin" / "pi-tmux-agents"
         package = ROOT / "pi_tmux_orchestrator"
         expected_modules = {
+            "broker.py",
+            "broker_client.py",
+            "broker_store.py",
             "cli.py",
             "commands.py",
             "controller.py",
             "prompts.py",
+            "protocol.py",
             "relay.py",
             "rpc_protocol.py",
             "rpc_store.py",
@@ -64,64 +68,45 @@ class PromptTests(unittest.TestCase):
         self.coord = Path("/tmp/example-coordination")
         self.task = "First criterion.\nSecond criterion.\n"
 
-    def assert_normalized(self, prompt: str) -> None:
-        self.assertTrue(prompt.startswith("# Role:"))
+    def assert_normalized(self, prompt: str, role: str) -> None:
+        self.assertTrue(prompt.startswith("# Pi Tmux Orchestrator worker"))
         self.assertFalse(prompt.startswith(" "))
-        self.assertIn("First criterion.\nSecond criterion.", prompt)
-        self.assertIn(str(self.coord), prompt)
+        self.assertIn(f"Role: `{role}`", prompt)
+        self.assertIn(str(self.project), prompt)
+        self.assertIn("orchestrator_report", prompt)
+        self.assertIn("End your turn", prompt)
+        self.assertIn("Never run sleep commands", prompt)
+        self.assertNotIn("handoff-N", prompt)
+        self.assertNotIn(str(self.coord), prompt)
+        self.assertNotIn("First criterion", prompt)
         self.assertTrue(prompt.endswith("\n"))
 
     def test_implementer_prompt(self) -> None:
-        prompt = ORCHESTRATOR.implementer_prompt(self.project, self.coord, self.task)
-        self.assert_normalized(prompt)
-        self.assertIn("sole agent permitted", prompt)
-        self.assertIn("handoff-N.ready", prompt)
+        prompt = ORCHESTRATOR.role_system_prompt(self.project, "implementer")
+        self.assert_normalized(prompt, "implementer")
+        self.assertIn("sole worker allowed", prompt)
 
     def test_reviewer_prompt(self) -> None:
-        prompt = ORCHESTRATOR.reviewer_prompt(self.project, self.coord, self.task)
-        self.assert_normalized(prompt)
-        self.assertIn("read-only reviewer", prompt)
-        self.assertIn("CHANGES_REQUESTED", prompt)
+        prompt = ORCHESTRATOR.role_system_prompt(self.project, "reviewer")
+        self.assert_normalized(prompt, "reviewer")
+        self.assertIn("Review independently", prompt)
 
     def test_probe_prompt(self) -> None:
-        prompt = ORCHESTRATOR.probe_prompt(
-            self.project,
-            self.coord,
-            self.task,
-            "Inspect the synthetic API boundary.",
-        )
-        self.assert_normalized(prompt)
+        prompt = ORCHESTRATOR.role_system_prompt(self.project, "probe")
+        self.assert_normalized(prompt, "probe")
         self.assertIn("production wire acceptance", prompt)
-        self.assertIn("probe.ready", prompt)
 
     def test_playwright_prompt_contract(self) -> None:
-        prompt = ORCHESTRATOR.playwright_prompt(
-            self.project,
-            self.coord,
-            self.task,
-            "Exercise the synthetic local test application.",
-        )
-        self.assert_normalized(prompt)
-        self.assertIn("read-only Playwright test agent", prompt)
-        self.assertIn("real test application through a browser", prompt)
-        self.assertIn("relevant failure path", prompt)
-        self.assertIn("playwright-N.md", prompt)
-        self.assertIn("exactly `PASS` or `FAIL`", prompt)
-        self.assertIn("process cleanup", prompt)
+        prompt = ORCHESTRATOR.role_system_prompt(self.project, "playwright")
+        self.assert_normalized(prompt, "playwright")
+        self.assertIn("browser", prompt)
+        self.assertIn("bounded process cleanup", prompt)
 
     def test_django_expert_prompt_contract(self) -> None:
-        prompt = ORCHESTRATOR.django_expert_prompt(
-            self.project,
-            self.coord,
-            self.task,
-            "Review synthetic Django behavior.",
-        )
-        self.assert_normalized(prompt)
-        self.assertIn("read-only senior Django expert", prompt)
-        self.assertIn("settings/app lifecycle", prompt)
-        self.assertIn("transaction/test-database behavior", prompt)
-        self.assertIn("django-review-N.md", prompt)
-        self.assertIn("`ADVISORY_APPROVED` or `ISSUES_FOUND`", prompt)
+        prompt = ORCHESTRATOR.role_system_prompt(self.project, "django")
+        self.assert_normalized(prompt, "django")
+        self.assertIn("Django APIs", prompt)
+        self.assertIn("transaction semantics", prompt)
 
 
 class UtilityTests(unittest.TestCase):
@@ -250,7 +235,7 @@ class UtilityTests(unittest.TestCase):
         self.assertTrue(stopped.confirm)
 
     def test_version(self) -> None:
-        self.assertEqual(ORCHESTRATOR.VERSION, "0.4.2")
+        self.assertEqual(ORCHESTRATOR.VERSION, "0.5.0")
 
     def test_default_model_contract_for_all_roles(self) -> None:
         self.assertEqual(

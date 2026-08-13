@@ -6,6 +6,34 @@ All notable changes to this project are documented here.
 
 _No changes yet._
 
+## 0.5.0 - 2026-08-13
+
+Event-driven structured coordination release.
+
+### Added
+
+- Added one dependency-free Python broker per orchestration over an owner-only Unix socket with strict length-prefixed JSON, independent role/control authentication, role ACLs, bounded schemas, idempotent IDs, and crash-`uncertain` semantics
+- Added one Pi worker bridge shared by TUI and RPC presentation, using custom messages for delivery, non-context custom entries for deduplication, lifecycle hooks, abort, and a terminating `orchestrator_report` tool
+- Added metadata-only SQLite workflow, assignment, report-shape, lifecycle, command, event, usage, context-pressure, and soft-budget state
+- Added structured implementation, review, probe, Playwright, and Django reports with bounded summaries, paths, checks, findings, verdicts, risks, and limitations
+- Added Supervisor API v2 broker snapshots and event pages while preserving tmux-independent retained-state reads
+- Added protocol, state, ACL, payload-redaction, no-polling, no-sleep, prompt, and bridge regression coverage
+
+### Changed
+
+- Changed every newly started run to manifest v3 and `coordination: broker-v1`; no option or fallback starts file-based coordination
+- Changed tmux from the workflow transport to the monitorable host for the broker and Pi workers
+- Changed TUI and `--rpc-workers` into presentation choices over one coordination protocol
+- Changed reviewer scheduling to wake only after required implementation/specialist evidence exists and removed approval-only implementer turns
+- Changed idle instructions to end the turn and explicitly prohibit sleep and coordination polling
+- Changed status and Supervisor API to expose provider-reported token/cost totals and context pressure without inventing estimates
+- Retained compatibility readers and controls for existing `0.4.x` manifests without exposing legacy coordination for new runs
+
+### Removed
+
+- Removed Markdown handoffs/reviews/specialist payloads, `.ready` markers, relay polling, mailbox payload files, and tmux key injection from newly started workflow coordination
+- Removed copied diffs/logs and unbounded prose reports from the inter-agent contract
+
 ## 0.4.2 - 2026-08-09
 
 Package-identity migration; orchestration behavior and the 29-file artifact surface are unchanged.

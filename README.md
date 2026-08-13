@@ -5,29 +5,30 @@
 [![CI](https://github.com/revazi/pi-tmux-orchestrator/actions/workflows/ci.yml/badge.svg)](https://github.com/revazi/pi-tmux-orchestrator/actions/workflows/ci.yml)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.md)
 
-A [Pi](https://github.com/earendil-works/pi) extension, skill, and dependency-free Python CLI for coordinating coding agents in monitorable tmux grids.
-
-It turns the recurring “implementer + reviewer + optional specialist” setup into one command, with durable handoffs and explicit safety boundaries.
+A [Pi](https://github.com/earendil-works/pi) extension, skill, and
+dependency-free Python CLI for coordinating coding agents in monitorable tmux
+grids.
 
 ## What it provides
 
-- One primary implementer with normal Pi coding tools
+- One implementer with normal Pi coding tools
 - One independent reviewer with read/verification tools
-- An optional workflow-read-only integration, contract, security, or runtime probe
-- An optional workflow-read-only Playwright tester for real local browser behavior
-- An optional workflow-read-only senior Django expert for framework-specific review
-- A live relay/status pane that validates and routes report-ready transitions
-- Numbered implementation, specialist, and review rounds
-- Configurable provider, model, and thinking level per role
-- Role messaging and model restart commands
-- External coordination state that does not pollute project repositories
-- Model-free dry runs and functional smoke tests
-- An opt-in versioned JSON CLI boundary and thin Pi extension that delegates to it
-- One persistent, project-neutral controller Pi session with stable identity and private storage
-- Optional headless Pi RPC workers with private mailbox transport, idempotency keys, durable worker registries, lifecycle journals, follow-up delivery, and abort
-- A versioned, tmux-independent supervisor read API for retained sessions/runs, snapshots, per-role event cursors, and exact command status
+- Optional technical probe, Playwright tester, and Django expert
+- One event-driven owner-only Unix-socket broker per run
+- The same worker-bridge protocol for interactive TUI and headless RPC workers
+- Bounded typed reports through a terminating Pi tool
+- No Markdown handoffs, readiness markers, mailbox payload files, relay polling,
+  lifecycle sleeps, or tmux key injection in newly started runs
+- Metadata-only SQLite state, durable Pi sessions, idempotent command IDs, and
+  crash-`uncertain` semantics
+- Actual provider token/cost accounting when Pi exposes it, plus context pressure
+  and soft budgets
+- A versioned JSON CLI and tmux-independent Supervisor API v2
+- A persistent project-neutral controller Pi session
+- Explicit project trust, one-writer policy, bounded output, and confirmations
+  for restart/stop
 
-## Default grid
+## Grid
 
 ```text
 ┌──────────────────────────────┬──────────────────────────────┐
@@ -39,28 +40,45 @@ It turns the recurring “implementer + reviewer + optional specialist” setup 
 │ openai-codex/gpt-5.4-mini    │ openai-codex/gpt-5.4         │
 │ high                         │ high                         │
 ├──────────────────────────────┼──────────────────────────────┤
-│ Optional Django expert       │ Relay + status               │
-│ openai-codex/gpt-5.4         │ handoffs and health          │
+│ Optional Django expert       │ Broker + status              │
+│ openai-codex/gpt-5.4         │ workflow, lifecycle, usage   │
 │ high                         │                              │
 └──────────────────────────────┴──────────────────────────────┘
 ```
 
-The default grid has implementer, reviewer, and monitor panes. Optional roles add panes, and tmux tiles the resulting grid.
+Tmux hosts and displays the broker and workers. It is not the coordination
+transport.
 
-## Implementation architecture
+## Architecture
 
-`bin/pi-tmux-agents` is only an executable launcher. The authoritative standard-library implementation lives in `pi_tmux_orchestrator/`, separated into CLI/commands, controller, tmux, storage/manifest validation, prompts, relay, RPC protocol/store/supervisor modules, the versioned `supervisor_api` service, and separate supervisor CLI handlers. The JSON CLI remains the stable control-plane boundary used by the thin Pi extension and package-local clients. Tmux owns worker/controller hosting, panes, monitoring, attachment, and live-session operations. Supervisor reads consume only private durable state and remain available after a tmux session exits.
+`bin/pi-tmux-agents` is a thin executable. The authoritative standard-library
+implementation is `pi_tmux_orchestrator/`:
+
+- CLI/controller/tmux host control
+- strict manifests and private storage
+- framed broker protocol and metadata-only SQLite state machine
+- broker clients and TUI/RPC worker supervision
+- role system prompts and worker bridge
+- retained-run Supervisor API
+
+The extension remains thin and delegates bounded argument arrays to the Python
+JSON CLI. The broker is the only current-run metadata writer. Pi owns worker
+conversation durability. Reviewer roles inspect the shared worktree directly
+instead of receiving copied diffs or logs.
+
+See [coordination protocol v1](references/protocol-v1.md) for schemas, role ACLs,
+authentication, lifecycle, report limits, acknowledgements, retry, crash
+recovery, and token accounting.
 
 ## Requirements
 
-- Pi coding agent available as `pi` (package extension tested with Pi 0.80.10 and designed for newer compatible APIs)
+- Pi available as `pi`
 - Python 3.11+
-- Node 22.19+ for package verification/evaluation
-- Ruff 0.11.11 for repository development checks (not a runtime/package dependency)
-- tmux 3.2+; tmux 3.5+ is recommended
-- A project already inspected and trusted before using `--approve-project`
+- tmux 3.2+; tmux 3.5+ recommended
+- Node 22.19+ for package verification
+- Ruff 0.11.11 for repository development checks only
 
-Recommended `~/.tmux.conf` for tmux 3.5+:
+Recommended tmux 3.5+ configuration:
 
 ```tmux
 set -g extended-keys on
@@ -69,262 +87,218 @@ set -g extended-keys-format csi-u
 
 ## Installation
 
-Install from npm:
-
 ```bash
 pi install npm:pi-tmux-orchestrator
 ```
 
-Try it for one Pi run without installing:
+One run without installation:
 
 ```bash
 pi -e npm:pi-tmux-orchestrator
 ```
 
-Install a reviewed Git commit or local checkout:
+Reviewed Git commit or local checkout:
 
 ```bash
 pi install git:github.com/revazi/pi-tmux-orchestrator@<reviewed-full-commit>
 pi install /absolute/path/to/pi-tmux-orchestrator
 ```
 
-Pi packages execute with the current user's permissions, so inspect the source before installation. The package imports no Pi core module, declares no dependencies or peers, and is distributed under the [MIT License](LICENSE.md).
+Pi packages execute with the current user's permissions. Inspect source before
+installation. This package has no runtime dependency tree and is MIT licensed.
 
-Versions 0.4.0 and 0.4.1 briefly used the scoped npm name `@revazi/pi-tmux-orchestrator`. Replace that package source with the canonical unscoped name:
+If an old installation uses the removed scoped npm identity:
 
 ```bash
 pi remove npm:@revazi/pi-tmux-orchestrator
 pi install npm:pi-tmux-orchestrator
 ```
 
-The legacy `install.sh` remains available as a standalone CLI/root-skill fallback. It does not install the extension or migrate an existing installation.
-
-## Persistent controller session
-
-Start one detached controller Pi session independently of any target repository:
-
-```bash
-pi-tmux-agents controller start
-pi-tmux-agents controller status
-pi-tmux-agents controller attach
-```
-
-The controller has the stable Pi session ID `pi-tmux-orchestrator-controller-v1`, resumes the same Pi conversation after a confirmed stop/start, and runs in a neutral workspace under `~/.pi/agent/orchestrator-controller/`. Its state, workspace, prompt, and dedicated Pi session directory are private and external to target repositories. Set `PI_TMUX_CONTROLLER_HOME` to choose another controller root.
-
-The controller explicitly loads this package's extension and skill when they are colocated with the CLI, ignores project context files in its neutral workspace, omits `edit` and `write`, and requires an explicit target project for controller-mode starts. Existing orchestration grids remain independent and can outlive the controller. Tmux is currently the controller's attachable terminal host, not its persistent Pi identity or source of orchestration state.
-
-Stop only after explicit confirmation; the Pi conversation and controller state are retained:
-
-```bash
-pi-tmux-agents controller stop --confirm
-```
-
-The command refuses duplicate starts and never replaces an unrelated tmux session using the reserved `pi-orchestrator-controller` name. Controller mode also blocks Pi `/new`, `/resume`, `/fork`, and `/clone` transitions so the TUI cannot silently leave its fixed controller identity. Controller attach remains interactive-only and cannot be used through JSON mode.
-
 ## Start from Pi
 
-The installed extension exposes exactly these slash commands:
+The package exposes:
 
-| Command | Behavior |
-| --- | --- |
-| `/orchestrator-help` | Show a bounded command overview without a subprocess. |
-| `/orchestrator-doctor` | Run the authoritative JSON CLI prerequisite checks without a provider request. |
-| `/orchestrator-start [task]` | Collect a task when omitted, select optional roles and TUI/RPC worker transport, enforce parent/child trust boundaries, preview, and confirm before start. |
-| `/orchestrator-list` | List running orchestrations and refresh the bounded metadata-only widget. |
-| `/orchestrator-status [session]` | Show metadata-only status for an exact session, or use safe unambiguous current-project resolution when omitted. |
-| `/orchestrator-send [session]` | Collect an exact session when omitted, select one of five roles, edit a non-empty private message, and send it through a unique mode-`0600` file. |
-| `/orchestrator-stop [session]` | Collect an exact session when omitted and require explicit confirmation before delegated `--yes`. |
-| `/orchestrate` | Backward-compatible alias for `/orchestrator-start`. |
-| `/orchestrations` | Backward-compatible alias for `/orchestrator-list`. |
+- `/orchestrator-help`
+- `/orchestrator-doctor`
+- `/orchestrator-start [task]`
+- `/orchestrator-list`
+- `/orchestrator-status [session]`
+- `/orchestrator-send [session]`
+- `/orchestrator-stop [session]`
+- `/orchestrate` and `/orchestrations` compatibility aliases
 
-The `tmux_orchestrator` model tool remains available for bounded `doctor`, `list`, `status`, `start`, and `send` actions; it intentionally excludes stop and restart. Start and slash-command send/stop require the interactive TUI. Parent trust is checked before an optional child `--approve`, a separate confirmation is required for every run, and parent trust is never treated as inherited by children. Message text never enters subprocess argv, status, details, notifications, or widgets.
-
-Attach, the supervisor API, RPC events/abort, and restart remain terminal/CLI-only. Attach takes over the terminal; abort requires RPC workers; restart requires explicit confirmation and provider/model/thinking configuration. The extension uses Pi's existing dialogs.
-
-Without the extension, use the skill/CLI fallback in a new Pi session:
-
-```text
-/skill:tmux-agent-orchestrator Start an implementer and reviewer for the current task and attach.
-```
-
-Ask for a probe when useful:
-
-```text
-/skill:tmux-agent-orchestrator Start an implementer, reviewer, and independent API contract probe for this task.
-```
-
-Ask for Playwright or Django review only when the task benefits from those specialists:
-
-```text
-/skill:tmux-agent-orchestrator Add a Playwright tester and Django expert to the implementer/reviewer workflow for this task.
-```
-
-The skill writes the agreed task to files and invokes the CLI rather than rebuilding prompts and tmux panes manually.
+The `tmux_orchestrator` model tool provides bounded `doctor`, `list`, `status`,
+`start`, and `send` actions. Start requires interactive confirmation. Parent
+project trust is never inherited by child Pi sessions; child `--approve` needs
+separate confirmation.
 
 ## Start from the terminal
 
-Create a task file:
-
 ```bash
 cat > /tmp/pi-agent-task.md <<'TASK'
-Implement the requested change, add focused tests, run project verification, and stop after independent review approval.
+Implement the requested change, add focused tests, run verification, and stop
+after independent review approval.
 TASK
+
+pi-tmux-agents start \
+  --project "$PWD" \
+  --task-file /tmp/pi-agent-task.md \
+  --attach
 ```
 
-Start the default two-agent workflow:
+Add specialists:
 
 ```bash
 pi-tmux-agents start \
   --project "$PWD" \
   --task-file /tmp/pi-agent-task.md \
-  --approve-project \
-  --attach
+  --with-probe --probe-task-file /tmp/pi-agent-probe.md \
+  --with-playwright --playwright-task-file /tmp/pi-agent-playwright.md \
+  --with-django-expert --django-task-file /tmp/pi-agent-django.md
 ```
 
-Add a focused probe:
+Use `--rpc-workers` for headless RPC event panes. TUI remains the default. Both
+presentations use the same broker and bridge; `--rpc-workers` is not a legacy
+coordination mode.
 
-```bash
-cat > /tmp/pi-agent-probe.md <<'PROBE'
-Independently inspect the provider request and response contract using synthetic data only. Report concrete gaps and limitations.
-PROBE
+Use `--approve-project` only after inspecting and trusting the target project.
+RPC workers otherwise apply Pi's saved/global trust behavior and cannot display
+startup trust dialogs.
 
-pi-tmux-agents start \
-  --project "$PWD" \
-  --task-file /tmp/pi-agent-task.md \
-  --with-probe \
-  --probe-task-file /tmp/pi-agent-probe.md \
-  --approve-project \
-  --attach
-```
+## Event-driven workflow
 
-Use acknowledged headless RPC workers instead of interactive child Pi TUIs when desired:
+1. Bridges connect and authenticate independently.
+2. Broker stores baseline context in each Pi session without waking idle roles.
+3. Only implementer and optional initial probe are triggered.
+4. Implementer submits a bounded `implementation` report through
+   `orchestrator_report`; the tool terminates the turn.
+5. Enabled specialists inspect the worktree and submit typed evidence.
+6. Broker supplies all evidence to reviewer and wakes reviewer exactly once.
+7. `changes_requested` starts the next implementation round.
+8. `approved` marks the workflow ready without an acknowledgement-only model
+   turn.
 
-```bash
-pi-tmux-agents start \
-  --project "$PWD" \
-  --task-file /tmp/pi-agent-task.md \
-  --rpc-workers \
-  --approve-project \
-  --attach
-```
-
-Without `--approve-project`, non-interactive RPC workers apply an existing saved Pi trust decision or global `defaultProjectTrust`. The default `ask` and `never` policies load context instructions but ignore project-local executable resources without prompting; `always` trusts them. Interactive TUI workers remain the default. RPC panes are read-only event streams; steer them with `send`, queue later work with `--delivery follow-up`, and interrupt active work with `abort` rather than typing into the pane. Each RPC role has a stable worker ID, a generation counter, a bounded command registry, and a private metadata-only lifecycle journal.
-
-Add browser and Django specialists with focused task files:
-
-```bash
-pi-tmux-agents start \
-  --project "$PWD" \
-  --task-file /tmp/pi-agent-task.md \
-  --with-playwright \
-  --playwright-task-file /tmp/pi-agent-playwright.md \
-  --with-django-expert \
-  --django-task-file /tmp/pi-agent-django.md \
-  --approve-project \
-  --attach
-```
-
-Each role supports matching `--ROLE-provider`, `--ROLE-model`, and `--ROLE-thinking` overrides. Playwright and Django are also valid roles for `send` and `restart`.
+Idle workers end their turns. They do not sleep or poll. A worker settling
+without a report becomes `waiting`/needs attention rather than entering an
+unlimited reminder loop.
 
 ## Manage grids
-
-The dedicated controller can manage grids through the `/orchestrator-*` commands, or use the same authoritative CLI directly:
 
 ```bash
 pi-tmux-agents list
 pi-tmux-agents status SESSION
+pi-tmux-agents attach SESSION
+pi-tmux-agents send SESSION --role implementer --message-file /tmp/message.txt
+pi-tmux-agents send SESSION --role reviewer --delivery follow-up \
+  --command-id 0123456789abcdef0123456789abcdef \
+  --message-file /tmp/review-message.txt
+pi-tmux-agents abort SESSION --role implementer
+pi-tmux-agents restart SESSION --role implementer --yes
+pi-tmux-agents stop SESSION --yes
+```
+
+Acknowledgement means acceptance, not completion. Matching role/action/delivery
+command IDs deduplicate; conflicting reuse is rejected. A crash in an
+unprovable delivery window becomes `uncertain`; there is no exactly-once claim.
+
+## Supervisor API v2
+
+```bash
 pi-tmux-agents --json supervisor capabilities
 pi-tmux-agents --json supervisor sessions
+pi-tmux-agents --json supervisor runs SESSION
 pi-tmux-agents --json supervisor snapshot SESSION --run RUN_ID
 pi-tmux-agents --json supervisor events SESSION --run RUN_ID \
   --cursor implementer=0 --cursor reviewer=0 --limit 50
 pi-tmux-agents --json supervisor command SESSION --run RUN_ID \
-  --role implementer --command-id 0123456789abcdef0123456789abcdef
-pi-tmux-agents attach SESSION
-pi-tmux-agents send SESSION --run RUN_ID --role implementer \
-  --message "Prioritize the failing regression."
-pi-tmux-agents send SESSION --role reviewer --delivery follow-up \
-  --command-id 0123456789abcdef0123456789abcdef \
-  --message "Review this after the current run settles."
-pi-tmux-agents abort SESSION --role implementer
-pi-tmux-agents events SESSION --role reviewer --after 0 --limit 50
-pi-tmux-agents restart SESSION --role implementer \
-  --provider openai-codex --model gpt-5.6-sol --thinking xhigh --yes
-pi-tmux-agents stop SESSION --yes
+  --role reviewer --command-id COMMAND_ID
 ```
 
-A restart preserves project files and coordination state but starts a fresh Pi conversation for that role. Follow-up delivery and abort require an RPC-worker grid. `--command-id` accepts an optional 32-character lowercase hexadecimal idempotency key; a retry with the same role, command type, and delivery is acknowledged from the durable registry without forwarding the payload again. Reusing an ID with conflicting metadata is rejected; for matching metadata, the first accepted payload wins and later payload text is intentionally neither compared nor hashed. RPC send/abort success still means Pi accepted the command, while lifecycle events distinguish received, accepted, started, completed, failed, aborted, rejected, and crash-uncertain states.
+Retained-state reads do not query tmux and never infer liveness from retained
+PIDs. Host runtime is reported as `not_observed`. Snapshot/status include role
+lifecycle, workflow round/state, actual provider usage totals when available,
+and context pressure without workflow payload bodies.
 
-The supervisor API version is independent of the outer JSON envelope version. `supervisor capabilities` explicitly describes acceptance-versus-completion, crash-`uncertain`, and non-exactly-once semantics. `supervisor sessions` discovers bounded retained state, `runs` selects exact history, `snapshot` exposes durable worker/runtime metadata, `events` returns independent per-role pages using repeatable `--cursor ROLE=SEQUENCE`, and `command` polls one idempotency key without returning its payload. These reads do not inspect tmux and remain available after the host session exits. They intentionally report the tmux host runtime as `not_observed`; retained process metadata is not a liveness claim. `send` and `abort` accept `--run RUN_ID` so an API client can target an exact RPC run without resolving a tmux session.
+## Durable state and compatibility
 
-## Handoff flow
-
-1. The implementer writes `handoff-N.md` and `handoff-N.ready`.
-2. After validating the marker and a regular non-empty handoff report, the relay notifies the reviewer and enabled Playwright/Django specialists.
-3. Playwright writes `playwright-N.md` (`PASS` or `FAIL`) and `playwright-N.ready`.
-4. Django writes `django-review-N.md` (`ADVISORY_APPROVED` or `ISSUES_FOUND`) and `django-review-N.ready`.
-5. The reviewer waits for enabled specialist reports, then writes `review-N.md` (`APPROVED` or `CHANGES_REQUESTED`) and `review-N.ready`.
-6. The relay routes specialist reports to implementer/reviewer and the review to the implementer only after validating each required first-line result.
-7. Requested changes start another numbered round with fresh specialist reports.
-8. Approval produces `implementation-ready.md` and stops before push or merge unless explicitly authorized.
-9. An optional probe writes `probe.md` and `probe.ready`; the relay informs implementer and reviewer.
-
-Coordination records live under:
+Run state is private and external to target repositories:
 
 ```text
 ~/.pi/agent/orchestrations/<session>/<run>/
 ```
 
-They are created with private permissions and remain outside the target repository. Status and monitor views show report file names and byte sizes, never report previews.
+Files are retained for manifests, authentication, Pi sessions, metadata-only
+SQLite, and a transient startup payload deleted after broker ingestion. Newly
+started workers never create or poll task/handoff/review/specialist payload
+files or readiness markers.
+
+Retained `0.4.x` runs remain readable and operable through compatibility code.
+Every `0.5.0` start creates manifest v3 with `coordination: "broker-v1"`; there
+is no selectable legacy fallback.
+
+## Token policy
+
+The bridge sums actual Pi/provider-reported input, output, cache-read,
+cache-write, optional reasoning tokens, and cost. It exposes current context
+usage when available. Missing data remains unavailable; the orchestrator does
+not invent estimates.
+
+Structural savings include no waiting turns, no polling, no copied diffs/logs,
+one reviewer wake after all evidence, no approval acknowledgement turn, and
+terminating report calls. Soft role/run budgets warn before additional work. No
+budget can stop an already-started provider response at an exact token.
+
+## Persistent controller
+
+```bash
+pi-tmux-agents controller start
+pi-tmux-agents controller status
+pi-tmux-agents controller attach
+pi-tmux-agents controller stop --confirm
+```
+
+The controller uses stable Pi session ID
+`pi-tmux-orchestrator-controller-v1`, a private project-neutral workspace, and
+no `edit`/`write` tools. Every target project must be explicit. Duplicate or
+unmarked reserved tmux names are refused.
 
 ## Safety model
 
-- Only the implementer receives Pi's normal write tools.
-- Reviewer, probe, Playwright tester, and Django expert are launched without `edit` and `write`.
-- Workflow-read-only roles retain `bash` for verification and are not OS-sandboxed, so prompts also prohibit tracked modifications.
-- Playwright artifacts and test data are restricted to ignored or external temporary paths, with bounded process cleanup.
-- Child sessions read the target project's governing instructions before acting.
-- `--approve-project` is explicit because it bypasses child trust prompts.
-- Existing tmux sessions are never replaced; every operation on an existing session/window uses an exact target, so a vanished target cannot fall through to a prefix collision during attach, status, stop, or cleanup.
-- The controller uses a reserved exact tmux session, a stable Pi session ID, a neutral no-context workspace, and strict private state markers; duplicate or unmarked name collisions are refused.
-- State root, session, and run directories must be canonical non-symlink directories; state files must be regular non-symlink files.
-- Schema-v1 and transport-aware schema-v2 manifests are strictly validated before acting on an existing orchestration's panes or processes.
-- Ready markers remain pending until their report is valid and transport succeeds for every enabled recipient; successful recipients are not notified again during another recipient's retry.
-- TUI-worker `tmux send-keys` success is transport-level only. RPC-worker mailbox delivery waits for Pi's correlated command response and reports an acknowledgement, but that acknowledgement proves acceptance/queueing rather than task completion.
-- RPC mailbox payloads use unique mode-`0600` files under the private coordination directory and are deleted after forwarding, rejection, or client timeout; cleanup is not a secure-erasure claim.
-- RPC registries and rotating event journals contain only bounded process/session/command metadata, never task or message bodies. A crash after forwarding but before Pi's response is recorded as `uncertain` and is never blindly redelivered under the same command ID.
-- Supervisor API scans, pages, cursors, issue lists, and command lookups are bounded. Its host status is explicitly `not_observed`, so stale retained PIDs or runtime records are never presented as proof that tmux or a worker is alive.
-- Failed starts retain a private `startup-state` diagnosis and kill any partial tmux session.
-- The orchestrator never reads or copies Pi authentication files.
-- `pi --list-models` validates availability without making a model request.
-- Role prompts are attached by file rather than exposed as command-line payloads.
-- Handoffs must not contain credentials, private documents, prompts, provider payloads, endpoints, or raw errors.
+- One writer; independent read-only reviewers retain `bash` and are not an OS sandbox.
+- Exact tmux targets; existing sessions are never replaced.
+- Private canonical non-symlink state paths and strict schemas.
+- Owner-only local socket with per-role and control authentication.
+- Role-specific structured report ACLs and bounded frames/fields.
+- Metadata-only status, SQLite, journals, widgets, and Supervisor API.
+- No Pi/provider credential access or copying.
+- No synthetic-as-production acceptance claims.
+- Explicit trust, restart, abort, and stop boundaries.
+- Failure ambiguity is `uncertain`, never blind replay.
 
-See [SECURITY.md](SECURITY.md) and [references/usage.md](references/usage.md) for details.
+See [SECURITY.md](SECURITY.md) and [usage reference](references/usage.md).
 
-## JSON CLI boundary
+## JSON CLI
 
-Put `--json` before or after the command to emit exactly one JSON object on stdout. The v1 envelope is:
+Place `--json` before or after a public command for one schema-v1 envelope:
 
 ```json
 {"schema_version":"1","command":"status","success":true,"data":{},"error":null}
 ```
 
-Failures return nonzero with `data: null` (or bounded diagnostic data for checks) and `error: {"code":"...","message":"..."}`. `doctor`, `controller`, `supervisor`, `list`, `status`, `events`, `start`, `send`, `abort`, `restart`, and `stop` return structured metadata. Grid attach and `controller attach` fail with `interactive_only`. Task, prompt, report, provider, specialist, and message bodies are never returned; list/status expose bounded names, paths, role/pane records, and file sizes only.
+The outer JSON envelope remains version 1; Supervisor API versioning is
+independent. Payload bodies are never returned.
 
 ## Author and license
 
-Created and maintained by [Revaz Zakalashvili](https://github.com/revazi) (`@revazi`). Public contact: [revaz.zakalashvili@gmail.com](mailto:revaz.zakalashvili@gmail.com).
-
-Licensed under the [MIT License](LICENSE.md). Copyright (c) 2026 Revaz Zakalashvili.
+Created and maintained by [Revaz Zakalashvili](https://github.com/revazi).
+Contact: [revaz.zakalashvili@gmail.com](mailto:revaz.zakalashvili@gmail.com).
+Licensed under the [MIT License](LICENSE.md).
 
 ## Development
-
-Run all local checks with the pinned CI Ruff version available:
 
 ```bash
 python -m pip install ruff==0.11.11
 scripts/test.sh
 ```
 
-The suite includes 79+ standard-library Python tests, Node extension tests for the exact nine-command surface plus controller/RPC/trust/private-message boundaries, deterministic manifest/pack verification, npm installation of the actual tarball, isolated Pi local-package installation plus package-provenance RPC discovery, an offline npm publication dry-run, and a model-free controller plus default-TUI and acknowledged five-worker RPC/tmux smoke. It sends no real prompt or provider request and isolates Pi/npm configuration from real authentication files.
+Checks are model-free and isolate package/Pi/npm state from real authentication.

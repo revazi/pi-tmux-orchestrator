@@ -45,7 +45,7 @@ const parameters = {
     djangoTask: { type: "string", maxLength: 65536 },
     rpcWorkers: {
       type: "boolean",
-      description: "Run workers behind acknowledged Pi RPC supervisors instead of interactive Pi TUIs",
+      description: "Use headless RPC presentation; TUI and RPC workers share the same broker protocol",
     },
     approveProject: {
       type: "boolean",
@@ -162,7 +162,7 @@ function startConfirmation(preview) {
     `Worker transport: ${preview.data?.transport || "tui"}`,
     `Roles/models (CLI policy):\n${roles}`,
     `External state: ${preview.data?.paths?.state_root}`,
-    "Coordination state is retained when the tmux session stops.",
+    "Metadata-only broker state and Pi sessions are retained when tmux stops; workflow payloads are not stored in coordination files.",
     `Trust: ${trust}`,
   ].join("\n\n");
 }
@@ -356,8 +356,8 @@ function createCommandHandlers(pi) {
     const withPlaywright = await ctx.ui.confirm("Optional role", "Add the read-only Playwright tester?");
     const withDjangoExpert = await ctx.ui.confirm("Optional role", "Add the read-only Django expert?");
     const rpcWorkers = await ctx.ui.confirm(
-      "Worker transport",
-      "Use acknowledged headless Pi RPC workers? No keeps interactive Pi TUIs and tmux key transport.",
+      "Worker presentation",
+      "Use headless Pi RPC event panes? No keeps interactive Pi TUIs. Both use the same event-driven broker and worker bridge.",
     );
     let approveProject = false;
     if (ctx.isProjectTrusted()) {
@@ -436,10 +436,10 @@ export default function tmuxOrchestratorExtension(pi) {
   pi.registerTool({
     name: "tmux_orchestrator",
     label: "Tmux Orchestrator",
-    description: "Delegate bounded doctor, list, status, start, or send actions to the bundled Python tmux orchestrator. Start can select TUI or acknowledged RPC workers and always requires interactive confirmation. Output is metadata-only and bounded.",
+    description: "Delegate bounded doctor, list, status, start, or send actions to the bundled Python tmux orchestrator. New runs use an event-driven private broker with TUI or RPC worker presentation and always require interactive confirmation. Output is metadata-only and bounded.",
     promptSnippet: "Inspect or operate local Pi tmux orchestrations through the authoritative Python CLI",
     promptGuidelines: [
-      "Use tmux_orchestrator instead of rebuilding tmux orchestration state; never claim parent project trust automatically applies to child Pi sessions or that an RPC command acknowledgement proves task completion.",
+      "Use tmux_orchestrator instead of rebuilding tmux orchestration state; never create file handoffs, poll coordination state, claim parent project trust applies to child Pi sessions, or equate command acknowledgement with task completion.",
     ],
     parameters,
     execute(_toolCallId, input, signal, _onUpdate, ctx) {

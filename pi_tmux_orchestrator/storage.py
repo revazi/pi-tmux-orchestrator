@@ -18,14 +18,18 @@ from .constants import (
     CONTROLLER_STATE_VERSION,
     CONTROLLER_TMUX_SESSION,
     CONTROLLER_WINDOW,
+    BROKER_COORDINATION,
+    BROKER_PROTOCOL_VERSION,
     KNOWN_ROLES,
     MANIFEST_FIELDS,
     MANIFEST_V1_FIELDS,
+    MANIFEST_V3_FIELDS,
     MAX_CONTROLLER_STATE_BYTES,
     MAX_MANIFEST_BYTES,
     PANE_ID_PATTERN,
     READ_ONLY_TOOLS,
     ROLE_FIELDS,
+    ROLE_V3_FIELDS,
     RPC_TRANSPORT,
     THINKING_LEVELS,
     TUI_TRANSPORT,
@@ -288,9 +292,13 @@ def validate_manifest(
     if not isinstance(value, dict):
         raise OrchestrationError("Orchestration manifest must be a JSON object")
     version = value.get("version")
-    if type(version) is not int or version not in {1, 2}:
+    if type(version) is not int or version not in {1, 2, 3}:
         raise OrchestrationError("Unsupported orchestration manifest version")
-    expected_fields = MANIFEST_V1_FIELDS if version == 1 else MANIFEST_FIELDS
+    expected_fields = {
+        1: MANIFEST_V1_FIELDS,
+        2: MANIFEST_FIELDS,
+        3: MANIFEST_V3_FIELDS,
+    }[version]
     if set(value) != expected_fields:
         raise OrchestrationError(
             "Orchestration manifest has missing or unknown top-level fields"
@@ -320,8 +328,13 @@ def validate_manifest(
         raise OrchestrationError("Manifest coordination path is not canonical")
     if type(value["approve_project"]) is not bool:
         raise OrchestrationError("Manifest approve_project must be a boolean")
-    if version == 2 and value["transport"] not in {TUI_TRANSPORT, RPC_TRANSPORT}:
+    if version >= 2 and value["transport"] not in {TUI_TRANSPORT, RPC_TRANSPORT}:
         raise OrchestrationError("Manifest transport is invalid")
+    if version == 3 and (
+        value["coordination"] != BROKER_COORDINATION
+        or value["protocol_version"] != BROKER_PROTOCOL_VERSION
+    ):
+        raise OrchestrationError("Manifest broker coordination protocol is invalid")
 
     project_value = value["project"]
     if not isinstance(project_value, str):
@@ -351,7 +364,8 @@ def validate_manifest(
 
     pane_ids = {monitor_pane_id}
     for role_name, role in roles.items():
-        if not isinstance(role, dict) or set(role) != ROLE_FIELDS:
+        expected_role_fields = ROLE_V3_FIELDS if version == 3 else ROLE_FIELDS
+        if not isinstance(role, dict) or set(role) != expected_role_fields:
             raise OrchestrationError(f"Manifest role {role_name} has invalid fields")
         for field in ("provider", "model"):
             field_value = role[field]
@@ -381,18 +395,29 @@ def validate_manifest(
             raise OrchestrationError("Manifest pane IDs must be unique")
         pane_ids.add(pane_id)
 
-        prompt_value = role["prompt_path"]
         session_value = role["session_dir"]
-        if not isinstance(prompt_value, str) or not isinstance(session_value, str):
+        if not isinstance(session_value, str):
             raise OrchestrationError(f"Manifest role {role_name} paths must be strings")
-        expected_prompt = coord / f"{role_name}.prompt.md"
         expected_session_dir = coord / "sessions" / role_name
-        if (
-            Path(prompt_value) != expected_prompt
-            or Path(session_value) != expected_session_dir
-        ):
+        if Path(session_value) != expected_session_dir:
             raise OrchestrationError(f"Manifest role {role_name} paths are invalid")
-        require_regular_file(expected_prompt, f"{role_name} prompt", nonempty=True)
+        if version == 3:
+            session_id = role["session_id"]
+            if not isinstance(session_id, str) or not re.fullmatch(
+                r"[A-Za-z0-9_.-]{1,128}", session_id
+            ):
+                raise OrchestrationError(
+                    f"Manifest role {role_name} session ID is invalid"
+                )
+        else:
+            prompt_value = role["prompt_path"]
+            expected_prompt = coord / f"{role_name}.prompt.md"
+            if (
+                not isinstance(prompt_value, str)
+                or Path(prompt_value) != expected_prompt
+            ):
+                raise OrchestrationError(f"Manifest role {role_name} paths are invalid")
+            require_regular_file(expected_prompt, f"{role_name} prompt", nonempty=True)
         sessions_parent = coord / "sessions"
         if sessions_parent.exists() or sessions_parent.is_symlink():
             require_directory(sessions_parent, "role sessions directory")

@@ -18,9 +18,13 @@ EXPECTED_FILES=(
   VERSION
   bin/pi-tmux-agents
   extensions/tmux-orchestrator.js
+  extensions/orchestrator-worker.js
   package.json
   pi_tmux_orchestrator/__init__.py
   pi_tmux_orchestrator/__main__.py
+  pi_tmux_orchestrator/broker.py
+  pi_tmux_orchestrator/broker_client.py
+  pi_tmux_orchestrator/broker_store.py
   pi_tmux_orchestrator/cli.py
   pi_tmux_orchestrator/commands.py
   pi_tmux_orchestrator/constants.py
@@ -28,6 +32,7 @@ EXPECTED_FILES=(
   pi_tmux_orchestrator/models.py
   pi_tmux_orchestrator/output.py
   pi_tmux_orchestrator/prompts.py
+  pi_tmux_orchestrator/protocol.py
   pi_tmux_orchestrator/relay.py
   pi_tmux_orchestrator/rpc.py
   pi_tmux_orchestrator/rpc_protocol.py
@@ -39,6 +44,7 @@ EXPECTED_FILES=(
   pi_tmux_orchestrator/supervisor_commands.py
   pi_tmux_orchestrator/tmux.py
   references/usage.md
+  references/protocol-v1.md
 )
 
 mkdir -p "$TEMP/npm-home" "$TEMP/npm-cache" "$TEMP/npm-tmp"
@@ -102,7 +108,7 @@ printf '%s\n' '{"name":"package-smoke-host","version":"1.0.0","private":true}' >
 
 PACKAGE="$TEMP/install/node_modules/pi-tmux-orchestrator"
 VERSION=$($TEMP/install/node_modules/.bin/pi-tmux-agents --version)
-test "$VERSION" = "pi-tmux-agents 0.4.2"
+test "$VERSION" = "pi-tmux-agents 0.5.0"
 test ! -e "$TEMP/install/node_modules/@earendil-works"
 test -f "$PACKAGE/LICENSE.md"
 test -z "$(find "$PACKAGE" -type d -name node_modules -print -quit)"
@@ -120,7 +126,7 @@ dependencies = tree.get("dependencies", {})
 if set(dependencies) != {"pi-tmux-orchestrator"}:
     raise SystemExit("installed root dependency surface was not exact")
 package = dependencies["pi-tmux-orchestrator"]
-if package.get("version") != "0.4.2" or package.get("dependencies"):
+if package.get("version") != "0.5.0" or package.get("dependencies"):
     raise SystemExit("installed package owns a dependency tree")
 PY
 
@@ -156,7 +162,7 @@ else:
     report = raw_report
 if not isinstance(report, dict):
     raise SystemExit("publication dry-run report shape mismatch")
-if report.get("name") != package_name or report.get("version") != "0.4.2":
+if report.get("name") != package_name or report.get("version") != "0.5.0":
     raise SystemExit("publication dry-run name/version mismatch")
 if report.get("bundled") != []:
     raise SystemExit("publication dry-run reported bundled dependencies")
@@ -165,4 +171,4 @@ if actual != sorted(expected):
     raise SystemExit("publication dry-run file allowlist mismatch")
 PY
 
-printf '%s\n' 'Actual 29-file modular tarball with MIT/author metadata, npm install, isolated Pi local-package install/RPC discovery, and offline npm publication dry-run passed (no owned dependency tree, real Pi/npm home, auth, or provider request).'
+printf '%s\n' 'Actual deterministic modular tarball with broker/bridge, MIT/author metadata, npm install, isolated Pi local-package install/RPC discovery, and offline npm publication dry-run passed (no owned dependency tree, real Pi/npm home, auth, or provider request).'

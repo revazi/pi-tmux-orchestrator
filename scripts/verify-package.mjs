@@ -9,6 +9,9 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const pythonFiles = [
   "__init__.py",
   "__main__.py",
+  "broker.py",
+  "broker_client.py",
+  "broker_store.py",
   "cli.py",
   "commands.py",
   "constants.py",
@@ -16,6 +19,7 @@ const pythonFiles = [
   "models.py",
   "output.py",
   "prompts.py",
+  "protocol.py",
   "relay.py",
   "rpc.py",
   "rpc_protocol.py",
@@ -36,7 +40,9 @@ const expectedFiles = [
   "VERSION",
   "bin/pi-tmux-agents",
   "extensions/tmux-orchestrator.js",
+  "extensions/orchestrator-worker.js",
   "references/usage.md",
+  "references/protocol-v1.md",
   ...pythonFiles,
 ];
 const declaredFiles = [
@@ -47,13 +53,15 @@ const declaredFiles = [
   "SKILL.md",
   "VERSION",
   "extensions/tmux-orchestrator.js",
+  "extensions/orchestrator-worker.js",
   "references/usage.md",
+  "references/protocol-v1.md",
   "bin/pi-tmux-agents",
   "pi_tmux_orchestrator/*.py",
 ];
 const expectedManifest = {
   name: "pi-tmux-orchestrator",
-  version: "0.4.2",
+  version: "0.5.0",
   description: "Pi extension, skill, and dependency-free Python CLI for coordinating coding agents in tmux",
   license: "MIT",
   author: {
@@ -159,7 +167,13 @@ const requiredBadges = [
 for (const badge of requiredBadges) {
   if (!readme.includes(badge)) throw new Error(`README.md omitted required badge: ${badge}`);
 }
-const packagedDocs = ["README.md", "CHANGELOG.md", "SECURITY.md", "references/usage.md"];
+const packagedDocs = [
+  "README.md",
+  "CHANGELOG.md",
+  "SECURITY.md",
+  "references/usage.md",
+  "references/protocol-v1.md",
+];
 const unrelatedRoadmap = /\b(?:Pi Deck|Herdr|future architecture|neutral core|multiplexer-neutral|terminal-neutral|terminal-independent|terminal-client|process-host)\b/i;
 for (const path of packagedDocs) {
   const content = await readFile(resolve(root, path), "utf8");

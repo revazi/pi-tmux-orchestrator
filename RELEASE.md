@@ -35,12 +35,12 @@ This checklist prepares a human-controlled release. It does not authorize public
   tar -tzf "$ARTIFACT_DIR"/*.tgz
   ```
 
-- [ ] Confirm it contains exactly 29 files: the manifest, `LICENSE.md`, modular Python runtime, launcher, extension/skill resources, and operator documentation; no tests, CI, state, sessions, credentials, caches, generated sessions, private task content, or unrelated development files. Remove the disposable artifact directory after review.
+- [ ] Confirm it exactly matches the deterministic allowlist: manifest, `LICENSE.md`, modular Python broker/control runtime, launcher, controller and worker extensions, skill/protocol/operator documentation; no tests, CI, state, sessions, credentials, caches, generated sessions, private task content, or unrelated development files. Remove the disposable artifact directory after review.
 - [ ] Confirm the packed/installed manifest reports the exact MIT/author metadata, the installed CLI reports `pi-tmux-agents $RELEASE_VERSION`, and the owned npm dependency tree is empty.
 - [ ] Confirm package acceptance uses isolated `pi install <local-package-root>` on the npm-installed tarball root, launches RPC without `--extension`, and discovers exactly nine extension commands plus `skill:tmux-agent-orchestrator` with package provenance.
 - [ ] Confirm the slash surface omits attach/supervisor/restart, aliases share start/list handlers, start/stop confirmations remain mandatory, and interactive send never exposes message text outside its unique private file.
-- [ ] Confirm supervisor API v1 reads retained sessions/runs/snapshots/events/commands without tmux, preserves per-role cursor gaps and bounds, labels host runtime `not_observed`, and exact-run send/abort retains private mailbox semantics.
-- [ ] Confirm documentation presents worker/controller hosting and live-session operations as tmux-owned while retained-state reads remain available after tmux exits.
+- [ ] Confirm Supervisor API v2 reads retained sessions/runs/snapshots/events without tmux, preserves cursor gaps/bounds, labels host runtime `not_observed`, exposes actual provider usage only, and broker send/abort retains idempotent acceptance-versus-completion semantics.
+- [ ] Confirm every new manifest is v3/`broker-v1`, no legacy coordination option exists, workflow payloads stay out of SQLite/status, TUI/RPC share the bridge, agents do not poll or sleep, and tmux hosts/monitors rather than transports workflow messages.
 - [ ] Confirm npm, reviewed-Git-commit, and local-path installation guidance is current.
 - [ ] Confirm the isolated offline `npm publish --dry-run` succeeds. It uses empty npm configuration, scripts disabled, offline mode, and a loopback registry; it is not a registry acceptance test.
 - [ ] Record the clean source commit and inspect the generated tarball as release evidence. Remove the disposable artifact after review; normal publication runs from the approved repository root.

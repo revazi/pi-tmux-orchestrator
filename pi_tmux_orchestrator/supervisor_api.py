@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from . import runtime
+from .broker_store import public_broker_events, public_broker_snapshot
 from .constants import (
     MAX_JSON_ITEMS,
     MAX_RPC_COMMANDS,
@@ -45,8 +46,14 @@ def supervisor_capabilities() -> dict[str, Any]:
     return {
         "api_version": SUPERVISOR_API_VERSION,
         "envelope_schema_version": "1",
-        "state_plane": "private-files",
-        "worker_transport": RPC_TRANSPORT,
+        "state_plane": "metadata-only-sqlite",
+        "worker_transport": "tui-or-rpc-with-shared-bridge",
+        "coordination_protocol": {
+            "name": "broker-v1",
+            "transport": "owner-only-unix-socket",
+            "payload_files": False,
+            "polling": False,
+        },
         "host_adapter": {
             "name": "tmux",
             "attachment": "terminal-only",
@@ -127,7 +134,7 @@ def public_supervisor_run(coord: Path, manifest: dict[str, Any]) -> dict[str, An
         "created_at": manifest["created_at"],
         "project": manifest["project"],
         "transport": transport,
-        "durable_workers": transport == RPC_TRANSPORT,
+        "durable_workers": manifest.get("version") == 3 or transport == RPC_TRANSPORT,
         "roles": [
             public_role(role, config, transport)
             for role, config in manifest["roles"].items()
@@ -315,6 +322,35 @@ def public_runtime_record(state: dict[str, Any] | None) -> dict[str, Any]:
 def supervisor_snapshot(session: str, run_id: str | None) -> dict[str, Any]:
     coord, manifest = resolve_supervisor_target(session, run_id, require_rpc=False)
     transport = manifest_transport(manifest)
+    if manifest.get("version") == 3:
+        snapshot = public_broker_snapshot(coord)
+        role_state = {value["role"]: value for value in snapshot["roles"]}
+        roles = []
+        for role, config in manifest["roles"].items():
+            value = public_role(role, config, transport)
+            value["runtime"] = {
+                "source": "retained-broker-state",
+                "liveness": "not-observed",
+                "state": role_state[role],
+            }
+            value["worker"] = None
+            value["event_cursor"] = snapshot["event_cursor"]
+            roles.append(value)
+        return {
+            "api_version": SUPERVISOR_API_VERSION,
+            "session": manifest["session"],
+            "run_id": coord.name,
+            "created_at": manifest["created_at"],
+            "project": manifest["project"],
+            "transport": transport,
+            "coordination": manifest["coordination"],
+            "durable_workers": True,
+            "host_adapter": {"name": "tmux", "runtime_status": "not_observed"},
+            "workflow": snapshot["workflow"],
+            "usage": snapshot["usage"],
+            "roles": roles,
+            "paths": {"coordination": str(coord)},
+        }
     roles: list[dict[str, Any]] = []
     for role, config in manifest["roles"].items():
         value = public_role(role, config, transport)
@@ -409,13 +445,43 @@ def supervisor_event_batch(
             "Supervisor event cursors must be non-negative integers",
             "invalid_arguments",
         )
-    coord, manifest = resolve_supervisor_target(session, run_id, require_rpc=True)
+    coord, manifest = resolve_supervisor_target(session, run_id, require_rpc=False)
     roles = selected_supervisor_roles(manifest, requested_roles)
     invalid_cursors = [role for role in cursors if role not in roles]
     if invalid_cursors:
         raise OrchestrationError(
             f"Cursors require a selected enabled role: {', '.join(invalid_cursors)}",
             "invalid_arguments",
+        )
+    if manifest.get("version") == 3:
+        values = []
+        for role in roles:
+            page = public_broker_events(
+                coord, after=cursors.get(role, 0), limit=limit, role=role
+            )
+            values.append(
+                {
+                    "role": role,
+                    "runtime": {
+                        "source": "retained-broker-state",
+                        "liveness": "not-observed",
+                    },
+                    "worker": None,
+                    "events": page["events"],
+                    "cursor": page["cursor"],
+                }
+            )
+        return {
+            "api_version": SUPERVISOR_API_VERSION,
+            "session": manifest["session"],
+            "run_id": coord.name,
+            "roles": values,
+            "paths": {"coordination": str(coord)},
+        }
+    if manifest_transport(manifest) != RPC_TRANSPORT:
+        raise OrchestrationError(
+            "Supervisor events require a brokered or RPC-worker orchestration",
+            "supervisor_requires_rpc",
         )
     values: list[dict[str, Any]] = []
     for role in roles:
@@ -470,14 +536,43 @@ def supervisor_command_status(
 ) -> dict[str, Any]:
     if not isinstance(command_id, str) or not RPC_TOKEN_PATTERN.fullmatch(command_id):
         raise OrchestrationError(
-            "RPC command ID must be exactly 32 lowercase hexadecimal characters",
+            "Command ID must be exactly 32 lowercase hexadecimal characters",
             "invalid_arguments",
         )
-    coord, manifest = resolve_supervisor_target(session, run_id, require_rpc=True)
+    coord, manifest = resolve_supervisor_target(session, run_id, require_rpc=False)
     if role not in manifest["roles"]:
         raise OrchestrationError(
             f"Role {role!r} is not enabled for this orchestration",
             "invalid_arguments",
+        )
+    if manifest.get("version") == 3:
+        from .broker_store import connect_broker_database
+
+        with connect_broker_database(coord, readonly=True) as database:
+            command = database.execute(
+                "SELECT id,action,role,delivery,status,received_at,updated_at "
+                "FROM control_commands WHERE id=? AND role=?",
+                (command_id, role),
+            ).fetchone()
+        if command is None:
+            raise OrchestrationError(
+                f"Broker command {command_id} is not retained for {role}",
+                "broker_command_not_found",
+            )
+        value = dict(command)
+        value["terminal"] = value["status"] in {"rejected", "uncertain"}
+        return {
+            "api_version": SUPERVISOR_API_VERSION,
+            "session": manifest["session"],
+            "run_id": coord.name,
+            "role": role,
+            "command": value,
+            "paths": {"coordination": str(coord)},
+        }
+    if manifest.get("transport") != RPC_TRANSPORT:
+        raise OrchestrationError(
+            "Supervisor command status requires a brokered or RPC-worker orchestration",
+            "supervisor_requires_rpc",
         )
     registry = load_rpc_registry(coord, role)
     if registry is None:

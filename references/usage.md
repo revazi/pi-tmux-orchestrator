@@ -1,98 +1,11 @@
 # Usage reference
 
-## Installation
-
-Install from npm:
-
-```bash
-pi install npm:pi-tmux-orchestrator
-pi -e npm:pi-tmux-orchestrator
-```
-
-Versions 0.4.0 and 0.4.1 briefly used `@revazi/pi-tmux-orchestrator`. Migrate an installation with `pi remove npm:@revazi/pi-tmux-orchestrator` followed by `pi install npm:pi-tmux-orchestrator`.
-
-Install a reviewed Git commit or local checkout:
-
-```bash
-pi install git:github.com/revazi/pi-tmux-orchestrator@<reviewed-full-commit>
-pi install /absolute/path/to/pi-tmux-orchestrator
-```
-
-Before release, `scripts/package-smoke.sh` packs and installs the exact 29-file artifact in disposable npm and Pi homes, verifies package provenance for nine extension commands plus the root skill, and performs an offline publication dry run without a provider request.
-
-The authoritative Python implementation is split across `pi_tmux_orchestrator/`; `supervisor_api.py` provides retained-state reads, `supervisor_commands.py` contains its CLI adapters, and `bin/pi-tmux-agents` is the thin launcher shared by npm and the standalone installer. Worker/controller hosting and live-session operations remain tmux-specific. The extension imports no Pi core package, so the package declares no dependency or peer tree. See the [MIT License](../LICENSE.md).
-
-## Extension slash commands
-
-| Command | Contract |
-| --- | --- |
-| `/orchestrator-help` | Bounded overview; no subprocess. |
-| `/orchestrator-doctor` | Delegated JSON CLI prerequisite checks. |
-| `/orchestrator-start [task]` | Interactive optional-role/trust preview and confirmed start. |
-| `/orchestrator-list` | Bounded metadata list and widget refresh. |
-| `/orchestrator-status [session]` | Exact-session or safe unambiguous current-project metadata status. |
-| `/orchestrator-send [session]` | Interactive exact session, five-role selection, editor message, and unique mode-`0600` file delegation. |
-| `/orchestrator-stop [session]` | Exact session and explicit confirmation before `--yes`. |
-| `/orchestrate` | Alias for `/orchestrator-start`. |
-| `/orchestrations` | Alias for `/orchestrator-list`. |
-
-The `tmux_orchestrator` tool exposes only `doctor`, `list`, `status`, `start`, and `send`. Slash start/send/stop require the interactive TUI. Start can select interactive TUI workers or opt-in RPC supervisors. Message bodies never enter subprocess argv, status, details, notifications, or widgets. Attach, the supervisor API, RPC events/abort, and restart stay terminal-only: attach takes over the terminal, abort is RPC-only, and restart requires explicit confirmation and provider/model/thinking configuration.
-
-## Dedicated controller
-
-Use a persistent Pi session as the project-neutral human-facing controller:
-
-```bash
-pi-tmux-agents controller start
-pi-tmux-agents controller status
-pi-tmux-agents controller attach
-pi-tmux-agents controller stop --confirm
-```
-
-`controller start` reserves exact tmux session `pi-orchestrator-controller`, creates a private neutral workspace and dedicated session directory under `~/.pi/agent/orchestrator-controller/`, and opens stable Pi session ID `pi-tmux-orchestrator-controller-v1`. A later start resumes that ID and its existing conversation. Override the controller root with `PI_TMUX_CONTROLLER_HOME`.
-
-The controller starts detached and sends no initial prompt/provider request. It explicitly loads the colocated package extension/skill when available, disables project context discovery and project approval in its neutral workspace, and omits `edit`/`write`. Controller-mode `/orchestrator-start` asks for an explicit target project; the model tool also rejects a controller start without one. This does not approve or trust that target for child agents.
-
-Duplicate starts and unrelated reserved-name collisions are refused. Controller mode cancels Pi `/new`, `/resume`, `/fork`, and `/clone` transitions to preserve the fixed Pi session identity. `controller attach` is interactive-only. `controller stop` requires `--confirm` and kills only the exact controller tmux session while retaining its state and Pi conversation. Worker grids, including RPC supervisors, are independent and continue when the controller stops.
-
-## JSON boundary
-
-`pi-tmux-agents --json COMMAND ...` emits one schema-v1 JSON object on stdout on success or failure and uses a nonzero exit code for failure:
-
-```json
-{"schema_version":"1","command":"list","success":true,"data":{"sessions":[]},"error":null}
-```
-
-The envelope always has exactly `schema_version`, `command`, `success`, `data`, and `error`. Errors contain bounded `code` and `message` fields. Arrays are bounded and report truncation. Roles, RPC queue/runtime/registry state, lifecycle events, cursors, panes, files, model checks, controller lifecycle, and paths are structured values. `supervisor`, `list`, `status`, `events`, and `controller status` remain metadata-only: no task, message, prompt, report, provider payload, or specialist body is included. Supervisor responses additionally carry `api_version: "1"`; that service version is independent of the outer envelope schema. Grid attach and `controller attach` return `interactive_only` in JSON mode.
-
 ## Commands
-
-### `controller start|status|attach|stop`
-
-Manages the one persistent project-neutral controller described above. Stop requires `--confirm`; attach cannot be automated through JSON mode. Controller state and conversation records are retained after stop.
-
-### `supervisor capabilities|sessions|runs|snapshot|events|command`
-
-Provides this tmux package's stable metadata-only read boundary for local clients:
-
-```bash
-pi-tmux-agents --json supervisor capabilities
-pi-tmux-agents --json supervisor sessions
-pi-tmux-agents --json supervisor runs SESSION --limit 100
-pi-tmux-agents --json supervisor snapshot SESSION [--run RUN_ID]
-pi-tmux-agents --json supervisor events SESSION [--run RUN_ID] \
-  [--role ROLE ...] [--cursor ROLE=SEQUENCE ...] [--limit N]
-pi-tmux-agents --json supervisor command SESSION [--run RUN_ID] \
-  --role ROLE --command-id ID
-```
-
-`capabilities` describes API v1, its bounds, acceptance-versus-completion semantics, crash-`uncertain` behavior, and the absence of an exactly-once claim. `sessions` lists each valid retained orchestration's newest run, while `runs` discovers exact history. `snapshot` returns manifest, worker registry, runtime record, and journal-cursor metadata without reading task/report bodies. TUI runs remain discoverable but have no durable worker/event surface. `events` pages one or more RPC roles independently; each repeated cursor is scoped to its role, and each page reports rotation gaps, truncation, and the next cursor. `command` returns the metadata-only lifecycle status for one exact idempotency key.
-
-All supervisor reads inspect only validated private retained state. They do not invoke tmux or claim that retained PIDs, sessions, or runtime records are live. Host runtime is reported as `not_observed`. State-directory scans, returned sessions/runs/issues, per-role event pages, and registry command counts are bounded. Starts, worker processes, controller sessions, panes, monitoring, attachment, restart, and stop remain tmux-hosted.
 
 ### `start`
 
-Creates a detached tmux session with an implementer, reviewer, optional technical probe, optional Playwright tester, optional Django expert, and relay/status monitor.
+Creates a detached tmux grid with an implementer, reviewer, broker/status
+monitor, and optional probe, Playwright, and Django roles.
 
 Required:
 
@@ -100,116 +13,148 @@ Required:
 
 Common options:
 
-- `--project PATH`: defaults to the current directory
-- `--session NAME`: defaults to `pi-<project>-agents`
-- `--approve-project`: passes Pi's `--approve` flag to child sessions; use only after project trust is established
-- `--rpc-workers`: replaces interactive child Pi TUIs with headless Pi RPC supervisors and acknowledged private-mailbox control; their panes are read-only event streams controlled through `send`/`abort`
-- `--with-probe`: adds the optional read-only technical probe pane
-- `--probe-task TEXT` or `--probe-task-file PATH`: focused technical probe instructions
-- `--with-playwright`: adds an optional read-only Playwright test pane
-- `--playwright-task TEXT` or `--playwright-task-file PATH`: focused browser-test instructions
-- `--with-django-expert`: adds an optional read-only senior Django review pane
-- `--django-task TEXT` or `--django-task-file PATH`: focused Django review and best-practice instructions
-- `--attach`: switches/attaches after startup
-- `--dry-run`: validates commands, models, project, and configuration without creating files or panes
-- `--skip-model-check`: skips catalog availability validation for custom/dynamic model setups
+- `--project PATH`
+- `--session NAME`
+- `--approve-project`: separately confirmed Pi trust bypass for inspected projects
+- `--with-probe` and optional `--probe-task[-file]`
+- `--with-playwright` and optional `--playwright-task[-file]`
+- `--with-django-expert` and optional `--django-task[-file]`
+- `--rpc-workers`: headless RPC event panes instead of interactive TUI panes
+- `--attach`
+- `--dry-run`
+- `--skip-model-check`
 
-Role model options follow this pattern:
+Model arguments use `--ROLE-provider`, `--ROLE-model`, and `--ROLE-thinking`.
+Thinking levels are `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and
+`max`.
 
-```text
---implementer-provider PROVIDER
---implementer-model MODEL
---implementer-thinking LEVEL
---reviewer-provider PROVIDER
---reviewer-model MODEL
---reviewer-thinking LEVEL
---probe-provider PROVIDER
---probe-model MODEL
---probe-thinking LEVEL
---playwright-provider PROVIDER
---playwright-model MODEL
---playwright-thinking LEVEL
---django-provider PROVIDER
---django-model MODEL
---django-thinking LEVEL
-```
-
-Thinking levels: `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`.
+All newly started runs use broker protocol v1. `--rpc-workers` does not select a
+different coordination protocol.
 
 ### `list`
 
-Lists sessions created by this skill. Unrelated tmux sessions are ignored.
+Lists live tmux sessions marked as Pi Tmux Orchestrator grids.
 
 ### `status [SESSION]`
 
-Shows role panes, process state, project path, coordination directory, and bounded handoff metadata. Coordination files are displayed by name and byte size only; report content and first-line previews are not printed. If the session is omitted, the command uses the current project's conventional session when unambiguous.
-
-### `events SESSION --role ROLE [--run RUN_ID] [--after SEQUENCE] [--limit N]`
-
-Reads the private metadata-only RPC lifecycle journal without requiring a live tmux session. Events use stable per-role sequence cursors and distinguish command `received`, `accepted`, `started`, `completed`, `failed`, `aborted`, `rejected`, and crash-`uncertain` states. `--run` selects an exact retained coordination run; otherwise the newest valid retained run for the exact session is used. Results report a retention gap when the requested cursor predates the bounded rotating journal.
+Shows bounded pane metadata, broker workflow state, role lifecycle, actual
+provider token totals when available, and context pressure. It never prints
+workflow payload bodies.
 
 ### `attach [SESSION]`
 
-Inside tmux, switches the current client. Outside tmux, attaches normally.
+Switches a tmux client when already inside tmux or attaches from outside.
 
-### `send SESSION [--run RUN_ID] --role ROLE --message TEXT [--delivery steer|follow-up] [--command-id ID]`
+### `send SESSION --role ROLE --message[-file] ...`
 
-Sends a message to an agent. Prefer a mode-`0600` `--message-file` for sensitive or longer instructions. The extension always uses a unique private temporary file and removes it in `finally`; message bodies are never put in child process arguments or returned JSON.
+Sends one operator message through the authenticated broker bridge. `steer` and
+`follow-up` delivery are supported. A successful response acknowledges
+acceptance; completion is observed through lifecycle/events.
 
-TUI workers use the existing immediate tmux-key submission and support only `steer`. RPC workers transfer the message through a unique mode-`0600` coordination mailbox file, remove it after forwarding/rejection/timeout, correlate Pi's `prompt` response, and support `steer` or `follow-up`. `--run` selects exact retained RPC state and bypasses tmux session resolution; it is rejected for TUI runs. A successful RPC response acknowledges acceptance or queueing, not completion. `--command-id` is an optional 32-character lowercase hexadecimal idempotency key. Retrying the same role/type/delivery ID returns its durable status without forwarding again; conflicting metadata reuse is rejected. For matching metadata, the first accepted payload wins; payloads are intentionally neither retained nor hashed for comparison.
+Use `--command-id` with a 32-character lowercase hexadecimal ID for retry-safe
+deduplication. Conflicting reuse is rejected. An interrupted unprovable delivery
+is `uncertain` and requires explicit retry.
 
-### `abort SESSION [--run RUN_ID] --role ROLE [--command-id ID]`
+### `abort SESSION --role ROLE`
 
-Sends Pi's RPC `abort` command to one RPC worker and waits for its correlated acknowledgement. It supports the same optional idempotency key and exact RPC `--run` selection. It is rejected for TUI-worker grids. Abort does not stop the tmux grid or delete state.
+Requests broker-bridge abort for either TUI or RPC presentation. Abort acceptance
+does not prove the provider operation reached a terminal state.
 
 ### `restart SESSION --role ROLE ... --yes`
 
-Restarts one role with optional new provider/model/thinking settings. Project files and mailbox state remain; the Pi role conversation is fresh. This is useful after provider denial or a requested model change.
+Restarts one role and starts a fresh Pi conversation while preserving the
+worktree and metadata. Pending unprovable work remains `uncertain`; it is not
+blindly replayed.
 
 ### `stop SESSION --yes`
 
-Kills only the selected orchestration's tmux session. Coordination records remain under `~/.pi/agent/orchestrations/` for audit and diagnosis.
+Kills only the selected tmux grid. Pi sessions and metadata-only broker state
+remain under `~/.pi/agent/orchestrations/`.
 
 ### `doctor`
 
-Checks Pi, Python, tmux, tmux extended-key settings, and default model availability without making provider requests.
+Checks Pi, Python, tmux, tmux extended-key settings, and default model
+availability without a provider request.
 
-## Handoff protocol
+### `supervisor ...`
 
-The coordination directory is external to the repository and mode `0700`.
+Supervisor API v2 reads retained state without tmux runtime observation:
 
-1. Implementer writes `handoff-N.md` and `handoff-N.ready`.
-2. Relay verifies that both marker and matching handoff report are regular files under the run and that the report is non-empty, then submits a notification to the reviewer and optional Playwright/Django panes.
-3. Optional Playwright tester runs the real local test application, writes `playwright-N.md` beginning with `PASS` or `FAIL`, and creates `playwright-N.ready`.
-4. Optional Django expert reviews ORM/settings/lifecycle/database/security/testing best practices, writes `django-review-N.md` beginning with `ADVISORY_APPROVED` or `ISSUES_FOUND`, and creates `django-review-N.ready`.
-5. Reviewer waits for matching specialist reports, then writes `review-N.md`; its first line is `APPROVED` or `CHANGES_REQUESTED`, followed by `review-N.ready`.
-6. Relay accepts only `PASS`/`FAIL`, `ADVISORY_APPROVED`/`ISSUES_FOUND`, and `APPROVED`/`CHANGES_REQUESTED` as the applicable first-line values, then submits specialist and review notices to their intended recipients.
-7. Requested changes produce another numbered round, including fresh specialist reviews.
-8. Approval causes the implementer to write `implementation-ready.md` and stop before push/merge unless the task and repository workflow explicitly authorize more.
-9. Optional technical probe writes `probe.md` and `probe.ready`; relay informs both implementation and review agents.
+```bash
+pi-tmux-agents --json supervisor capabilities
+pi-tmux-agents --json supervisor sessions
+pi-tmux-agents --json supervisor runs SESSION
+pi-tmux-agents --json supervisor snapshot SESSION --run RUN_ID
+pi-tmux-agents --json supervisor events SESSION --run RUN_ID \
+  --cursor implementer=0 --cursor reviewer=0 --limit 50
+```
 
-The relay transports file paths and state transitions, not source documents or provider payloads. A missing, empty, symlinked, non-regular, or invalid-enum report leaves its marker pending. Delivery is recorded per marker and recipient; a successful recipient is not duplicated while another recipient retries, and global completion is recorded only after every enabled intended recipient succeeds. TUI `send-keys` success remains transport-level only. RPC relay delivery uses a deterministic per-marker/recipient command ID and is recorded only after Pi returns the correlated prompt-acceptance response. Relay retries are therefore deduplicated across supervisor restarts, although acceptance still does not prove task completion. Crash-uncertain delivery stays pending rather than risking blind redelivery.
+Host liveness is `not_observed`; retained PIDs do not imply a running process.
+
+## Event-driven workflow
+
+1. Every worker bridge connects to the owner-only run socket.
+2. The broker adds task/role baseline context to each Pi session without waking idle roles.
+3. It triggers only the implementer and optional initial probe.
+4. The implementer submits a bounded `implementation` report with `orchestrator_report`.
+5. Enabled specialists inspect the shared worktree and submit typed evidence.
+6. The broker supplies all evidence to the reviewer and wakes it once.
+7. `changes_requested` supplies one bounded review to the implementer and starts the next round.
+8. `approved` marks the run ready without waking the implementer for an acknowledgement turn.
+
+The terminating report tool avoids an extra post-report provider turn. Idle
+agents end their turn and never sleep or poll. Timeouts detect failure; they do
+not schedule workflow transitions.
+
+Report fields, limits, ACLs, acknowledgements, deduplication, retry, crash
+semantics, and token accounting are specified in
+[protocol-v1.md](protocol-v1.md).
+
+## Durable state
+
+Files remain for:
+
+- mode-`0700` run/session directories;
+- mode-`0600` manifests and authentication tokens;
+- Pi's own JSONL sessions;
+- one mode-`0600` metadata-only SQLite database;
+- a transient startup payload deleted by the broker immediately after reading.
+
+New workers never create or poll Markdown reports, readiness markers, mailbox
+payload files, or relay-seen files. The database excludes task, assignment,
+report, prompt, message, provider, diff, and log bodies.
+
+Retained manifests from `0.4.x` remain compatible with legacy readers and
+controls. There is no option to start that protocol in `0.5.0`.
+
+## Token accounting and budgets
+
+The worker bridge reports Pi/provider values for:
+
+- input and output tokens;
+- cache-read and cache-write tokens;
+- reasoning tokens when exposed;
+- total cost;
+- current context tokens/window/percentage.
+
+Unavailable values remain unavailable; no provider token estimate is invented.
+Status and Supervisor API expose per-role and total usage. Soft role/run budgets
+warn before subsequent work. A budget cannot stop an already-started provider
+response at an exact token.
 
 ## Security boundaries
 
-- Only the implementer receives Pi's normal write tools.
-- Reviewer, technical probe, Playwright tester, and Django expert are launched without `edit` or `write`; they retain `bash` for tests, so role prompts also explicitly prohibit tracked modifications.
-- The Playwright tester may create browser caches, screenshots, traces, logs, and test databases only under ignored or external temporary paths and must clean up local servers/browser processes.
-- The orchestrator never reads or copies Pi authentication files.
-- Controller state uses private non-symlink directories/files outside target repositories; the Pi child runs with `umask 077`, a stable session ID, no discovered project context, and no `edit`/`write` tools.
-- Model validation uses `pi --list-models`, which checks configured availability but sends no model request.
-- State root, session, and run paths must resolve within the configured orchestration root and may not themselves be symlink directories. State files used by the orchestrator must be regular non-symlink files.
-- Schema-v1 TUI manifests and schema-v2 transport-aware manifests require exact structural, role, pane, trust, transport, canonical path, and containment validation before actions on an existing orchestration.
-- RPC control/state directories and files are private, role-scoped, bounded, non-symlink paths under the coordination run. Status stores queue counts and session/process metadata, never queued message bodies.
-- Each RPC role keeps a stable worker ID, incrementing supervisor generation, bounded command registry, and locked rotating JSONL event journal. Journals contain no task/message bodies and use atomic registry snapshots; in-flight commands become `uncertain` after crash recovery and are not automatically redelivered under the same ID.
-- Supervisor API v1 exposes only bounded validated metadata. It has per-role cursors rather than a synthetic global ordering, explicitly reports journal retention gaps and registry/journal synchronization, and labels tmux host runtime `not_observed` instead of treating retained process records as liveness evidence.
-- Manifest updates use unique mode-`0600` temporary files and atomic replacement. Failed starts kill partial sessions and retain a private `startup-state` diagnosis when safe.
-- Avoid task text on the command line when it contains sensitive project information; use `--task-file`.
-- Never place credentials, raw career documents, private customer data, prompts, provider responses, or raw provider errors in coordination files.
-- `--approve-project` bypasses child-session trust prompts and must be limited to a project already inspected and trusted. The extension additionally requires `ctx.isProjectTrusted()` and explicit per-run UI confirmation; parent trust is never automatically inherited by children.
-- RPC mode is non-interactive for project trust. Without `--approve-project`, an applicable saved decision or global `defaultProjectTrust` is used. `ask`/`never` still loads context instructions but ignores project-local executable resources without prompting; `always` trusts them.
-- Extension start/probe/specialist/message bodies use unique mode-`0600` temporary files, are passed only via `--*-file`, and are removed in `finally`.
-- The extension starts no background poller or resource in its factory; status/widget refresh occurs only on command, tool, or session lifecycle points.
+- Only the implementer receives normal write tools.
+- Read-only roles retain `bash` and are governed by explicit role instructions;
+  they are not OS-sandboxed.
+- Run directory `0700`; socket/database/token files `0600`.
+- Independent role tokens and control token; broker enforces role/report ACLs.
+- Same-user peer credential validation where supported.
+- No Pi/provider credential reading or copying.
+- No TCP listener, cloud service, external message queue, or package dependency.
+- Project trust remains explicit and mandatory.
+- Status, journals, widgets, and registries never include workflow payloads.
+- No exactly-once claim: crash ambiguity is `uncertain`.
 
 ## tmux navigation
 
@@ -219,7 +164,7 @@ Ctrl-b arrows  move between panes
 Ctrl-b z       zoom/unzoom current pane
 ```
 
-Recommended `~/.tmux.conf` for tmux 3.5+:
+Recommended for tmux 3.5+:
 
 ```tmux
 set -g extended-keys on
@@ -228,27 +173,28 @@ set -g extended-keys-format csi-u
 
 ## Troubleshooting
 
-### Provider error in one role
-
-Use `restart` to select another available model without rebuilding the grid:
-
-```bash
-pi-tmux-agents restart SESSION --role implementer \
-  --provider openai-codex --model gpt-5.6-sol --thinking xhigh --yes
-```
-
 ### Existing session name
 
-Inspect it with `status`, stop it explicitly, or pass another `--session` name. The tool never replaces an existing tmux session automatically. Existing session/window operations use exact tmux targets, so if the selected orchestration disappears during an operation, a prefix-named session is not substituted.
+Use `status`, explicitly stop it, or select another `--session`. The tool never
+replaces an existing tmux session.
 
-### Relay pane exited
+### Worker is `disconnected`
 
-Project agents continue running, but automatic notifications stop. Restarting relay is intentionally conservative; send messages manually with `send`, or stop and create a new orchestration after preserving work. If a report-ready marker remains pending, verify that its matching report is a regular non-empty file with the required first-line result; transport failures are retried without resending to recipients already recorded as successful.
+Inspect its pane. The bridge reconnects with bounded exponential backoff without
+using model turns. A transition in an unprovable window remains `uncertain`.
 
-### Child session asks for project trust
+### Worker is `waiting`
 
-For TUI workers, approve interactively in each pane or stop and restart with `--approve-project` after confirming the project is trusted. RPC workers cannot prompt: save a Pi trust decision, intentionally configure global `defaultProjectTrust`, or use a separately confirmed `--approve-project`; under `ask`/`never`, project-local executable resources are ignored. The controller's neutral workspace and stable identity never count as trust for a target project.
+Pi settled while an assignment remained open, usually because it did not call
+`orchestrator_report`. Send one focused reminder or restart the role; the broker
+does not run an unlimited reminder loop.
 
-### Controller name already exists
+### Broker pane exited
 
-`controller start` never replaces the existing exact tmux session. If it is the managed controller, use `controller status`, `controller attach`, or `controller stop --confirm`. If it is unrelated, rename or stop it manually only after inspecting it.
+Workflow delivery stops. Do not start a legacy relay. Preserve the worktree and
+restart or stop/recreate the brokered run after inspecting retained state.
+
+### Project trust prompt
+
+Approve each interactive child only after inspection, use saved/global trust
+for RPC presentation, or restart with a separately confirmed `--approve-project`.
