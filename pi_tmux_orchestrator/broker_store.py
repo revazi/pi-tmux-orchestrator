@@ -7,6 +7,8 @@ import hashlib
 import json
 import os
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -31,9 +33,10 @@ def broker_paths(coord: Path) -> dict[str, Path]:
     }
 
 
+@contextmanager
 def connect_broker_database(
     coord: Path, *, readonly: bool = False
-) -> sqlite3.Connection:
+) -> Iterator[sqlite3.Connection]:
     paths = broker_paths(coord)
     database = paths["database"]
     if readonly:
@@ -50,13 +53,18 @@ def connect_broker_database(
             connection = sqlite3.connect(database, timeout=5.0)
         finally:
             os.umask(previous_umask)
-        os.chmod(database, 0o600)
-    connection.row_factory = sqlite3.Row
-    connection.execute("PRAGMA foreign_keys = ON")
-    if not readonly:
-        connection.execute("PRAGMA journal_mode = DELETE")
-        connection.execute("PRAGMA synchronous = FULL")
-    return connection
+    try:
+        if not readonly:
+            os.chmod(database, 0o600)
+        connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys = ON")
+        if not readonly:
+            connection.execute("PRAGMA journal_mode = DELETE")
+            connection.execute("PRAGMA synchronous = FULL")
+        with connection:
+            yield connection
+    finally:
+        connection.close()
 
 
 def initialize_broker_database(
