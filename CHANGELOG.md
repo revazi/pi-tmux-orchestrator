@@ -6,6 +6,14 @@ All notable changes to this project are documented here.
 
 _No changes yet._
 
+## 0.6.1 - 2026-08-14
+
+### Fixed
+
+- Added `/orchestrator-watch` and the model tool's `watch` action so a parent Pi can attach to lifecycle and final-report updates for an existing compatible run
+- Made attached parents show bounded lifecycle and report-received progress while keeping raw assistant/tool output in tmux
+- Made model-tool status results include workflow and role states so ready, active, waiting, and uncertain runs are immediately distinguishable
+
 ## 0.6.0 - 2026-08-14
 
 Parent-supervision and worker-visibility release.

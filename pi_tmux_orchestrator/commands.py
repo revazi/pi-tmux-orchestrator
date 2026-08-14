@@ -613,11 +613,14 @@ def status_command(args: argparse.Namespace) -> CommandResult:
                     f"queue={rpc_state['steering_count']}+{rpc_state['follow_up_count']}"
                     f"{registry_suffix}"
                 )
+    paths = {"coordination": str(coord)}
+    if manifest.get("version") == 3:
+        paths["observer_socket"] = str(broker_paths(coord)["socket"])
     return CommandResult(
         data={
             "session": session,
             "project": manifest["project"],
-            "paths": {"coordination": str(coord)},
+            "paths": paths,
             "roles": role_values,
             "panes": panes,
             "broker": broker_snapshot,

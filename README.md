@@ -129,16 +129,20 @@ The package exposes:
 - `/orchestrator-start [task]`
 - `/orchestrator-list`
 - `/orchestrator-status [session]`
+- `/orchestrator-watch [session]`
 - `/orchestrator-send [session]`
 - `/orchestrator-stop [session]`
 - `/orchestrate` and `/orchestrations` compatibility aliases
 
 The `tmux_orchestrator` model tool provides bounded `doctor`, `list`, `status`,
-`start`, and `send` actions. Start requires interactive confirmation. The
-invoking Pi remains the parent supervisor: watch the tmux grid for live work;
-when the broker reaches `ready`, `needs_attention`, or `uncertain`, it sends a
-bounded structured update back to that parent Pi. Parent project trust is never
-inherited by child Pi sessions; child `--approve` needs separate confirmation.
+`watch`, `start`, and `send` actions. Start requires interactive confirmation.
+New runs are watched automatically. Use `watch` or `/orchestrator-watch SESSION`
+to attach this parent Pi to an existing run without taking over its terminal.
+The parent receives visible lifecycle/report-received progress and a triggered
+structured update when the broker reaches `ready`, `needs_attention`, or
+`uncertain`; live assistant/tool output stays in tmux. Parent project trust is
+never inherited by child Pi sessions; child `--approve` needs separate
+confirmation.
 
 ## Start from the terminal
 
@@ -186,8 +190,9 @@ startup trust dialogs.
 7. `changes_requested` starts the next implementation round.
 8. `approved` marks the workflow ready without an acknowledgement-only worker
    turn.
-9. For a Pi-started run, the broker returns the latest structured role reports
-   to the parent Pi, which interprets the result and decides follow-up.
+9. An attached parent observer shows lifecycle and report-received progress,
+   then returns the latest structured role reports when the run is ready or
+   requires intervention.
 
 Idle workers end their turns. They do not sleep or poll. A worker settling
 without a report becomes `waiting`/needs attention rather than entering an
