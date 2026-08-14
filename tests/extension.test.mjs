@@ -97,10 +97,10 @@ test("registers one bounded model tool and the exact canonical/alias command sur
   assert.equal(commands.has("orchestrator-restart"), false);
   assert.equal(commands.get("orchestrator-start").handler, commands.get("orchestrate").handler);
   assert.equal(commands.get("orchestrator-list").handler, commands.get("orchestrations").handler);
-  assert.ok(events.has("session_start"));
+  assert.equal(events.has("session_start"), false);
   assert.ok(events.has("session_before_switch"));
   assert.ok(events.has("session_before_fork"));
-  assert.ok(events.has("session_shutdown"));
+  assert.equal(events.has("session_shutdown"), false);
 });
 
 test("help is bounded, subprocess-free, and documents terminal-only operations", async () => {
@@ -146,7 +146,8 @@ test("doctor, list alias, and status commands delegate exact bounded JSON CLI ac
     ["--json", "status", "pi-exact"],
     ["--json", "status"],
   ]);
-  assert.deepEqual(ctx.calls.widgets.at(-1).value, ["pi-one · /tmp/project"]);
+  assert.equal(ctx.calls.widgets.length, 0);
+  assert.equal(ctx.calls.statuses.length, 0);
   assert.ok(ctx.calls.notifications.every(({ message }) => message.length <= 800));
 });
 
@@ -161,7 +162,7 @@ test("slash-command failures are bounded and redact raw subprocess errors", asyn
   assert.equal(ctx.calls.notifications[0].message, "Unable to show orchestration status");
   assert.equal(JSON.stringify(ctx.calls).includes(canary), false);
   assert.ok(ctx.calls.notifications[0].message.length <= 300);
-  assert.deepEqual(ctx.calls.statuses.at(-1), { key: "tmux-orchestrator", value: "tmux: error" });
+  assert.equal(ctx.calls.statuses.length, 0);
 });
 
 test("passes cancellation to pi.exec and consumes only the JSON envelope", async () => {
@@ -269,7 +270,7 @@ test("controller mode requires and collects an explicit target project", async (
   }
 });
 
-test("controller session lifecycle advertises its dedicated identity without a subprocess", async () => {
+test("controller lifecycle blocks switching without persistent extension chrome", async () => {
   const previous = process.env.PI_TMUX_CONTROLLER;
   process.env.PI_TMUX_CONTROLLER = "1";
   try {
@@ -279,16 +280,14 @@ test("controller session lifecycle advertises its dedicated identity without a s
       return { code: 0, stdout: "" };
     });
     const ctx = context();
-    await events.get("session_start")({}, ctx);
     assert.equal(calls, 0);
-    assert.deepEqual(ctx.calls.titles, ["Pi Tmux Orchestrator Controller"]);
-    assert.deepEqual(ctx.calls.statuses.at(-1), {
-      key: "tmux-orchestrator",
-      value: "tmux: controller",
-    });
-    assert.match(ctx.calls.widgets.at(-1).value.join("\n"), /Target projects must be explicit/);
+    assert.equal(events.has("session_start"), false);
+    assert.equal(events.has("session_shutdown"), false);
     assert.deepEqual(await events.get("session_before_switch")({}, ctx), { cancel: true });
     assert.deepEqual(await events.get("session_before_fork")({}, ctx), { cancel: true });
+    assert.equal(ctx.calls.statuses.length, 0);
+    assert.equal(ctx.calls.widgets.length, 0);
+    assert.equal(ctx.calls.titles.length, 0);
     assert.match(ctx.calls.notifications.at(-2).message, /fixed persistent Pi session/);
     assert.match(ctx.calls.notifications.at(-1).message, /disabled/);
   } finally {

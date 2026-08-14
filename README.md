@@ -269,7 +269,7 @@ unmarked reserved tmux names are refused.
 - Private canonical non-symlink state paths and strict schemas.
 - Owner-only local socket with per-role and control authentication.
 - Role-specific structured report ACLs and bounded frames/fields.
-- Metadata-only status, SQLite, journals, widgets, and Supervisor API.
+- Metadata-only status, SQLite, journals, registries, and Supervisor API.
 - No Pi/provider credential access or copying.
 - No synthetic-as-production acceptance claims.
 - Explicit trust, restart, abort, and stop boundaries.
