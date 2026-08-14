@@ -61,7 +61,7 @@ const declaredFiles = [
 ];
 const expectedManifest = {
   name: "pi-tmux-orchestrator",
-  version: "0.5.0",
+  version: "0.5.1",
   description: "Pi extension, skill, and dependency-free Python CLI for coordinating coding agents in tmux",
   license: "MIT",
   author: {
@@ -166,6 +166,12 @@ const requiredBadges = [
 ];
 for (const badge of requiredBadges) {
   if (!readme.includes(badge)) throw new Error(`README.md omitted required badge: ${badge}`);
+}
+const extension = await readFile(resolve(root, "extensions/tmux-orchestrator.js"), "utf8");
+for (const method of ["setStatus", "setWidget", "setTitle"]) {
+  if (extension.includes(`.${method}(`)) {
+    throw new Error(`package extension must not add persistent Pi UI chrome with ${method}`);
+  }
 }
 const packagedDocs = [
   "README.md",

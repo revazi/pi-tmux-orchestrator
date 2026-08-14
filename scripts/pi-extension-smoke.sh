@@ -134,6 +134,14 @@ if not (
 commands = response.get("data", {}).get("commands")
 if not isinstance(commands, list):
     raise SystemExit("Pi RPC get_commands response omitted commands")
+root_path = Path(root).resolve()
+package_commands = [
+    command
+    for command in commands
+    if command.get("sourceInfo", {}).get("origin") == "package"
+    and isinstance(command.get("sourceInfo", {}).get("baseDir"), str)
+    and Path(command["sourceInfo"]["baseDir"]).resolve() == root_path
+]
 expected = {
     "orchestrator-help": ("extension", "extensions/tmux-orchestrator.js"),
     "orchestrator-doctor": ("extension", "extensions/tmux-orchestrator.js"),
@@ -146,13 +154,12 @@ expected = {
     "orchestrations": ("extension", "extensions/tmux-orchestrator.js"),
     "skill:tmux-agent-orchestrator": ("skill", "SKILL.md"),
 }
-actual = {command.get("name"): command.get("source") for command in commands}
+actual = {command.get("name"): command.get("source") for command in package_commands}
 expected_sources = {name: source for name, (source, _path) in expected.items()}
-if len(commands) != len(expected) or actual != expected_sources:
+if len(package_commands) != len(expected) or actual != expected_sources:
     raise SystemExit("Pi RPC package command discovery did not match the exact expected surface")
 
-root_path = Path(root).resolve()
-for command in commands:
+for command in package_commands:
     name = command["name"]
     source_path = command.get("sourceInfo", {}).get("path")
     if not isinstance(source_path, str):

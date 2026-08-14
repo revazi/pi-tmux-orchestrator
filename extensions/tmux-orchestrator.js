@@ -5,7 +5,6 @@ import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
 
 const CLI_PATH = fileURLToPath(new URL("../bin/pi-tmux-agents", import.meta.url));
-const STATUS_KEY = "tmux-orchestrator";
 const MAX_VISIBLE_CHARS = 12_000;
 const ACTIONS = ["doctor", "list", "status", "start", "send"];
 const ROLES = ["implementer", "reviewer", "probe", "playwright", "django"];
@@ -13,7 +12,7 @@ const COMMAND_OVERVIEW = [
   "/orchestrator-help — show this bounded command overview",
   "/orchestrator-doctor — check local prerequisites without a provider request",
   "/orchestrator-start [task] — confirm and start an orchestration",
-  "/orchestrator-list — list orchestrations and refresh the metadata-only widget",
+  "/orchestrator-list — list running orchestrations",
   "/orchestrator-status [session] — show metadata-only status",
   "/orchestrator-send [session] — privately send a message to one role",
   "/orchestrator-stop [session] — confirm and stop one exact session",
@@ -258,12 +257,10 @@ function safeDetails(envelope) {
 function notifyEnvelope(ctx, envelope) {
   const message = bounded(compactSummary(envelope), 800);
   ctx.ui.notify(message, envelope.success ? "info" : "error");
-  ctx.ui.setStatus(STATUS_KEY, envelope.success ? `tmux: ${envelope.command}` : "tmux: error");
   return message;
 }
 
 async function executeAction(pi, input, signal, ctx) {
-  ctx.ui.setStatus(STATUS_KEY, `tmux: ${input.action}…`);
   let envelope;
   try {
     switch (input.action) {
@@ -289,7 +286,6 @@ async function executeAction(pi, input, signal, ctx) {
       details: safeDetails(envelope),
     };
   } catch (error) {
-    ctx.ui.setStatus(STATUS_KEY, "tmux: error");
     throw new Error(bounded(error instanceof Error ? error.message : "orchestrator_error", 200));
   }
 }
@@ -309,7 +305,6 @@ function notifyCommandFailure(ctx, action) {
     send: "send orchestration message",
     stop: "stop orchestration",
   };
-  ctx.ui.setStatus(STATUS_KEY, "tmux: error");
   ctx.ui.notify(`Unable to ${labels[action] || "run orchestrator command"}`, "error");
 }
 
@@ -322,16 +317,6 @@ async function runCommandCli(pi, action, args, ctx) {
     notifyCommandFailure(ctx, action);
     return undefined;
   }
-}
-
-function refreshListWidget(ctx, envelope) {
-  const sessions = Array.isArray(envelope?.data?.sessions) ? envelope.data.sessions : [];
-  ctx.ui.setWidget(
-    STATUS_KEY,
-    sessions.length
-      ? sessions.slice(0, 8).map((item) => bounded(`${item.session} · ${item.project || "invalid"}`, 240))
-      : [bounded(compactSummary(envelope), 800)],
-  );
 }
 
 function createCommandHandlers(pi) {
@@ -388,8 +373,7 @@ function createCommandHandlers(pi) {
   };
 
   const list = async (_args, ctx) => {
-    const envelope = await runCommandCli(pi, "list", [], ctx);
-    if (envelope) refreshListWidget(ctx, envelope);
+    await runCommandCli(pi, "list", [], ctx);
   };
 
   const status = async (args, ctx) => {
@@ -461,7 +445,7 @@ export default function tmuxOrchestratorExtension(pi) {
     handler: commandHandlers.start,
   });
   pi.registerCommand("orchestrator-list", {
-    description: "List running tmux orchestrations and refresh the metadata widget",
+    description: "List running tmux orchestrations",
     handler: commandHandlers.list,
   });
   pi.registerCommand("orchestrator-status", {
@@ -485,18 +469,6 @@ export default function tmuxOrchestratorExtension(pi) {
     handler: commandHandlers.list,
   });
 
-  pi.on("session_start", (_event, ctx) => {
-    if (isControllerMode()) {
-      ctx.ui.setTitle?.("Pi Tmux Orchestrator Controller");
-      ctx.ui.setStatus(STATUS_KEY, "tmux: controller");
-      ctx.ui.setWidget(STATUS_KEY, [
-        "Dedicated orchestrator controller",
-        "Use /orchestrator-list or /orchestrator-start. Target projects must be explicit.",
-      ]);
-      return;
-    }
-    ctx.ui.setStatus(STATUS_KEY, "tmux: ready");
-  });
   pi.on("session_before_switch", async (_event, ctx) => {
     if (!isControllerMode()) return undefined;
     ctx.ui.notify("The controller uses one fixed persistent Pi session; stop it from the terminal to leave.", "warning");
@@ -506,10 +478,6 @@ export default function tmuxOrchestratorExtension(pi) {
     if (!isControllerMode()) return undefined;
     ctx.ui.notify("Fork and clone are disabled in the fixed controller session.", "warning");
     return { cancel: true };
-  });
-  pi.on("session_shutdown", (_event, ctx) => {
-    ctx.ui.setStatus(STATUS_KEY, undefined);
-    ctx.ui.setWidget(STATUS_KEY, undefined);
   });
 }
 

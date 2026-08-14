@@ -6,6 +6,12 @@ All notable changes to this project are documented here.
 
 _No changes yet._
 
+## 0.5.1 - 2026-08-14
+
+### Fixed
+
+- Removed unsolicited Pi status-line, widget, and title chrome from the package extension; orchestrator UI now appears only as explicit command notifications and results.
+
 ## 0.5.0 - 2026-08-13
 
 Event-driven structured coordination release.

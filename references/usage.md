@@ -153,7 +153,7 @@ response at an exact token.
 - No Pi/provider credential reading or copying.
 - No TCP listener, cloud service, external message queue, or package dependency.
 - Project trust remains explicit and mandatory.
-- Status, journals, widgets, and registries never include workflow payloads.
+- Status, journals, registries, and Supervisor API never include workflow payloads.
 - No exactly-once claim: crash ambiguity is `uncertain`.
 
 ## tmux navigation
