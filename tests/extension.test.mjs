@@ -5,6 +5,7 @@ import { join } from "node:path";
 import net from "node:net";
 import { test } from "node:test";
 import extension, { testHooks } from "../extensions/tmux-orchestrator.js";
+import { testHooks as workerHooks } from "../extensions/orchestrator-worker.js";
 
 function success(command, data = {}) {
   return { schema_version: "1", command, success: true, data, error: null };
@@ -79,7 +80,7 @@ test("registers one bounded model tool and the exact canonical/alias command sur
   const { tool, tools, commands, events } = harness(async () => ({ code: 0, stdout: "" }));
   assert.equal(tools.length, 1);
   assert.equal(tool.name, "tmux_orchestrator");
-  assert.deepEqual(tool.parameters.properties.action.enum, ["doctor", "list", "status", "watch", "start", "send"]);
+  assert.deepEqual(tool.parameters.properties.action.enum, ["doctor", "list", "status", "watch", "attach", "start", "send"]);
   assert.equal(tool.parameters.properties.action.enum.includes("restart"), false);
   assert.equal(tool.parameters.properties.action.enum.includes("stop"), false);
   assert.equal(tool.renderCall, undefined);
@@ -93,13 +94,14 @@ test("registers one bounded model tool and the exact canonical/alias command sur
       "orchestrator-list",
       "orchestrator-status",
       "orchestrator-watch",
+      "orchestrator-attach",
       "orchestrator-send",
       "orchestrator-stop",
       "orchestrate",
       "orchestrations",
     ],
   );
-  assert.equal(commands.has("orchestrator-attach"), false);
+  assert.equal(commands.has("orchestrator-attach"), true);
   assert.equal(commands.has("orchestrator-restart"), false);
   assert.equal(commands.get("orchestrator-start").handler, commands.get("orchestrate").handler);
   assert.equal(commands.get("orchestrator-list").handler, commands.get("orchestrations").handler);
@@ -107,6 +109,20 @@ test("registers one bounded model tool and the exact canonical/alias command sur
   assert.ok(events.has("session_before_switch"));
   assert.ok(events.has("session_before_fork"));
   assert.equal(events.has("session_shutdown"), true);
+});
+
+test("worker report schemas expose only fields valid for each role", () => {
+  const implementer = workerHooks.reportParameters("implementer");
+  assert.deepEqual(implementer.properties.kind.enum, ["implementation"]);
+  assert.ok(implementer.properties.changed_paths);
+  assert.equal(implementer.properties.verdict, undefined);
+  assert.deepEqual(implementer.required, ["kind", "summary"]);
+
+  const reviewer = workerHooks.reportParameters("reviewer");
+  assert.deepEqual(reviewer.properties.kind.enum, ["review"]);
+  assert.equal(reviewer.properties.changed_paths, undefined);
+  assert.deepEqual(reviewer.properties.verdict.enum, ["approved", "changes_requested"]);
+  assert.deepEqual(reviewer.required, ["kind", "summary", "verdict"]);
 });
 
 test("authenticated broker observer returns structured final reports to the parent Pi", async () => {
@@ -277,7 +293,8 @@ test("help is bounded, subprocess-free, and documents terminal-only operations",
   assert.ok(message.length <= 2400);
   assert.match(message, /\/orchestrator-start/);
   assert.match(message, /\/orchestrator-watch/);
-  assert.match(message, /Terminal tmux attach/);
+  assert.match(message, /\/orchestrator-attach/);
+  assert.match(message, /prefix then L/);
   assert.equal(message.includes("PRIVATE_HELP_ARGUMENT"), false);
 });
 
@@ -396,6 +413,131 @@ test("watch attaches the parent through an exact metadata-only status lookup", a
   assert.deepEqual(seen[1][1].slice(1), ["--json", "status"]);
 });
 
+test("attach switches an in-tmux parent into the exact live worker grid", async () => {
+  const previousTmux = process.env.TMUX;
+  process.env.TMUX = "/tmp/tmux-test";
+  try {
+    const seen = [];
+    const pi = {
+      exec: async (command, args) => {
+        seen.push([command, args]);
+        const action = args[2];
+        if (action === "status") {
+          return {
+            code: 0,
+            stdout: JSON.stringify(success("status", {
+              session: "pi-workers",
+              project: "/tmp/project",
+              paths: { coordination: "/tmp/run", observer_socket: "/tmp/broker.sock" },
+              broker: { workflow: { state: "active", round: 1 }, roles: [] },
+              roles: [], panes: [], files: [],
+            })),
+          };
+        }
+        return {
+          code: 0,
+          stdout: JSON.stringify(success("attach", {
+            session: "pi-workers",
+            project: "/tmp/project",
+            transport: "tui",
+            mode: "switch-client",
+            return_hint: "Press the tmux prefix, then L, to return to the parent Pi session.",
+          })),
+        };
+      },
+    };
+    const ctx = context();
+    let supervised;
+    const result = await testHooks.executeAction(
+      pi,
+      { action: "attach", session: "pi-workers" },
+      undefined,
+      ctx,
+      async (envelope) => { supervised = envelope; },
+    );
+    assert.deepEqual(seen.map(([, args]) => args.slice(1)), [
+      ["--json", "status", "pi-workers"],
+      ["--json", "attach", "pi-workers"],
+    ]);
+    assert.equal(supervised.command, "status");
+    assert.equal(result.details.command, "attach");
+    assert.match(result.content[0].text, /Switched to pi-workers/);
+    assert.match(ctx.calls.notifications[0].message, /Prefix then L detaches/);
+  } finally {
+    if (previousTmux === undefined) delete process.env.TMUX;
+    else process.env.TMUX = previousTmux;
+  }
+});
+
+test("attach fails before execution when the parent Pi is outside tmux", async () => {
+  const previousTmux = process.env.TMUX;
+  delete process.env.TMUX;
+  try {
+    let calls = 0;
+    const pi = {
+      exec: async () => {
+        calls += 1;
+        return { code: 0, stdout: "" };
+      },
+    };
+    await assert.rejects(
+      testHooks.executeAction(
+        pi,
+        { action: "attach", session: "pi-workers" },
+        undefined,
+        context(),
+        async () => {},
+      ),
+      /attach_requires_parent_tmux/,
+    );
+    assert.equal(calls, 0);
+  } finally {
+    if (previousTmux === undefined) delete process.env.TMUX;
+    else process.env.TMUX = previousTmux;
+  }
+});
+
+test("start keeps the invoking Pi as parent and starts no separate parent session", async () => {
+  const actions = [];
+  let supervised;
+  const pi = {
+    exec: async (_command, args) => {
+      const action = args[2];
+      actions.push(action);
+      assert.equal(action, "start");
+      const dryRun = args.includes("--dry-run");
+      return {
+        code: 0,
+        stdout: JSON.stringify(success("start", {
+          project: process.cwd(),
+          session: "pi-project-agents",
+          roles: [],
+          transport: "tui",
+          trust: { child_bypass: false },
+          dry_run: dryRun,
+          paths: {
+            state_root: "/tmp/state",
+            coordination: dryRun ? null : "/tmp/state/pi-project-agents/run",
+            observer_socket: dryRun ? null : "/tmp/state/pi-project-agents/run/broker.sock",
+          },
+        })),
+      };
+    },
+  };
+  const result = await testHooks.executeAction(
+    pi,
+    { action: "start", task: "Synthetic parent identity test." },
+    undefined,
+    context({ confirmations: [true] }),
+    async (envelope) => { supervised = envelope; },
+  );
+  assert.deepEqual(actions, ["start", "start"]);
+  assert.equal(supervised.command, "start");
+  assert.equal(supervised.data.session, "pi-project-agents");
+  assert.equal(result.details.command, "start");
+  assert.match(result.content[0].text, /This invoking Pi remains the parent/);
+});
+
 test("start previews CLI policy, keeps private text out of argv, and cleans mode-0600 files", async () => {
   const canary = "PRIVATE_TASK_CANARY_49a7";
   const paths = [];
@@ -476,7 +618,7 @@ test("controller mode requires and collects an explicit target project", async (
 
     const ctx = context({
       input: process.cwd(),
-      confirmations: [false, false, false, false, true],
+      confirmations: [false, false, false, true],
     });
     await commands.get("orchestrator-start").handler("synthetic", ctx);
     assert.equal(calls, 2);
@@ -583,6 +725,7 @@ test("canonical start command reuses private preview and explicit confirmation f
   const { commands } = harness(async (_command, args) => {
     execCalls += 1;
     assert.equal(args.includes(task), false);
+    assert.equal(args.includes("--rpc-workers"), false);
     const taskPath = args[args.indexOf("--task-file") + 1];
     paths.push(taskPath);
     assert.equal((await stat(taskPath)).mode & 0o777, 0o600);
@@ -600,7 +743,7 @@ test("canonical start command reuses private preview and explicit confirmation f
       })),
     };
   });
-  const ctx = context({ confirmations: [false, false, false, false, true] });
+  const ctx = context({ confirmations: [false, false, false, true] });
   await commands.get("orchestrator-start").handler(task, ctx);
   assert.equal(execCalls, 2);
   assert.equal(ctx.calls.confirmations.at(-1).title, "Start tmux orchestration?");

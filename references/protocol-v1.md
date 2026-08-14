@@ -81,8 +81,11 @@ disconnected observers are dropped without blocking routing. Their report
 bodies are not written to SQLite, event journals, status, registries, or the
 Supervisor API. A connected parent Pi places bounded completion or attention
 updates in its own Pi session and remains responsible for interpreting results
-and choosing operator follow-up. Parent attachment is process-local and does not
-change detached operation or broker workflow state.
+and choosing operator follow-up. Switching the tmux client into native worker panes
+does not close the parent observer; the parent Pi keeps running in its original
+pane and receives updates for display when the user returns. Client switching
+is presentation-only and does not change detached operation or broker workflow
+state.
 
 ## Structured reports
 

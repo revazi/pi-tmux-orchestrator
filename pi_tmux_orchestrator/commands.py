@@ -675,15 +675,39 @@ def events_command(args: argparse.Namespace) -> CommandResult:
 
 
 def attach_command(args: argparse.Namespace) -> CommandResult:
-    if getattr(args, "json_output", False):
+    json_output = getattr(args, "json_output", False)
+    inside_tmux = bool(os.environ.get("TMUX"))
+    if json_output and not inside_tmux:
         raise OrchestrationError(
-            "attach is interactive-only and cannot be used with --json",
+            "Parent attach requires Pi to be running inside tmux",
             "interactive_only",
         )
     session, coord = resolve_session(args.session)
-    load_manifest(coord, expected_session=session)
+    manifest = load_manifest(coord, expected_session=session)
     attach_session(session)
-    return CommandResult(data={"session": session})
+    if inside_tmux:
+        tmux(
+            [
+                "display-message",
+                "-d",
+                "5000",
+                f"Attached to {session} · prefix then L detaches back without stopping workers",
+            ],
+            check=False,
+        )
+    return CommandResult(
+        data={
+            "session": session,
+            "project": manifest["project"],
+            "transport": manifest_transport(manifest),
+            "mode": "switch-client" if inside_tmux else "attach-client",
+            "return_hint": (
+                "Press the tmux prefix, then L, to detach back to the invoking Pi without stopping workers."
+                if inside_tmux
+                else None
+            ),
+        }
+    )
 
 
 def send_keys(pane_id: str, message: str) -> None:

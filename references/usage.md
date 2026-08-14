@@ -29,8 +29,9 @@ Thinking levels are `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and
 `max`.
 
 All newly started runs use broker protocol v1. `--rpc-workers` does not select a
-different coordination protocol. RPC panes render assistant progress and
-bounded tool inputs/results; interactive TUI panes retain native Pi rendering.
+different coordination protocol. RPC panes are a plain headless automation
+view; interactive TUI panes are the default and retain Pi's native highlighting,
+tool rendering, and input editor for direct steering.
 
 ### `list`
 
@@ -44,7 +45,12 @@ workflow payload bodies.
 
 ### `attach [SESSION]`
 
-Switches a tmux client when already inside tmux or attaches from outside.
+Switches the existing tmux client when already inside tmux or attaches from
+outside. JSON mode is allowed only for the in-tmux `switch-client` path used by
+the Pi extension; it never attempts to replace or suspend the invoking Pi
+process. Prefix then `L` is the detach/return operation: it switches that exact
+client back to the invoking Pi while leaving the worker grid running. Reattach
+with the same `attach` command.
 
 ### `send SESSION --role ROLE --message[-file] ...`
 
@@ -94,11 +100,22 @@ Host liveness is `not_observed`; retained PIDs do not imply a running process.
 
 ## Parent Pi supervision
 
-When the package extension starts a run, the invoking Pi opens an authenticated,
-read-only broker observer. Use `/orchestrator-watch SESSION` or the model tool's
-`watch` action to attach the current parent Pi to a compatible existing run.
-This parent attachment does not take over the terminal; terminal `attach`
-continues to open the tmux grid.
+When the package extension starts a run, the invoking Pi itself is the parent
+supervisor and opens an authenticated, read-only broker observer. Starting a
+normal run creates one detached worker grid; it does not start a second parent
+Pi, parent window, or persistent controller. Use `/orchestrator-watch SESSION`
+or the model tool's `watch` action to subscribe the invoking Pi to a compatible
+existing run without changing the terminal.
+
+Use `/orchestrator-attach SESSION` or the model tool's `attach` action to ensure
+that subscription and switch the invoking Pi's existing tmux client into the
+live worker grid. Select panes with normal tmux keys and type directly into a
+native Pi worker's input editor to steer it. Prefix then `L` detaches from the
+grid by returning that exact client to the same invoking Pi; the workers and
+observer continue running, so attach/detach can be repeated. Pi exposes no
+supported terminal-suspension API for an outside-tmux parent, so seamless
+in-place attach deliberately requires the invoking Pi to already run inside
+tmux.
 
 Tmux remains the live worker view. The observer does not mirror raw worker logs
 into the parent. It shows bounded non-triggering lifecycle and report-received
