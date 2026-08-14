@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
-import { access, readFile, stat } from "node:fs/promises";
+import { access, chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import net from "node:net";
 import { test } from "node:test";
 import extension, { testHooks } from "../extensions/tmux-orchestrator.js";
 
@@ -11,14 +14,16 @@ function harness(exec) {
   const tools = [];
   const commands = new Map();
   const events = new Map();
+  const messages = [];
   const pi = {
     exec,
+    sendMessage(message, options) { messages.push({ message, options }); },
     registerTool(tool) { tools.push(tool); },
     registerCommand(name, command) { commands.set(name, command); },
     on(name, handler) { events.set(name, handler); },
   };
   extension(pi);
-  return { pi, tool: tools[0], tools, commands, events };
+  return { pi, tool: tools[0], tools, commands, events, messages };
 }
 
 function context(overrides = {}) {
@@ -100,7 +105,110 @@ test("registers one bounded model tool and the exact canonical/alias command sur
   assert.equal(events.has("session_start"), false);
   assert.ok(events.has("session_before_switch"));
   assert.ok(events.has("session_before_fork"));
-  assert.equal(events.has("session_shutdown"), false);
+  assert.equal(events.has("session_shutdown"), true);
+});
+
+test("authenticated broker observer returns structured final reports to the parent Pi", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "pi-tmux-parent-observer-test-"));
+  await chmod(directory, 0o700);
+  const token = "a".repeat(32);
+  const socketPath = join(directory, "broker.sock");
+  await writeFile(join(directory, "control.token"), `${token}\n`, { mode: 0o600 });
+  const session = "pi-parent-observer-test";
+  const reportId = "b".repeat(32);
+  const assignmentId = "c".repeat(32);
+  let server;
+  try {
+    server = net.createServer((socket) => {
+      socket.once("data", (chunk) => {
+        const size = chunk.readUInt32BE(0);
+        const hello = JSON.parse(chunk.subarray(4, size + 4).toString("utf8"));
+        assert.equal(hello.type, "observe");
+        assert.equal(hello.token, token);
+        socket.write(testHooks.brokerFrame({
+          version: 1, type: "response", id: hello.id, success: true, status: "observing",
+        }));
+        socket.write(testHooks.brokerFrame({
+          version: 1,
+          type: "report",
+          session,
+          id: reportId,
+          assignment_id: assignmentId,
+          role: "reviewer",
+          round: 2,
+          report: { kind: "review", summary: "The implementation is ready.", verdict: "approved" },
+        }));
+        socket.write(testHooks.brokerFrame({
+          version: 1, type: "workflow", session, state: "ready", round: 2,
+        }));
+      });
+    });
+    await new Promise((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(socketPath, resolve);
+    });
+    const observer = { closed: false, socket: undefined, timer: undefined, stop: () => {} };
+    let stopped = false;
+    const parentMessage = new Promise((resolve) => {
+      void testHooks.attachParentObserver(
+        { sendMessage: (message, options) => resolve({ message, options }) },
+        {
+          data: {
+            session,
+            paths: { coordination: directory, observer_socket: socketPath },
+          },
+        },
+        observer,
+        () => { stopped = true; },
+      );
+    });
+    const delivered = await parentMessage;
+    assert.equal(delivered.message.customType, "pi-tmux-orchestrator-parent-v1");
+    assert.equal(delivered.message.details.state, "ready");
+    assert.match(delivered.message.content, /reviewer report \(round 2\)/);
+    assert.match(delivered.message.content, /The implementation is ready/);
+    assert.deepEqual(delivered.options, { triggerTurn: true, deliverAs: "followUp" });
+    assert.equal(stopped, true);
+  } finally {
+    await new Promise((resolve) => server?.close(resolve) ?? resolve());
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("observer snapshots require bounded report replay metadata", () => {
+  const value = {
+    version: 1,
+    type: "snapshot",
+    session: "pi-test",
+    state: "active",
+    round: 1,
+    roles: [{ role: "implementer", state: "active" }],
+    report_count: 2,
+    report_replay_complete: false,
+  };
+  assert.equal(testHooks.validateObserverFrame(value, "pi-test", "a".repeat(32)), value);
+  assert.throws(
+    () => testHooks.validateObserverFrame({ ...value, report_count: -1 }, "pi-test", "a".repeat(32)),
+    /invalid_observer_snapshot/,
+  );
+  assert.throws(
+    () => testHooks.validateObserverFrame({ version: 1, type: "toString", session: "pi-test" }, "pi-test", "a".repeat(32)),
+    /unsupported_observer_frame/,
+  );
+});
+
+test("parent updates keep only the latest bounded report per role", () => {
+  const event = (role, round, summary) => ({ role, round, report: { kind: role === "reviewer" ? "review" : "implementation", summary } });
+  const update = testHooks.parentUpdateContent(
+    "pi-test",
+    "ready",
+    2,
+    [event("implementer", 1, "old"), event("implementer", 2, "new"), event("reviewer", 2, "approved")],
+  );
+  assert.doesNotMatch(update.content, /\"summary\": \"old\"/);
+  assert.match(update.content, /\"summary\": \"new\"/);
+  assert.match(update.content, /\"summary\": \"approved\"/);
+  assert.ok(update.content.length <= 192 * 1024);
 });
 
 test("help is bounded, subprocess-free, and documents terminal-only operations", async () => {
@@ -282,7 +390,7 @@ test("controller lifecycle blocks switching without persistent extension chrome"
     const ctx = context();
     assert.equal(calls, 0);
     assert.equal(events.has("session_start"), false);
-    assert.equal(events.has("session_shutdown"), false);
+    assert.equal(events.has("session_shutdown"), true);
     assert.deepEqual(await events.get("session_before_switch")({}, ctx), { cancel: true });
     assert.deepEqual(await events.get("session_before_fork")({}, ctx), { cancel: true });
     assert.equal(ctx.calls.statuses.length, 0);

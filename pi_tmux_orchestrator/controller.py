@@ -54,8 +54,10 @@ def controller_prompt_text(state_root: Path) -> str:
 
         - Always identify an explicit target project before starting an orchestration.
         - Use the bundled orchestrator extension or the authoritative CLI at {runtime.SCRIPT_PATH}.
-        - Treat tmux as the current worker view host, not as controller identity; select
-          interactive TUI or acknowledged RPC control per orchestration.
+        - Act as the parent supervisor: use tmux as the live worker view, interpret
+          returned structured reports, and decide or request explicit follow-up.
+        - Select interactive TUI or acknowledged RPC control per orchestration; tmux is
+          the view host, not the coordination transport or controller identity.
         - Keep task and message bodies out of argv, status, widgets, and notifications.
         - Preserve one writer, independent review, project instructions, trust prompts, and
           explicit stop/restart confirmations.

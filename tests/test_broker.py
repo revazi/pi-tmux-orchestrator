@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import asyncio
+import json
 import os
+import secrets
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from pi_tmux_orchestrator import broker_store, runtime
-from pi_tmux_orchestrator.broker import initialize_broker_run
+from pi_tmux_orchestrator.broker import Broker, Client, Observer, initialize_broker_run
 from pi_tmux_orchestrator.constants import (
     BROKER_COORDINATION,
     BROKER_PROTOCOL_VERSION,
@@ -164,6 +168,340 @@ class BrokerStoreTests(BrokerFixture):
         self.assertEqual(result["command"]["action"], "send")
         self.assertEqual(result["command"]["status"], "accepted")
         self.assertNotIn("message", result["command"])
+
+
+class BrokerObserverTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
+    async def _read_frame(self, reader: asyncio.StreamReader) -> dict[str, object]:
+        size = int.from_bytes(await reader.readexactly(4), "big")
+        return json.loads(await reader.readexactly(size))
+
+    async def test_authenticated_observer_receives_ephemeral_reports(self) -> None:
+        initialize_broker_run(self.coord, self.manifest, "PRIVATE_TASK", {})
+        broker = Broker(self.coord, self.manifest)
+        run_task = asyncio.create_task(broker.run())
+        try:
+            for _ in range(100):
+                if broker.server is not None:
+                    break
+                await asyncio.sleep(0.01)
+            self.assertIsNotNone(broker.server)
+            reader, writer = await asyncio.open_unix_connection(
+                broker_store.broker_paths(self.coord)["socket"]
+            )
+            token = (self.coord / "control.token").read_text(encoding="ascii").strip()
+            request_id = secrets.token_hex(16)
+            writer.write(
+                encode_frame(
+                    {
+                        "version": BROKER_PROTOCOL_VERSION,
+                        "type": "observe",
+                        "token": token,
+                        "id": request_id,
+                    }
+                )
+            )
+            await writer.drain()
+            response = await self._read_frame(reader)
+            snapshot = await self._read_frame(reader)
+            self.assertEqual(response["status"], "observing")
+            self.assertEqual(snapshot["type"], "snapshot")
+            self.assertEqual(snapshot["state"], "connecting")
+            self.assertEqual(snapshot["report_count"], 0)
+            self.assertTrue(snapshot["report_replay_complete"])
+
+            assignment_id = secrets.token_hex(16)
+            now = broker_store.utc_now()
+            with broker_store.connect_broker_database(self.coord) as database:
+                database.execute(
+                    "INSERT INTO assignments(id,role,round,kind,state,delivery_id,created_at,updated_at) "
+                    "VALUES (?,?,?,?,?,?,?,?)",
+                    (
+                        assignment_id,
+                        "reviewer",
+                        1,
+                        "review",
+                        "accepted",
+                        secrets.token_hex(16),
+                        now,
+                        now,
+                    ),
+                )
+                database.execute(
+                    "UPDATE roles SET active_assignment_id=?,state='active' WHERE role='reviewer'",
+                    (assignment_id,),
+                )
+            worker_writer = mock.Mock()
+            worker_writer.drain = mock.AsyncMock()
+            client = Client("reviewer", mock.Mock(), worker_writer)
+            report = {
+                "kind": "review",
+                "summary": "PRIVATE_EPHEMERAL_REPORT_CANARY",
+                "changed_paths": [],
+                "checks": [],
+                "findings": [],
+                "risks": [],
+                "limitations": [],
+                "verdict": "approved",
+            }
+            with mock.patch.object(
+                broker, "route_report", new=mock.AsyncMock()
+            ) as route_report:
+                await broker.handle_report(
+                    client,
+                    {
+                        "id": secrets.token_hex(16),
+                        "assignment_id": assignment_id,
+                        "report": report,
+                    },
+                )
+            report_event = await self._read_frame(reader)
+            self.assertEqual(report_event["type"], "report")
+            self.assertEqual(report_event["assignment_id"], assignment_id)
+            self.assertEqual(report_event["report"], report)
+            route_report.assert_awaited_once_with("reviewer", 1, report)
+            with broker_store.connect_broker_database(
+                self.coord, readonly=True
+            ) as database:
+                dump = "\n".join(database.iterdump())
+            self.assertNotIn("PRIVATE_EPHEMERAL_REPORT_CANARY", dump)
+            writer.close()
+            await writer.wait_closed()
+        finally:
+            broker.stopping.set()
+            await run_task
+
+    async def test_broken_observer_cannot_block_workflow_broadcast(self) -> None:
+        initialize_broker_run(self.coord, self.manifest, "task", {})
+        broker = Broker(self.coord, self.manifest)
+        writer = mock.Mock()
+        observer = Observer(writer)
+        broker.observers.add(observer)
+        with mock.patch.object(
+            broker,
+            "send_observer",
+            new=mock.AsyncMock(side_effect=RuntimeError("closed transport")),
+        ):
+            await broker.broadcast(
+                {
+                    "version": BROKER_PROTOCOL_VERSION,
+                    "type": "workflow",
+                    "session": self.manifest["session"],
+                    "state": "active",
+                    "round": 1,
+                }
+            )
+        self.assertNotIn(observer, broker.observers)
+        writer.close.assert_called_once_with()
+
+    async def test_observer_snapshot_fails_closed_when_report_replay_was_lost(
+        self,
+    ) -> None:
+        initialize_broker_run(self.coord, self.manifest, "task", {})
+        now = broker_store.utc_now()
+        with broker_store.connect_broker_database(self.coord) as database:
+            database.execute(
+                "INSERT INTO assignments(id,role,round,kind,state,delivery_id,created_at,updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (
+                    "7" * 32,
+                    "reviewer",
+                    1,
+                    "review",
+                    "completed",
+                    "8" * 32,
+                    now,
+                    now,
+                ),
+            )
+            database.execute(
+                "INSERT INTO reports(id,assignment_id,role,round,kind,verdict,summary_chars,"
+                "changed_path_count,check_count,finding_count,risk_count,limitation_count,created_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    "9" * 32,
+                    "7" * 32,
+                    "reviewer",
+                    1,
+                    "review",
+                    "approved",
+                    10,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    now,
+                ),
+            )
+        snapshot = Broker(self.coord, self.manifest).observer_snapshot()
+        self.assertEqual(snapshot["report_count"], 1)
+        self.assertFalse(snapshot["report_replay_complete"])
+
+    async def test_report_routing_failure_notifies_parent_as_uncertain(self) -> None:
+        initialize_broker_run(self.coord, self.manifest, "task", {})
+        broker = Broker(self.coord, self.manifest)
+        assignment_id = "a" * 32
+        now = broker_store.utc_now()
+        with broker_store.connect_broker_database(self.coord) as database:
+            database.execute(
+                "INSERT INTO assignments(id,role,round,kind,state,delivery_id,created_at,updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (
+                    assignment_id,
+                    "reviewer",
+                    1,
+                    "review",
+                    "accepted",
+                    "b" * 32,
+                    now,
+                    now,
+                ),
+            )
+        writer = mock.Mock()
+        writer.drain = mock.AsyncMock()
+        client = Client("reviewer", mock.Mock(), writer)
+        report = {
+            "kind": "review",
+            "summary": "A bounded report.",
+            "verdict": "approved",
+        }
+        with (
+            mock.patch.object(broker, "broadcast", new=mock.AsyncMock()) as broadcast,
+            mock.patch.object(
+                broker,
+                "route_report",
+                new=mock.AsyncMock(
+                    side_effect=RuntimeError("synthetic routing failure")
+                ),
+            ),
+            mock.patch.object(
+                broker, "broadcast_workflow", new=mock.AsyncMock()
+            ) as broadcast_workflow,
+            mock.patch.object(broker, "reply", new=mock.AsyncMock()) as reply,
+        ):
+            with self.assertRaisesRegex(Exception, "routing became uncertain"):
+                await broker.handle_report(
+                    client,
+                    {
+                        "id": "c" * 32,
+                        "assignment_id": assignment_id,
+                        "report": report,
+                    },
+                )
+        broadcast.assert_awaited_once()
+        broadcast_workflow.assert_awaited_once_with("uncertain", 1)
+        reply.assert_not_awaited()
+        snapshot = broker_store.public_broker_snapshot(self.coord)
+        self.assertEqual(snapshot["workflow"]["state"], "uncertain")
+
+    async def test_uncertain_assignment_is_not_blindly_replayed_on_reconnect(
+        self,
+    ) -> None:
+        initialize_broker_run(self.coord, self.manifest, "task", {})
+        broker = Broker(self.coord, self.manifest)
+        now = broker_store.utc_now()
+        with broker_store.connect_broker_database(self.coord) as database:
+            database.execute(
+                "INSERT INTO assignments(id,role,round,kind,state,delivery_id,created_at,updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (
+                    "3" * 32,
+                    "implementer",
+                    1,
+                    "implementation",
+                    "uncertain",
+                    "4" * 32,
+                    now,
+                    now,
+                ),
+            )
+            broker_store.set_meta(database, "workflow_state", "active")
+        writer = mock.Mock()
+        writer.drain = mock.AsyncMock()
+        client = Client("implementer", mock.Mock(), writer)
+        with (
+            mock.patch.object(broker, "send", new=mock.AsyncMock()) as send,
+            mock.patch.object(
+                broker, "broadcast_workflow", new=mock.AsyncMock()
+            ) as broadcast_workflow,
+        ):
+            await broker.recover_role(client)
+        send.assert_not_awaited()
+        broadcast_workflow.assert_awaited_once_with("uncertain", 1)
+        snapshot = broker_store.public_broker_snapshot(self.coord)
+        self.assertEqual(snapshot["workflow"]["state"], "uncertain")
+
+    async def test_settled_assignment_without_report_requires_parent_attention(
+        self,
+    ) -> None:
+        initialize_broker_run(self.coord, self.manifest, "task", {})
+        broker = Broker(self.coord, self.manifest)
+        assignment_id = "d" * 32
+        with broker_store.connect_broker_database(self.coord) as database:
+            now = broker_store.utc_now()
+            database.execute(
+                "INSERT INTO assignments(id,role,round,kind,state,delivery_id,created_at,updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (
+                    assignment_id,
+                    "implementer",
+                    1,
+                    "implementation",
+                    "accepted",
+                    "e" * 32,
+                    now,
+                    now,
+                ),
+            )
+            database.execute(
+                "UPDATE roles SET active_assignment_id=?,state='active' WHERE role='implementer'",
+                (assignment_id,),
+            )
+            broker_store.set_meta(database, "workflow_state", "active")
+        writer = mock.Mock()
+        writer.drain = mock.AsyncMock()
+        client = Client("implementer", mock.Mock(), writer)
+        with mock.patch.object(
+            broker, "broadcast_workflow", new=mock.AsyncMock()
+        ) as broadcast_workflow:
+            await broker.handle_lifecycle(
+                client,
+                {
+                    "state": "waiting",
+                    "usage": None,
+                    "id": "f" * 32,
+                },
+            )
+            snapshot = broker_store.public_broker_snapshot(self.coord)
+            self.assertEqual(snapshot["workflow"]["state"], "needs_attention")
+            await broker.handle_lifecycle(
+                client,
+                {
+                    "state": "active",
+                    "usage": None,
+                    "id": "1" * 32,
+                },
+            )
+            snapshot = broker_store.public_broker_snapshot(self.coord)
+            self.assertEqual(snapshot["workflow"]["state"], "active")
+            await broker.handle_lifecycle(
+                client,
+                {
+                    "state": "uncertain",
+                    "usage": None,
+                    "id": "2" * 32,
+                },
+            )
+        snapshot = broker_store.public_broker_snapshot(self.coord)
+        self.assertEqual(snapshot["workflow"]["state"], "uncertain")
+        self.assertEqual(
+            broadcast_workflow.await_args_list,
+            [
+                mock.call("needs_attention", 1),
+                mock.call("active", 1),
+                mock.call("uncertain", 1),
+            ],
+        )
 
 
 class PromptAndExtensionContractTests(unittest.TestCase):

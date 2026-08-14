@@ -29,12 +29,13 @@ because it cannot display a startup trust prompt.
 
 ## Broker boundary
 
-Every `0.5.0` run uses one local Unix-domain socket:
+Every run created by `0.5.0` or later uses one local Unix-domain socket:
 
 - private run directory mode `0700`;
 - socket, database, manifests, and token files mode `0600`;
 - independent random 128-bit role tokens plus a separate control token;
 - role-scoped report/lifecycle permissions;
+- read-only parent observers authenticated with the control token;
 - same-user peer credential checking where supported;
 - four-byte length-prefixed JSON frames bounded to 256 KiB;
 - bounded report fields, arrays, and canonical encoded size;
@@ -60,10 +61,11 @@ The metadata-only SQLite database retains:
 
 It does not retain task, assignment, report, prompt, message, provider, diff, or
 log bodies. Task and role baseline text enters through one transient private
-startup file deleted immediately after broker ingestion. Report bodies remain
-in Pi's own protected session tool results; recipient context remains in their
-Pi sessions. Pi session files and local backups remain the operator's
-responsibility.
+startup file deleted immediately after broker ingestion. A bounded report replay
+may exist only in live broker memory for authenticated parent observers. Report
+bodies remain in Pi's own protected session tool results; recipient context and
+parent completion/attention updates remain in their Pi sessions. Pi session
+files and local backups remain the operator's responsibility.
 
 The package extension transfers start/message input through unique private
 temporary files so payloads do not enter subprocess argv, status, details,
@@ -88,9 +90,11 @@ Broker/bridge acknowledgement proves acceptance, not task completion.
 - Uncertain work is not blindly replayed and requires explicit retry.
 - The project makes no exactly-once claim.
 
-Idle agents end their turn. The broker and bridge use OS event delivery; agents
-do not poll files, sockets, or tmux and never use sleeps for lifecycle. Bounded
-timeouts detect failures rather than schedule workflow work.
+Idle agents end their turn. A settled worker with an active assignment but no
+report moves the workflow to `needs_attention` for parent intervention. The
+broker and bridge use OS event delivery; agents do not poll files, sockets, or
+tmux and never use sleeps for lifecycle. Bounded timeouts detect failures
+rather than schedule workflow work.
 
 ## Token data
 

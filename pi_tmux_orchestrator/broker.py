@@ -44,12 +44,23 @@ class Client:
     send_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
+@dataclass(eq=False)
+class Observer:
+    writer: asyncio.StreamWriter
+    send_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+
+MAX_OBSERVER_REPORTS = 100
+
+
 class Broker:
     def __init__(self, coord: Path, manifest: dict[str, Any]) -> None:
         self.coord = coord
         self.manifest = manifest
         self.paths = broker_paths(coord)
         self.clients: dict[str, Client] = {}
+        self.observers: set[Observer] = set()
+        self.recent_reports: list[dict[str, Any]] = []
         self.server: asyncio.AbstractServer | None = None
         self.stopping = asyncio.Event()
         self.task_bodies = self._load_startup_payload()
@@ -136,11 +147,13 @@ class Broker:
             pass
 
     async def close_clients(self) -> None:
-        for client in list(self.clients.values()):
-            client.writer.close()
+        writers = [client.writer for client in self.clients.values()]
+        writers.extend(observer.writer for observer in self.observers)
+        for writer in writers:
+            writer.close()
             try:
-                await client.writer.wait_closed()
-            except (BrokenPipeError, ConnectionError):
+                await writer.wait_closed()
+            except (BrokenPipeError, ConnectionError, OSError):
                 pass
 
     async def read_frame(self, reader: asyncio.StreamReader) -> dict[str, Any]:
@@ -193,6 +206,9 @@ class Broker:
             if raw_hello.get("type") == "control":
                 await self.handle_control(reader, writer, raw_hello)
                 return
+            if raw_hello.get("type") == "observe":
+                await self.handle_observer(reader, writer, raw_hello)
+                return
             hello = validate_client_message(raw_hello)
             if hello["type"] != "hello":
                 raise OrchestrationError(
@@ -238,7 +254,7 @@ class Broker:
                         "Worker authentication failed", "unauthorized"
                     )
                 await self.handle_message(client, message)
-        except (asyncio.IncompleteReadError, BrokenPipeError, ConnectionError):
+        except (asyncio.IncompleteReadError, BrokenPipeError, ConnectionError, OSError):
             pass
         except OrchestrationError as error:
             if client is not None:
@@ -250,7 +266,7 @@ class Broker:
                         status=error.code,
                         error=bounded_message(error),
                     )
-                except (BrokenPipeError, ConnectionError):
+                except (BrokenPipeError, ConnectionError, OSError):
                     pass
         finally:
             if client is not None and self.clients.get(client.role) is client:
@@ -269,7 +285,7 @@ class Broker:
             writer.close()
             try:
                 await writer.wait_closed()
-            except (BrokenPipeError, ConnectionError):
+            except (BrokenPipeError, ConnectionError, OSError):
                 pass
 
     async def read_raw_frame(self, reader: asyncio.StreamReader) -> dict[str, Any]:
@@ -294,6 +310,117 @@ class Broker:
     ) -> None:
         writer.write(encode_frame(value))
         await writer.drain()
+
+    async def send_observer(self, observer: Observer, value: dict[str, Any]) -> None:
+        async with observer.send_lock:
+            await self.send_raw(observer.writer, value)
+
+    async def broadcast(self, value: dict[str, Any]) -> None:
+        if not self.observers:
+            return
+
+        async def deliver(observer: Observer) -> None:
+            try:
+                await asyncio.wait_for(self.send_observer(observer, value), timeout=1.0)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                self.observers.discard(observer)
+                observer.writer.close()
+
+        await asyncio.gather(*(deliver(observer) for observer in list(self.observers)))
+
+    def observer_snapshot(self) -> dict[str, Any]:
+        with connect_broker_database(self.coord, readonly=True) as database:
+            state = database.execute(
+                "SELECT value FROM meta WHERE key='workflow_state'"
+            ).fetchone()["value"]
+            round_number = int(
+                database.execute("SELECT value FROM meta WHERE key='round'").fetchone()[
+                    "value"
+                ]
+            )
+            roles = [
+                {"role": row["role"], "state": row["state"]}
+                for row in database.execute(
+                    "SELECT role,state FROM roles ORDER BY role"
+                )
+            ]
+            report_count = database.execute(
+                "SELECT COUNT(*) AS count FROM reports"
+            ).fetchone()["count"]
+        return {
+            "version": BROKER_PROTOCOL_VERSION,
+            "type": "snapshot",
+            "session": self.manifest["session"],
+            "state": state,
+            "round": round_number,
+            "roles": roles,
+            "report_count": report_count,
+            "report_replay_complete": report_count <= len(self.recent_reports),
+        }
+
+    async def broadcast_workflow(self, state: str, round_number: int) -> None:
+        await self.broadcast(
+            {
+                "version": BROKER_PROTOCOL_VERSION,
+                "type": "workflow",
+                "session": self.manifest["session"],
+                "state": state,
+                "round": round_number,
+            }
+        )
+
+    async def handle_observer(
+        self,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+        message: dict[str, Any],
+    ) -> None:
+        if (
+            set(message) != {"version", "type", "token", "id"}
+            or message.get("version") != BROKER_PROTOCOL_VERSION
+        ):
+            raise OrchestrationError("Observer hello is invalid", "invalid_protocol")
+        request_id = message.get("id")
+        token = message.get("token")
+        if (
+            not isinstance(request_id, str)
+            or not RPC_TOKEN_PATTERN.fullmatch(request_id)
+            or not isinstance(token, str)
+            or not RPC_TOKEN_PATTERN.fullmatch(token)
+        ):
+            raise OrchestrationError("Observer identity is invalid", "invalid_protocol")
+        with connect_broker_database(self.coord, readonly=True) as database:
+            stored_token = database.execute(
+                "SELECT value FROM meta WHERE key='control_token'"
+            ).fetchone()["value"]
+        if not secrets.compare_digest(stored_token, token):
+            raise OrchestrationError("Observer authentication failed", "unauthorized")
+
+        observer = Observer(writer)
+        self.observers.add(observer)
+        try:
+            await self.send_observer(
+                observer,
+                {
+                    "version": BROKER_PROTOCOL_VERSION,
+                    "type": "response",
+                    "id": request_id,
+                    "success": True,
+                    "status": "observing",
+                },
+            )
+            for report in list(self.recent_reports):
+                await self.send_observer(observer, report)
+            await self.send_observer(observer, self.observer_snapshot())
+            unexpected = await reader.read(1)
+            if unexpected:
+                raise OrchestrationError(
+                    "Observer connections are read-only", "invalid_protocol"
+                )
+        finally:
+            self.observers.discard(observer)
 
     async def handle_control(
         self,
@@ -336,6 +463,7 @@ class Broker:
             raise OrchestrationError(
                 "Control message fields are invalid", "invalid_protocol"
             )
+        resumed_round: int | None = None
         with connect_broker_database(self.coord) as database:
             stored_token = database.execute(
                 "SELECT value FROM meta WHERE key='control_token'"
@@ -377,13 +505,20 @@ class Broker:
             else:
                 status = "accepted"
                 if action == "send":
+                    current_round = self.current_round(database)
                     await self.deliver(
                         role,
                         "operator_message",
-                        self.current_round(database),
+                        current_round,
                         body.strip(),
                         trigger=True,
                     )
+                    workflow_state = database.execute(
+                        "SELECT value FROM meta WHERE key='workflow_state'"
+                    ).fetchone()["value"]
+                    if workflow_state == "needs_attention":
+                        set_meta(database, "workflow_state", "active")
+                        resumed_round = current_round
                 else:
                     await self.send(
                         self.clients[role],
@@ -417,6 +552,8 @@ class Broker:
                 "duplicate": False,
             },
         )
+        if resumed_round is not None:
+            await self.broadcast_workflow("active", resumed_round)
 
     def current_round(self, database: Any) -> int:
         return int(
@@ -462,25 +599,40 @@ class Broker:
             ).fetchone()
         if assignment is None:
             return
-        if assignment["state"] == "delivering":
+        if assignment["state"] in {"delivering", "uncertain"}:
             with connect_broker_database(self.coord) as database:
-                database.execute(
-                    "UPDATE assignments SET state='uncertain',updated_at=? WHERE id=?",
-                    (utc_now(), assignment["id"]),
-                )
+                if assignment["state"] == "delivering":
+                    database.execute(
+                        "UPDATE assignments SET state='uncertain',updated_at=? WHERE id=?",
+                        (utc_now(), assignment["id"]),
+                    )
+                    record_event(
+                        database,
+                        "assignment_uncertain",
+                        role=client.role,
+                        round_number=assignment["round"],
+                        assignment_id=assignment["id"],
+                        delivery_id=assignment["delivery_id"],
+                        status="uncertain",
+                    )
                 database.execute(
                     "UPDATE roles SET state='uncertain',updated_at=? WHERE role=?",
                     (utc_now(), client.role),
                 )
-                record_event(
-                    database,
-                    "assignment_uncertain",
-                    role=client.role,
-                    round_number=assignment["round"],
-                    assignment_id=assignment["id"],
-                    delivery_id=assignment["delivery_id"],
-                    status="uncertain",
-                )
+                workflow_state = database.execute(
+                    "SELECT value FROM meta WHERE key='workflow_state'"
+                ).fetchone()["value"]
+                if workflow_state != "uncertain":
+                    set_meta(database, "workflow_state", "uncertain")
+                    record_event(
+                        database,
+                        "workflow_uncertain",
+                        role=client.role,
+                        round_number=assignment["round"],
+                        assignment_id=assignment["id"],
+                        status="uncertain",
+                    )
+            await self.broadcast_workflow("uncertain", assignment["round"])
             return
         await self.send(
             client,
@@ -510,6 +662,10 @@ class Broker:
         for role in self.manifest["roles"]:
             baseline = self._baseline(role)
             await self.deliver(role, "baseline", 1, baseline, trigger=False)
+        with connect_broker_database(self.coord) as database:
+            set_meta(database, "workflow_state", "active")
+            record_event(database, "workflow_active", status="active")
+        await self.broadcast_workflow("active", 1)
         await self.assign(
             "implementer", "implementation", 1, self._assignment("implementer", 1)
         )
@@ -520,9 +676,6 @@ class Broker:
         except FileNotFoundError:
             pass
         self.task_bodies = {"task": ""}
-        with connect_broker_database(self.coord) as database:
-            set_meta(database, "workflow_state", "active")
-            record_event(database, "workflow_active", status="active")
 
     def _baseline(self, role: str) -> str:
         role_guidance = self.task_bodies.get(role, "")
@@ -634,6 +787,7 @@ class Broker:
             raise OrchestrationError(
                 "Delivery acknowledgement is invalid", "invalid_protocol"
             )
+        uncertain_round: int | None = None
         with connect_broker_database(self.coord) as database:
             assignment = database.execute(
                 "SELECT id,round FROM assignments WHERE delivery_id=? AND role=?",
@@ -658,6 +812,24 @@ class Broker:
                     delivery_id=message["delivery_id"],
                     status=state,
                 )
+                if state == "uncertain":
+                    uncertain_round = assignment["round"]
+                    database.execute(
+                        "UPDATE roles SET state='uncertain',updated_at=? WHERE role=?",
+                        (utc_now(), client.role),
+                    )
+                    set_meta(database, "workflow_state", "uncertain")
+                    record_event(
+                        database,
+                        "workflow_uncertain",
+                        role=client.role,
+                        round_number=uncertain_round,
+                        assignment_id=assignment["id"],
+                        delivery_id=message["delivery_id"],
+                        status="uncertain",
+                    )
+        if uncertain_round is not None:
+            await self.broadcast_workflow("uncertain", uncertain_round)
         await self.reply(client, message["id"], True, status="recorded")
 
     async def handle_lifecycle(self, client: Client, message: dict[str, Any]) -> None:
@@ -693,6 +865,76 @@ class Broker:
                 f"UPDATE roles SET {','.join(changes)} WHERE role=?", values
             )
             record_event(database, "worker_lifecycle", role=client.role, status=state)
+        workflow_transition: str | None = None
+        round_number: int | None = None
+        if state in {"active", "waiting", "uncertain"}:
+            with connect_broker_database(self.coord) as database:
+                active_assignment = database.execute(
+                    "SELECT active_assignment_id FROM roles WHERE role=?",
+                    (client.role,),
+                ).fetchone()["active_assignment_id"]
+                workflow_state = database.execute(
+                    "SELECT value FROM meta WHERE key='workflow_state'"
+                ).fetchone()["value"]
+                if (
+                    state == "uncertain"
+                    and active_assignment
+                    and workflow_state not in {"ready", "uncertain"}
+                ):
+                    workflow_transition = "uncertain"
+                    round_number = self.current_round(database)
+                    set_meta(database, "workflow_state", workflow_transition)
+                    record_event(
+                        database,
+                        "workflow_uncertain",
+                        role=client.role,
+                        round_number=round_number,
+                        assignment_id=active_assignment,
+                        status=workflow_transition,
+                    )
+                elif (
+                    state == "waiting"
+                    and active_assignment
+                    and workflow_state not in {"ready", "uncertain", "needs_attention"}
+                ):
+                    workflow_transition = "needs_attention"
+                    round_number = self.current_round(database)
+                    set_meta(database, "workflow_state", workflow_transition)
+                    record_event(
+                        database,
+                        "workflow_needs_attention",
+                        role=client.role,
+                        round_number=round_number,
+                        assignment_id=active_assignment,
+                        status=workflow_transition,
+                    )
+                elif (
+                    state == "active"
+                    and active_assignment
+                    and workflow_state == "needs_attention"
+                ):
+                    workflow_transition = "active"
+                    round_number = self.current_round(database)
+                    set_meta(database, "workflow_state", workflow_transition)
+                    record_event(
+                        database,
+                        "workflow_resumed",
+                        role=client.role,
+                        round_number=round_number,
+                        assignment_id=active_assignment,
+                        status=workflow_transition,
+                    )
+        await self.broadcast(
+            {
+                "version": BROKER_PROTOCOL_VERSION,
+                "type": "lifecycle",
+                "session": self.manifest["session"],
+                "role": client.role,
+                "state": state,
+            }
+        )
+        if workflow_transition is not None and round_number is not None:
+            await self.broadcast_workflow(workflow_transition, round_number)
         await self.reply(client, message["id"], True, status="recorded")
 
     def _valid_usage(self, usage: object) -> bool:
@@ -787,8 +1029,38 @@ class Broker:
                 assignment_id=assignment_id,
                 status=report["verdict"] or "completed",
             )
+        report_event = {
+            "version": BROKER_PROTOCOL_VERSION,
+            "type": "report",
+            "session": self.manifest["session"],
+            "id": report_id,
+            "assignment_id": assignment_id,
+            "role": client.role,
+            "round": assignment["round"],
+            "report": report,
+        }
+        self.recent_reports.append(report_event)
+        if len(self.recent_reports) > MAX_OBSERVER_REPORTS:
+            del self.recent_reports[: len(self.recent_reports) - MAX_OBSERVER_REPORTS]
+        await self.broadcast(report_event)
+        try:
+            await self.route_report(client.role, assignment["round"], report)
+        except Exception as error:
+            with connect_broker_database(self.coord) as database:
+                set_meta(database, "workflow_state", "uncertain")
+                record_event(
+                    database,
+                    "workflow_uncertain",
+                    role=client.role,
+                    round_number=assignment["round"],
+                    assignment_id=assignment_id,
+                    status="uncertain",
+                )
+            await self.broadcast_workflow("uncertain", assignment["round"])
+            raise OrchestrationError(
+                "Report routing became uncertain", "broker_uncertain"
+            ) from error
         await self.reply(client, message["id"], True, status="accepted")
-        await self.route_report(client.role, assignment["round"], report)
 
     def _report_context(self, role: str, report: dict[str, Any]) -> str:
         return (
@@ -863,6 +1135,7 @@ class Broker:
                         round_number=round_number,
                         status="ready",
                     )
+                await self.broadcast_workflow("ready", round_number)
                 human_print(f"Workflow approved and ready at round {round_number}.")
                 return
             await self.deliver(
@@ -872,6 +1145,7 @@ class Broker:
             with connect_broker_database(self.coord) as database:
                 set_meta(database, "round", str(next_round))
                 set_meta(database, "workflow_state", "active")
+            await self.broadcast_workflow("active", next_round)
             await self.assign(
                 "implementer",
                 "implementation",

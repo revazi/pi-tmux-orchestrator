@@ -29,7 +29,8 @@ Thinking levels are `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and
 `max`.
 
 All newly started runs use broker protocol v1. `--rpc-workers` does not select a
-different coordination protocol.
+different coordination protocol. RPC panes render assistant progress and
+bounded tool inputs/results; interactive TUI panes retain native Pi rendering.
 
 ### `list`
 
@@ -91,6 +92,20 @@ pi-tmux-agents --json supervisor events SESSION --run RUN_ID \
 
 Host liveness is `not_observed`; retained PIDs do not imply a running process.
 
+## Parent Pi supervision
+
+When the package extension starts a run, the invoking Pi opens an authenticated,
+read-only broker observer. Tmux remains the live worker view. The observer does
+not mirror raw worker logs into the parent; it sends bounded structured role
+reports when the workflow becomes `ready`, and sends attention/uncertainty
+updates when parent intervention is required. Those updates trigger the parent
+Pi to assess results and decide follow-up.
+
+Observer report bodies are bounded, held only in broker memory while live, and
+stored only in the relevant Pi sessions. They are excluded from SQLite, status,
+journals, registries, and Supervisor API output. Terminal-started detached runs
+remain supported without a parent observer.
+
 ## Event-driven workflow
 
 1. Every worker bridge connects to the owner-only run socket.
@@ -101,6 +116,7 @@ Host liveness is `not_observed`; retained PIDs do not imply a running process.
 6. The broker supplies all evidence to the reviewer and wakes it once.
 7. `changes_requested` supplies one bounded review to the implementer and starts the next round.
 8. `approved` marks the run ready without waking the implementer for an acknowledgement turn.
+9. An attached parent observer returns the latest structured reports to the parent Pi.
 
 The terminating report tool avoids an extra post-report provider turn. Idle
 agents end their turn and never sleep or poll. Timeouts detect failure; they do
@@ -125,7 +141,7 @@ payload files, or relay-seen files. The database excludes task, assignment,
 report, prompt, message, provider, diff, and log bodies.
 
 Retained manifests from `0.4.x` remain compatible with legacy readers and
-controls. There is no option to start that protocol in `0.5.0`.
+controls. There is no option to start that protocol in current releases.
 
 ## Token accounting and budgets
 
@@ -186,8 +202,9 @@ using model turns. A transition in an unprovable window remains `uncertain`.
 ### Worker is `waiting`
 
 Pi settled while an assignment remained open, usually because it did not call
-`orchestrator_report`. Send one focused reminder or restart the role; the broker
-does not run an unlimited reminder loop.
+`orchestrator_report`. The broker marks the workflow `needs_attention` and an
+attached parent Pi receives an event-driven update. Send one focused reminder
+or restart the role; the broker does not run an unlimited reminder loop.
 
 ### Broker pane exited
 

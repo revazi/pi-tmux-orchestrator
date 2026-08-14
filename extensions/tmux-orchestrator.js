@@ -3,6 +3,13 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomUUID } from "node:crypto";
+import {
+  attachParentObserver,
+  brokerFrame,
+  PARENT_MESSAGE_TYPE,
+  parentUpdateContent,
+  validateObserverFrame,
+} from "./orchestrator-parent.js";
 
 const CLI_PATH = fileURLToPath(new URL("../bin/pi-tmux-agents", import.meta.url));
 const MAX_VISIBLE_CHARS = 12_000;
@@ -18,6 +25,7 @@ const COMMAND_OVERVIEW = [
   "/orchestrator-stop [session] — confirm and stop one exact session",
   "/orchestrate — backward-compatible alias for /orchestrator-start",
   "/orchestrations — backward-compatible alias for /orchestrator-list",
+  "Tmux panes show live worker activity; structured ready/attention reports return to the Pi that starts the run.",
   "Attach, supervisor API reads, RPC events/abort, and restart remain terminal-only: attach takes over the terminal; supervisor/events/abort require RPC workers; restart requires explicit CLI confirmation and configuration.",
 ].join("\n");
 
@@ -222,7 +230,9 @@ const successSummaries = {
     return `${data.session}: ${data.roles?.length || 0} roles, ${data.panes?.length || 0} panes, ${data.files?.length || 0} status files`;
   },
   start(data) {
-    return data.dry_run ? `Validated ${data.session}` : `Started ${data.session}`;
+    return data.dry_run
+      ? `Validated ${data.session}`
+      : `Started ${data.session}; watch the tmux panes for live work. Structured final reports will return to this parent Pi.`;
   },
   send(data) {
     return data.acknowledged
@@ -260,7 +270,7 @@ function notifyEnvelope(ctx, envelope) {
   return message;
 }
 
-async function executeAction(pi, input, signal, ctx) {
+async function executeAction(pi, input, signal, ctx, superviseStart = () => {}) {
   let envelope;
   try {
     switch (input.action) {
@@ -273,6 +283,7 @@ async function executeAction(pi, input, signal, ctx) {
         break;
       case "start":
         envelope = await runStart(pi, input, signal, ctx);
+        if (envelope.success && !envelope.data?.dry_run) superviseStart(envelope);
         break;
       case "send":
         envelope = await runSend(pi, input, signal);
@@ -319,7 +330,7 @@ async function runCommandCli(pi, action, args, ctx) {
   }
 }
 
-function createCommandHandlers(pi) {
+function createCommandHandlers(pi, superviseStart = () => {}) {
   const help = async (_args, ctx) => {
     ctx.ui.notify(bounded(COMMAND_OVERVIEW, 2400), "info");
   };
@@ -366,6 +377,7 @@ function createCommandHandlers(pi) {
         ctx.signal,
         ctx,
       );
+      if (envelope.success && !envelope.data?.dry_run) superviseStart(envelope);
       notifyEnvelope(ctx, envelope);
     } catch {
       notifyCommandFailure(ctx, "start");
@@ -417,21 +429,63 @@ function createCommandHandlers(pi) {
 }
 
 export default function tmuxOrchestratorExtension(pi) {
+  const observers = new Map();
+  let shuttingDown = false;
+
+  function superviseStart(envelope) {
+    const coordination = envelope.data?.paths?.coordination;
+    if (typeof coordination !== "string" || !coordination || observers.has(coordination) || shuttingDown) return;
+    const observer = { closed: false, socket: undefined, timer: undefined, stop: undefined };
+    observer.stop = () => {
+      if (observer.closed) return;
+      observer.closed = true;
+      if (observer.timer) clearTimeout(observer.timer);
+      if (observer.socket) observer.socket.destroy();
+      observers.delete(coordination);
+    };
+    observers.set(coordination, observer);
+    void attachParentObserver(pi, envelope, observer, () => observers.delete(coordination)).catch(() => {
+      observers.delete(coordination);
+      if (shuttingDown || observer.closed) return;
+      observer.closed = true;
+      const update = parentUpdateContent(envelope.data?.session || "unknown", "uncertain", null, []);
+      try {
+        pi.sendMessage(
+          {
+            customType: PARENT_MESSAGE_TYPE,
+            content: update.content,
+            display: true,
+            details: {
+              session: envelope.data?.session || null,
+              state: "uncertain",
+              round: null,
+              report_roles: [],
+              omitted_reports: 0,
+            },
+          },
+          { triggerTurn: true, deliverAs: "followUp" },
+        );
+      } catch {
+        // The parent session may already be shutting down.
+      }
+    });
+  }
+
   pi.registerTool({
     name: "tmux_orchestrator",
     label: "Tmux Orchestrator",
-    description: "Delegate bounded doctor, list, status, start, or send actions to the bundled Python tmux orchestrator. New runs use an event-driven private broker with TUI or RPC worker presentation and always require interactive confirmation. Output is metadata-only and bounded.",
+    description: "Supervise bounded doctor, list, status, start, or send actions through the bundled Python tmux orchestrator. New runs show live work in tmux and return bounded structured reports to this parent Pi through an event-driven private broker. Start always requires interactive confirmation.",
     promptSnippet: "Inspect or operate local Pi tmux orchestrations through the authoritative Python CLI",
     promptGuidelines: [
-      "Use tmux_orchestrator instead of rebuilding tmux orchestration state; never create file handoffs, poll coordination state, claim parent project trust applies to child Pi sessions, or equate command acknowledgement with task completion.",
+      "Use tmux_orchestrator instead of rebuilding tmux orchestration state; the parent Pi remains responsible for interpreting final reports and deciding follow-up. Never create file handoffs, poll coordination state, claim parent project trust applies to child Pi sessions, or equate command acknowledgement with task completion.",
     ],
     parameters,
     execute(_toolCallId, input, signal, _onUpdate, ctx) {
-      return executeAction(pi, input, signal, ctx);
+      return executeAction(pi, input, signal, ctx, superviseStart);
     },
   });
 
-  const commandHandlers = createCommandHandlers(pi);
+  const commandHandlers = createCommandHandlers(pi, superviseStart);
   pi.registerCommand("orchestrator-help", {
     description: "Show the bounded tmux orchestrator command overview",
     handler: commandHandlers.help,
@@ -469,6 +523,11 @@ export default function tmuxOrchestratorExtension(pi) {
     handler: commandHandlers.list,
   });
 
+  pi.on("session_shutdown", () => {
+    shuttingDown = true;
+    for (const observer of observers.values()) observer.stop();
+    observers.clear();
+  });
   pi.on("session_before_switch", async (_event, ctx) => {
     if (!isControllerMode()) return undefined;
     ctx.ui.notify("The controller uses one fixed persistent Pi session; stop it from the terminal to leave.", "warning");
@@ -489,6 +548,10 @@ export const testHooks = {
   isControllerMode,
   oneLineJson,
   runCli,
+  attachParentObserver,
+  brokerFrame,
+  parentUpdateContent,
   runStart,
+  validateObserverFrame,
   withPrivateFiles,
 };

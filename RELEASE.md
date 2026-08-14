@@ -41,6 +41,7 @@ This checklist prepares a human-controlled release. It does not authorize public
 - [ ] Confirm the slash surface omits attach/supervisor/restart, aliases share start/list handlers, start/stop confirmations remain mandatory, and interactive send never exposes message text outside its unique private file.
 - [ ] Confirm Supervisor API v2 reads retained sessions/runs/snapshots/events without tmux, preserves cursor gaps/bounds, labels host runtime `not_observed`, exposes actual provider usage only, and broker send/abort retains idempotent acceptance-versus-completion semantics.
 - [ ] Confirm every new manifest is v3/`broker-v1`, no legacy coordination option exists, workflow payloads stay out of SQLite/status, TUI/RPC share the bridge, agents do not poll or sleep, and tmux hosts/monitors rather than transports workflow messages.
+- [ ] Confirm RPC panes show bounded assistant/tool input/tool output content, parent observer reports return only to the invoking Pi session, `needs_attention` is event-driven, and observer report bodies never enter SQLite or metadata APIs.
 - [ ] Confirm npm, reviewed-Git-commit, and local-path installation guidance is current.
 - [ ] Confirm the isolated offline `npm publish --dry-run` succeeds. It uses empty npm configuration, scripts disabled, offline mode, and a loopback registry; it is not a registry acceptance test.
 - [ ] Record the clean source commit and inspect the generated tarball as release evidence. Remove the disposable artifact after review; normal publication runs from the approved repository root.
