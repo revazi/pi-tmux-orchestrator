@@ -40,7 +40,7 @@ Do not push feature work directly to `main` after the initial repository bootstr
 - Shell syntax checks
 - A model-free tmux functional smoke covering all roles, broker/bridge lifecycle, and exact session targeting
 - CLI help and an all-role dry-run
-- Node built-in extension tests for the exact nine-command surface, shared aliases, delegation, trust/confirmation, bounded errors, and private send cancellation/cleanup/redaction
+- Node built-in extension tests for the exact ten-command surface, shared aliases, parent watch/lifecycle delivery, delegation, trust/confirmation, bounded errors, and private send cancellation/cleanup/redaction
 - deterministic manifest and `npm pack --dry-run --json` checks
 - exact inspection and disposable installation of the deterministic modular tarball, including broker/bridge and MIT/author metadata
 - isolated `pi install` of the npm-installed package root followed by RPC `get_commands` discovery without `--extension`, requiring exact package provenance

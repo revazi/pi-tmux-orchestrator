@@ -79,7 +79,7 @@ test("registers one bounded model tool and the exact canonical/alias command sur
   const { tool, tools, commands, events } = harness(async () => ({ code: 0, stdout: "" }));
   assert.equal(tools.length, 1);
   assert.equal(tool.name, "tmux_orchestrator");
-  assert.deepEqual(tool.parameters.properties.action.enum, ["doctor", "list", "status", "start", "send"]);
+  assert.deepEqual(tool.parameters.properties.action.enum, ["doctor", "list", "status", "watch", "start", "send"]);
   assert.equal(tool.parameters.properties.action.enum.includes("restart"), false);
   assert.equal(tool.parameters.properties.action.enum.includes("stop"), false);
   assert.equal(tool.renderCall, undefined);
@@ -92,6 +92,7 @@ test("registers one bounded model tool and the exact canonical/alias command sur
       "orchestrator-start",
       "orchestrator-list",
       "orchestrator-status",
+      "orchestrator-watch",
       "orchestrator-send",
       "orchestrator-stop",
       "orchestrate",
@@ -130,6 +131,26 @@ test("authenticated broker observer returns structured final reports to the pare
         }));
         socket.write(testHooks.brokerFrame({
           version: 1,
+          type: "snapshot",
+          session,
+          state: "active",
+          round: 2,
+          roles: [
+            { role: "implementer", state: "idle" },
+            { role: "reviewer", state: "active" },
+          ],
+          report_count: 0,
+          report_replay_complete: true,
+        }));
+        socket.write(testHooks.brokerFrame({
+          version: 1,
+          type: "lifecycle",
+          session,
+          role: "reviewer",
+          state: "waiting",
+        }));
+        socket.write(testHooks.brokerFrame({
+          version: 1,
           type: "report",
           session,
           id: reportId,
@@ -149,9 +170,15 @@ test("authenticated broker observer returns structured final reports to the pare
     });
     const observer = { closed: false, socket: undefined, timer: undefined, stop: () => {} };
     let stopped = false;
+    const deliveredMessages = [];
     const parentMessage = new Promise((resolve) => {
       void testHooks.attachParentObserver(
-        { sendMessage: (message, options) => resolve({ message, options }) },
+        {
+          sendMessage: (message, options) => {
+            deliveredMessages.push({ message, options });
+            if (message.details.state === "ready") resolve({ message, options });
+          },
+        },
         {
           data: {
             session,
@@ -169,6 +196,14 @@ test("authenticated broker observer returns structured final reports to the pare
     assert.match(delivered.message.content, /The implementation is ready/);
     assert.deepEqual(delivered.options, { triggerTurn: true, deliverAs: "followUp" });
     assert.equal(stopped, true);
+    const progress = deliveredMessages.filter(({ message }) => message.details.event);
+    assert.deepEqual(progress.map(({ message }) => message.details.event), ["attached", "lifecycle", "report"]);
+    assert.ok(progress.every(({ options }) => (
+      options.triggerTurn === false && options.deliverAs === "followUp"
+    )));
+    assert.match(progress[0].message.content, /Parent supervision attached/);
+    assert.match(progress[1].message.content, /reviewer is now waiting/);
+    assert.doesNotMatch(progress[2].message.content, /The implementation is ready/);
   } finally {
     await new Promise((resolve) => server?.close(resolve) ?? resolve());
     await rm(directory, { recursive: true, force: true });
@@ -195,6 +230,23 @@ test("observer snapshots require bounded report replay metadata", () => {
     () => testHooks.validateObserverFrame({ version: 1, type: "toString", session: "pi-test" }, "pi-test", "a".repeat(32)),
     /unsupported_observer_frame/,
   );
+});
+
+test("parent lifecycle progress is bounded and makes completion state legible", () => {
+  const content = testHooks.parentProgressContent(
+    "pi-test",
+    "active",
+    3,
+    [
+      { role: "reviewer", state: "waiting" },
+      { role: "implementer", state: "idle" },
+    ],
+    { kind: "lifecycle", role: "reviewer", workerState: "waiting" },
+  );
+  assert.match(content, /Workflow: active/);
+  assert.match(content, /reviewer is now waiting/);
+  assert.match(content, /implementer: idle/);
+  assert.ok(content.length <= 8 * 1024);
 });
 
 test("parent updates keep only the latest bounded report per role", () => {
@@ -224,8 +276,8 @@ test("help is bounded, subprocess-free, and documents terminal-only operations",
   const message = ctx.calls.notifications[0].message;
   assert.ok(message.length <= 2400);
   assert.match(message, /\/orchestrator-start/);
-  assert.match(message, /\/orchestrator-send/);
-  assert.match(message, /Attach, supervisor API reads, RPC events\/abort, and restart remain terminal-only/);
+  assert.match(message, /\/orchestrator-watch/);
+  assert.match(message, /Terminal tmux attach/);
   assert.equal(message.includes("PRIVATE_HELP_ARGUMENT"), false);
 });
 
@@ -239,7 +291,14 @@ test("doctor, list alias, and status commands delegate exact bounded JSON CLI ac
     const data = action === "list"
       ? { sessions: [{ session: "pi-one", project: "/tmp/project" }] }
       : action === "status"
-        ? { session: args[3] || "pi-current", roles: [], panes: [], files: [] }
+        ? {
+            session: args[3] || "pi-current",
+            roles: [], panes: [], files: [],
+            broker: {
+              workflow: { state: "ready", round: 4 },
+              roles: [{ role: "reviewer", state: "idle" }],
+            },
+          }
         : { commands: [] };
     return { code: 0, stdout: JSON.stringify(success(action, data)) };
   });
@@ -257,6 +316,7 @@ test("doctor, list alias, and status commands delegate exact bounded JSON CLI ac
   assert.equal(ctx.calls.widgets.length, 0);
   assert.equal(ctx.calls.statuses.length, 0);
   assert.ok(ctx.calls.notifications.every(({ message }) => message.length <= 800));
+  assert.ok(ctx.calls.notifications.some(({ message }) => message.includes("workflow=ready round=4")));
 });
 
 test("slash-command failures are bounded and redact raw subprocess errors", async () => {
@@ -285,6 +345,55 @@ test("passes cancellation to pi.exec and consumes only the JSON envelope", async
   const result = await tool.execute("call", { action: "doctor" }, signal, undefined, context({ signal }));
   assert.match(result.content[0].text, /checks complete/i);
   assert.equal(result.details.command, "doctor");
+});
+
+test("watch attaches the parent through an exact metadata-only status lookup", async () => {
+  const seen = [];
+  let supervised;
+  const pi = {
+    exec: async (command, args) => {
+      seen.push([command, args]);
+      return {
+        code: 0,
+        stdout: JSON.stringify(success("status", {
+          session: "pi-existing",
+          project: "/tmp/project",
+          paths: { coordination: "/tmp/run", observer_socket: "/tmp/broker.sock" },
+          broker: {
+            workflow: { state: "active", round: 2 },
+            roles: [
+              { role: "implementer", state: "idle" },
+              { role: "reviewer", state: "active" },
+            ],
+          },
+          roles: [{ name: "implementer" }, { name: "reviewer" }],
+          panes: [{ id: "%1" }, { id: "%2" }, { id: "%3" }],
+          files: [],
+        })),
+      };
+    },
+  };
+  const result = await testHooks.executeAction(
+    pi,
+    { action: "watch", session: " pi-existing " },
+    undefined,
+    context(),
+    async (envelope) => { supervised = envelope; },
+  );
+  assert.deepEqual(seen[0][1].slice(1), ["--json", "status", "pi-existing"]);
+  assert.equal(supervised.command, "status");
+  assert.equal(result.details.command, "watch");
+  assert.match(result.content[0].text, /watching pi-existing/);
+  assert.match(result.content[0].text, /active, round 2/);
+
+  await testHooks.executeAction(
+    pi,
+    { action: "watch" },
+    undefined,
+    context(),
+    async () => {},
+  );
+  assert.deepEqual(seen[1][1].slice(1), ["--json", "status"]);
 });
 
 test("start previews CLI policy, keeps private text out of argv, and cleans mode-0600 files", async () => {

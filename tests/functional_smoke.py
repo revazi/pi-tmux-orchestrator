@@ -326,6 +326,8 @@ def main() -> int:
         if (
             status.data["broker"]["workflow"]["state"] != "active"
             or status.data["files"]
+            or status.data["paths"].get("observer_socket")
+            != str(ORCHESTRATOR.broker_paths(coord)["socket"])
         ):
             raise AssertionError("status did not expose broker-only metadata")
         supervisor = ORCHESTRATOR.supervisor_snapshot(session, coord.name)

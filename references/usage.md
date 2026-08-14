@@ -95,16 +95,25 @@ Host liveness is `not_observed`; retained PIDs do not imply a running process.
 ## Parent Pi supervision
 
 When the package extension starts a run, the invoking Pi opens an authenticated,
-read-only broker observer. Tmux remains the live worker view. The observer does
-not mirror raw worker logs into the parent; it sends bounded structured role
-reports when the workflow becomes `ready`, and sends attention/uncertainty
-updates when parent intervention is required. Those updates trigger the parent
-Pi to assess results and decide follow-up.
+read-only broker observer. Use `/orchestrator-watch SESSION` or the model tool's
+`watch` action to attach the current parent Pi to a compatible existing run.
+This parent attachment does not take over the terminal; terminal `attach`
+continues to open the tmux grid.
+
+Tmux remains the live worker view. The observer does not mirror raw worker logs
+into the parent. It shows bounded non-triggering lifecycle and report-received
+progress, sends bounded structured role reports when the workflow becomes
+`ready`, and sends attention/uncertainty updates when parent intervention is
+required. Terminal updates trigger the parent Pi to assess results and decide
+follow-up. Metadata-only `status` summaries include the workflow and role states
+so completion is legible even before an observer is attached.
 
 Observer report bodies are bounded, held only in broker memory while live, and
 stored only in the relevant Pi sessions. They are excluded from SQLite, status,
-journals, registries, and Supervisor API output. Terminal-started detached runs
-remain supported without a parent observer.
+journals, registries, and Supervisor API output. Terminal-started detached runs remain supported without a parent observer.
+Parent observation requires a broker process from `0.6.0` or later; retained
+runs hosted by an older broker remain status-readable but cannot be retrofitted
+with live report observation.
 
 ## Event-driven workflow
 

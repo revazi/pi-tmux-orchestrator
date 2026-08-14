@@ -306,6 +306,60 @@ class JsonMainTests(unittest.TestCase):
             self.assert_envelope(envelope, "stop", True)
             self.assertTrue(envelope["data"]["state_retained"])
 
+    def test_broker_status_exposes_parent_observer_endpoint(self) -> None:
+        manifest = {
+            "version": 3,
+            "project": str(ROOT),
+            "window": ORCHESTRATOR.WINDOW,
+            "transport": ORCHESTRATOR.TUI_TRANSPORT,
+            "coordination": ORCHESTRATOR.BROKER_COORDINATION,
+            "roles": {},
+        }
+        broker_snapshot = {
+            "workflow": {"state": "ready", "round": 2},
+            "usage": {
+                "total_tokens": 0,
+                "soft_total_budget_exceeded": False,
+            },
+            "roles": [],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            coord = Path(directory)
+            tmux_result = subprocess.CompletedProcess([], 0, "", "")
+            expected_socket = coord / "broker.sock"
+            with (
+                mock.patch.object(
+                    ORCHESTRATOR,
+                    "resolve_session",
+                    return_value=("pi-test", coord),
+                ),
+                mock.patch.object(ORCHESTRATOR, "load_manifest", return_value=manifest),
+                mock.patch.object(ORCHESTRATOR, "tmux", return_value=tmux_result),
+                mock.patch.object(
+                    ORCHESTRATOR,
+                    "public_broker_snapshot",
+                    return_value=broker_snapshot,
+                ),
+                mock.patch.object(ORCHESTRATOR, "status_roles", return_value=[]),
+                mock.patch.object(
+                    ORCHESTRATOR,
+                    "broker_paths",
+                    return_value={"socket": expected_socket},
+                ),
+            ):
+                code, envelope, raw, stderr = self.run_main(
+                    ["--json", "status", "pi-test"]
+                )
+        self.assertEqual(code, 0)
+        self.assertEqual(stderr, "")
+        self.assert_envelope(envelope, "status", True)
+        self.assertEqual(
+            envelope["data"]["paths"]["observer_socket"],
+            str(expected_socket),
+        )
+        self.assertNotIn("control_token", raw)
+        self.assertNotIn("auth_token", raw)
+
     def test_rpc_send_and_abort_return_acknowledged_metadata(self) -> None:
         manifest = {
             "version": 2,
@@ -585,7 +639,7 @@ class JsonMainTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(stderr, "")
         self.assert_envelope(envelope, "version", True)
-        self.assertEqual(envelope["data"]["version"], "0.6.0")
+        self.assertEqual(envelope["data"]["version"], "0.6.1")
 
         code, envelope, _, stderr = self.run_main(["--json", "--help"])
         self.assertEqual(code, 2)

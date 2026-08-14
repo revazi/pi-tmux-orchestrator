@@ -7,8 +7,11 @@ compatibility: Requires Pi, Python 3.11+, and tmux 3.2+. tmux 3.5+ with extended
 # Pi Tmux Orchestrator
 
 Prefer `/orchestrator-start`, `/orchestrator-list`, `/orchestrator-status`,
-`/orchestrator-send`, and `/orchestrator-stop` when the package extension is
-available. The bounded `tmux_orchestrator` tool exposes the same authoritative control plane. The standalone `pi-tmux-agents` CLI fallback is authoritative; do not hand-build
+`/orchestrator-watch`, `/orchestrator-send`, and `/orchestrator-stop` when the
+package extension is available. The bounded `tmux_orchestrator` tool exposes the
+same authoritative control plane. New starts are watched automatically; use its
+`watch` action for an existing run so the parent receives lifecycle and final
+updates. The standalone `pi-tmux-agents` CLI fallback is authoritative; do not hand-build
 panes, file handoffs, relay scripts, or polling loops.
 
 ## Operating rules
@@ -31,8 +34,10 @@ There is no new-run file-coordination mode or fallback.
 Workers submit bounded typed results through `orchestrator_report`, which ends
 the assignment. Reviewers inspect the shared worktree directly. For a run
 started through the package extension, the invoking Pi remains the parent
-supervisor: use the tmux panes for live visibility, then interpret the bounded
-structured completion or attention update returned by the broker observer.
+supervisor: use the tmux panes for live visibility, watch lifecycle progress in
+the parent, then interpret the bounded structured completion or attention
+update returned by the broker observer. `/orchestrator-watch SESSION` attaches
+this Pi to a compatible existing run without taking over the terminal.
 The broker stores metadata-only SQLite state and actual provider token totals
 when Pi reports them; it does not persist task, report, prompt, message, diff,
 or log bodies. See [references/protocol-v1.md](references/protocol-v1.md).

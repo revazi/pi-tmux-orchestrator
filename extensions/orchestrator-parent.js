@@ -5,6 +5,7 @@ import net from "node:net";
 
 const MAX_BROKER_FRAME_BYTES = 256 * 1024;
 const MAX_PARENT_REPORT_CHARS = 192 * 1024;
+const MAX_PARENT_PROGRESS_CHARS = 8 * 1024;
 const BROKER_PROTOCOL_VERSION = 1;
 export const PARENT_MESSAGE_TYPE = "pi-tmux-orchestrator-parent-v1";
 const ROLES = ["implementer", "reviewer", "probe", "playwright", "django"];
@@ -189,6 +190,32 @@ export function parentUpdateContent(session, state, round, events) {
   return { content: sections.join("\n\n"), reports, omitted };
 }
 
+export function parentProgressContent(session, state, round, roles, update) {
+  const roleLines = [...roles]
+    .sort((left, right) => left.role.localeCompare(right.role))
+    .map((item) => `- ${item.role}: ${item.state}`);
+  const sections = [
+    update.kind === "attached"
+      ? "# Parent supervision attached"
+      : "# Tmux orchestration progress",
+    `Session: ${session}\nWorkflow: ${state}\nRound: ${round || "unknown"}`,
+  ];
+  if (update.kind === "attached") {
+    sections.push("This Pi is now watching lifecycle and structured completion events. Live assistant and tool output remains in the tmux panes.");
+  } else if (update.kind === "lifecycle") {
+    sections.push(`${update.role} is now ${update.workerState}.`);
+  } else if (update.kind === "report") {
+    sections.push(`${update.role} submitted its structured report for round ${update.reportRound}.`);
+  } else if (update.kind === "workflow") {
+    sections.push(`The workflow moved to ${state} for round ${round}.`);
+  }
+  if (roleLines.length) sections.push(`Worker states:\n${roleLines.join("\n")}`);
+  const content = sections.join("\n\n");
+  return content.length <= MAX_PARENT_PROGRESS_CHARS
+    ? content
+    : `${content.slice(0, MAX_PARENT_PROGRESS_CHARS - 1).trimEnd()}…`;
+}
+
 function validObserverPaths(coordination, socketPath, session) {
   return typeof coordination === "string" && Boolean(coordination)
     && typeof socketPath === "string" && Boolean(socketPath)
@@ -232,23 +259,73 @@ export async function attachParentObserver(pi, envelope, observer, onStop) {
   const identity = await readObserverIdentity(envelope);
   if (observer.closed) {
     onStop();
-    return { state: "uncertain", stop: observer.stop };
+    throw new Error("observer_closed");
   }
   const reports = [];
   const reportIds = new Set();
+  const roleStates = new Map();
   let workflowState = "starting";
   let round = 1;
   let retryCount = 0;
   let attentionNotified = false;
+  let snapshotSeen = false;
+  let attachmentNotified = false;
+  let readySettled = false;
+  let resolveReady;
+  let rejectReady;
+  const ready = new Promise((resolve, reject) => {
+    resolveReady = resolve;
+    rejectReady = reject;
+  });
 
-  function stop() {
+  function settleReady(error) {
+    if (readySettled) return;
+    readySettled = true;
+    if (error) rejectReady(error);
+    else resolveReady({ session: identity.session });
+  }
+
+  function stop(error) {
     if (observer.closed) return;
     observer.closed = true;
     if (observer.timer) clearTimeout(observer.timer);
     if (observer.socket) observer.socket.destroy();
+    settleReady(error || new Error("observer_stopped_before_ready"));
     onStop();
   }
   observer.stop = stop;
+
+  function currentRoles() {
+    return [...roleStates].map(([role, state]) => ({ role, state }));
+  }
+
+  function notifyProgress(update) {
+    try {
+      pi.sendMessage(
+        {
+          customType: PARENT_MESSAGE_TYPE,
+          content: parentProgressContent(
+            identity.session,
+            workflowState,
+            round,
+            currentRoles(),
+            update,
+          ),
+          display: true,
+          details: {
+            session: identity.session,
+            state: workflowState,
+            round,
+            event: update.kind,
+            role: update.role || null,
+          },
+        },
+        { triggerTurn: false, deliverAs: "followUp" },
+      );
+    } catch (error) {
+      stop(error instanceof Error ? error : new Error("parent_progress_failed"));
+    }
+  }
 
   function notifyParent(state) {
     const update = parentUpdateContent(identity.session, state, round, reports);
@@ -268,15 +345,19 @@ export async function attachParentObserver(pi, envelope, observer, onStop) {
         },
         { triggerTurn: true, deliverAs: "followUp" },
       );
-    } catch {
-      stop();
+    } catch (error) {
+      stop(error instanceof Error ? error : new Error("parent_notification_failed"));
     }
   }
 
   function acceptWorkflow(state, valueRound) {
+    const changed = workflowState !== state || round !== valueRound;
     workflowState = state;
     round = valueRound;
-    if (state === "active") attentionNotified = false;
+    if (state === "active") {
+      attentionNotified = false;
+      if (snapshotSeen && changed) notifyProgress({ kind: "workflow" });
+    }
     if (state === "needs_attention" && !attentionNotified) {
       attentionNotified = true;
       notifyParent(state);
@@ -287,27 +368,54 @@ export async function attachParentObserver(pi, envelope, observer, onStop) {
     }
   }
 
+  function acceptReport(value) {
+    if (reportIds.has(value.id)) return;
+    invalidUnless(reports.length < 100, "too_many_observer_reports");
+    reportIds.add(value.id);
+    reports.push(value);
+    if (snapshotSeen) {
+      notifyProgress({ kind: "report", role: value.role, reportRound: value.round });
+    }
+  }
+
+  function acceptSnapshot(value) {
+    retryCount = 0;
+    const firstSnapshot = !snapshotSeen;
+    for (const item of value.roles) roleStates.set(item.role, item.state);
+    snapshotSeen = true;
+    const replayLost = !value.report_replay_complete && reportIds.size < value.report_count;
+    if (firstSnapshot) {
+      workflowState = value.state;
+      round = value.round;
+      if (!attachmentNotified && !replayLost && !["ready", "uncertain", "needs_attention"].includes(value.state)) {
+        attachmentNotified = true;
+        notifyProgress({ kind: "attached" });
+      }
+    }
+    acceptWorkflow(replayLost ? "uncertain" : value.state, value.round);
+  }
+
+  function acceptLifecycle(value) {
+    const changed = roleStates.get(value.role) !== value.state;
+    roleStates.set(value.role, value.state);
+    if (snapshotSeen && changed) {
+      notifyProgress({ kind: "lifecycle", role: value.role, workerState: value.state });
+    }
+  }
+
   function acceptFrame(rawValue, requestId, connection) {
+    if (observer.closed) return;
     const value = validateObserverFrame(rawValue, identity.session, requestId);
     if (value.type === "response") {
       connection.acknowledged = true;
+      settleReady();
       return;
     }
     invalidUnless(connection.acknowledged, "observer_event_before_response");
-    if (value.type === "report") {
-      if (reportIds.has(value.id)) return;
-      invalidUnless(reports.length < 100, "too_many_observer_reports");
-      reportIds.add(value.id);
-      reports.push(value);
-      return;
-    }
-    if (value.type === "snapshot") {
-      retryCount = 0;
-      const replayLost = !value.report_replay_complete && reportIds.size < value.report_count;
-      acceptWorkflow(replayLost ? "uncertain" : value.state, value.round);
-      return;
-    }
-    if (value.type === "workflow") acceptWorkflow(value.state, value.round);
+    if (value.type === "report") acceptReport(value);
+    else if (value.type === "snapshot") acceptSnapshot(value);
+    else if (value.type === "lifecycle") acceptLifecycle(value);
+    else if (value.type === "workflow") acceptWorkflow(value.state, value.round);
   }
 
   function scheduleReconnect() {
@@ -315,10 +423,11 @@ export async function attachParentObserver(pi, envelope, observer, onStop) {
     retryCount += 1;
     if (retryCount > 10) {
       workflowState = "uncertain";
+      const error = new Error("observer_connection_uncertain");
       try {
         notifyParent("uncertain");
       } finally {
-        stop();
+        stop(error);
       }
       return;
     }
@@ -359,5 +468,5 @@ export async function attachParentObserver(pi, envelope, observer, onStop) {
   }
 
   connect();
-  return { get state() { return workflowState; }, stop };
+  return { get state() { return workflowState; }, ready, stop };
 }

@@ -60,12 +60,15 @@ Only the implementer has normal write tools. Other roles are read-only.
 ## Parent observer
 
 A run started through the Pi extension may create one or more read-only parent
-observers. An observer:
+observers. The starting Pi attaches automatically, and a Pi may explicitly
+watch a compatible existing run through the package extension. An observer:
 
 - authenticates with the separate control token and same-user socket boundary;
 - sends a strict `observe` hello and sends no frames after authentication;
 - receives lifecycle and workflow-state frames plus accepted structured report
   bodies;
+- produces bounded lifecycle/report-received progress in the watching Pi while
+  keeping raw assistant/tool output in tmux;
 - receives a bounded in-memory replay of up to 100 reports from the current
   broker process before its initial workflow snapshot; the snapshot includes a
   metadata-only report count and replay-completeness flag so loss across a
@@ -78,7 +81,8 @@ disconnected observers are dropped without blocking routing. Their report
 bodies are not written to SQLite, event journals, status, registries, or the
 Supervisor API. A connected parent Pi places bounded completion or attention
 updates in its own Pi session and remains responsible for interpreting results
-and choosing operator follow-up.
+and choosing operator follow-up. Parent attachment is process-local and does not
+change detached operation or broker workflow state.
 
 ## Structured reports
 
@@ -146,6 +150,8 @@ response at an exact token boundary.
 ## Compatibility
 
 Retained `0.4.x` manifests remain readable and operable through compatibility
-code. Every manifest created by `0.5.0` or later is version `3` with
+code. Live parent observation requires a broker process from `0.6.0` or later;
+older live runs remain metadata-readable but cannot gain observer support
+without starting a new run. Every manifest created by `0.5.0` or later is version `3` with
 `coordination: "broker-v1"`; there is no option or fallback that starts the
 legacy file coordination protocol.
