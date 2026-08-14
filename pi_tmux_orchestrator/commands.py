@@ -334,6 +334,7 @@ def start_command(args: argparse.Namespace) -> CommandResult:
         "paths": {
             "state_root": str(absolute_path(runtime.STATE_ROOT)),
             "coordination": None,
+            "observer_socket": None,
         },
         "state_retained_on_stop": True,
     }
@@ -422,6 +423,7 @@ def start_command(args: argparse.Namespace) -> CommandResult:
                 pass
         raise
     data["paths"]["coordination"] = str(coord)
+    data["paths"]["observer_socket"] = str(broker_paths(coord)["socket"])
     human_print(f"Coordination: {coord}")
     human_print(f"Status: pi-tmux-agents status {session}")
     human_print(f"Attach: pi-tmux-agents attach {session}")

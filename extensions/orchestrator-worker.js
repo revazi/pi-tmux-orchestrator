@@ -161,7 +161,7 @@ export default function orchestratorWorker(pi) {
     socket.write(frame(value));
   }
 
-  function request(value, timeout = 10_000) {
+  function brokerRequest(value, timeout = 10_000) {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         pending.delete(value.id);
@@ -180,11 +180,11 @@ export default function orchestratorWorker(pi) {
 
   function lifecycle(state, ctx, includeUsage = false) {
     const value = message("lifecycle", { state, usage: includeUsage ? totalUsage(ctx) : null });
-    request(value).catch(() => {});
+    brokerRequest(value).catch(() => {});
   }
 
   function acknowledge(deliveryId, status) {
-    request(message("ack", { delivery_id: deliveryId, status })).catch(() => {});
+    brokerRequest(message("ack", { delivery_id: deliveryId, status })).catch(() => {});
   }
 
   function acceptDelivery(value) {
@@ -281,7 +281,7 @@ export default function orchestratorWorker(pi) {
     socket.on("connect", async () => {
       reconnectDelay = 100;
       try {
-        await request(message("hello"));
+        await brokerRequest(message("hello"));
         lifecycle(context?.isIdle() ? "idle" : "active", context, true);
       } catch {
         socket.destroy();
@@ -346,7 +346,7 @@ export default function orchestratorWorker(pi) {
       if (!activeAssignment) throw new Error("no_active_orchestration_assignment");
       const report = normalizeReport(input);
       const assignment = activeAssignment;
-      const response = await request(message("report", { assignment_id: assignment.id, report }));
+      const response = await brokerRequest(message("report", { assignment_id: assignment.id, report }));
       if (!response.success) throw new Error("orchestration_report_rejected");
       pi.appendEntry(DELIVERY_ENTRY, { kind: "report", assignment_id: assignment.id, report_id: response.id });
       activeAssignment = undefined;

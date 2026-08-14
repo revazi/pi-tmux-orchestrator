@@ -40,6 +40,7 @@ const expectedFiles = [
   "VERSION",
   "bin/pi-tmux-agents",
   "extensions/tmux-orchestrator.js",
+  "extensions/orchestrator-parent.js",
   "extensions/orchestrator-worker.js",
   "references/usage.md",
   "references/protocol-v1.md",
@@ -53,6 +54,7 @@ const declaredFiles = [
   "SKILL.md",
   "VERSION",
   "extensions/tmux-orchestrator.js",
+  "extensions/orchestrator-parent.js",
   "extensions/orchestrator-worker.js",
   "references/usage.md",
   "references/protocol-v1.md",
@@ -61,7 +63,7 @@ const declaredFiles = [
 ];
 const expectedManifest = {
   name: "pi-tmux-orchestrator",
-  version: "0.5.1",
+  version: "0.6.0",
   description: "Pi extension, skill, and dependency-free Python CLI for coordinating coding agents in tmux",
   license: "MIT",
   author: {
@@ -167,10 +169,14 @@ const requiredBadges = [
 for (const badge of requiredBadges) {
   if (!readme.includes(badge)) throw new Error(`README.md omitted required badge: ${badge}`);
 }
-const extension = await readFile(resolve(root, "extensions/tmux-orchestrator.js"), "utf8");
+const extensionSources = await Promise.all([
+  "extensions/tmux-orchestrator.js",
+  "extensions/orchestrator-parent.js",
+  "extensions/orchestrator-worker.js",
+].map((path) => readFile(resolve(root, path), "utf8")));
 for (const method of ["setStatus", "setWidget", "setTitle"]) {
-  if (extension.includes(`.${method}(`)) {
-    throw new Error(`package extension must not add persistent Pi UI chrome with ${method}`);
+  if (extensionSources.some((source) => source.includes(`.${method}(`))) {
+    throw new Error(`package extensions must not add persistent Pi UI chrome with ${method}`);
   }
 }
 const packagedDocs = [

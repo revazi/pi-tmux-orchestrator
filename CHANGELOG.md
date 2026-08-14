@@ -6,6 +6,24 @@ All notable changes to this project are documented here.
 
 _No changes yet._
 
+## 0.6.0 - 2026-08-14
+
+Parent-supervision and worker-visibility release.
+
+### Added
+
+- Added an authenticated read-only broker observer that returns bounded structured completion, attention, and uncertainty updates to the Pi session that started the run
+- Added bounded in-memory report replay for live observers without placing report bodies in SQLite, status, journals, registries, or Supervisor API output
+- Added explicit `needs_attention` workflow transitions when a worker settles with an active assignment but no report
+- Added workflow-level `uncertain` propagation for ambiguous delivery, reconnect, lifecycle, and report-routing transitions without blind assignment replay
+- Added model-free coverage for parent report delivery and visible RPC assistant/tool output
+
+### Changed
+
+- Changed the invoking Pi into the primary interactive supervisor while keeping tmux as the live worker view and the broker as deterministic transport/state
+- Changed RPC panes to render assistant progress, tool inputs, and tool outputs instead of tool-name placeholders
+- Clarified that the persistent project-neutral controller is optional and can serve as the parent Pi for cross-project operation
+
 ## 0.5.1 - 2026-08-14
 
 ### Fixed

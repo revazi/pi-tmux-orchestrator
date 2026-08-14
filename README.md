@@ -16,6 +16,8 @@ grids.
 - Optional technical probe, Playwright tester, and Django expert
 - One event-driven owner-only Unix-socket broker per run
 - The same worker-bridge protocol for interactive TUI and headless RPC workers
+- Native worker output in TUI panes and assistant/tool input/tool output visibility in RPC panes
+- Parent Pi supervision with event-driven final structured reports and attention alerts
 - Bounded typed reports through a terminating Pi tool
 - No Markdown handoffs, readiness markers, mailbox payload files, relay polling,
   lifecycle sleeps, or tmux key injection in newly started runs
@@ -61,10 +63,14 @@ implementation is `pi_tmux_orchestrator/`:
 - role system prompts and worker bridge
 - retained-run Supervisor API
 
-The extension remains thin and delegates bounded argument arrays to the Python
-JSON CLI. The broker is the only current-run metadata writer. Pi owns worker
-conversation durability. Reviewer roles inspect the shared worktree directly
-instead of receiving copied diffs or logs.
+The extension delegates control actions as bounded argument arrays to the Python
+JSON CLI and owns only the parent-session observer/presentation bridge. For
+Pi-started runs, the invoking parent Pi keeps an authenticated
+read-only broker observer: tmux panes provide live worker visibility, while
+structured completion/attention reports return to the parent for decisions.
+The broker is the only current-run metadata writer. Pi owns conversation
+durability. Reviewer roles inspect the shared worktree directly instead of
+receiving copied diffs or logs.
 
 See [coordination protocol v1](references/protocol-v1.md) for schemas, role ACLs,
 authentication, lifecycle, report limits, acknowledgements, retry, crash
@@ -128,9 +134,11 @@ The package exposes:
 - `/orchestrate` and `/orchestrations` compatibility aliases
 
 The `tmux_orchestrator` model tool provides bounded `doctor`, `list`, `status`,
-`start`, and `send` actions. Start requires interactive confirmation. Parent
-project trust is never inherited by child Pi sessions; child `--approve` needs
-separate confirmation.
+`start`, and `send` actions. Start requires interactive confirmation. The
+invoking Pi remains the parent supervisor: watch the tmux grid for live work;
+when the broker reaches `ready`, `needs_attention`, or `uncertain`, it sends a
+bounded structured update back to that parent Pi. Parent project trust is never
+inherited by child Pi sessions; child `--approve` needs separate confirmation.
 
 ## Start from the terminal
 
@@ -157,9 +165,10 @@ pi-tmux-agents start \
   --with-django-expert --django-task-file /tmp/pi-agent-django.md
 ```
 
-Use `--rpc-workers` for headless RPC event panes. TUI remains the default. Both
-presentations use the same broker and bridge; `--rpc-workers` is not a legacy
-coordination mode.
+Use `--rpc-workers` for headless RPC event panes. These panes render assistant
+progress plus bounded tool inputs and outputs rather than tool-name placeholders.
+TUI remains the default with native Pi rendering. Both presentations use the
+same broker and bridge; `--rpc-workers` is not a legacy coordination mode.
 
 Use `--approve-project` only after inspecting and trusting the target project.
 RPC workers otherwise apply Pi's saved/global trust behavior and cannot display
@@ -175,8 +184,10 @@ startup trust dialogs.
 5. Enabled specialists inspect the worktree and submit typed evidence.
 6. Broker supplies all evidence to reviewer and wakes reviewer exactly once.
 7. `changes_requested` starts the next implementation round.
-8. `approved` marks the workflow ready without an acknowledgement-only model
+8. `approved` marks the workflow ready without an acknowledgement-only worker
    turn.
+9. For a Pi-started run, the broker returns the latest structured role reports
+   to the parent Pi, which interprets the result and decides follow-up.
 
 Idle workers end their turns. They do not sleep or poll. A worker settling
 without a report becomes `waiting`/needs attention rather than entering an
@@ -228,9 +239,11 @@ Run state is private and external to target repositories:
 ```
 
 Files are retained for manifests, authentication, Pi sessions, metadata-only
-SQLite, and a transient startup payload deleted after broker ingestion. Newly
-started workers never create or poll task/handoff/review/specialist payload
-files or readiness markers.
+SQLite, and a transient startup payload deleted after broker ingestion. Report
+bodies sent to an attached parent observer are ephemeral in broker memory and
+become durable only in Pi sessions; they never enter SQLite, status, journals,
+or Supervisor API output. Newly started workers never create or poll
+task/handoff/review/specialist payload files or readiness markers.
 
 Retained `0.4.x` runs remain readable and operable through compatibility code.
 Every `0.5.0` start creates manifest v3 with `coordination: "broker-v1"`; there
@@ -257,10 +270,11 @@ pi-tmux-agents controller attach
 pi-tmux-agents controller stop --confirm
 ```
 
-The controller uses stable Pi session ID
+The optional controller uses stable Pi session ID
 `pi-tmux-orchestrator-controller-v1`, a private project-neutral workspace, and
-no `edit`/`write` tools. Every target project must be explicit. Duplicate or
-unmarked reserved tmux names are refused.
+no `edit`/`write` tools. It can serve as the parent Pi for cross-project runs;
+a normal project Pi is the primary interactive parent otherwise. Every target
+project must be explicit. Duplicate or unmarked reserved tmux names are refused.
 
 ## Safety model
 

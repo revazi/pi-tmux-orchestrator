@@ -29,10 +29,13 @@ bridge. TUI and `--rpc-workers` are presentation choices over the same protocol.
 There is no new-run file-coordination mode or fallback.
 
 Workers submit bounded typed results through `orchestrator_report`, which ends
-the assignment. Reviewers inspect the shared worktree directly. The broker
-stores metadata-only SQLite state and actual provider token totals when Pi
-reports them; it does not retain task, report, prompt, message, diff, or log
-bodies. See [references/protocol-v1.md](references/protocol-v1.md).
+the assignment. Reviewers inspect the shared worktree directly. For a run
+started through the package extension, the invoking Pi remains the parent
+supervisor: use the tmux panes for live visibility, then interpret the bounded
+structured completion or attention update returned by the broker observer.
+The broker stores metadata-only SQLite state and actual provider token totals
+when Pi reports them; it does not persist task, report, prompt, message, diff,
+or log bodies. See [references/protocol-v1.md](references/protocol-v1.md).
 
 ## Start a grid
 
@@ -61,9 +64,10 @@ pi-tmux-agents start \
   --with-django-expert --django-task-file /tmp/pi-agent-django.md
 ```
 
-Use `--rpc-workers` for headless RPC event panes. Otherwise workers are native
-interactive Pi TUIs. Both use broker delivery; neither uses report files,
-mailbox payload files, polling, or tmux key injection for workflow transitions.
+Use `--rpc-workers` for headless RPC event panes that show assistant progress
+plus bounded tool inputs and outputs. Otherwise workers are native interactive
+Pi TUIs. Both use broker delivery; neither uses report files, mailbox payload
+files, polling, or tmux key injection for workflow transitions.
 Use `--approve-project` only after separately inspecting and trusting the target.
 
 ## Operate a grid
@@ -103,9 +107,11 @@ pi-tmux-agents controller start
 pi-tmux-agents controller attach
 ```
 
-The controller has a fixed project-neutral Pi identity. Every target project
-must be explicit. Stop it only with `controller stop --confirm`; worker grids
-and conversations are retained independently.
+The optional controller has a fixed project-neutral Pi identity and can be the
+parent Pi for cross-project operation. A normal project Pi remains the primary
+interactive parent otherwise. Every target project must be explicit. Stop the
+controller only with `controller stop --confirm`; worker grids and
+conversations are retained independently.
 
 ## Before launching
 

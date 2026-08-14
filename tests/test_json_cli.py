@@ -141,6 +141,7 @@ class JsonMainTests(unittest.TestCase):
             ["implementer", "reviewer", "probe", "playwright", "django"],
         )
         self.assertIsNone(data["paths"]["coordination"])
+        self.assertIsNone(data["paths"]["observer_socket"])
 
     def test_start_success_returns_paths_without_payload_bodies(self) -> None:
         canary = "PRIVATE_FULL_START_CANARY_JSON_a12d"
@@ -167,12 +168,20 @@ class JsonMainTests(unittest.TestCase):
                         "--skip-model-check",
                     ]
                 )
+                expected_socket = str(
+                    ORCHESTRATOR.broker_paths(
+                        Path(envelope["data"]["paths"]["coordination"])
+                    )["socket"]
+                )
             self.assertEqual(code, 0)
             self.assertEqual(stderr, "")
             self.assert_envelope(envelope, "start", True)
             self.assertFalse(envelope["data"]["dry_run"])
             coordination = Path(envelope["data"]["paths"]["coordination"])
             self.assertTrue(coordination.is_relative_to(state_root.resolve()))
+            self.assertEqual(
+                envelope["data"]["paths"]["observer_socket"], expected_socket
+            )
             self.assertNotIn(canary, raw)
 
     def test_list_status_send_restart_and_stop_return_structured_metadata(self) -> None:
@@ -576,7 +585,7 @@ class JsonMainTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(stderr, "")
         self.assert_envelope(envelope, "version", True)
-        self.assertEqual(envelope["data"]["version"], "0.5.1")
+        self.assertEqual(envelope["data"]["version"], "0.6.0")
 
         code, envelope, _, stderr = self.run_main(["--json", "--help"])
         self.assertEqual(code, 2)

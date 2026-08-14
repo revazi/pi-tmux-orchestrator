@@ -42,6 +42,49 @@ from .storage import ensure_private_directory, read_regular_file
 from .tmux import command_path
 
 
+MAX_RPC_DISPLAY_CHARS = 64 * 1024
+
+
+def _bounded_rpc_display(value: str, limit: int = MAX_RPC_DISPLAY_CHARS) -> str:
+    safe = "".join(
+        character
+        if character in {"\n", "\t"} or (ord(character) >= 32 and ord(character) != 127)
+        else "�"
+        for character in value
+    )
+    if len(safe) <= limit:
+        return safe
+    return safe[:limit].rstrip() + "\n… [RPC pane output truncated]"
+
+
+def _rpc_json_display(value: object) -> str:
+    try:
+        rendered = json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True)
+    except (TypeError, ValueError):
+        rendered = str(value)
+    return _bounded_rpc_display(rendered)
+
+
+def _rpc_tool_result_display(value: object) -> str:
+    if not isinstance(value, dict):
+        return _rpc_json_display(value)
+    content = value.get("content")
+    rendered: list[str] = []
+    if isinstance(content, list):
+        for item in content:
+            if not isinstance(item, dict):
+                continue
+            if item.get("type") == "text" and isinstance(item.get("text"), str):
+                rendered.append(item["text"])
+            elif item.get("type") == "image":
+                rendered.append("[image result]")
+    if rendered:
+        return _bounded_rpc_display("\n".join(rendered))
+    if "details" in value:
+        return _rpc_json_display(value["details"])
+    return _rpc_json_display(value)
+
+
 def run_rpc_agent(
     coord: Path,
     manifest: dict[str, Any],
@@ -197,6 +240,16 @@ def run_rpc_agent(
     fatal = False
     run_outcome: str | None = None
     abort_requested = False
+    stream_section: str | None = None
+
+    def display_stream_delta(section: str, delta: object) -> None:
+        nonlocal stream_section
+        if not isinstance(delta, str) or not delta:
+            return
+        if stream_section != section:
+            human_print(f"\n[{section}]")
+            stream_section = section
+        print(_bounded_rpc_display(delta), end="", flush=True)
 
     def process_mailbox() -> None:
         for request_path in sorted(paths["inbox"].glob("*.json"))[:MAX_JSON_ITEMS]:
@@ -464,6 +517,7 @@ def run_rpc_agent(
                 continue
             if event_type == "agent_start":
                 run_outcome = None
+                stream_section = None
                 transition_active_commands("started")
                 record_rpc_event(paths, registry, role_name, "agent_started")
                 persist_state(status="streaming", is_streaming=True)
@@ -500,9 +554,11 @@ def run_rpc_agent(
             elif event_type == "message_update":
                 update = event.get("assistantMessageEvent")
                 if isinstance(update, dict) and update.get("type") == "text_delta":
-                    delta = update.get("delta")
-                    if isinstance(delta, str):
-                        print(delta, end="", flush=True)
+                    display_stream_delta("assistant", update.get("delta"))
+                elif (
+                    isinstance(update, dict) and update.get("type") == "thinking_delta"
+                ):
+                    display_stream_delta("thinking", update.get("delta"))
                 elif isinstance(update, dict) and update.get("type") == "error":
                     run_outcome = (
                         "aborted" if update.get("reason") == "aborted" else "failed"
@@ -523,7 +579,18 @@ def run_rpc_agent(
             elif event_type == "auto_retry_end" and event.get("success") is False:
                 run_outcome = "failed"
             elif event_type == "tool_execution_start":
-                human_print(f"\n[tool {bounded_message(event.get('toolName'), 80)}]")
+                stream_section = None
+                tool_name = bounded_message(event.get("toolName"), 80)
+                human_print(f"\n[tool {tool_name} input]")
+                if "args" in event:
+                    human_print(_rpc_json_display(event["args"]))
+            elif event_type == "tool_execution_end":
+                stream_section = None
+                tool_name = bounded_message(event.get("toolName"), 80)
+                suffix = " error" if event.get("isError") is True else " output"
+                human_print(f"\n[tool {tool_name}{suffix}]")
+                if "result" in event:
+                    human_print(_rpc_tool_result_display(event["result"]))
             elif event_type == "extension_ui_request":
                 method = event.get("method")
                 request_id = event.get("id")

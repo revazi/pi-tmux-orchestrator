@@ -84,7 +84,13 @@ def main() -> int:
         "    response={'type':'response','command':kind,'success':True}\n"
         "    if rid is not None: response['id']=rid\n"
         "    if data is not None: response['data']=data\n"
-        "    print(json.dumps(response), flush=True)\n",
+        "    print(json.dumps(response), flush=True)\n"
+        "    if kind=='get_state':\n"
+        "        print(json.dumps({'type':'agent_start'}), flush=True)\n"
+        "        print(json.dumps({'type':'message_update','assistantMessageEvent':{'type':'text_delta','delta':'Synthetic assistant progress.'}}), flush=True)\n"
+        "        print(json.dumps({'type':'tool_execution_start','toolName':'read','args':{'path':'synthetic-visible.txt'}}), flush=True)\n"
+        "        print(json.dumps({'type':'tool_execution_end','toolName':'read','isError':False,'result':{'content':[{'type':'text','text':'SYNTHETIC_RPC_VISIBLE_OUTPUT'}]}}), flush=True)\n"
+        "        print(json.dumps({'type':'agent_settled'}), flush=True)\n",
         encoding="utf-8",
     )
     fake_pi.chmod(0o700)
@@ -197,6 +203,31 @@ def main() -> int:
         ).stdout.splitlines()
         if len(panes) != 6 or any(value != "0" for value in panes):
             raise AssertionError(f"brokered RPC grid is unhealthy: {panes}")
+
+        implementer_pane = manifest["roles"]["implementer"]["pane_id"]
+        deadline = time.time() + 4
+        rpc_output = ""
+        while time.time() < deadline:
+            rpc_output = subprocess.run(
+                ["tmux", "capture-pane", "-p", "-S", "-200", "-t", implementer_pane],
+                check=True,
+                text=True,
+                capture_output=True,
+            ).stdout
+            if "SYNTHETIC_RPC_VISIBLE_OUTPUT" in rpc_output:
+                break
+            time.sleep(0.05)
+        if (
+            "[assistant]" not in rpc_output
+            or "Synthetic assistant progress." not in rpc_output
+            or "[tool read input]" not in rpc_output
+            or '"path": "synthetic-visible.txt"' not in rpc_output
+            or "[tool read output]" not in rpc_output
+            or "SYNTHETIC_RPC_VISIBLE_OUTPUT" not in rpc_output
+        ):
+            raise AssertionError(
+                f"RPC pane omitted visible assistant/tool output: {rpc_output!r}"
+            )
 
         deadline = time.time() + 8
         socket_path = ORCHESTRATOR.broker_paths(coord)["socket"]
@@ -363,6 +394,7 @@ def main() -> int:
 
         print("OK controller lifecycle")
         print("OK TUI and RPC presentations share manifest-v3 broker-v1")
+        print("OK RPC panes render assistant progress plus tool inputs and outputs")
         print("OK owner-only broker accepted five authenticated role bridges")
         print(
             "OK new runs created no handoff, readiness, mailbox, or relay payload files"

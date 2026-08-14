@@ -14,6 +14,9 @@ Provide a small, reusable, intentionally tmux-scoped Pi skill and modular standa
 - `pi_tmux_orchestrator/`: authoritative dependency-free Python orchestration package
 - `pi_tmux_orchestrator/supervisor_api.py`: versioned durable-state read boundary
 - `pi_tmux_orchestrator/supervisor_commands.py`: thin CLI adapters for the supervisor API
+- `extensions/tmux-orchestrator.js`: Pi control surface
+- `extensions/orchestrator-parent.js`: parent-session observer bridge
+- `extensions/orchestrator-worker.js`: shared TUI/RPC worker bridge
 - `bin/pi-tmux-agents`: thin executable launcher
 - `references/usage.md`: detailed operator guidance
 - `install.sh`: global Pi skill installation

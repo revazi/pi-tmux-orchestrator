@@ -1,7 +1,7 @@
 # Coordination protocol v1
 
-Pi Tmux Orchestrator `0.5.0` uses one private local broker for every newly
-started orchestration. This protocol replaces report files, readiness markers,
+Pi Tmux Orchestrator `0.5.0` and later use one private local broker for every
+newly started orchestration. This protocol replaces report files, readiness markers,
 mailbox payload files, relay polling, and tmux key injection as workflow
 coordination mechanisms.
 
@@ -20,6 +20,8 @@ coordination mechanisms.
 
 The control-plane SQLite database stores tokens and metadata but never task,
 assignment, report, prompt, message, provider response, diff, or log bodies.
+Authenticated parent-observer report bodies are ephemeral in broker memory and
+may become durable only in Pi session history.
 
 ## Worker lifecycle
 
@@ -30,7 +32,9 @@ Workers authenticate with `hello`, then report one of:
 - `waiting`: the agent settled with an active assignment but no accepted report;
 - `uncertain`: the bridge cannot prove the prior transition.
 
-A socket close records `disconnected`. Retained PIDs never imply liveness.
+A socket close records `disconnected`. A worker settling with an active
+assignment and no report marks the workflow `needs_attention`. Retained PIDs
+never imply liveness.
 
 Every worker receives baseline context once with no model trigger. The broker
 then creates assignments according to the workflow. Workers never poll and
@@ -52,6 +56,29 @@ must end the turn when there is no active assignment.
    to acknowledge approval.
 
 Only the implementer has normal write tools. Other roles are read-only.
+
+## Parent observer
+
+A run started through the Pi extension may create one or more read-only parent
+observers. An observer:
+
+- authenticates with the separate control token and same-user socket boundary;
+- sends a strict `observe` hello and sends no frames after authentication;
+- receives lifecycle and workflow-state frames plus accepted structured report
+  bodies;
+- receives a bounded in-memory replay of up to 100 reports from the current
+  broker process before its initial workflow snapshot; the snapshot includes a
+  metadata-only report count and replay-completeness flag so loss across a
+  broker restart fails closed as uncertain;
+- never receives task, assignment, operator-message, provider, diff, or log
+  bodies.
+
+Observers are presentation/supervision clients, not workflow writers. Slow or
+disconnected observers are dropped without blocking routing. Their report
+bodies are not written to SQLite, event journals, status, registries, or the
+Supervisor API. A connected parent Pi places bounded completion or attention
+updates in its own Pi session and remains responsible for interpreting results
+and choosing operator follow-up.
 
 ## Structured reports
 
@@ -101,8 +128,9 @@ lowercase hexadecimal values.
 - The protocol does not claim exactly-once delivery.
 
 Report bodies remain durable in the submitting Pi session's tool result, while
-delivery context remains in recipient Pi sessions. SQLite retains only report
-shape/count/verdict metadata.
+delivery context remains in recipient Pi sessions. When a parent observer is
+attached, returned structured reports also become part of the parent Pi
+session. SQLite retains only report shape/count/verdict metadata.
 
 ## Token accounting
 
@@ -118,6 +146,6 @@ response at an exact token boundary.
 ## Compatibility
 
 Retained `0.4.x` manifests remain readable and operable through compatibility
-code. Every manifest created by `0.5.0` is version `3` with
+code. Every manifest created by `0.5.0` or later is version `3` with
 `coordination: "broker-v1"`; there is no option or fallback that starts the
 legacy file coordination protocol.
