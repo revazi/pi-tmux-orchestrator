@@ -14,7 +14,7 @@ import {
 
 const CLI_PATH = fileURLToPath(new URL("../bin/pi-tmux-agents", import.meta.url));
 const MAX_VISIBLE_CHARS = 12_000;
-const ACTIONS = ["doctor", "list", "status", "watch", "start", "send"];
+const ACTIONS = ["doctor", "list", "status", "watch", "attach", "start", "send"];
 const ROLES = ["implementer", "reviewer", "probe", "playwright", "django"];
 const COMMAND_OVERVIEW = [
   "/orchestrator-help — show this bounded command overview",
@@ -22,13 +22,16 @@ const COMMAND_OVERVIEW = [
   "/orchestrator-start [task] — confirm and start an orchestration",
   "/orchestrator-list — list running orchestrations",
   "/orchestrator-status [session] — show metadata-only status",
-  "/orchestrator-watch [session] — attach this parent Pi to lifecycle and final-report updates",
+  "/orchestrator-watch [session] — subscribe this parent Pi to lifecycle and final-report updates",
+  "/orchestrator-attach [session] — switch this tmux client into the live worker grid",
   "/orchestrator-send [session] — privately send a message to one role",
   "/orchestrator-stop [session] — confirm and stop one exact session",
   "/orchestrate — backward-compatible alias for /orchestrator-start",
   "/orchestrations — backward-compatible alias for /orchestrator-list",
-  "Tmux panes show live worker activity; lifecycle and structured ready/attention reports return to the parent Pi watching the run.",
-  "Terminal tmux attach, Supervisor API reads, RPC events/abort, and restart remain terminal-only: terminal attach takes over the terminal; /orchestrator-watch attaches only the parent update stream.",
+  "The invoking Pi is the parent supervisor; start creates no separate parent Pi, parent window, or controller.",
+  "Tmux panes show live worker activity; lifecycle and structured ready/attention reports return to the invoking Pi watching the run.",
+  "Attach requires the invoking Pi to run inside tmux. Use normal pane navigation; prefix then L detaches back to the same Pi without stopping workers. Native TUI panes accept direct steering, while plain RPC panes remain headless/display-only.",
+  "Supervisor API reads, RPC events/abort, and restart remain terminal-only.",
 ].join("\n");
 
 const parameters = {
@@ -38,7 +41,7 @@ const parameters = {
   properties: {
     action: { type: "string", enum: ACTIONS },
     project: { type: "string", description: "Project path for start; defaults to the current project" },
-    session: { type: "string", description: "Exact orchestration session for status, watch, or send" },
+    session: { type: "string", description: "Exact orchestration session for status, watch, attach, or send" },
     role: {
       type: "string",
       enum: ROLES,
@@ -54,7 +57,7 @@ const parameters = {
     djangoTask: { type: "string", maxLength: 65536 },
     rpcWorkers: {
       type: "boolean",
-      description: "Use headless RPC presentation; TUI and RPC workers share the same broker protocol",
+      description: "Use plain headless RPC panes only when explicitly requested; native Pi TUI workers are the interactive default",
     },
     approveProject: {
       type: "boolean",
@@ -207,6 +210,32 @@ async function runStart(pi, input, signal, ctx) {
   });
 }
 
+function requireAttachContext(ctx) {
+  if (ctx.mode !== "tui" || !ctx.hasUI) {
+    throw new Error("attach_requires_interactive_tui");
+  }
+  if (!process.env.TMUX) throw new Error("attach_requires_parent_tmux");
+}
+
+async function runAttach(pi, input, signal, ctx) {
+  requireAttachContext(ctx);
+  const session = String(input.session || "").trim();
+  ctx.ui.notify(
+    "Switching this client to the worker grid. Prefix then L detaches back to this Pi without stopping the orchestration.",
+    "info",
+  );
+  return runCli(pi, "attach", session ? [session] : [], signal);
+}
+
+async function attachAndSupervise(pi, input, signal, ctx, superviseStart) {
+  requireAttachContext(ctx);
+  const session = String(input.session || "").trim();
+  const statusEnvelope = await runCli(pi, "status", session ? [session] : [], signal);
+  if (!statusEnvelope.success) return statusEnvelope;
+  await superviseStart(statusEnvelope);
+  return runAttach(pi, { session: statusEnvelope.data?.session }, signal, ctx);
+}
+
 async function runSend(pi, input, signal) {
   if (!input.session || !input.role || !input.message || !String(input.message).trim()) {
     throw new Error("send_requires_session_role_message");
@@ -241,12 +270,15 @@ const successSummaries = {
   watch(data) {
     const workflow = data.broker?.workflow;
     const state = workflow ? ` Current workflow: ${workflow.state}, round ${workflow.round}.` : "";
-    return `This parent Pi is watching ${data.session} for lifecycle and final-report updates.${state}`;
+    return `This invoking Pi is watching ${data.session} for lifecycle and final-report updates.${state}`;
+  },
+  attach(data) {
+    return `Switched to ${data.session}. ${data.return_hint || "Use tmux session navigation to return."}`;
   },
   start(data) {
     return data.dry_run
       ? `Validated ${data.session}`
-      : `Started ${data.session}; watch the tmux panes for live work. Structured final reports will return to this parent Pi.`;
+      : `Started detached ${data.session} with ${data.transport === "rpc" ? "headless RPC" : "native Pi TUI"} workers. This invoking Pi remains the parent; use /orchestrator-attach ${data.session} to enter the grid.`;
   },
   send(data) {
     return data.acknowledged
@@ -306,6 +338,15 @@ async function executeAction(pi, input, signal, ctx, superviseStart = () => {}) 
         envelope = { ...statusEnvelope, command: "watch" };
         break;
       }
+      case "attach":
+        envelope = await attachAndSupervise(
+          pi,
+          input,
+          signal,
+          ctx,
+          superviseStart,
+        );
+        break;
       case "start":
         envelope = await runStart(pi, input, signal, ctx);
         if (envelope.success && !envelope.data?.dry_run) {
@@ -340,6 +381,7 @@ function notifyCommandFailure(ctx, action) {
     list: "list orchestrations",
     status: "show orchestration status",
     watch: "watch orchestration updates",
+    attach: "attach to the orchestration grid",
     start: "start orchestration",
     send: "send orchestration message",
     stop: "stop orchestration",
@@ -385,10 +427,7 @@ function createCommandHandlers(pi, superviseStart = () => {}) {
     const withProbe = await ctx.ui.confirm("Optional role", "Add the independent technical probe?");
     const withPlaywright = await ctx.ui.confirm("Optional role", "Add the read-only Playwright tester?");
     const withDjangoExpert = await ctx.ui.confirm("Optional role", "Add the read-only Django expert?");
-    const rpcWorkers = await ctx.ui.confirm(
-      "Worker presentation",
-      "Use headless Pi RPC event panes? No keeps interactive Pi TUIs. Both use the same event-driven broker and worker bridge.",
-    );
+    const rpcWorkers = false;
     let approveProject = false;
     if (ctx.isProjectTrusted()) {
       approveProject = await ctx.ui.confirm(
@@ -446,6 +485,22 @@ function createCommandHandlers(pi, superviseStart = () => {}) {
     }
   };
 
+  const attach = async (args, ctx) => {
+    if (!requireInteractiveTui(ctx, "orchestrator-attach")) return;
+    try {
+      const envelope = await attachAndSupervise(
+        pi,
+        { session: String(args || "").trim() || undefined },
+        ctx.signal,
+        ctx,
+        superviseStart,
+      );
+      notifyEnvelope(ctx, envelope);
+    } catch {
+      notifyCommandFailure(ctx, "attach");
+    }
+  };
+
   const send = async (args, ctx) => {
     if (!requireInteractiveTui(ctx, "orchestrator-send")) return;
     const session = await requestedSession(args, ctx);
@@ -474,7 +529,7 @@ function createCommandHandlers(pi, superviseStart = () => {}) {
     await runCommandCli(pi, "stop", [session, "--yes"], ctx);
   };
 
-  return { help, doctor, start, list, status, watch, send, stop };
+  return { help, doctor, start, list, status, watch, attach, send, stop };
 }
 
 export default function tmuxOrchestratorExtension(pi) {
@@ -538,10 +593,10 @@ export default function tmuxOrchestratorExtension(pi) {
   pi.registerTool({
     name: "tmux_orchestrator",
     label: "Tmux Orchestrator",
-    description: "Supervise bounded doctor, list, status, watch, start, or send actions through the bundled Python tmux orchestrator. Watch attaches this parent Pi to lifecycle and final-report updates for an existing run. New runs are watched automatically. Start always requires interactive confirmation.",
+    description: "Supervise bounded doctor, list, status, watch, attach, start, or send actions through the bundled Python tmux orchestrator. The invoking Pi remains the parent; normal starts create no separate parent Pi or controller. Watch subscribes this Pi to lifecycle and final-report updates. Attach ensures watching, then switches its existing tmux client into native Pi worker panes; prefix then L returns without stopping workers. New runs are watched automatically. Start always requires interactive confirmation.",
     promptSnippet: "Inspect or operate local Pi tmux orchestrations through the authoritative Python CLI",
     promptGuidelines: [
-      "Use tmux_orchestrator instead of rebuilding tmux orchestration state; after starting or resuming an existing run, ensure this parent Pi is watching it for lifecycle and final reports. The parent remains responsible for interpreting reports and deciding follow-up. Never create file handoffs, poll coordination state, claim parent project trust applies to child Pi sessions, or equate command acknowledgement with task completion.",
+      "Use tmux_orchestrator instead of rebuilding tmux orchestration state; after starting or resuming an existing run, ensure the invoking Pi is watching it for lifecycle and final reports. When the user asks to enter, navigate, or directly steer the live workers, use attach rather than watch; attach requires the invoking Pi to be inside tmux. Prefer native Pi TUI workers and use rpcWorkers only after an explicit request for headless panes. The invoking Pi remains responsible for interpreting reports and deciding follow-up. Never create file handoffs, poll coordination state, claim parent project trust applies to child Pi sessions, or equate command acknowledgement with task completion.",
     ],
     parameters,
     execute(_toolCallId, input, signal, _onUpdate, ctx) {
@@ -571,8 +626,12 @@ export default function tmuxOrchestratorExtension(pi) {
     handler: commandHandlers.status,
   });
   pi.registerCommand("orchestrator-watch", {
-    description: "Attach this parent Pi to lifecycle and final-report updates for an orchestration",
+    description: "Subscribe this invoking Pi to lifecycle and final-report updates for an orchestration",
     handler: commandHandlers.watch,
+  });
+  pi.registerCommand("orchestrator-attach", {
+    description: "Switch this tmux client into the live worker grid for navigation and steering",
+    handler: commandHandlers.attach,
   });
   pi.registerCommand("orchestrator-send", {
     description: "Privately send a message to one role in an exact orchestration session",
@@ -616,10 +675,12 @@ export const testHooks = {
   isControllerMode,
   oneLineJson,
   runCli,
+  attachAndSupervise,
   attachParentObserver,
   brokerFrame,
   parentProgressContent,
   parentUpdateContent,
+  runAttach,
   runStart,
   validateObserverFrame,
   withPrivateFiles,

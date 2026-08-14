@@ -130,18 +130,29 @@ The package exposes:
 - `/orchestrator-list`
 - `/orchestrator-status [session]`
 - `/orchestrator-watch [session]`
+- `/orchestrator-attach [session]`
 - `/orchestrator-send [session]`
 - `/orchestrator-stop [session]`
 - `/orchestrate` and `/orchestrations` compatibility aliases
 
 The `tmux_orchestrator` model tool provides bounded `doctor`, `list`, `status`,
-`watch`, `start`, and `send` actions. Start requires interactive confirmation.
-New runs are watched automatically. Use `watch` or `/orchestrator-watch SESSION`
-to attach this parent Pi to an existing run without taking over its terminal.
-The parent receives visible lifecycle/report-received progress and a triggered
-structured update when the broker reaches `ready`, `needs_attention`, or
-`uncertain`; live assistant/tool output stays in tmux. Parent project trust is
-never inherited by child Pi sessions; child `--approve` needs separate
+`watch`, `attach`, `start`, and `send` actions. Start requires interactive
+confirmation. The Pi session that invokes `start` is the parent supervisor; a
+run creates only the detached worker grid and does not start another parent Pi,
+parent window, or controller. New runs are watched automatically. `watch`
+subscribes that invoking Pi to lifecycle/final updates without changing the
+terminal. `attach` (or `/orchestrator-attach SESSION`) switches its existing
+tmux client into the worker grid after ensuring observation. Use normal tmux
+pane keys to select a subagent and type directly into its native Pi editor.
+Press the tmux prefix followed by `L` to detach from the grid and return to the
+same invoking Pi; the orchestration keeps running and can be reattached.
+
+Native Pi TUI workers are the interactive default, preserving Pi's highlighting,
+tool rendering, and input field in every subagent pane. Plain RPC panes remain
+an explicit headless automation option only. The parent receives visible
+lifecycle/report-received progress and a triggered structured update when the
+broker reaches `ready`, `needs_attention`, or `uncertain`. Parent project trust
+is never inherited by child Pi sessions; child `--approve` needs separate
 confirmation.
 
 ## Start from the terminal
@@ -169,9 +180,11 @@ pi-tmux-agents start \
   --with-django-expert --django-task-file /tmp/pi-agent-django.md
 ```
 
-Use `--rpc-workers` for headless RPC event panes. These panes render assistant
-progress plus bounded tool inputs and outputs rather than tool-name placeholders.
-TUI remains the default with native Pi rendering. Both presentations use the
+Use `--rpc-workers` only when plain headless RPC event panes are explicitly
+needed for automation. They render assistant progress plus bounded tool inputs
+and outputs, but they do not reproduce Pi's native interactive editor or visual
+presentation. Native TUI is the default and is the required presentation for
+full visual navigation and direct subagent input. Both presentations use the
 same broker and bridge; `--rpc-workers` is not a legacy coordination mode.
 
 Use `--approve-project` only after inspecting and trusting the target project.
@@ -212,6 +225,12 @@ pi-tmux-agents abort SESSION --role implementer
 pi-tmux-agents restart SESSION --role implementer --yes
 pi-tmux-agents stop SESSION --yes
 ```
+
+When the invoking Pi is already inside tmux, `/orchestrator-attach SESSION`
+performs the exact client switch without replacing or stopping that Pi. Prefix
+then `L` detaches the client from the grid by returning it to the invoking Pi;
+it does not stop the workers. Attach and detach can be repeated while the run is
+live.
 
 Acknowledgement means acceptance, not completion. Matching role/action/delivery
 command IDs deduplicate; conflicting reuse is rejected. A crash in an
@@ -277,9 +296,11 @@ pi-tmux-agents controller stop --confirm
 
 The optional controller uses stable Pi session ID
 `pi-tmux-orchestrator-controller-v1`, a private project-neutral workspace, and
-no `edit`/`write` tools. It can serve as the parent Pi for cross-project runs;
-a normal project Pi is the primary interactive parent otherwise. Every target
-project must be explicit. Duplicate or unmarked reserved tmux names are refused.
+no `edit`/`write` tools. It exists only after an explicit `controller start`; a
+normal orchestration never creates it. It can serve as the parent Pi for
+cross-project runs; the invoking project Pi is the interactive parent otherwise.
+Every target project must be explicit. Duplicate or unmarked reserved tmux names
+are refused.
 
 ## Safety model
 

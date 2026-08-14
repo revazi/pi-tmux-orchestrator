@@ -120,6 +120,7 @@ The CLI:
 - never replaces an existing tmux session;
 - uses exact tmux targets;
 - validates reserved controller identity before attach/stop;
+- permits extension-driven worker-grid attach only as an exact `switch-client` when the parent Pi is already inside tmux; it never injects keys or replaces the parent process;
 - requires `--yes` for role restart and grid stop;
 - requires `--confirm` for controller stop;
 - records ambiguous delivery as `uncertain`;

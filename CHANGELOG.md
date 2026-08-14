@@ -6,6 +6,19 @@ All notable changes to this project are documented here.
 
 _No changes yet._
 
+## 0.6.2 - 2026-08-14
+
+### Added
+
+- Added `/orchestrator-attach` and the model tool's `attach` action to ensure parent observation and switch an in-tmux parent client into the exact live worker grid
+- Added and regression-tested a repeatable tmux detach/return path (`prefix`, then `L`) that preserves both the invoking Pi pane and live worker panes
+
+### Changed
+
+- Made native interactive Pi TUI panes—with Pi highlighting, tool rendering, and direct input editors—the package command default; plain RPC panes remain explicit headless automation only
+- Clarified that the invoking Pi is the parent supervisor, normal starts create no separate parent Pi/window/controller, `watch` subscribes to updates, and `attach` enters the live worker grid
+- Constrained each worker's report-tool schema to its valid role kind, changed-path, and verdict fields, avoiding preventable visible validation retries
+
 ## 0.6.1 - 2026-08-14
 
 ### Fixed

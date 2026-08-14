@@ -7,11 +7,15 @@ compatibility: Requires Pi, Python 3.11+, and tmux 3.2+. tmux 3.5+ with extended
 # Pi Tmux Orchestrator
 
 Prefer `/orchestrator-start`, `/orchestrator-list`, `/orchestrator-status`,
-`/orchestrator-watch`, `/orchestrator-send`, and `/orchestrator-stop` when the
+`/orchestrator-watch`, `/orchestrator-attach`, `/orchestrator-send`, and `/orchestrator-stop` when the
 package extension is available. The bounded `tmux_orchestrator` tool exposes the
 same authoritative control plane. New starts are watched automatically; use its
 `watch` action for an existing run so the parent receives lifecycle and final
-updates. The standalone `pi-tmux-agents` CLI fallback is authoritative; do not hand-build
+updates. Use `attach` when the user wants to enter, navigate, or directly steer
+the worker panes; it switches the invoking Pi's existing tmux client into the
+grid while keeping that Pi and its observer alive. Prefix then `L` detaches from
+the grid by returning to the same invoking Pi without stopping the workers. The
+standalone `pi-tmux-agents` CLI fallback is authoritative; do not hand-build
 panes, file handoffs, relay scripts, or polling loops.
 
 ## Operating rules
@@ -34,10 +38,13 @@ There is no new-run file-coordination mode or fallback.
 Workers submit bounded typed results through `orchestrator_report`, which ends
 the assignment. Reviewers inspect the shared worktree directly. For a run
 started through the package extension, the invoking Pi remains the parent
-supervisor: use the tmux panes for live visibility, watch lifecycle progress in
-the parent, then interpret the bounded structured completion or attention
-update returned by the broker observer. `/orchestrator-watch SESSION` attaches
-this Pi to a compatible existing run without taking over the terminal.
+supervisor; no second parent Pi, parent window, or controller is started. Use
+the tmux panes for live visibility, watch lifecycle progress in the invoking Pi,
+then interpret the bounded structured completion or attention update returned
+by the broker observer. `/orchestrator-watch SESSION` subscribes this Pi to a
+compatible existing run without taking over the terminal;
+`/orchestrator-attach SESSION` enters its native worker grid, and prefix then
+`L` returns while leaving the grid live for later reattachment.
 The broker stores metadata-only SQLite state and actual provider token totals
 when Pi reports them; it does not persist task, report, prompt, message, diff,
 or log bodies. See [references/protocol-v1.md](references/protocol-v1.md).
@@ -70,8 +77,9 @@ pi-tmux-agents start \
 ```
 
 Use `--rpc-workers` for headless RPC event panes that show assistant progress
-plus bounded tool inputs and outputs. Otherwise workers are native interactive
-Pi TUIs. Both use broker delivery; neither uses report files, mailbox payload
+plus bounded tool inputs and outputs, but use it only after an explicit request
+for headless presentation. Otherwise workers are native interactive Pi TUIs
+with Pi's normal highlighting, tool rendering, and input editor. Both use broker delivery; neither uses report files, mailbox payload
 files, polling, or tmux key injection for workflow transitions.
 Use `--approve-project` only after separately inspecting and trusting the target.
 
@@ -113,9 +121,10 @@ pi-tmux-agents controller attach
 ```
 
 The optional controller has a fixed project-neutral Pi identity and can be the
-parent Pi for cross-project operation. A normal project Pi remains the primary
-interactive parent otherwise. Every target project must be explicit. Stop the
-controller only with `controller stop --confirm`; worker grids and
+parent Pi for cross-project operation. It starts only through an explicit
+`controller start`; normal runs never create one. The invoking project Pi
+remains the primary interactive parent otherwise. Every target project must be
+explicit. Stop the controller only with `controller stop --confirm`; worker grids and
 conversations are retained independently.
 
 ## Before launching

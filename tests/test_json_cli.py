@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -360,6 +361,43 @@ class JsonMainTests(unittest.TestCase):
         self.assertNotIn("control_token", raw)
         self.assertNotIn("auth_token", raw)
 
+    def test_json_attach_switches_the_current_tmux_client(self) -> None:
+        manifest = {
+            "version": 3,
+            "project": str(ROOT),
+            "transport": ORCHESTRATOR.TUI_TRANSPORT,
+            "roles": {},
+        }
+        with (
+            mock.patch.dict(os.environ, {"TMUX": "/tmp/tmux"}),
+            mock.patch.object(
+                ORCHESTRATOR,
+                "resolve_session",
+                return_value=("pi-test", ROOT),
+            ),
+            mock.patch.object(ORCHESTRATOR, "load_manifest", return_value=manifest),
+            mock.patch.object(ORCHESTRATOR, "attach_session") as attach_session,
+            mock.patch.object(ORCHESTRATOR, "tmux") as tmux,
+        ):
+            code, envelope, raw, stderr = self.run_main(["--json", "attach", "pi-test"])
+        self.assertEqual(code, 0)
+        self.assertEqual(stderr, "")
+        self.assert_envelope(envelope, "attach", True)
+        self.assertEqual(envelope["data"]["mode"], "switch-client")
+        self.assertEqual(envelope["data"]["transport"], "tui")
+        self.assertIn("prefix", envelope["data"]["return_hint"])
+        self.assertNotIn(str(ROOT / "control.token"), raw)
+        attach_session.assert_called_once_with("pi-test")
+        tmux.assert_called_once_with(
+            [
+                "display-message",
+                "-d",
+                "5000",
+                "Attached to pi-test · prefix then L detaches back without stopping workers",
+            ],
+            check=False,
+        )
+
     def test_rpc_send_and_abort_return_acknowledged_metadata(self) -> None:
         manifest = {
             "version": 2,
@@ -639,7 +677,7 @@ class JsonMainTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(stderr, "")
         self.assert_envelope(envelope, "version", True)
-        self.assertEqual(envelope["data"]["version"], "0.6.1")
+        self.assertEqual(envelope["data"]["version"], "0.6.2")
 
         code, envelope, _, stderr = self.run_main(["--json", "--help"])
         self.assertEqual(code, 2)
@@ -648,7 +686,8 @@ class JsonMainTests(unittest.TestCase):
         self.assertEqual(envelope["error"]["code"], "interactive_help_only")
 
     def test_json_failures_are_exact_bounded_and_never_duplicate_stderr(self) -> None:
-        code, envelope, _, stderr = self.run_main(["--json", "attach"])
+        with mock.patch.dict(os.environ, {"TMUX": ""}):
+            code, envelope, _, stderr = self.run_main(["--json", "attach"])
         self.assertEqual(code, 2)
         self.assertEqual(stderr, "")
         self.assert_envelope(envelope, "attach", False)

@@ -1,4 +1,3 @@
-// fallow-ignore-file unused-file -- loaded explicitly by Python worker launch commands
 import net from "node:net";
 import { randomBytes } from "node:crypto";
 
@@ -42,6 +41,54 @@ function textArray(value, label) {
   if (value === undefined) return [];
   if (!Array.isArray(value) || value.length > 50) throw new Error(`invalid_${label}`);
   return value.map((item) => text(item, 500));
+}
+
+function reportParameters(role) {
+  const kind = {
+    implementer: "implementation",
+    reviewer: "review",
+    probe: "probe",
+    playwright: "playwright",
+    django: "django",
+  }[role];
+  const verdicts = {
+    reviewer: ["approved", "changes_requested"],
+    playwright: ["pass", "fail"],
+    django: ["advisory_approved", "issues_found"],
+  }[role];
+  const properties = {
+    kind: { type: "string", enum: [kind] },
+    summary: { type: "string", maxLength: 2000 },
+    checks: {
+      type: "array", maxItems: 50,
+      items: {
+        type: "object", additionalProperties: false, required: ["name", "status"],
+        properties: { name: { type: "string", maxLength: 500 }, status: { type: "string", enum: ["passed", "failed", "skipped", "unknown"] } },
+      },
+    },
+    findings: {
+      type: "array", maxItems: 50,
+      items: {
+        type: "object", additionalProperties: false, required: ["severity", "summary"],
+        properties: {
+          severity: { type: "string", enum: ["critical", "high", "medium", "low", "info"] },
+          path: { type: "string", maxLength: 500 }, line: { type: "integer", minimum: 1 },
+          summary: { type: "string", maxLength: 500 }, acceptance: { type: "string", maxLength: 500 },
+        },
+      },
+    },
+    risks: { type: "array", maxItems: 50, items: { type: "string", maxLength: 500 } },
+    limitations: { type: "array", maxItems: 50, items: { type: "string", maxLength: 500 } },
+  };
+  const required = ["kind", "summary"];
+  if (role === "implementer") {
+    properties.changed_paths = { type: "array", maxItems: 50, items: { type: "string", maxLength: 500 } };
+  }
+  if (verdicts) {
+    properties.verdict = { type: "string", enum: verdicts };
+    required.push("verdict");
+  }
+  return { type: "object", additionalProperties: false, required, properties };
 }
 
 function normalizeReport(input) {
@@ -124,6 +171,7 @@ function totalUsage(ctx) {
   return totals;
 }
 
+// fallow-ignore-next-line unused-export -- loaded explicitly by Python worker launch commands
 export default function orchestratorWorker(pi) {
   if (!validEnvironment()) throw new Error("Pi Tmux Orchestrator worker environment is invalid");
 
@@ -311,37 +359,7 @@ export default function orchestratorWorker(pi) {
       "Report concise summaries, paths, checks, findings, risks, and limitations; never copy diffs, logs, prompts, credentials, provider bodies, or private payloads.",
       "After reporting, end the turn. Never wait, sleep, or poll for coordination work.",
     ],
-    parameters: {
-      type: "object",
-      additionalProperties: false,
-      required: ["kind", "summary"],
-      properties: {
-        kind: { type: "string", enum: ["implementation", "review", "probe", "playwright", "django"] },
-        summary: { type: "string", maxLength: 2000 },
-        changed_paths: { type: "array", maxItems: 50, items: { type: "string", maxLength: 500 } },
-        checks: {
-          type: "array", maxItems: 50,
-          items: {
-            type: "object", additionalProperties: false, required: ["name", "status"],
-            properties: { name: { type: "string", maxLength: 500 }, status: { type: "string", enum: ["passed", "failed", "skipped", "unknown"] } },
-          },
-        },
-        findings: {
-          type: "array", maxItems: 50,
-          items: {
-            type: "object", additionalProperties: false, required: ["severity", "summary"],
-            properties: {
-              severity: { type: "string", enum: ["critical", "high", "medium", "low", "info"] },
-              path: { type: "string", maxLength: 500 }, line: { type: "integer", minimum: 1 },
-              summary: { type: "string", maxLength: 500 }, acceptance: { type: "string", maxLength: 500 },
-            },
-          },
-        },
-        risks: { type: "array", maxItems: 50, items: { type: "string", maxLength: 500 } },
-        limitations: { type: "array", maxItems: 50, items: { type: "string", maxLength: 500 } },
-        verdict: { type: "string", enum: ["approved", "changes_requested", "pass", "fail", "advisory_approved", "issues_found"] },
-      },
-    },
+    parameters: reportParameters(ROLE),
     async execute(_toolCallId, input) {
       if (!activeAssignment) throw new Error("no_active_orchestration_assignment");
       const report = normalizeReport(input);
@@ -397,3 +415,5 @@ export default function orchestratorWorker(pi) {
     if (socket) socket.destroy();
   });
 }
+
+export const testHooks = { reportParameters };

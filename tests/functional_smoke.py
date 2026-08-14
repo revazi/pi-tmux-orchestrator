@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import pty
 import shlex
 import shutil
 import socket
@@ -37,10 +38,147 @@ def receive(stream: socket.socket) -> dict[str, object]:
     return json.loads(payload)
 
 
+def assert_attach_detach_reuses_invoking_parent() -> None:
+    socket_name = f"pi-attach-smoke-{os.getpid()}"
+    invoking_session = "invoking-pi"
+    worker_session = "orchestration"
+    client_pid: int | None = None
+    client_fd: int | None = None
+
+    def isolated_tmux(
+        *args: str, check: bool = True
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["tmux", "-L", socket_name, *args],
+            check=check,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+    def wait_for_client(expected: str) -> None:
+        for _ in range(100):
+            clients = isolated_tmux(
+                "list-clients", "-F", "#{session_name}", check=False
+            )
+            if clients.returncode == 0 and clients.stdout.splitlines() == [expected]:
+                return
+            time.sleep(0.05)
+        raise AssertionError(f"tmux client did not switch to {expected}")
+
+    def pane_pid(target: str) -> str:
+        return isolated_tmux(
+            "display-message", "-p", "-t", target, "#{pane_pid}"
+        ).stdout.strip()
+
+    try:
+        subprocess.run(
+            [
+                "tmux",
+                "-L",
+                socket_name,
+                "-f",
+                "/dev/null",
+                "new-session",
+                "-d",
+                "-s",
+                invoking_session,
+                "-c",
+                str(ROOT),
+            ],
+            check=True,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        isolated_tmux("new-session", "-d", "-s", worker_session, "-c", str(ROOT))
+        sessions = isolated_tmux(
+            "list-sessions", "-F", "#{session_name}"
+        ).stdout.splitlines()
+        if set(sessions) != {invoking_session, worker_session}:
+            raise AssertionError(f"unexpected tmux sessions before attach: {sessions}")
+
+        invoking_target = f"={invoking_session}:0.0"
+        worker_target = f"={worker_session}:0.0"
+        invoking_pid = pane_pid(invoking_target)
+        worker_pid = pane_pid(worker_target)
+        invoking_pane = isolated_tmux(
+            "display-message", "-p", "-t", invoking_target, "#{pane_id}"
+        ).stdout.strip()
+
+        client_pid, client_fd = pty.fork()
+        if client_pid == 0:
+            os.environ.pop("TMUX", None)
+            os.environ.pop("TMUX_PANE", None)
+            os.environ["TERM"] = "xterm-256color"
+            os.execvp(
+                "tmux",
+                [
+                    "tmux",
+                    "-L",
+                    socket_name,
+                    "attach-session",
+                    "-t",
+                    f"={invoking_session}",
+                ],
+            )
+        wait_for_client(invoking_session)
+
+        code = (
+            f"import sys;sys.path.insert(0,{str(ROOT)!r});"
+            "from pi_tmux_orchestrator.tmux import attach_session;"
+            f"attach_session({worker_session!r})"
+        )
+        command = shlex.join([sys.executable, "-c", code])
+        for _ in range(2):
+            isolated_tmux("send-keys", "-t", invoking_pane, "-l", command)
+            isolated_tmux("send-keys", "-t", invoking_pane, "Enter")
+            wait_for_client(worker_session)
+            if pane_pid(invoking_target) != invoking_pid:
+                raise AssertionError("attach replaced the invoking parent Pi pane")
+            if pane_pid(worker_target) != worker_pid:
+                raise AssertionError("attach restarted the orchestration worker pane")
+
+            # Tmux's default prefix-L binding switches this exact client back to
+            # its previous session. This is the user-facing detach/return path.
+            os.write(client_fd, b"\x02L")
+            wait_for_client(invoking_session)
+            if pane_pid(invoking_target) != invoking_pid:
+                raise AssertionError(
+                    "detach did not preserve the invoking parent Pi pane"
+                )
+            if pane_pid(worker_target) != worker_pid:
+                raise AssertionError("detach stopped the running orchestration")
+
+        sessions = isolated_tmux(
+            "list-sessions", "-F", "#{session_name}"
+        ).stdout.splitlines()
+        if set(sessions) != {invoking_session, worker_session}:
+            raise AssertionError(
+                f"attach/detach created a separate parent session: {sessions}"
+            )
+    finally:
+        subprocess.run(
+            ["tmux", "-L", socket_name, "kill-server"],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        if client_fd is not None:
+            os.close(client_fd)
+        if client_pid not in {None, 0}:
+            try:
+                os.waitpid(client_pid, 0)
+            except ChildProcessError:
+                pass
+
+
 def main() -> int:
     if not shutil.which("tmux"):
         print("tmux is required for the functional smoke", file=sys.stderr)
         return 1
+
+    assert_attach_detach_reuses_invoking_parent()
 
     session = f"pi-orchestrator-smoke-{os.getpid()}"
     prefix_collision = f"{session}-prefix-collision"
@@ -394,6 +532,8 @@ def main() -> int:
             if path.exists():
                 raise AssertionError(f"broker socket residue remains: {path}")
 
+        print("OK invoking Pi remains the parent across repeated attach/detach")
+        print("OK detach returns the exact client without stopping worker panes")
         print("OK controller lifecycle")
         print("OK TUI and RPC presentations share manifest-v3 broker-v1")
         print("OK RPC panes render assistant progress plus tool inputs and outputs")
