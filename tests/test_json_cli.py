@@ -144,6 +144,79 @@ class JsonMainTests(unittest.TestCase):
         self.assertIsNone(data["paths"]["coordination"])
         self.assertIsNone(data["paths"]["observer_socket"])
 
+    def test_start_model_policy_uses_config_with_explicit_override_precedence(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "models.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "defaults": {
+                            "provider": "anthropic",
+                            "model": "configured-model",
+                            "thinking": "medium",
+                        },
+                        "roles": {
+                            "reviewer": {
+                                "provider": "google",
+                                "model": "configured-reviewer",
+                                "thinking": "low",
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with (
+                mock.patch.dict(
+                    os.environ,
+                    {"PI_TMUX_ORCHESTRATOR_CONFIG": str(config_path)},
+                ),
+                mock.patch.object(
+                    ORCHESTRATOR, "command_path", return_value="/usr/bin/true"
+                ),
+                mock.patch.object(ORCHESTRATOR, "session_exists", return_value=False),
+            ):
+                code, envelope, _, stderr = self.run_main(
+                    [
+                        "--json",
+                        "start",
+                        "--project",
+                        str(ROOT),
+                        "--task",
+                        "synthetic",
+                        "--implementer-provider",
+                        "openrouter",
+                        "--implementer-model",
+                        "explicit/model",
+                        "--implementer-thinking",
+                        "high",
+                        "--skip-model-check",
+                        "--dry-run",
+                    ]
+                )
+        self.assertEqual(code, 0)
+        self.assertEqual(stderr, "")
+        roles = {role["name"]: role for role in envelope["data"]["roles"]}
+        self.assertEqual(
+            (
+                roles["implementer"]["provider"],
+                roles["implementer"]["model"],
+                roles["implementer"]["thinking"],
+            ),
+            ("openrouter", "explicit/model", "high"),
+        )
+        self.assertEqual(
+            (
+                roles["reviewer"]["provider"],
+                roles["reviewer"]["model"],
+                roles["reviewer"]["thinking"],
+            ),
+            ("google", "configured-reviewer", "low"),
+        )
+
     def test_start_success_returns_paths_without_payload_bodies(self) -> None:
         canary = "PRIVATE_FULL_START_CANARY_JSON_a12d"
         with tempfile.TemporaryDirectory() as directory:
@@ -677,7 +750,7 @@ class JsonMainTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(stderr, "")
         self.assert_envelope(envelope, "version", True)
-        self.assertEqual(envelope["data"]["version"], "0.6.2")
+        self.assertEqual(envelope["data"]["version"], "0.6.3")
 
         code, envelope, _, stderr = self.run_main(["--json", "--help"])
         self.assertEqual(code, 2)

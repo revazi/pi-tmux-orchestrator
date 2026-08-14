@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import os
+import tempfile
+from pathlib import Path
+
 from pi_tmux_orchestrator import (
     broker,
     broker_client,
     broker_store,
     cli,
     commands,
+    configuration,
     constants,
     controller,
     models,
@@ -26,6 +31,11 @@ from pi_tmux_orchestrator import (
     tmux,
 )
 
+_TEST_MODEL_CONFIG = (
+    Path(tempfile.gettempdir()) / f"pi-tmux-test-model-config-{os.getpid()}.json"
+)
+os.environ.setdefault("PI_TMUX_ORCHESTRATOR_CONFIG", str(_TEST_MODEL_CONFIG))
+
 
 class ModuleFacade:
     """Route test patches to every module that imported a shared symbol."""
@@ -41,6 +51,7 @@ class ModuleFacade:
                 broker_store,
                 cli,
                 commands,
+                configuration,
                 controller,
                 relay,
                 rpc,

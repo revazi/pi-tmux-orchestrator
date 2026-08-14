@@ -6,14 +6,18 @@ compatibility: Requires Pi, Python 3.11+, and tmux 3.2+. tmux 3.5+ with extended
 
 # Pi Tmux Orchestrator
 
-Prefer `/orchestrator-start`, `/orchestrator-list`, `/orchestrator-status`,
-`/orchestrator-watch`, `/orchestrator-attach`, `/orchestrator-send`, and `/orchestrator-stop` when the
-package extension is available. The bounded `tmux_orchestrator` tool exposes the
-same authoritative control plane. New starts are watched automatically; use its
+Prefer `/or-start`, `/or-list`, `/or-status`, `/or-watch`, `/or-attach`,
+`/or-send`, and `/or-stop` when the package extension is available. The
+canonical `/orchestrator-*` names remain equivalent. The bounded
+`tmux_orchestrator` tool exposes the same authoritative control plane. New
+starts are watched automatically; use its
 `watch` action for an existing run so the parent receives lifecycle and final
-updates. Use `attach` when the user wants to enter, navigate, or directly steer
-the worker panes; it switches the invoking Pi's existing tmux client into the
-grid while keeping that Pi and its observer alive. Prefix then `L` detaches from
+updates. Pi slash commands with an omitted session list valid running
+orchestrations for explicit selection; model-tool calls should continue to use
+an exact session whenever multiple runs exist. Use `attach` when the user wants
+to enter, navigate, or directly steer the worker panes; it switches the invoking
+Pi's existing tmux client into the grid while keeping that Pi and its observer
+alive. Prefix then `L` detaches from
 the grid by returning to the same invoking Pi without stopping the workers. The
 standalone `pi-tmux-agents` CLI fallback is authoritative; do not hand-build
 panes, file handoffs, relay scripts, or polling loops.
@@ -24,7 +28,8 @@ panes, file handoffs, relay scripts, or polling loops.
 2. Never approve an unfamiliar project. Parent trust does not transfer to child Pi sessions.
 3. Keep one writer: only the implementer may edit tracked files. Other roles are workflow-read-only but retain `bash` for verification and are not OS-sandboxed.
 4. Keep credentials, private documents, provider bodies, raw errors, diffs, and logs out of tasks and structured reports.
-5. Use specialists only where their independent evidence is relevant.
+5. Honor explicit user provider/model/thinking requests through `useParentModel` or `modelOverrides`. Use the bounded `models` action to resolve exact available IDs; never invent IDs or inspect credentials. Omitted overrides use the user's global configuration.
+6. Use specialists only where their independent evidence is relevant.
 6. Never claim a synthetic probe or browser smoke is production wire acceptance.
 7. Do not push, merge, publish, deploy, or perform destructive cleanup without explicit authorization.
 8. Idle agents end their turn. They never run sleeps or poll files, sockets, or tmux.
@@ -61,9 +66,14 @@ pi-tmux-agents start \
 
 Default roles:
 
-- implementer: `openai-codex/gpt-5.6-sol`, `xhigh`
-- reviewer: `openai-codex/gpt-5.4`, `high`
+- implementer: user-configured provider/model/thinking, then packaged fallback
+- reviewer: user-configured provider/model/thinking, then packaged fallback
 - broker/status monitor
+
+Global model policy is read from `~/.pi/agent/tmux-orchestrator.json` (or
+`PI_TMUX_ORCHESTRATOR_CONFIG`). Explicit CLI or model-tool role overrides win.
+Pi's own model registry and authentication remain authoritative; never place
+credentials or endpoint secrets in orchestrator configuration.
 
 Optional roles:
 

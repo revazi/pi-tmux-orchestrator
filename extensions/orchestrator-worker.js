@@ -30,6 +30,10 @@ function message(type, extra = {}) {
   return { version: VERSION, type, role: ROLE, token: TOKEN, id: id(), ...extra };
 }
 
+function deliveryOptions(trigger) {
+  return { triggerTurn: trigger, deliverAs: "followUp" };
+}
+
 function text(value, limit) {
   if (typeof value !== "string" || !value.trim() || value.length > limit || value.includes("\0")) {
     throw new Error("invalid_report_text");
@@ -269,10 +273,7 @@ export default function orchestratorWorker(pi) {
     };
     pi.sendMessage(
       { customType: MESSAGE_TYPE, content: value.content, display: true, details },
-      {
-        triggerTurn: value.trigger === true,
-        deliverAs: value.trigger === true ? "followUp" : "nextTurn",
-      },
+      deliveryOptions(value.trigger === true),
     );
     pi.appendEntry(DELIVERY_ENTRY, details);
     delivered.add(value.id);
@@ -416,4 +417,4 @@ export default function orchestratorWorker(pi) {
   });
 }
 
-export const testHooks = { reportParameters };
+export const testHooks = { deliveryOptions, reportParameters };

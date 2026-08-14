@@ -23,6 +23,8 @@ grids.
   lifecycle sleeps, or tmux key injection in newly started runs
 - Metadata-only SQLite state, durable Pi sessions, idempotent command IDs, and
   crash-`uncertain` semantics
+- User-configurable provider/model/thinking policy for every role, including Pi
+  custom providers, with exact natural-language overrides through the model tool
 - Actual provider token/cost accounting when Pi exposes it, plus context pressure
   and soft budgets
 - A versioned JSON CLI and tmux-independent Supervisor API v2
@@ -35,16 +37,16 @@ grids.
 ```text
 ┌──────────────────────────────┬──────────────────────────────┐
 │ Implementer                  │ Reviewer                     │
-│ openai-codex/gpt-5.6-sol     │ openai-codex/gpt-5.4         │
-│ xhigh                        │ high                         │
+│ configured provider/model    │ configured provider/model    │
+│ configured thinking          │ configured thinking          │
 ├──────────────────────────────┼──────────────────────────────┤
 │ Optional probe               │ Optional Playwright tester   │
-│ openai-codex/gpt-5.4-mini    │ openai-codex/gpt-5.4         │
-│ high                         │ high                         │
+│ configured provider/model    │ configured provider/model    │
+│ configured thinking          │ configured thinking          │
 ├──────────────────────────────┼──────────────────────────────┤
 │ Optional Django expert       │ Broker + status              │
-│ openai-codex/gpt-5.4         │ workflow, lifecycle, usage   │
-│ high                         │                              │
+│ configured provider/model    │ workflow, lifecycle, usage   │
+│ configured thinking          │                              │
 └──────────────────────────────┴──────────────────────────────┘
 ```
 
@@ -63,8 +65,9 @@ implementation is `pi_tmux_orchestrator/`:
 - role system prompts and worker bridge
 - retained-run Supervisor API
 
-The extension delegates control actions as bounded argument arrays to the Python
-JSON CLI and owns only the parent-session observer/presentation bridge. For
+The extension delegates orchestration control actions as bounded argument
+arrays to the Python JSON CLI, reads only bounded model metadata from Pi's
+current registry, and owns the parent-session observer/presentation bridge. For
 Pi-started runs, the invoking parent Pi keeps an authenticated
 read-only broker observer: tmux panes provide live worker visibility, while
 structured completion/attention reports return to the parent for decisions.
@@ -125,7 +128,9 @@ pi install npm:pi-tmux-orchestrator
 The package exposes:
 
 - `/orchestrator-help`
+- `/orchestrator-about`
 - `/orchestrator-doctor`
+- `/orchestrator-models [query]`
 - `/orchestrator-start [task]`
 - `/orchestrator-list`
 - `/orchestrator-status [session]`
@@ -133,7 +138,77 @@ The package exposes:
 - `/orchestrator-attach [session]`
 - `/orchestrator-send [session]`
 - `/orchestrator-stop [session]`
+- Short aliases: `/or-help`, `/or-about`, `/or-doctor`, `/or-models`, `/or-start`, `/or-list`,
+  `/or-status`, `/or-watch`, `/or-attach`, `/or-send`, and `/or-stop`
 - `/orchestrate` and `/orchestrations` compatibility aliases
+
+The `/or-*` aliases use the exact same handlers, confirmations, selectors, and
+safety boundaries as their canonical `/orchestrator-*` commands.
+
+At interactive Pi startup, the extension makes one best-effort, time-bounded
+request to the public npm registry. If a newer release exists, it shows a
+non-blocking warning with `pi update npm:pi-tmux-orchestrator`. `/or-about`
+shows the installed version, latest npm version, update command, and project
+links. Set `PI_TMUX_ORCHESTRATOR_DISABLE_UPDATE_NOTICE=1` to disable startup
+notices. Update checks are skipped in orchestration worker and controller
+sessions.
+
+### Worker model configuration
+
+Pi's own provider authentication and `models.json` remain authoritative. The
+orchestrator never reads or copies provider credentials. Configure global
+worker defaults outside project repositories in
+`~/.pi/agent/tmux-orchestrator.json` (or under `PI_CODING_AGENT_DIR`):
+
+```json
+{
+  "version": 1,
+  "defaults": {
+    "provider": "anthropic",
+    "model": "claude-sonnet-4-6",
+    "thinking": "high"
+  },
+  "roles": {
+    "reviewer": {
+      "provider": "google",
+      "model": "gemini-3.1-pro-preview",
+      "thinking": "medium"
+    },
+    "probe": {
+      "thinking": "low"
+    }
+  }
+}
+```
+
+The file is read for every new start. `defaults` applies to every role and
+`roles` overrides individual roles. Only
+`provider`, `model`, and `thinking` are accepted; credential or endpoint fields
+are rejected. Set `PI_TMUX_ORCHESTRATOR_CONFIG` to an absolute path to keep the
+file elsewhere. Precedence is: explicit CLI/model-tool role override, role
+configuration, global configuration, then packaged fallback defaults.
+
+Natural-language requests are supported by the `tmux_orchestrator` tool. For
+example, users can ask Pi to “use my current model for every worker,” “use
+Anthropic model X with high thinking for the implementer,” or “use configured
+models.” Pi can call the metadata-only `models` action to resolve exact IDs; the
+same catalogue is available with `/or-models [query]`. The tool must not invent
+provider/model IDs. Explicit CLI equivalents remain available:
+
+```bash
+pi-tmux-agents start --task-file /tmp/task.md \
+  --implementer-provider anthropic \
+  --implementer-model claude-sonnet-4-6 \
+  --implementer-thinking high \
+  --reviewer-provider google \
+  --reviewer-model gemini-3.1-pro-preview \
+  --reviewer-thinking medium
+```
+
+When a session argument is omitted, `status`, `watch`, `attach`, `send`, and
+`stop` list valid running orchestrations in a Pi selector showing session and
+project. Choosing one passes its exact session name to the authoritative CLI;
+providing a session argument still bypasses the picker.
 
 The `tmux_orchestrator` model tool provides bounded `doctor`, `list`, `status`,
 `watch`, `attach`, `start`, and `send` actions. Start requires interactive

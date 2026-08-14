@@ -27,6 +27,13 @@ Pi processes. `--approve-project` is permitted only after target inspection and
 separate confirmation. RPC presentation uses Pi's saved/global trust behavior
 because it cannot display a startup trust prompt.
 
+Worker provider/model/thinking policy comes only from bounded explicit
+arguments or the strict user-global orchestrator configuration outside target
+repositories. The configuration accepts identifiers and thinking levels only;
+credential, endpoint, header, and arbitrary extra fields are rejected. Pi's own
+model registry and authentication remain authoritative. Bounded model discovery
+returns no authentication material.
+
 ## Broker boundary
 
 Every run created by `0.5.0` or later uses one local Unix-domain socket:
@@ -130,6 +137,13 @@ The CLI:
 It does not push, merge, publish, deploy, or clean target repositories.
 
 ## Package and tests
+
+In a regular interactive parent Pi session, the extension makes one
+best-effort HTTPS request to the public npm registry's package metadata endpoint
+to detect a newer release. The request is time-bounded, sends no project or
+orchestration data, stores only the validated version in process memory, and is
+skipped in worker/controller sessions. Set
+`PI_TMUX_ORCHESTRATOR_DISABLE_UPDATE_NOTICE=1` to disable it.
 
 The npm package declares no dependencies or lifecycle scripts and does not
 bundle Pi. Deterministic package checks exclude tests, CI files, generated

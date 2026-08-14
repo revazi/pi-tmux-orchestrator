@@ -5,7 +5,23 @@ import { join } from "node:path";
 import net from "node:net";
 import { test } from "node:test";
 import extension, { testHooks } from "../extensions/tmux-orchestrator.js";
+import { updateTestHooks as updateHooks } from "../extensions/orchestrator-update.js";
 import { testHooks as workerHooks } from "../extensions/orchestrator-worker.js";
+
+const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+
+async function drainPromises() {
+  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => setImmediate(resolve));
+}
+
+async function waitFor(predicate, timeoutMs = 1_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error("timed out waiting for async extension work");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
 
 function success(command, data = {}) {
   return { schema_version: "1", command, success: true, data, error: null };
@@ -48,6 +64,10 @@ function context(overrides = {}) {
     hasUI: true,
     cwd: process.cwd(),
     signal: overrides.signal,
+    model: { provider: "synthetic-parent", id: "parent-model", reasoning: true },
+    thinkingLevel: "high",
+    scopedModels: [],
+    modelRegistry: { getAvailable: () => [] },
     isProjectTrusted: () => overrides.trusted ?? false,
     ui: {
       confirm: async (title, message) => {
@@ -80,7 +100,7 @@ test("registers one bounded model tool and the exact canonical/alias command sur
   const { tool, tools, commands, events } = harness(async () => ({ code: 0, stdout: "" }));
   assert.equal(tools.length, 1);
   assert.equal(tool.name, "tmux_orchestrator");
-  assert.deepEqual(tool.parameters.properties.action.enum, ["doctor", "list", "status", "watch", "attach", "start", "send"]);
+  assert.deepEqual(tool.parameters.properties.action.enum, ["doctor", "models", "list", "status", "watch", "attach", "start", "send"]);
   assert.equal(tool.parameters.properties.action.enum.includes("restart"), false);
   assert.equal(tool.parameters.properties.action.enum.includes("stop"), false);
   assert.equal(tool.renderCall, undefined);
@@ -89,7 +109,9 @@ test("registers one bounded model tool and the exact canonical/alias command sur
     [...commands.keys()],
     [
       "orchestrator-help",
+      "orchestrator-about",
       "orchestrator-doctor",
+      "orchestrator-models",
       "orchestrator-start",
       "orchestrator-list",
       "orchestrator-status",
@@ -97,6 +119,17 @@ test("registers one bounded model tool and the exact canonical/alias command sur
       "orchestrator-attach",
       "orchestrator-send",
       "orchestrator-stop",
+      "or-help",
+      "or-about",
+      "or-doctor",
+      "or-models",
+      "or-start",
+      "or-list",
+      "or-status",
+      "or-watch",
+      "or-attach",
+      "or-send",
+      "or-stop",
       "orchestrate",
       "orchestrations",
     ],
@@ -105,10 +138,99 @@ test("registers one bounded model tool and the exact canonical/alias command sur
   assert.equal(commands.has("orchestrator-restart"), false);
   assert.equal(commands.get("orchestrator-start").handler, commands.get("orchestrate").handler);
   assert.equal(commands.get("orchestrator-list").handler, commands.get("orchestrations").handler);
-  assert.equal(events.has("session_start"), false);
+  for (const action of ["help", "about", "doctor", "models", "start", "list", "status", "watch", "attach", "send", "stop"]) {
+    assert.equal(commands.get(`or-${action}`).handler, commands.get(`orchestrator-${action}`).handler);
+  }
+  assert.equal(events.has("session_start"), true);
   assert.ok(events.has("session_before_switch"));
   assert.ok(events.has("session_before_fork"));
   assert.equal(events.has("session_shutdown"), true);
+});
+
+test("shows a non-blocking update notice once and exposes version details", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalDisable = process.env.PI_TMUX_ORCHESTRATOR_DISABLE_UPDATE_NOTICE;
+  const originalRole = process.env.PI_TMUX_ORCHESTRATOR_ROLE;
+  const originalController = process.env.PI_TMUX_CONTROLLER;
+  let fetchCalls = 0;
+  globalThis.fetch = async () => {
+    fetchCalls += 1;
+    return { ok: true, async json() { return { version: "99.0.0" }; } };
+  };
+  delete process.env.PI_TMUX_ORCHESTRATOR_DISABLE_UPDATE_NOTICE;
+  delete process.env.PI_TMUX_ORCHESTRATOR_ROLE;
+  delete process.env.PI_TMUX_CONTROLLER;
+  updateHooks.reset();
+
+  try {
+    const { commands, events } = harness(async () => ({ code: 0, stdout: "" }));
+    const ctx = context();
+    events.get("session_start")({}, ctx);
+    await waitFor(() => ctx.calls.notifications.length === 1);
+    assert.deepEqual(ctx.calls.notifications, [{
+      message: `Pi Tmux Orchestrator 99.0.0 is available (you have ${packageJson.version}). Update: pi update npm:pi-tmux-orchestrator. Details: /or-about`,
+      level: "warning",
+    }]);
+
+    events.get("session_start")({}, ctx);
+    await drainPromises();
+    assert.equal(ctx.calls.notifications.length, 1);
+
+    const aboutCtx = context();
+    await commands.get("or-about").handler("", aboutCtx);
+    assert.equal(fetchCalls, 2);
+    assert.equal(aboutCtx.calls.notifications.length, 1);
+    assert.match(aboutCtx.calls.notifications[0].message, new RegExp(`Installed version: ${packageJson.version}`));
+    assert.match(aboutCtx.calls.notifications[0].message, /Latest npm version: 99\.0\.0/);
+    assert.match(aboutCtx.calls.notifications[0].message, /Update command: pi update npm:pi-tmux-orchestrator/);
+    assert.equal(aboutCtx.calls.notifications[0].level, "warning");
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalDisable === undefined) delete process.env.PI_TMUX_ORCHESTRATOR_DISABLE_UPDATE_NOTICE;
+    else process.env.PI_TMUX_ORCHESTRATOR_DISABLE_UPDATE_NOTICE = originalDisable;
+    if (originalRole === undefined) delete process.env.PI_TMUX_ORCHESTRATOR_ROLE;
+    else process.env.PI_TMUX_ORCHESTRATOR_ROLE = originalRole;
+    if (originalController === undefined) delete process.env.PI_TMUX_CONTROLLER;
+    else process.env.PI_TMUX_CONTROLLER = originalController;
+    updateHooks.reset();
+  }
+});
+
+test("startup update notices honor opt-out and skip orchestration worker sessions", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalDisable = process.env.PI_TMUX_ORCHESTRATOR_DISABLE_UPDATE_NOTICE;
+  const originalRole = process.env.PI_TMUX_ORCHESTRATOR_ROLE;
+  let fetchCalls = 0;
+  globalThis.fetch = async () => {
+    fetchCalls += 1;
+    return { ok: true, async json() { return { version: "99.0.0" }; } };
+  };
+
+  try {
+    const { events } = harness(async () => ({ code: 0, stdout: "" }));
+    process.env.PI_TMUX_ORCHESTRATOR_DISABLE_UPDATE_NOTICE = "1";
+    updateHooks.reset();
+    const disabledCtx = context();
+    events.get("session_start")({}, disabledCtx);
+    await drainPromises();
+    assert.equal(disabledCtx.calls.notifications.length, 0);
+
+    delete process.env.PI_TMUX_ORCHESTRATOR_DISABLE_UPDATE_NOTICE;
+    process.env.PI_TMUX_ORCHESTRATOR_ROLE = "reviewer";
+    updateHooks.reset();
+    const workerCtx = context();
+    events.get("session_start")({}, workerCtx);
+    await drainPromises();
+    assert.equal(workerCtx.calls.notifications.length, 0);
+    assert.equal(fetchCalls, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalDisable === undefined) delete process.env.PI_TMUX_ORCHESTRATOR_DISABLE_UPDATE_NOTICE;
+    else process.env.PI_TMUX_ORCHESTRATOR_DISABLE_UPDATE_NOTICE = originalDisable;
+    if (originalRole === undefined) delete process.env.PI_TMUX_ORCHESTRATOR_ROLE;
+    else process.env.PI_TMUX_ORCHESTRATOR_ROLE = originalRole;
+    updateHooks.reset();
+  }
 });
 
 test("worker report schemas expose only fields valid for each role", () => {
@@ -123,6 +245,92 @@ test("worker report schemas expose only fields valid for each role", () => {
   assert.equal(reviewer.properties.changed_paths, undefined);
   assert.deepEqual(reviewer.properties.verdict.enum, ["approved", "changes_requested"]);
   assert.deepEqual(reviewer.required, ["kind", "summary", "verdict"]);
+});
+
+test("worker queues baseline context before a triggered assignment turn", () => {
+  assert.deepEqual(workerHooks.deliveryOptions(false), {
+    triggerTurn: false,
+    deliverAs: "followUp",
+  });
+  assert.deepEqual(workerHooks.deliveryOptions(true), {
+    triggerTurn: true,
+    deliverAs: "followUp",
+  });
+});
+
+test("model discovery uses bounded available metadata and respects scoped models", async () => {
+  let execCalls = 0;
+  const { tool, commands } = harness(async () => {
+    execCalls += 1;
+    return { code: 0, stdout: "" };
+  });
+  const model = {
+    provider: "anthropic",
+    id: "claude-user-model",
+    name: "Claude User Model",
+    reasoning: true,
+    thinkingLevelMap: { off: null, xhigh: "xhigh", max: null },
+  };
+  const ctx = context({
+    context: {
+      scopedModels: [{ model, thinkingLevel: "high" }],
+      modelRegistry: {
+        getAvailable: () => [{ provider: "ignored", id: "outside-scope", reasoning: false }],
+      },
+    },
+  });
+
+  const result = await tool.execute("call", { action: "models", query: "claude" }, undefined, undefined, ctx);
+  assert.equal(execCalls, 0);
+  assert.equal(result.details.command, "models");
+  assert.equal(result.details.data.scoped, true);
+  assert.deepEqual(result.details.data.models, [{
+    provider: "anthropic",
+    model: "claude-user-model",
+    name: "Claude User Model",
+    reasoning: true,
+    thinking_levels: ["high"],
+  }]);
+  assert.match(result.content[0].text, /anthropic\/claude-user-model thinking=high/);
+  assert.equal(JSON.stringify(result).includes("outside-scope"), false);
+
+  const slashCtx = context({
+    context: {
+      scopedModels: ctx.scopedModels,
+      modelRegistry: ctx.modelRegistry,
+    },
+  });
+  await commands.get("or-models").handler("claude", slashCtx);
+  assert.match(slashCtx.calls.notifications[0].message, /1\/1 available model/);
+});
+
+test("natural-language starts can use the parent model with exact per-role overrides", () => {
+  const input = testHooks.startInputWithParentModel(
+    {
+      useParentModel: true,
+      modelOverrides: {
+        reviewer: {
+          provider: "google",
+          model: "gemini-user-model",
+          thinking: "medium",
+        },
+      },
+    },
+    {
+      model: { provider: "anthropic", id: "claude-parent-model" },
+      thinkingLevel: "high",
+    },
+  );
+  const args = testHooks.buildStartArgs(input, "/project", { task: "/private/task" });
+  const value = (flag) => args[args.indexOf(flag) + 1];
+  assert.equal(value("--implementer-provider"), "anthropic");
+  assert.equal(value("--implementer-model"), "claude-parent-model");
+  assert.equal(value("--implementer-thinking"), "high");
+  assert.equal(value("--reviewer-provider"), "google");
+  assert.equal(value("--reviewer-model"), "gemini-user-model");
+  assert.equal(value("--reviewer-thinking"), "medium");
+  assert.equal(value("--probe-provider"), "anthropic");
+  assert.equal(value("--probe-model"), "claude-parent-model");
 });
 
 test("authenticated broker observer returns structured final reports to the parent Pi", async () => {
@@ -298,7 +506,7 @@ test("help is bounded, subprocess-free, and documents terminal-only operations",
   assert.equal(message.includes("PRIVATE_HELP_ARGUMENT"), false);
 });
 
-test("doctor, list alias, and status commands delegate exact bounded JSON CLI actions", async () => {
+test("doctor, list alias, and status commands delegate exact bounded JSON CLI actions with session selection", async () => {
   const seen = [];
   const { commands } = harness(async (command, args) => {
     assert.equal(command, "python3");
@@ -306,10 +514,10 @@ test("doctor, list alias, and status commands delegate exact bounded JSON CLI ac
     seen.push(args.slice(1));
     const action = args[2];
     const data = action === "list"
-      ? { sessions: [{ session: "pi-one", project: "/tmp/project" }] }
+      ? { sessions: [{ session: "pi-one", project: "/tmp/project", valid: true }] }
       : action === "status"
         ? {
-            session: args[3] || "pi-current",
+            session: args[3],
             roles: [], panes: [], files: [],
             broker: {
               workflow: { state: "ready", round: 4 },
@@ -319,7 +527,7 @@ test("doctor, list alias, and status commands delegate exact bounded JSON CLI ac
         : { commands: [] };
     return { code: 0, stdout: JSON.stringify(success(action, data)) };
   });
-  const ctx = context();
+  const ctx = context({ selection: "pi-one · /tmp/project" });
   await commands.get("orchestrator-doctor").handler("", ctx);
   await commands.get("orchestrations").handler("", ctx);
   await commands.get("orchestrator-status").handler("  pi-exact  ", ctx);
@@ -328,12 +536,127 @@ test("doctor, list alias, and status commands delegate exact bounded JSON CLI ac
     ["--json", "doctor"],
     ["--json", "list"],
     ["--json", "status", "pi-exact"],
-    ["--json", "status"],
+    ["--json", "list"],
+    ["--json", "status", "pi-one"],
   ]);
+  assert.deepEqual(ctx.calls.selections[0], {
+    title: "Select a running orchestration",
+    options: ["pi-one · /tmp/project"],
+  });
   assert.equal(ctx.calls.widgets.length, 0);
   assert.equal(ctx.calls.statuses.length, 0);
   assert.ok(ctx.calls.notifications.every(({ message }) => message.length <= 800));
   assert.ok(ctx.calls.notifications.some(({ message }) => message.includes("workflow=ready round=4")));
+});
+
+test("session picker lists valid running orchestrations and returns the exact selection", async () => {
+  let calls = 0;
+  const pi = {
+    exec: async (_command, args) => {
+      calls += 1;
+      assert.deepEqual(args.slice(1), ["--json", "list"]);
+      return {
+        code: 0,
+        stdout: JSON.stringify(success("list", {
+          sessions: [
+            { session: "pi-one", project: "/work/one", valid: true },
+            { session: "pi-invalid", project: null, valid: false },
+            { session: "pi-two", project: "/work/two", valid: true },
+          ],
+        })),
+      };
+    },
+  };
+  const ctx = context({ selection: "pi-two · /work/two" });
+  assert.equal(await testHooks.requestedSession(pi, "", ctx), "pi-two");
+  assert.deepEqual(ctx.calls.selections[0], {
+    title: "Select a running orchestration",
+    options: ["pi-one · /work/one", "pi-two · /work/two"],
+  });
+  assert.equal(await testHooks.requestedSession(pi, " pi-exact ", ctx), "pi-exact");
+  assert.equal(calls, 1);
+});
+
+test("attach without an argument selects a running orchestration before switching", async () => {
+  const previousTmux = process.env.TMUX;
+  process.env.TMUX = "/tmp/tmux-test";
+  try {
+    const seen = [];
+    let supervised;
+    const pi = {
+      exec: async (_command, args) => {
+        const action = args[2];
+        seen.push(args.slice(1));
+        if (action === "list") {
+          return {
+            code: 0,
+            stdout: JSON.stringify(success("list", {
+              sessions: [
+                { session: "pi-one", project: "/work/one", valid: true },
+                { session: "pi-two", project: "/work/two", valid: true },
+              ],
+            })),
+          };
+        }
+        if (action === "status") {
+          return {
+            code: 0,
+            stdout: JSON.stringify(success("status", {
+              session: "pi-two",
+              project: "/work/two",
+              paths: { coordination: "/tmp/run", observer_socket: "/tmp/broker.sock" },
+              broker: { workflow: { state: "active", round: 1 }, roles: [] },
+              roles: [], panes: [], files: [],
+            })),
+          };
+        }
+        return {
+          code: 0,
+          stdout: JSON.stringify(success("attach", {
+            session: "pi-two",
+            project: "/work/two",
+            transport: "tui",
+            mode: "switch-client",
+            return_hint: "Prefix then L returns.",
+          })),
+        };
+      },
+    };
+    const handlers = testHooks.createCommandHandlers(
+      pi,
+      async (envelope) => { supervised = envelope; },
+    );
+    const ctx = context({ selection: "pi-two · /work/two" });
+    await handlers.attach("", ctx);
+    assert.deepEqual(seen, [
+      ["--json", "list"],
+      ["--json", "status", "pi-two"],
+      ["--json", "attach", "pi-two"],
+    ]);
+    assert.equal(supervised.data.session, "pi-two");
+    assert.deepEqual(ctx.calls.selections[0].options, [
+      "pi-one · /work/one",
+      "pi-two · /work/two",
+    ]);
+    assert.match(ctx.calls.notifications.at(-1).message, /Switched to pi-two/);
+  } finally {
+    if (previousTmux === undefined) delete process.env.TMUX;
+    else process.env.TMUX = previousTmux;
+  }
+});
+
+test("session picker handles cancellation and an empty running list without free-form input", async () => {
+  const pi = {
+    exec: async () => ({
+      code: 0,
+      stdout: JSON.stringify(success("list", { sessions: [] })),
+    }),
+  };
+  const ctx = context();
+  assert.equal(await testHooks.requestedSession(pi, "", ctx), undefined);
+  assert.equal(ctx.calls.selections.length, 0);
+  assert.equal(ctx.calls.inputs.length, 0);
+  assert.equal(ctx.calls.notifications[0].message, "No running orchestrations are available.");
 });
 
 test("slash-command failures are bounded and redact raw subprocess errors", async () => {
@@ -640,7 +963,10 @@ test("controller lifecycle blocks switching without persistent extension chrome"
     });
     const ctx = context();
     assert.equal(calls, 0);
-    assert.equal(events.has("session_start"), false);
+    assert.equal(events.has("session_start"), true);
+    events.get("session_start")({}, ctx);
+    await drainPromises();
+    assert.equal(ctx.calls.notifications.length, 0);
     assert.equal(events.has("session_shutdown"), true);
     assert.deepEqual(await events.get("session_before_switch")({}, ctx), { cancel: true });
     assert.deepEqual(await events.get("session_before_fork")({}, ctx), { cancel: true });
@@ -825,28 +1151,37 @@ test("send transfers message through a private file and cleans it", async () => 
 
 test("interactive send cancels safely at TUI, session, role, or message boundaries", async () => {
   let execCalls = 0;
-  const { commands } = harness(async () => {
+  const { commands } = harness(async (_command, args) => {
     execCalls += 1;
-    return { code: 0, stdout: "" };
+    assert.equal(args[2], "list");
+    return { code: 0, stdout: JSON.stringify(success("list", { sessions: [] })) };
   });
   await commands.get("orchestrator-send").handler(
     "pi-test",
     context({ context: { mode: "rpc", hasUI: true } }),
   );
   await commands.get("orchestrator-send").handler("", context());
-  await commands.get("orchestrator-send").handler("", context({ input: "pi-test" }));
+  await commands.get("orchestrator-send").handler("pi-test", context());
   await commands.get("orchestrator-send").handler(
-    "",
-    context({ input: "pi-test", selection: "reviewer", editor: "   " }),
+    "pi-test",
+    context({ selection: "reviewer", editor: "   " }),
   );
-  assert.equal(execCalls, 0);
+  assert.equal(execCalls, 1);
 });
 
-test("interactive send obtains exact session/role/message and redacts the private file payload", async () => {
+test("interactive send selects an exact session/role and redacts the private file payload", async () => {
   const canary = "PRIVATE_SLASH_MESSAGE_CANARY_7ad1";
   let path;
   const { commands } = harness(async (_command, args) => {
     assert.equal(args.includes(canary), false);
+    if (args[2] === "list") {
+      return {
+        code: 0,
+        stdout: JSON.stringify(success("list", {
+          sessions: [{ session: "pi-test", project: "/tmp/project", valid: true }],
+        })),
+      };
+    }
     path = args[args.indexOf("--message-file") + 1];
     assert.equal((await stat(path)).mode & 0o777, 0o600);
     assert.equal(await readFile(path, "utf8"), canary);
@@ -855,9 +1190,13 @@ test("interactive send obtains exact session/role/message and redacts the privat
       stdout: JSON.stringify(success("send", { session: "pi-test", role: "reviewer", sent: true })),
     };
   });
-  const ctx = context({ input: "pi-test", selection: "reviewer", editor: canary });
+  const ctx = context({
+    selections: ["pi-test · /tmp/project", "reviewer"],
+    editor: canary,
+  });
   await commands.get("orchestrator-send").handler("", ctx);
-  assert.deepEqual(ctx.calls.selections[0].options, ["implementer", "reviewer", "probe", "playwright", "django"]);
+  assert.deepEqual(ctx.calls.selections[0].options, ["pi-test · /tmp/project"]);
+  assert.deepEqual(ctx.calls.selections[1].options, ["implementer", "reviewer", "probe", "playwright", "django"]);
   assert.equal(ctx.calls.notifications.at(-1).message, "Sent to pi-test/reviewer");
   assert.equal(JSON.stringify(ctx.calls).includes(canary), false);
   await assert.rejects(access(path));
@@ -878,19 +1217,29 @@ test("interactive send cleans private files and bounds errors when delegation fa
   await assert.rejects(access(path));
 });
 
-test("stop obtains an exact session and requires explicit UI confirmation before --yes", async () => {
+test("stop selects an exact session and requires explicit UI confirmation before --yes", async () => {
   const argvs = [];
   const { commands } = harness(async (_command, args) => {
     argvs.push(args);
-    return { code: 0, stdout: JSON.stringify(success("stop", { session: "pi-test", stopped: true })) };
+    const action = args[2];
+    const data = action === "list"
+      ? { sessions: [{ session: "pi-test", project: "/tmp/project", valid: true }] }
+      : { session: "pi-test", stopped: true };
+    return { code: 0, stdout: JSON.stringify(success(action, data)) };
   });
-  const ctx = context({ input: "pi-test", confirmations: [true] });
+  const ctx = context({
+    selection: "pi-test · /tmp/project",
+    confirmations: [true],
+  });
   await commands.get("orchestrator-stop").handler("", ctx);
-  assert.deepEqual(argvs[0].slice(1), ["--json", "stop", "pi-test", "--yes"]);
-  assert.equal(ctx.calls.inputs.length, 1);
+  assert.deepEqual(argvs.map((args) => args.slice(1)), [
+    ["--json", "list"],
+    ["--json", "stop", "pi-test", "--yes"],
+  ]);
+  assert.equal(ctx.calls.inputs.length, 0);
   assert.match(ctx.calls.confirmations[0].message, /retained/);
 
   const declinedCtx = context({ confirmations: [false] });
   await commands.get("orchestrator-stop").handler("pi-other", declinedCtx);
-  assert.equal(argvs.length, 1);
+  assert.equal(argvs.length, 2);
 });

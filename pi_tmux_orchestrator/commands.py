@@ -15,6 +15,12 @@ from . import runtime
 from .broker import initialize_broker_run
 from .broker_client import broker_control_request
 from .broker_store import broker_paths, public_broker_snapshot
+from .configuration import (
+    effective_model_config,
+    empty_model_config,
+    load_model_config,
+    model_config_path,
+)
 from .constants import (
     BROKER_COORDINATION,
     BROKER_PROTOCOL_VERSION,
@@ -74,8 +80,12 @@ from .tmux import (
 )
 
 
-def role_config(args: argparse.Namespace, role: str) -> dict[str, Any]:
-    defaults = DEFAULT_MODELS[role]
+def role_config(
+    args: argparse.Namespace,
+    role: str,
+    model_config: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    defaults = effective_model_config(role, model_config or empty_model_config())
     config: dict[str, Any] = {
         "provider": getattr(args, f"{role}_provider") or defaults["provider"],
         "model": getattr(args, f"{role}_model") or defaults["model"],
@@ -294,7 +304,8 @@ def start_command(args: argparse.Namespace) -> CommandResult:
         roles.append("playwright")
     if args.with_django_expert:
         roles.append("django")
-    configs = {role: role_config(args, role) for role in roles}
+    configured_models = load_model_config()
+    configs = {role: role_config(args, role, configured_models) for role in roles}
     if not args.skip_model_check:
         for role, config in configs.items():
             validate_model(role, config)
@@ -945,6 +956,11 @@ def stop_command(args: argparse.Namespace) -> CommandResult:
 
 
 def doctor_command(_: argparse.Namespace) -> CommandResult:
+    configured_models = load_model_config()
+    config_path = model_config_path()
+    config_in_use = bool(
+        configured_models["defaults"] or any(configured_models["roles"].values())
+    )
     ok = True
     command_checks: list[dict[str, Any]] = []
     for name in ("pi", "tmux", "python3"):
@@ -963,7 +979,14 @@ def doctor_command(_: argparse.Namespace) -> CommandResult:
                 "commands": command_checks,
                 "tmux": None,
                 "model_checks": [],
-                "paths": {"state_root": str(absolute_path(runtime.STATE_ROOT))},
+                "model_policy": {
+                    "config_path": str(config_path),
+                    "configured": config_in_use,
+                },
+                "paths": {
+                    "state_root": str(absolute_path(runtime.STATE_ROOT)),
+                    "model_config": str(config_path),
+                },
             },
             code=1,
             error_code="missing_prerequisite",
@@ -1011,7 +1034,8 @@ def doctor_command(_: argparse.Namespace) -> CommandResult:
         )
 
     model_checks: list[dict[str, Any]] = []
-    for role, config in DEFAULT_MODELS.items():
+    for role in DEFAULT_MODELS:
+        config = effective_model_config(role, configured_models)
         available, detail = model_available(config["provider"], config["model"])
         label = "OK" if available else "WARN"
         human_print(
@@ -1026,13 +1050,23 @@ def doctor_command(_: argparse.Namespace) -> CommandResult:
                 "detail": bounded_message(detail, 256),
             }
         )
+    human_print(
+        f"OK   model config: {config_path} ({'configured' if config_in_use else 'packaged defaults'})"
+    )
     human_print(f"OK   state root: {runtime.STATE_ROOT}")
     return CommandResult(
         data={
             "commands": command_checks,
             "tmux": tmux_data,
             "model_checks": model_checks,
-            "paths": {"state_root": str(absolute_path(runtime.STATE_ROOT))},
+            "model_policy": {
+                "config_path": str(config_path),
+                "configured": config_in_use,
+            },
+            "paths": {
+                "state_root": str(absolute_path(runtime.STATE_ROOT)),
+                "model_config": str(config_path),
+            },
         }
     )
 

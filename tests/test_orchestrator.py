@@ -24,6 +24,7 @@ class SkillMetadataTests(unittest.TestCase):
             "broker_store.py",
             "cli.py",
             "commands.py",
+            "configuration.py",
             "controller.py",
             "prompts.py",
             "protocol.py",
@@ -235,7 +236,7 @@ class UtilityTests(unittest.TestCase):
         self.assertTrue(stopped.confirm)
 
     def test_version(self) -> None:
-        self.assertEqual(ORCHESTRATOR.VERSION, "0.6.2")
+        self.assertEqual(ORCHESTRATOR.VERSION, "0.6.3")
 
     def test_default_model_contract_for_all_roles(self) -> None:
         self.assertEqual(
@@ -268,6 +269,118 @@ class UtilityTests(unittest.TestCase):
                 },
             },
         )
+
+    def test_user_model_config_applies_global_and_per_role_defaults(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "tmux-orchestrator.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "defaults": {
+                            "provider": "anthropic",
+                            "model": "claude-sonnet-synthetic",
+                            "thinking": "medium",
+                        },
+                        "roles": {
+                            "reviewer": {
+                                "provider": "google",
+                                "model": "gemini-synthetic",
+                                "thinking": "high",
+                            },
+                            "probe": {"thinking": "low"},
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            configured = ORCHESTRATOR.load_model_config(path)
+
+        self.assertEqual(
+            ORCHESTRATOR.effective_model_config("implementer", configured),
+            {
+                "provider": "anthropic",
+                "model": "claude-sonnet-synthetic",
+                "thinking": "medium",
+            },
+        )
+        self.assertEqual(
+            ORCHESTRATOR.effective_model_config("reviewer", configured),
+            {
+                "provider": "google",
+                "model": "gemini-synthetic",
+                "thinking": "high",
+            },
+        )
+        self.assertEqual(
+            ORCHESTRATOR.effective_model_config("probe", configured),
+            {
+                "provider": "anthropic",
+                "model": "claude-sonnet-synthetic",
+                "thinking": "low",
+            },
+        )
+
+        arguments = argparse.Namespace(
+            implementer_provider="openrouter",
+            implementer_model="user/model",
+            implementer_thinking="max",
+        )
+        explicit = ORCHESTRATOR.role_config(arguments, "implementer", configured)
+        self.assertEqual(
+            {key: explicit[key] for key in ("provider", "model", "thinking")},
+            {
+                "provider": "openrouter",
+                "model": "user/model",
+                "thinking": "max",
+            },
+        )
+
+    def test_user_model_config_is_strict_bounded_and_external(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            previous_home = ORCHESTRATOR.PI_HOME
+            ORCHESTRATOR.PI_HOME = root
+            self.addCleanup(setattr, ORCHESTRATOR, "PI_HOME", previous_home)
+            with mock.patch.dict(
+                os.environ,
+                {"PI_TMUX_ORCHESTRATOR_CONFIG": ""},
+            ):
+                self.assertEqual(
+                    ORCHESTRATOR.model_config_path(),
+                    root / "tmux-orchestrator.json",
+                )
+                self.assertEqual(
+                    ORCHESTRATOR.load_model_config(),
+                    {"version": 1, "defaults": {}, "roles": {}},
+                )
+
+            invalid = root / "invalid.json"
+            invalid.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "defaults": {
+                            "provider": "anthropic",
+                            "apiKey": "must-not-be-accepted",
+                        },
+                        "roles": {},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaises(ORCHESTRATOR.OrchestrationError):
+                ORCHESTRATOR.load_model_config(invalid)
+
+            target = root / "target.json"
+            target.write_text(
+                '{"version":1,"defaults":{},"roles":{}}',
+                encoding="utf-8",
+            )
+            linked = root / "linked.json"
+            linked.symlink_to(target)
+            with self.assertRaises(ORCHESTRATOR.OrchestrationError):
+                ORCHESTRATOR.load_model_config(linked)
 
     def test_parser_exposes_specialist_tasks_models_and_role_commands(self) -> None:
         parser = ORCHESTRATOR.build_parser()
