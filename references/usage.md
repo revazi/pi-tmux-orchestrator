@@ -2,6 +2,51 @@
 
 ## Commands
 
+Every canonical `/orchestrator-*` Pi command also has an `/or-*` short alias,
+for example `/or-attach` and `/or-status`. Aliases share the canonical handler,
+selector, confirmation, and safety behavior.
+
+A regular interactive Pi session checks the public npm package metadata once at
+startup and shows a non-blocking warning only when a newer release is available.
+Use `/or-about` for installed/latest versions and update links, update with
+`pi update npm:pi-tmux-orchestrator`, or set
+`PI_TMUX_ORCHESTRATOR_DISABLE_UPDATE_NOTICE=1` to disable the startup check.
+Worker and controller sessions never perform this check.
+
+### Model policy
+
+The strict user-global file `~/.pi/agent/tmux-orchestrator.json` supports:
+
+```json
+{
+  "version": 1,
+  "defaults": {
+    "provider": "anthropic",
+    "model": "claude-sonnet-4-5",
+    "thinking": "high"
+  },
+  "roles": {
+    "reviewer": {
+      "provider": "google",
+      "model": "gemini-3.1-pro-preview",
+      "thinking": "medium"
+    }
+  }
+}
+```
+
+The file is relative to `PI_CODING_AGENT_DIR`; an absolute
+`PI_TMUX_ORCHESTRATOR_CONFIG` overrides its location. Only version, defaults,
+roles, provider, model, and thinking fields are accepted. It must never contain
+credentials. Explicit `--ROLE-*` or model-tool `modelOverrides` values win over
+role configuration, global defaults, and packaged fallbacks, in that order.
+
+The model tool's `models` action and `/or-models [query]` expose a maximum of 100
+available model metadata rows from the current Pi registry, respecting scoped
+models and never exposing authentication. Natural-language requests can use
+`useParentModel` for the current Pi provider/model/thinking or exact `all` and
+per-role `modelOverrides` after resolving ambiguous IDs with `models`.
+
 ### `start`
 
 Creates a detached tmux grid with an implementer, reviewer, broker/status
@@ -35,7 +80,10 @@ tool rendering, and input editor for direct steering.
 
 ### `list`
 
-Lists live tmux sessions marked as Pi Tmux Orchestrator grids.
+Lists live tmux sessions marked as Pi Tmux Orchestrator grids. In the Pi TUI,
+omitting `[SESSION]` from `status`, `watch`, `attach`, `send`, or `stop` opens a
+selector populated from this metadata-only list. Each option shows the exact
+session and project; invalid orchestration metadata is excluded.
 
 ### `status [SESSION]`
 
@@ -80,8 +128,8 @@ remain under `~/.pi/agent/orchestrations/`.
 
 ### `doctor`
 
-Checks Pi, Python, tmux, tmux extended-key settings, and default model
-availability without a provider request.
+Checks Pi, Python, tmux, tmux extended-key settings, the model configuration
+path, and effective configured model availability without a provider request.
 
 ### `supervisor ...`
 

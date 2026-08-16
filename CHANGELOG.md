@@ -6,6 +6,21 @@ All notable changes to this project are documented here.
 
 _No changes yet._
 
+## 0.6.3 - 2026-08-14
+
+### Added
+
+- Added `/or-*` short aliases for every canonical `/orchestrator-*` slash command, sharing the exact same handlers and safety checks
+- Added a non-blocking, time-bounded startup notice when npm has a newer release, plus `/orchestrator-about` and `/or-about` for version, update, and project details
+- Added `PI_TMUX_ORCHESTRATOR_DISABLE_UPDATE_NOTICE=1` to disable startup update notices
+- Added strict user-global provider/model/thinking defaults with per-role overrides, custom config-path support, and explicit CLI precedence
+- Added bounded `/orchestrator-models` and `/or-models` metadata discovery plus natural-language model-tool support for the parent model or exact all-role/per-role overrides
+- Added an interactive running-orchestration selector when Pi slash commands omit the session for status, watch, attach, send, or stop
+
+### Fixed
+
+- Queued non-triggering task baseline and evidence context as `followUp` before assignment turns, preventing workers from acting on generic role instructions without the requested task
+
 ## 0.6.2 - 2026-08-14
 
 ### Added

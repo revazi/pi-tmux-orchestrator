@@ -11,14 +11,29 @@ import {
   parentUpdateContent,
   validateObserverFrame,
 } from "./orchestrator-parent.js";
+import {
+  appendModelArgs,
+  availableThinkingLevels,
+  MODEL_ROLES,
+  modelCatalogContent,
+  modelCatalogEnvelope,
+  modelOverrideParameters,
+  ROLES,
+  startInputWithParentModel,
+} from "./orchestrator-models.js";
+import {
+  scheduleOrchestratorUpdateNotice,
+  showOrchestratorAbout,
+} from "./orchestrator-update.js";
 
 const CLI_PATH = fileURLToPath(new URL("../bin/pi-tmux-agents", import.meta.url));
 const MAX_VISIBLE_CHARS = 12_000;
-const ACTIONS = ["doctor", "list", "status", "watch", "attach", "start", "send"];
-const ROLES = ["implementer", "reviewer", "probe", "playwright", "django"];
+const ACTIONS = ["doctor", "models", "list", "status", "watch", "attach", "start", "send"];
 const COMMAND_OVERVIEW = [
   "/orchestrator-help — show this bounded command overview",
-  "/orchestrator-doctor — check local prerequisites without a provider request",
+  "/orchestrator-about — show installed/latest versions, update command, and project links",
+  "/orchestrator-doctor — check local prerequisites and configured worker models without a provider request",
+  "/orchestrator-models [query] — list bounded available Pi model metadata without a provider request",
   "/orchestrator-start [task] — confirm and start an orchestration",
   "/orchestrator-list — list running orchestrations",
   "/orchestrator-status [session] — show metadata-only status",
@@ -26,8 +41,10 @@ const COMMAND_OVERVIEW = [
   "/orchestrator-attach [session] — switch this tmux client into the live worker grid",
   "/orchestrator-send [session] — privately send a message to one role",
   "/orchestrator-stop [session] — confirm and stop one exact session",
+  "Short aliases: /or-help, /or-about, /or-doctor, /or-models, /or-start, /or-list, /or-status, /or-watch, /or-attach, /or-send, /or-stop",
   "/orchestrate — backward-compatible alias for /orchestrator-start",
   "/orchestrations — backward-compatible alias for /orchestrator-list",
+  "Omit [session] on status, watch, attach, send, or stop to choose from the running orchestration list.",
   "The invoking Pi is the parent supervisor; start creates no separate parent Pi, parent window, or controller.",
   "Tmux panes show live worker activity; lifecycle and structured ready/attention reports return to the invoking Pi watching the run.",
   "Attach requires the invoking Pi to run inside tmux. Use normal pane navigation; prefix then L detaches back to the same Pi without stopping workers. Native TUI panes accept direct steering, while plain RPC panes remain headless/display-only.",
@@ -40,6 +57,7 @@ const parameters = {
   required: ["action"],
   properties: {
     action: { type: "string", enum: ACTIONS },
+    query: { type: "string", maxLength: 200, description: "Optional provider/model filter for the models action" },
     project: { type: "string", description: "Project path for start; defaults to the current project" },
     session: { type: "string", description: "Exact orchestration session for status, watch, attach, or send" },
     role: {
@@ -58,6 +76,16 @@ const parameters = {
     rpcWorkers: {
       type: "boolean",
       description: "Use plain headless RPC panes only when explicitly requested; native Pi TUI workers are the interactive default",
+    },
+    useParentModel: {
+      type: "boolean",
+      description: "For start, use this Pi session's exact current provider/model/thinking as the default for every worker role",
+    },
+    modelOverrides: {
+      type: "object",
+      additionalProperties: false,
+      description: "For start, explicit user-requested all-role or per-role provider/model/thinking overrides; omitted fields retain configured defaults",
+      properties: Object.fromEntries(MODEL_ROLES.map((role) => [role, modelOverrideParameters])),
     },
     approveProject: {
       type: "boolean",
@@ -154,6 +182,7 @@ function buildStartArgs(input, project, paths, { dryRun = false } = {}) {
   if (paths.django) args.push("--django-task-file", paths.django);
   if (input.approveProject) args.push("--approve-project");
   if (input.rpcWorkers) args.push("--rpc-workers");
+  appendModelArgs(args, input);
   if (dryRun) args.push("--dry-run", "--skip-model-check");
   return args;
 }
@@ -191,8 +220,9 @@ async function runStart(pi, input, signal, ctx) {
     throw new Error("controller_start_requires_explicit_project");
   }
 
-  const project = await canonicalProject(input.project, ctx.cwd);
-  if (input.approveProject) {
+  const startInput = startInputWithParentModel(input, ctx);
+  const project = await canonicalProject(startInput.project, ctx.cwd);
+  if (startInput.approveProject) {
     if (!ctx.isProjectTrusted()) throw new Error("approve_requires_trusted_parent_project");
     const bypassConfirmed = await ctx.ui.confirm(
       "Child project trust bypass",
@@ -201,12 +231,12 @@ async function runStart(pi, input, signal, ctx) {
     if (!bypassConfirmed) throw new Error("approve_confirmation_declined");
   }
 
-  return withPrivateFiles(startFileValues(input), async (paths) => {
-    const preview = await runCli(pi, "start", buildStartArgs(input, project, paths, { dryRun: true }), signal);
+  return withPrivateFiles(startFileValues(startInput), async (paths) => {
+    const preview = await runCli(pi, "start", buildStartArgs(startInput, project, paths, { dryRun: true }), signal);
     if (!preview.success) return preview;
     const confirmed = await ctx.ui.confirm("Start tmux orchestration?", startConfirmation(preview));
     if (!confirmed) throw new Error("start_confirmation_declined");
-    return runCli(pi, "start", buildStartArgs(input, project, paths), signal);
+    return runCli(pi, "start", buildStartArgs(startInput, project, paths), signal);
   });
 }
 
@@ -251,6 +281,9 @@ async function runSend(pi, input, signal) {
 }
 
 const successSummaries = {
+  models(data) {
+    return `${data.shown}/${data.total} available model(s)${data.query ? ` matching ${data.query}` : ""}${data.truncated ? "; refine the query for more" : ""}`;
+  },
   list(data) {
     const sessions = data.sessions || [];
     return sessions.length
@@ -320,6 +353,9 @@ async function executeAction(pi, input, signal, ctx, superviseStart = () => {}) 
   let envelope;
   try {
     switch (input.action) {
+      case "models":
+        envelope = modelCatalogEnvelope(ctx, input.query);
+        break;
       case "doctor":
       case "list":
         envelope = await runCli(pi, input.action, [], signal);
@@ -361,7 +397,10 @@ async function executeAction(pi, input, signal, ctx, superviseStart = () => {}) 
     }
     const summary = notifyEnvelope(ctx, envelope);
     return {
-      content: [{ type: "text", text: bounded(summary, 800) }],
+      content: [{
+        type: "text",
+        text: input.action === "models" ? modelCatalogContent(envelope.data) : bounded(summary, 800),
+      }],
       details: safeDetails(envelope),
     };
   } catch (error) {
@@ -400,10 +439,31 @@ async function runCommandCli(pi, action, args, ctx) {
   }
 }
 
-async function requestedSession(args, ctx) {
+async function requestedSession(pi, args, ctx) {
   const supplied = String(args || "").trim();
-  const entered = supplied || await ctx.ui.input("Exact orchestration session", "pi-project-agents");
-  return String(entered || "").trim();
+  if (supplied) return supplied;
+
+  const envelope = await runCli(pi, "list", [], ctx.signal);
+  if (!envelope.success) {
+    notifyEnvelope(ctx, envelope);
+    return undefined;
+  }
+  if (!Array.isArray(envelope.data?.sessions)) throw new Error("invalid_orchestrator_list");
+  const sessions = envelope.data.sessions.filter(
+    (item) => item?.valid === true && typeof item.session === "string" && item.session,
+  );
+  if (!sessions.length) {
+    ctx.ui.notify("No running orchestrations are available.", "info");
+    return undefined;
+  }
+
+  const choices = sessions.map((item) => {
+    const project = typeof item.project === "string" ? bounded(item.project, 160) : "unknown project";
+    return `${item.session} · ${project}`;
+  });
+  const selected = await ctx.ui.select("Select a running orchestration", choices);
+  const index = choices.indexOf(selected);
+  return index >= 0 ? sessions[index].session : undefined;
 }
 
 function createCommandHandlers(pi, superviseStart = () => {}) {
@@ -411,8 +471,17 @@ function createCommandHandlers(pi, superviseStart = () => {}) {
     ctx.ui.notify(bounded(COMMAND_OVERVIEW, 2400), "info");
   };
 
+  const about = async (_args, ctx) => {
+    if (!requireInteractiveTui(ctx, "orchestrator-about")) return;
+    await showOrchestratorAbout(ctx);
+  };
+
   const doctor = async (_args, ctx) => {
     await runCommandCli(pi, "doctor", [], ctx);
+  };
+
+  const models = async (args, ctx) => {
+    notifyEnvelope(ctx, modelCatalogEnvelope(ctx, args));
   };
 
   const start = async (args, ctx) => {
@@ -464,13 +533,25 @@ function createCommandHandlers(pi, superviseStart = () => {}) {
   };
 
   const status = async (args, ctx) => {
-    const session = String(args || "").trim();
-    await runCommandCli(pi, "status", session ? [session] : [], ctx);
+    if (!requireInteractiveTui(ctx, "orchestrator-status")) return;
+    try {
+      const session = await requestedSession(pi, args, ctx);
+      if (!session) return;
+      await runCommandCli(pi, "status", [session], ctx);
+    } catch {
+      notifyCommandFailure(ctx, "status");
+    }
   };
 
   const watch = async (args, ctx) => {
     if (!requireInteractiveTui(ctx, "orchestrator-watch")) return;
-    const session = await requestedSession(args, ctx);
+    let session;
+    try {
+      session = await requestedSession(pi, args, ctx);
+    } catch {
+      notifyCommandFailure(ctx, "watch");
+      return;
+    }
     if (!session) return;
     try {
       const statusEnvelope = await runCli(pi, "status", [session], ctx.signal);
@@ -488,9 +569,11 @@ function createCommandHandlers(pi, superviseStart = () => {}) {
   const attach = async (args, ctx) => {
     if (!requireInteractiveTui(ctx, "orchestrator-attach")) return;
     try {
+      const session = await requestedSession(pi, args, ctx);
+      if (!session) return;
       const envelope = await attachAndSupervise(
         pi,
-        { session: String(args || "").trim() || undefined },
+        { session },
         ctx.signal,
         ctx,
         superviseStart,
@@ -503,7 +586,13 @@ function createCommandHandlers(pi, superviseStart = () => {}) {
 
   const send = async (args, ctx) => {
     if (!requireInteractiveTui(ctx, "orchestrator-send")) return;
-    const session = await requestedSession(args, ctx);
+    let session;
+    try {
+      session = await requestedSession(pi, args, ctx);
+    } catch {
+      notifyCommandFailure(ctx, "send");
+      return;
+    }
     if (!session) return;
     const role = await ctx.ui.select("Target role", [...ROLES]);
     if (!ROLES.includes(role)) return;
@@ -519,7 +608,13 @@ function createCommandHandlers(pi, superviseStart = () => {}) {
 
   const stop = async (args, ctx) => {
     if (!requireInteractiveTui(ctx, "orchestrator-stop")) return;
-    const session = await requestedSession(args, ctx);
+    let session;
+    try {
+      session = await requestedSession(pi, args, ctx);
+    } catch {
+      notifyCommandFailure(ctx, "stop");
+      return;
+    }
     if (!session) return;
     const confirmed = await ctx.ui.confirm(
       "Stop tmux orchestration?",
@@ -529,7 +624,7 @@ function createCommandHandlers(pi, superviseStart = () => {}) {
     await runCommandCli(pi, "stop", [session, "--yes"], ctx);
   };
 
-  return { help, doctor, start, list, status, watch, attach, send, stop };
+  return { help, about, doctor, models, start, list, status, watch, attach, send, stop };
 }
 
 export default function tmuxOrchestratorExtension(pi) {
@@ -593,10 +688,10 @@ export default function tmuxOrchestratorExtension(pi) {
   pi.registerTool({
     name: "tmux_orchestrator",
     label: "Tmux Orchestrator",
-    description: "Supervise bounded doctor, list, status, watch, attach, start, or send actions through the bundled Python tmux orchestrator. The invoking Pi remains the parent; normal starts create no separate parent Pi or controller. Watch subscribes this Pi to lifecycle and final-report updates. Attach ensures watching, then switches its existing tmux client into native Pi worker panes; prefix then L returns without stopping workers. New runs are watched automatically. Start always requires interactive confirmation.",
+    description: "Supervise bounded doctor, available-model discovery, list, status, watch, attach, start, or send actions through the Pi runtime and bundled Python tmux orchestrator. Start may use user-configured defaults, this parent Pi's current model, or exact user-requested per-role provider/model/thinking overrides. The invoking Pi remains the parent; normal starts create no separate parent Pi or controller. Watch subscribes this Pi to lifecycle and final-report updates. Attach ensures watching, then switches its existing tmux client into native Pi worker panes; prefix then L returns without stopping workers. New runs are watched automatically. Start always requires interactive confirmation.",
     promptSnippet: "Inspect or operate local Pi tmux orchestrations through the authoritative Python CLI",
     promptGuidelines: [
-      "Use tmux_orchestrator instead of rebuilding tmux orchestration state; after starting or resuming an existing run, ensure the invoking Pi is watching it for lifecycle and final reports. When the user asks to enter, navigate, or directly steer the live workers, use attach rather than watch; attach requires the invoking Pi to be inside tmux. Prefer native Pi TUI workers and use rpcWorkers only after an explicit request for headless panes. The invoking Pi remains responsible for interpreting reports and deciding follow-up. Never create file handoffs, poll coordination state, claim parent project trust applies to child Pi sessions, or equate command acknowledgement with task completion.",
+      "Use tmux_orchestrator instead of rebuilding tmux orchestration state; after starting or resuming an existing run, ensure the invoking Pi is watching it for lifecycle and final reports. Honor explicit user model/provider/thinking requests through useParentModel or modelOverrides. Use the models action to resolve available exact identifiers when needed; never invent a provider/model identifier or read provider credentials. Omitted overrides use the user's global orchestrator model configuration, then packaged defaults. When the user asks to enter, navigate, or directly steer the live workers, use attach rather than watch; attach requires the invoking Pi to be inside tmux. Prefer native Pi TUI workers and use rpcWorkers only after an explicit request for headless panes. The invoking Pi remains responsible for interpreting reports and deciding follow-up. Never create file handoffs, poll coordination state, claim parent project trust applies to child Pi sessions, or equate command acknowledgement with task completion.",
     ],
     parameters,
     execute(_toolCallId, input, signal, _onUpdate, ctx) {
@@ -609,9 +704,17 @@ export default function tmuxOrchestratorExtension(pi) {
     description: "Show the bounded tmux orchestrator command overview",
     handler: commandHandlers.help,
   });
+  pi.registerCommand("orchestrator-about", {
+    description: "Show installed and latest versions, update guidance, and project links",
+    handler: commandHandlers.about,
+  });
   pi.registerCommand("orchestrator-doctor", {
-    description: "Check local tmux orchestrator prerequisites",
+    description: "Check local tmux orchestrator prerequisites and configured models",
     handler: commandHandlers.doctor,
+  });
+  pi.registerCommand("orchestrator-models", {
+    description: "List bounded available Pi model metadata with an optional query",
+    handler: commandHandlers.models,
   });
   pi.registerCommand("orchestrator-start", {
     description: "Confirm and start a tmux orchestration",
@@ -641,6 +744,22 @@ export default function tmuxOrchestratorExtension(pi) {
     description: "Confirm and stop one exact tmux orchestration session",
     handler: commandHandlers.stop,
   });
+  const shortAliases = {
+    "or-help": ["Show the tmux orchestrator command overview", commandHandlers.help],
+    "or-about": ["Show version and update details", commandHandlers.about],
+    "or-doctor": ["Check prerequisites and configured models", commandHandlers.doctor],
+    "or-models": ["List available Pi model metadata", commandHandlers.models],
+    "or-start": ["Confirm and start a tmux orchestration", commandHandlers.start],
+    "or-list": ["List running tmux orchestrations", commandHandlers.list],
+    "or-status": ["Show metadata-only orchestration status", commandHandlers.status],
+    "or-watch": ["Subscribe this Pi to orchestration updates", commandHandlers.watch],
+    "or-attach": ["Enter a live worker grid", commandHandlers.attach],
+    "or-send": ["Send a private message to one orchestration role", commandHandlers.send],
+    "or-stop": ["Confirm and stop one orchestration", commandHandlers.stop],
+  };
+  for (const [name, [description, handler]] of Object.entries(shortAliases)) {
+    pi.registerCommand(name, { description, handler });
+  }
   pi.registerCommand("orchestrate", {
     description: "Alias for /orchestrator-start",
     handler: commandHandlers.start,
@@ -650,6 +769,9 @@ export default function tmuxOrchestratorExtension(pi) {
     handler: commandHandlers.list,
   });
 
+  pi.on("session_start", (_event, ctx) => {
+    scheduleOrchestratorUpdateNotice(ctx);
+  });
   pi.on("session_shutdown", () => {
     shuttingDown = true;
     for (const observer of observers.values()) observer.stop();
@@ -669,12 +791,16 @@ export default function tmuxOrchestratorExtension(pi) {
 
 export const testHooks = {
   CLI_PATH,
+  availableThinkingLevels,
   buildStartArgs,
   canonicalProject,
+  createCommandHandlers,
   executeAction,
   isControllerMode,
+  modelCatalogEnvelope,
   oneLineJson,
   runCli,
+  requestedSession,
   attachAndSupervise,
   attachParentObserver,
   brokerFrame,
@@ -682,6 +808,7 @@ export const testHooks = {
   parentUpdateContent,
   runAttach,
   runStart,
+  startInputWithParentModel,
   validateObserverFrame,
   withPrivateFiles,
 };

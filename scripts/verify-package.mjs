@@ -14,6 +14,7 @@ const pythonFiles = [
   "broker_store.py",
   "cli.py",
   "commands.py",
+  "configuration.py",
   "constants.py",
   "controller.py",
   "models.py",
@@ -40,6 +41,8 @@ const expectedFiles = [
   "VERSION",
   "bin/pi-tmux-agents",
   "extensions/tmux-orchestrator.js",
+  "extensions/orchestrator-models.js",
+  "extensions/orchestrator-update.js",
   "extensions/orchestrator-parent.js",
   "extensions/orchestrator-worker.js",
   "references/usage.md",
@@ -54,6 +57,8 @@ const declaredFiles = [
   "SKILL.md",
   "VERSION",
   "extensions/tmux-orchestrator.js",
+  "extensions/orchestrator-models.js",
+  "extensions/orchestrator-update.js",
   "extensions/orchestrator-parent.js",
   "extensions/orchestrator-worker.js",
   "references/usage.md",
@@ -63,7 +68,7 @@ const declaredFiles = [
 ];
 const expectedManifest = {
   name: "pi-tmux-orchestrator",
-  version: "0.6.2",
+  version: "0.6.3",
   description: "Pi extension, skill, and dependency-free Python CLI for coordinating coding agents in tmux",
   license: "MIT",
   author: {
@@ -171,6 +176,8 @@ for (const badge of requiredBadges) {
 }
 const extensionSources = await Promise.all([
   "extensions/tmux-orchestrator.js",
+  "extensions/orchestrator-models.js",
+  "extensions/orchestrator-update.js",
   "extensions/orchestrator-parent.js",
   "extensions/orchestrator-worker.js",
 ].map((path) => readFile(resolve(root, path), "utf8")));
