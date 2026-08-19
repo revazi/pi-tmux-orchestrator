@@ -4,6 +4,10 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+_No changes yet._
+
+## 0.7.0 - 2026-08-19
+
 ### Added
 
 - Added an event-driven broker/status terminal dashboard with explicit state/color semantics, adaptive full/compact/narrow layouts, per-role configured model and actual usage/context data, soft-budget warnings, bounded metadata events, and operator guidance
