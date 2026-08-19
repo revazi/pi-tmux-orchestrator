@@ -4,6 +4,8 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## 0.8.0 - 2026-08-19
+
 ### Added
 
 - Added an optional 12 KiB structured parent context capsule for task-relevant state, decisions, constraints, acceptance criteria, paths, evidence, open questions, and out-of-scope items without copying the parent transcript or making another model request
