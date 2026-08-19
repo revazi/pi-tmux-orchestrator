@@ -105,6 +105,10 @@ test("registers one bounded model tool and the exact canonical/alias command sur
   assert.equal(tool.parameters.properties.action.enum.includes("stop"), false);
   assert.equal(tool.renderCall, undefined);
   assert.equal(tool.renderResult, undefined);
+  assert.match(
+    tool.promptGuidelines.join(" "),
+    /Once watching, end the turn.*never run sleep commands.*poll status\/tmux/,
+  );
   assert.deepEqual(
     [...commands.keys()],
     [
@@ -333,7 +337,7 @@ test("natural-language starts can use the parent model with exact per-role overr
   assert.equal(value("--probe-model"), "claude-parent-model");
 });
 
-test("authenticated broker observer returns structured final reports to the parent Pi", async () => {
+test("authenticated broker observer steers progress and returns structured final reports to the parent Pi", async () => {
   const directory = await mkdtemp(join(tmpdir(), "pi-tmux-parent-observer-test-"));
   await chmod(directory, 0o700);
   const token = "a".repeat(32);
@@ -418,12 +422,12 @@ test("authenticated broker observer returns structured final reports to the pare
     assert.equal(delivered.message.details.state, "ready");
     assert.match(delivered.message.content, /reviewer report \(round 2\)/);
     assert.match(delivered.message.content, /The implementation is ready/);
-    assert.deepEqual(delivered.options, { triggerTurn: true, deliverAs: "followUp" });
+    assert.deepEqual(delivered.options, { triggerTurn: true, deliverAs: "steer" });
     assert.equal(stopped, true);
     const progress = deliveredMessages.filter(({ message }) => message.details.event);
     assert.deepEqual(progress.map(({ message }) => message.details.event), ["attached", "lifecycle", "report"]);
     assert.ok(progress.every(({ options }) => (
-      options.triggerTurn === false && options.deliverAs === "followUp"
+      options.triggerTurn === false && options.deliverAs === "steer"
     )));
     assert.match(progress[0].message.content, /Parent supervision attached/);
     assert.match(progress[1].message.content, /reviewer is now waiting/);
