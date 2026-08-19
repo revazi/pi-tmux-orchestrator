@@ -4,13 +4,20 @@ import asyncio
 import json
 import os
 import secrets
+import signal
 import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
 
 from pi_tmux_orchestrator import broker_store, runtime
-from pi_tmux_orchestrator.broker import Broker, Client, Observer, initialize_broker_run
+from pi_tmux_orchestrator.broker import (
+    Broker,
+    Client,
+    Observer,
+    _register_broker_signal_handlers,
+    initialize_broker_run,
+)
 from pi_tmux_orchestrator.constants import (
     BROKER_COORDINATION,
     BROKER_PROTOCOL_VERSION,
@@ -138,6 +145,10 @@ class BrokerStoreTests(BrokerFixture):
         self.assertEqual({role["total_tokens"] for role in snapshot["roles"]}, {0})
         self.assertEqual(
             {role["state"] for role in snapshot["roles"]}, {"disconnected"}
+        )
+        self.assertEqual({role["assignment"] for role in snapshot["roles"]}, {None})
+        self.assertFalse(
+            any("active_assignment_id" in role for role in snapshot["roles"])
         )
 
     def test_supervisor_command_status_reads_broker_metadata(self) -> None:
@@ -502,6 +513,75 @@ class BrokerObserverTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
                 mock.call("uncertain", 1),
             ],
         )
+
+
+class BrokerDashboardHookTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
+    def test_signal_handlers_add_event_driven_resize_refresh_portably(self) -> None:
+        broker = mock.Mock()
+        loop = mock.Mock()
+
+        _register_broker_signal_handlers(loop, broker)
+
+        self.assertIn(
+            mock.call(signal.SIGINT, broker.stopping.set),
+            loop.add_signal_handler.call_args_list,
+        )
+        self.assertIn(
+            mock.call(signal.SIGTERM, broker.stopping.set),
+            loop.add_signal_handler.call_args_list,
+        )
+        resize_signal = getattr(signal, "SIGWINCH", None)
+        if resize_signal is not None:
+            self.assertIn(
+                mock.call(resize_signal, broker.refresh_dashboard),
+                loop.add_signal_handler.call_args_list,
+            )
+
+        unsupported_loop = mock.Mock()
+        unsupported_loop.add_signal_handler.side_effect = NotImplementedError
+        _register_broker_signal_handlers(unsupported_loop, broker)
+
+    async def test_worker_messages_refresh_dashboard_after_success_or_error(
+        self,
+    ) -> None:
+        initialize_broker_run(self.coord, self.manifest, "task", {})
+        broker = Broker(self.coord, self.manifest)
+        broker.dashboard = mock.Mock()
+        broker.dashboard_active = True
+        writer = mock.Mock()
+        writer.drain = mock.AsyncMock()
+        client = Client("implementer", mock.Mock(), writer)
+
+        await broker.handle_message(
+            client,
+            {
+                "type": "lifecycle",
+                "state": "idle",
+                "usage": None,
+                "id": "1" * 32,
+            },
+        )
+        broker.dashboard.refresh_from_store.assert_called_once_with(self.coord)
+
+        broker.dashboard.reset_mock()
+        with self.assertRaisesRegex(Exception, "Unsupported worker message"):
+            await broker.handle_message(client, {"type": "unsupported"})
+        broker.dashboard.refresh_from_store.assert_called_once_with(self.coord)
+
+    def test_dashboard_failure_cannot_change_broker_workflow(self) -> None:
+        initialize_broker_run(self.coord, self.manifest, "task", {})
+        broker = Broker(self.coord, self.manifest)
+        broker.dashboard = mock.Mock()
+        broker.dashboard.refresh_from_store.side_effect = RuntimeError(
+            "PRIVATE_RAW_ERROR_CANARY"
+        )
+        broker.dashboard_active = True
+
+        broker.refresh_dashboard()
+
+        broker.dashboard.render_unavailable.assert_called_once_with()
+        snapshot = broker_store.public_broker_snapshot(self.coord)
+        self.assertEqual(snapshot["workflow"]["state"], "starting")
 
 
 class PromptAndExtensionContractTests(unittest.TestCase):

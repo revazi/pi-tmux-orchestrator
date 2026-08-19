@@ -112,10 +112,14 @@ stop an already-started provider response at an exact token boundary.
 
 ## Metadata APIs
 
-Status, monitor, JSON output, journals, widgets, and Supervisor API return only
-bounded metadata. Supervisor API v2 reads retained state without tmux and
-reports host runtime as `not_observed`; retained PIDs never imply liveness.
-Directory scans and pages remain bounded.
+Status, the broker dashboard, JSON output, journals, widgets, and Supervisor
+API return only bounded metadata. The dashboard selects only workflow, role,
+assignment-shape, configured model, usage/context, and event metadata; it never
+renders task, prompt, message, report, diff, log, credential, token-secret, or
+provider-response bodies. Dynamic terminal text is control-byte sanitized and
+width-bounded before display. Supervisor API v2 reads retained state without
+tmux and reports host runtime as `not_observed`; retained PIDs never imply
+liveness. Directory scans and pages remain bounded.
 
 Retained `0.4.x` runs remain readable and operable through compatibility code.
 No newly started run can select their file-relay or mailbox payload protocol.

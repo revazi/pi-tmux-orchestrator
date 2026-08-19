@@ -33,6 +33,7 @@ EXPECTED_FILES=(
   pi_tmux_orchestrator/configuration.py
   pi_tmux_orchestrator/constants.py
   pi_tmux_orchestrator/controller.py
+  pi_tmux_orchestrator/dashboard.py
   pi_tmux_orchestrator/models.py
   pi_tmux_orchestrator/output.py
   pi_tmux_orchestrator/prompts.py
@@ -49,6 +50,7 @@ EXPECTED_FILES=(
   pi_tmux_orchestrator/tmux.py
   references/usage.md
   references/protocol-v1.md
+  references/dashboard-design.md
 )
 
 mkdir -p "$TEMP/npm-home" "$TEMP/npm-cache" "$TEMP/npm-tmp"

@@ -30,10 +30,11 @@ from .constants import (
     MAX_RPC_COMMANDS,
     RPC_TOKEN_PATTERN,
 )
+from .dashboard import BrokerDashboard
 from .models import OrchestrationError
-from .output import bounded_message, human_print
+from .output import bounded_message
 from .protocol import encode_frame, validate_client_message, validate_report
-from .storage import load_manifest, manifest_transport, secure_write
+from .storage import load_manifest, secure_write
 
 
 @dataclass
@@ -64,6 +65,8 @@ class Broker:
         self.server: asyncio.AbstractServer | None = None
         self.stopping = asyncio.Event()
         self.task_bodies = self._load_startup_payload()
+        self.dashboard = BrokerDashboard(manifest)
+        self.dashboard_active = False
 
     def _load_startup_payload(self) -> dict[str, str]:
         path = self.coord / "startup.json"
@@ -100,6 +103,14 @@ class Broker:
         return result
 
     async def run(self) -> None:
+        with self.dashboard:
+            self.dashboard_active = True
+            try:
+                await self._run()
+            finally:
+                self.dashboard_active = False
+
+    async def _run(self) -> None:
         socket_path = self.paths["socket"]
         socket_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         os.chmod(socket_path.parent, 0o700)
@@ -133,11 +144,7 @@ class Broker:
                 set_meta(database, "workflow_state", current_state)
                 record_event(database, "workflow_uncertain", status=current_state)
             record_event(database, "broker_started", status=current_state)
-        human_print(
-            f"Coordination broker: protocol={BROKER_PROTOCOL_VERSION} "
-            f"transport={manifest_transport(self.manifest)}"
-        )
-        human_print("Waiting for worker bridges; no coordination polling is used.")
+        self.refresh_dashboard()
         async with self.server:
             await self.stopping.wait()
         await self.close_clients()
@@ -145,6 +152,20 @@ class Broker:
             socket_path.unlink()
         except FileNotFoundError:
             pass
+
+    def refresh_dashboard(self) -> None:
+        """Refresh presentation after state writes without affecting broker behavior."""
+        if not self.dashboard_active:
+            return
+        try:
+            self.dashboard.refresh_from_store(self.coord)
+        except Exception:
+            # Presentation is best-effort; never turn a terminal failure into a
+            # workflow transition or expose a raw terminal/database error.
+            try:
+                self.dashboard.render_unavailable()
+            except Exception:
+                pass
 
     async def close_clients(self) -> None:
         writers = [client.writer for client in self.clients.values()]
@@ -243,6 +264,7 @@ class Broker:
             await self.maybe_start_workflow()
             if workflow_state != "connecting":
                 await self.recover_role(client)
+            self.refresh_dashboard()
             while True:
                 message = await self.read_frame(reader)
                 if message["role"] != role:
@@ -282,6 +304,7 @@ class Broker:
                         role=client.role,
                         status="disconnected",
                     )
+                self.refresh_dashboard()
             writer.close()
             try:
                 await writer.wait_closed()
@@ -552,6 +575,7 @@ class Broker:
                 "duplicate": False,
             },
         )
+        self.refresh_dashboard()
         if resumed_round is not None:
             await self.broadcast_workflow("active", resumed_round)
 
@@ -580,14 +604,19 @@ class Broker:
             )
 
     async def handle_message(self, client: Client, message: dict[str, Any]) -> None:
-        if message["type"] == "lifecycle":
-            await self.handle_lifecycle(client, message)
-        elif message["type"] == "report":
-            await self.handle_report(client, message)
-        elif message["type"] == "ack":
-            await self.handle_delivery_ack(client, message)
-        else:
-            raise OrchestrationError("Unsupported worker message", "invalid_protocol")
+        try:
+            if message["type"] == "lifecycle":
+                await self.handle_lifecycle(client, message)
+            elif message["type"] == "report":
+                await self.handle_report(client, message)
+            elif message["type"] == "ack":
+                await self.handle_delivery_ack(client, message)
+            else:
+                raise OrchestrationError(
+                    "Unsupported worker message", "invalid_protocol"
+                )
+        finally:
+            self.refresh_dashboard()
 
     async def recover_role(self, client: Client) -> None:
         with connect_broker_database(self.coord) as database:
@@ -1136,7 +1165,6 @@ class Broker:
                         status="ready",
                     )
                 await self.broadcast_workflow("ready", round_number)
-                human_print(f"Workflow approved and ready at round {round_number}.")
                 return
             await self.deliver(
                 "implementer", "review_result", round_number, context, trigger=False
@@ -1217,6 +1245,25 @@ def initialize_broker_run(
     secure_write(coord / "control.token", control_token + "\n")
 
 
+def _register_broker_signal_handlers(
+    loop: asyncio.AbstractEventLoop, broker: Broker
+) -> None:
+    handlers = [
+        (signal.SIGINT, broker.stopping.set),
+        (signal.SIGTERM, broker.stopping.set),
+    ]
+    resize_signal = getattr(signal, "SIGWINCH", None)
+    if resize_signal is not None:
+        handlers.append((resize_signal, broker.refresh_dashboard))
+    for signum, callback in handlers:
+        try:
+            loop.add_signal_handler(signum, callback)
+        except (NotImplementedError, RuntimeError, ValueError):
+            # Some event loops/platforms do not expose POSIX signal callbacks.
+            # Broker state transitions still drive presentation in that case.
+            continue
+
+
 def broker_command(args: argparse.Namespace) -> int:
     runtime.STATE_ROOT = Path(args.state_root)
     coord = Path(args.coord)
@@ -1225,11 +1272,7 @@ def broker_command(args: argparse.Namespace) -> int:
 
     async def run() -> None:
         loop = asyncio.get_running_loop()
-        for signum in (signal.SIGINT, signal.SIGTERM):
-            try:
-                loop.add_signal_handler(signum, broker.stopping.set)
-            except NotImplementedError:
-                pass
+        _register_broker_signal_handlers(loop, broker)
         await broker.run()
 
     asyncio.run(run())

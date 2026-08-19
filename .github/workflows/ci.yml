@@ -13,6 +13,7 @@ jobs:
   test:
     name: Python ${{ matrix.python-version }}
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -35,10 +36,9 @@ jobs:
         with:
           node-version: 22.19.0
 
-      - name: Install tmux
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes tmux
+      - name: Ensure tmux is available
+        timeout-minutes: 5
+        run: scripts/ensure-tmux.sh
 
       - name: Run verification
         run: scripts/test.sh

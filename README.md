@@ -15,6 +15,7 @@ grids.
 - One independent reviewer with read/verification tools
 - Optional technical probe, Playwright tester, and Django expert
 - One event-driven owner-only Unix-socket broker per run
+- An adaptive broker/status dashboard for workflow, role, model, usage, context, and recent metadata events
 - The same worker-bridge protocol for interactive TUI and headless RPC workers
 - Native worker output in TUI panes and assistant/tool input/tool output visibility in RPC panes
 - Parent Pi supervision with event-driven final structured reports and attention alerts
@@ -45,13 +46,27 @@ grids.
 │ configured thinking          │ configured thinking          │
 ├──────────────────────────────┼──────────────────────────────┤
 │ Optional Django expert       │ Broker + status              │
-│ configured provider/model    │ workflow, lifecycle, usage   │
-│ configured thinking          │                              │
+│ configured provider/model    │ state, roles, models, usage  │
+│ configured thinking          │ recent metadata events       │
 └──────────────────────────────┴──────────────────────────────┘
 ```
 
 Tmux hosts and displays the broker and workers. It is not the coordination
 transport.
+
+The broker pane is an event-driven terminal dashboard rather than a log tail.
+It prioritizes session identity and workflow state/round, then transport and
+protocol, per-role connection/lifecycle/assignment/model/thinking/actual usage,
+soft-budget pressure, and a bounded recent metadata event rail. Green denotes
+healthy/success, cyan active work, yellow attention or budget pressure, red
+failure/uncertainty, and dim text secondary metadata. Full, compact, and narrow
+layouts adapt to the pane without wrapping. State changes and supported
+`SIGWINCH` resize notifications repaint TTYs in place and restore cursor state;
+`NO_COLOR`, `TERM=dumb`, non-TTY, and non-UTF-8 outputs
+have plain safe fallbacks. The dashboard never renders workflow or provider
+bodies and never polls to refresh. See the reviewable
+[broker dashboard design](references/dashboard-design.md) for the wireframe,
+hierarchy, semantic tokens, breakpoints, and intentional omissions.
 
 ## Architecture
 
@@ -61,6 +76,7 @@ implementation is `pi_tmux_orchestrator/`:
 - CLI/controller/tmux host control
 - strict manifests and private storage
 - framed broker protocol and metadata-only SQLite state machine
+- focused dependency-free broker dashboard presentation
 - broker clients and TUI/RPC worker supervision
 - role system prompts and worker bridge
 - retained-run Supervisor API
