@@ -18,6 +18,7 @@ printf '%s\n' '==> Shell syntax'
 bash -n \
   "$ROOT/install.sh" \
   "$ROOT/scripts/test.sh" \
+  "$ROOT/scripts/ensure-tmux.sh" \
   "$ROOT/scripts/package-smoke.sh" \
   "$ROOT/scripts/pi-extension-smoke.sh"
 
