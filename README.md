@@ -9,6 +9,13 @@ A [Pi](https://github.com/earendil-works/pi) extension, skill, and
 dependency-free Python CLI for coordinating coding agents in monitorable tmux
 grids.
 
+## Demo
+
+![Pi Tmux Orchestrator native worker grid and broker dashboard](https://raw.githubusercontent.com/revazi/pi-tmux-orchestrator/main/assets/pi-tmux-orchestrator-demo.png)
+
+Native Pi TUI workers remain directly steerable while the broker dashboard shows
+workflow, role, model, usage, context, and recent metadata state.
+
 ## What it provides
 
 - One implementer with normal Pi coding tools
