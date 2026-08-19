@@ -32,7 +32,7 @@ panes, file handoffs, relay scripts, or polling loops.
 6. Use specialists only where their independent evidence is relevant.
 6. Never claim a synthetic probe or browser smoke is production wire acceptance.
 7. Do not push, merge, publish, deploy, or perform destructive cleanup without explicit authorization.
-8. Idle agents end their turn. They never run sleeps or poll files, sockets, or tmux.
+8. Idle workers end their turn. A parent that is watching also ends its turn and relies on broker updates. Neither workers nor watching parents run sleeps or poll files, sockets, status, or tmux while waiting.
 
 ## Coordination model
 

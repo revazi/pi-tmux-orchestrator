@@ -202,8 +202,11 @@ with live report observation.
 9. An attached parent observer returns the latest structured reports to the parent Pi.
 
 The terminating report tool avoids an extra post-report provider turn. Idle
-agents end their turn and never sleep or poll. Timeouts detect failure; they do
-not schedule workflow transitions.
+workers end their turn and never sleep or poll. A watching parent also ends its
+turn and relies on broker events instead of sleeping or repeatedly polling
+status/tmux. Non-terminal progress does not start a turn when the parent is
+idle; if the parent is already active, progress is steered in before its next
+model step. Timeouts detect failure; they do not schedule workflow transitions.
 
 Report fields, limits, ACLs, acknowledgements, deduplication, retry, crash
 semantics, and token accounting are specified in

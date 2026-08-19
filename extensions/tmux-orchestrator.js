@@ -676,7 +676,7 @@ export default function tmuxOrchestratorExtension(pi) {
               omitted_reports: 0,
             },
           },
-          { triggerTurn: true, deliverAs: "followUp" },
+          { triggerTurn: true, deliverAs: "steer" },
         );
       } catch {
         // The parent session may already be shutting down.
@@ -691,7 +691,7 @@ export default function tmuxOrchestratorExtension(pi) {
     description: "Supervise bounded doctor, available-model discovery, list, status, watch, attach, start, or send actions through the Pi runtime and bundled Python tmux orchestrator. Start may use user-configured defaults, this parent Pi's current model, or exact user-requested per-role provider/model/thinking overrides. The invoking Pi remains the parent; normal starts create no separate parent Pi or controller. Watch subscribes this Pi to lifecycle and final-report updates. Attach ensures watching, then switches its existing tmux client into native Pi worker panes; prefix then L returns without stopping workers. New runs are watched automatically. Start always requires interactive confirmation.",
     promptSnippet: "Inspect or operate local Pi tmux orchestrations through the authoritative Python CLI",
     promptGuidelines: [
-      "Use tmux_orchestrator instead of rebuilding tmux orchestration state; after starting or resuming an existing run, ensure the invoking Pi is watching it for lifecycle and final reports. Honor explicit user model/provider/thinking requests through useParentModel or modelOverrides. Use the models action to resolve available exact identifiers when needed; never invent a provider/model identifier or read provider credentials. Omitted overrides use the user's global orchestrator model configuration, then packaged defaults. When the user asks to enter, navigate, or directly steer the live workers, use attach rather than watch; attach requires the invoking Pi to be inside tmux. Prefer native Pi TUI workers and use rpcWorkers only after an explicit request for headless panes. The invoking Pi remains responsible for interpreting reports and deciding follow-up. Never create file handoffs, poll coordination state, claim parent project trust applies to child Pi sessions, or equate command acknowledgement with task completion.",
+      "Use tmux_orchestrator instead of rebuilding tmux orchestration state; after starting or resuming an existing run, ensure the invoking Pi is watching it for lifecycle and final reports. Once watching, end the turn and rely on broker updates: never run sleep commands or repeatedly poll status/tmux while waiting for a watched orchestration. Honor explicit user model/provider/thinking requests through useParentModel or modelOverrides. Use the models action to resolve available exact identifiers when needed; never invent a provider/model identifier or read provider credentials. Omitted overrides use the user's global orchestrator model configuration, then packaged defaults. When the user asks to enter, navigate, or directly steer the live workers, use attach rather than watch; attach requires the invoking Pi to be inside tmux. Prefer native Pi TUI workers and use rpcWorkers only after an explicit request for headless panes. The invoking Pi remains responsible for interpreting reports and deciding follow-up. Never create file handoffs, poll coordination state, claim parent project trust applies to child Pi sessions, or equate command acknowledgement with task completion.",
     ],
     parameters,
     execute(_toolCallId, input, signal, _onUpdate, ctx) {

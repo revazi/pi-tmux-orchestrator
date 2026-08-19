@@ -6,6 +6,13 @@ All notable changes to this project are documented here.
 
 _No changes yet._
 
+## 0.7.1 - 2026-08-19
+
+### Fixed
+
+- Deliver parent observer updates with steer semantics so an active parent sees lifecycle or terminal broker events before it can continue a sleep/status polling loop, while non-terminal progress remains non-triggering when idle
+- Explicitly require watching parents to end their turn and rely on observer events instead of sleeping or repeatedly polling status/tmux
+
 ## 0.7.0 - 2026-08-19
 
 ### Added

@@ -320,7 +320,7 @@ export async function attachParentObserver(pi, envelope, observer, onStop) {
             role: update.role || null,
           },
         },
-        { triggerTurn: false, deliverAs: "followUp" },
+        { triggerTurn: false, deliverAs: "steer" },
       );
     } catch (error) {
       stop(error instanceof Error ? error : new Error("parent_progress_failed"));
@@ -343,7 +343,7 @@ export async function attachParentObserver(pi, envelope, observer, onStop) {
             omitted_reports: update.omitted,
           },
         },
-        { triggerTurn: true, deliverAs: "followUp" },
+        { triggerTurn: true, deliverAs: "steer" },
       );
     } catch (error) {
       stop(error instanceof Error ? error : new Error("parent_notification_failed"));

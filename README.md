@@ -298,9 +298,13 @@ startup trust dialogs.
    then returns the latest structured role reports when the run is ready or
    requires intervention.
 
-Idle workers end their turns. They do not sleep or poll. A worker settling
-without a report becomes `waiting`/needs attention rather than entering an
-unlimited reminder loop.
+Idle workers end their turns. They do not sleep or poll. A parent with an
+attached observer also ends its turn and relies on broker updates instead of
+sleeping or repeatedly polling status/tmux. Non-terminal updates remain
+non-triggering while steering an already-active parent before its next model
+step; terminal updates may trigger parent reasoning. A worker settling without
+a report becomes `waiting`/needs attention rather than entering an unlimited
+reminder loop.
 
 ## Manage grids
 

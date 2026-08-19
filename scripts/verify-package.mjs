@@ -71,7 +71,7 @@ const declaredFiles = [
 ];
 const expectedManifest = {
   name: "pi-tmux-orchestrator",
-  version: "0.7.0",
+  version: "0.7.1",
   description: "Pi extension, skill, and dependency-free Python CLI for coordinating coding agents in tmux",
   license: "MIT",
   author: {
