@@ -11,6 +11,7 @@ import {
   parentUpdateContent,
   validateObserverFrame,
 } from "./orchestrator-parent.js";
+import { contextCapsuleParameters, renderContextCapsule } from "./orchestrator-context.js";
 import {
   appendModelArgs,
   availableThinkingLevels,
@@ -65,7 +66,8 @@ const parameters = {
       enum: ROLES,
       description: "Target role for send",
     },
-    task: { type: "string", maxLength: 65536, description: "Start task; transferred through a private file" },
+    task: { type: "string", maxLength: 65536, description: "Self-contained start objective; transferred through a private file" },
+    contextCapsule: contextCapsuleParameters,
     message: { type: "string", maxLength: 65536, description: "Send message; transferred through a private file" },
     withProbe: { type: "boolean" },
     probeTask: { type: "string", maxLength: 65536 },
@@ -166,6 +168,7 @@ async function canonicalProject(project, cwd) {
 function startFileValues(input) {
   return {
     task: input.task,
+    contextCapsule: renderContextCapsule(input.contextCapsule),
     probe: input.probeTask,
     playwright: input.playwrightTask,
     django: input.djangoTask,
@@ -174,6 +177,7 @@ function startFileValues(input) {
 
 function buildStartArgs(input, project, paths, { dryRun = false } = {}) {
   const args = ["--project", project, "--task-file", paths.task];
+  if (paths.contextCapsule) args.push("--context-capsule-file", paths.contextCapsule);
   if (input.withProbe) args.push("--with-probe");
   if (paths.probe) args.push("--probe-task-file", paths.probe);
   if (input.withPlaywright) args.push("--with-playwright");
@@ -203,6 +207,7 @@ function startConfirmation(preview) {
     `Worker transport: ${preview.data?.transport || "tui"}`,
     `Roles/models (CLI policy):\n${roles}`,
     `External state: ${preview.data?.paths?.state_root}`,
+    `Parent context capsule: ${preview.data?.context_capsule?.present ? `${preview.data.context_capsule.chars} characters` : "not supplied"}`,
     "Metadata-only broker state and Pi sessions are retained when tmux stops; workflow payloads are not stored in coordination files.",
     `Trust: ${trust}`,
   ].join("\n\n");
@@ -691,7 +696,7 @@ export default function tmuxOrchestratorExtension(pi) {
     description: "Supervise bounded doctor, available-model discovery, list, status, watch, attach, start, or send actions through the Pi runtime and bundled Python tmux orchestrator. Start may use user-configured defaults, this parent Pi's current model, or exact user-requested per-role provider/model/thinking overrides. The invoking Pi remains the parent; normal starts create no separate parent Pi or controller. Watch subscribes this Pi to lifecycle and final-report updates. Attach ensures watching, then switches its existing tmux client into native Pi worker panes; prefix then L returns without stopping workers. New runs are watched automatically. Start always requires interactive confirmation.",
     promptSnippet: "Inspect or operate local Pi tmux orchestrations through the authoritative Python CLI",
     promptGuidelines: [
-      "Use tmux_orchestrator instead of rebuilding tmux orchestration state; after starting or resuming an existing run, ensure the invoking Pi is watching it for lifecycle and final reports. Once watching, end the turn and rely on broker updates: never run sleep commands or repeatedly poll status/tmux while waiting for a watched orchestration. Honor explicit user model/provider/thinking requests through useParentModel or modelOverrides. Use the models action to resolve available exact identifiers when needed; never invent a provider/model identifier or read provider credentials. Omitted overrides use the user's global orchestrator model configuration, then packaged defaults. When the user asks to enter, navigate, or directly steer the live workers, use attach rather than watch; attach requires the invoking Pi to be inside tmux. Prefer native Pi TUI workers and use rpcWorkers only after an explicit request for headless panes. The invoking Pi remains responsible for interpreting reports and deciding follow-up. Never create file handoffs, poll coordination state, claim parent project trust applies to child Pi sessions, or equate command acknowledgement with task completion.",
+      "Use tmux_orchestrator instead of rebuilding tmux orchestration state; before a start, synthesize a bounded contextCapsule from the current conversation when prior decisions or work matter; include only task-relevant state, constraints, acceptance criteria, paths, evidence, and open questions, never the full transcript. After starting or resuming an existing run, ensure the invoking Pi is watching it for lifecycle and final reports. Once watching, end the turn and rely on broker updates: never run sleep commands or repeatedly poll status/tmux while waiting for a watched orchestration. Honor explicit user model/provider/thinking requests through useParentModel or modelOverrides. Use the models action to resolve available exact identifiers when needed; never invent a provider/model identifier or read provider credentials. Omitted overrides use the user's global orchestrator model configuration, then packaged defaults. When the user asks to enter, navigate, or directly steer the live workers, use attach rather than watch; attach requires the invoking Pi to be inside tmux. Prefer native Pi TUI workers and use rpcWorkers only after an explicit request for headless panes. The invoking Pi remains responsible for interpreting reports and deciding follow-up. Never create file handoffs, poll coordination state, claim parent project trust applies to child Pi sessions, or equate command acknowledgement with task completion.",
     ],
     parameters,
     execute(_toolCallId, input, signal, _onUpdate, ctx) {
@@ -801,6 +806,7 @@ export const testHooks = {
   oneLineJson,
   runCli,
   requestedSession,
+  renderContextCapsule,
   attachAndSupervise,
   attachParentObserver,
   brokerFrame,

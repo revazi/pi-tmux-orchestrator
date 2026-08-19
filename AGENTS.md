@@ -13,10 +13,12 @@ Provide a small, reusable, intentionally tmux-scoped Pi skill and modular standa
 - `SKILL.md`: Pi Agent Skill entry point
 - `pi_tmux_orchestrator/`: authoritative dependency-free Python orchestration package
 - `pi_tmux_orchestrator/configuration.py`: strict user-global worker model policy
+- `pi_tmux_orchestrator/context_capsules.py`: bounded worker baseline and rolling run-state projections
 - `pi_tmux_orchestrator/dashboard.py`: adaptive metadata-only broker pane presentation
 - `pi_tmux_orchestrator/supervisor_api.py`: versioned durable-state read boundary
 - `pi_tmux_orchestrator/supervisor_commands.py`: thin CLI adapters for the supervisor API
 - `extensions/tmux-orchestrator.js`: Pi control surface
+- `extensions/orchestrator-context.js`: structured parent context-capsule schema and renderer
 - `extensions/orchestrator-models.js`: bounded model metadata and override adapter
 - `extensions/orchestrator-update.js`: best-effort npm release notice
 - `extensions/orchestrator-parent.js`: parent-session observer bridge

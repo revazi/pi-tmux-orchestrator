@@ -4,7 +4,15 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
-_No changes yet._
+### Added
+
+- Added an optional 12 KiB structured parent context capsule for task-relevant state, decisions, constraints, acceptance criteria, paths, evidence, open questions, and out-of-scope items without copying the parent transcript or making another model request
+- Added one 16 KiB UTF-8-bounded rolling run-state capsule that replaces historical per-report evidence with the latest accepted report per role
+- Added a deterministic two-round context-efficiency regression that currently reduces serialized provider-visible message characters from 99,170 to 8,678 (91.2%) and enforces at least a 50% reduction without claiming provider-specific token savings
+
+### Changed
+
+- Exclude completed assignment assistant/tool turns from future provider context while preserving the complete Pi worker session history, latest structured run state, direct user messages, and isolation boundaries
 
 ## 0.7.1 - 2026-08-19
 

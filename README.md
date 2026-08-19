@@ -19,6 +19,7 @@ grids.
 - The same worker-bridge protocol for interactive TUI and headless RPC workers
 - Native worker output in TUI panes and assistant/tool input/tool output visibility in RPC panes
 - Parent Pi supervision with event-driven final structured reports and attention alerts
+- Bounded parent context capsules, rolling latest-per-role run state, and completed-assignment context pruning
 - Bounded typed reports through a terminating Pi tool
 - No Markdown handoffs, readiness markers, mailbox payload files, relay polling,
   lifecycle sleeps, or tmux key injection in newly started runs
@@ -244,7 +245,11 @@ an explicit headless automation option only. The parent receives visible
 lifecycle/report-received progress and a triggered structured update when the
 broker reaches `ready`, `needs_attention`, or `uncertain`. Parent project trust
 is never inherited by child Pi sessions; child `--approve` needs separate
-confirmation.
+confirmation. For natural-language starts, the parent can synthesize an optional
+structured `contextCapsule` from its existing conversation without another
+model call. The capsule carries only task-relevant current state, settled
+decisions, constraints, acceptance criteria, paths, evidence, open questions,
+and out-of-scope items—never the complete parent transcript.
 
 ## Start from the terminal
 
@@ -254,11 +259,29 @@ Implement the requested change, add focused tests, run verification, and stop
 after independent review approval.
 TASK
 
+cat > /tmp/pi-agent-context.md <<'CONTEXT'
+### Current state
+A focused branch already contains the reviewed scaffolding.
+
+### Decisions already made
+- Preserve broker-v1 as the only workflow transport.
+
+### Acceptance criteria
+- Add focused regressions and preserve metadata-only durable state.
+CONTEXT
+
 pi-tmux-agents start \
   --project "$PWD" \
   --task-file /tmp/pi-agent-task.md \
+  --context-capsule-file /tmp/pi-agent-context.md \
   --attach
 ```
+
+The context capsule is limited to 12 KiB, transferred through a private file,
+consumed only by the broker startup path, and deleted after baseline delivery.
+Its body is excluded from SQLite, status, registries, dashboards, and the
+Supervisor API. The worker Pi session retains the delivered baseline as normal
+conversation context.
 
 Add specialists:
 
@@ -285,13 +308,13 @@ startup trust dialogs.
 ## Event-driven workflow
 
 1. Bridges connect and authenticate independently.
-2. Broker stores baseline context in each Pi session without waking idle roles.
+2. Broker stores the task plus optional bounded parent context capsule in each Pi session without waking idle roles.
 3. Only implementer and optional initial probe are triggered.
 4. Implementer submits a bounded `implementation` report through
    `orchestrator_report`; the tool terminates the turn.
 5. Enabled specialists inspect the worktree and submit typed evidence.
-6. Broker supplies all evidence to reviewer and wakes reviewer exactly once.
-7. `changes_requested` starts the next implementation round.
+6. Broker replaces prior evidence deliveries with one bounded run-state capsule containing only the latest accepted report per role, then wakes reviewer exactly once.
+7. `changes_requested` starts the next implementation round; before that model turn, the worker context hook keeps the baseline, latest run-state capsule, and current assignment while excluding completed assistant/tool turns from provider context.
 8. `approved` marks the workflow ready without an acknowledgement-only worker
    turn.
 9. An attached parent observer shows lifecycle and report-received progress,
@@ -304,7 +327,12 @@ sleeping or repeatedly polling status/tmux. Non-terminal updates remain
 non-triggering while steering an already-active parent before its next model
 step; terminal updates may trigger parent reasoning. A worker settling without
 a report becomes `waiting`/needs attention rather than entering an unlimited
-reminder loop.
+reminder loop. Context filtering changes only the provider-visible projection;
+Pi's durable worker session history remains intact. A deterministic two-round
+synthetic regression currently reduces serialized provider-visible message
+characters from 99,170 to 8,678 (91.2%) and enforces a minimum 50% reduction in
+CI. This is a reproducible character metric, not provider token acceptance; real
+token usage remains provider-reported and visible in the dashboard/Supervisor API.
 
 ## Manage grids
 

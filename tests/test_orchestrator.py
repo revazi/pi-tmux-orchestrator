@@ -218,6 +218,27 @@ class UtilityTests(unittest.TestCase):
         oversized = "x" * (ORCHESTRATOR.MAX_TASK_BYTES + 1)
         with self.assertRaises(ORCHESTRATOR.OrchestrationError):
             ORCHESTRATOR.read_text_argument(oversized, None, "task")
+        oversized_capsule = "x" * (ORCHESTRATOR.MAX_CONTEXT_CAPSULE_BYTES + 1)
+        with self.assertRaisesRegex(Exception, "12 KiB"):
+            ORCHESTRATOR.read_text_argument(
+                oversized_capsule,
+                None,
+                "context-capsule",
+                max_bytes=ORCHESTRATOR.MAX_CONTEXT_CAPSULE_BYTES,
+            )
+
+    def test_start_parser_accepts_an_optional_private_context_capsule(self) -> None:
+        parsed = ORCHESTRATOR.build_parser().parse_args(
+            [
+                "start",
+                "--task",
+                "Focused task",
+                "--context-capsule-file",
+                "/private/context.md",
+            ]
+        )
+        self.assertEqual(parsed.context_capsule_file, "/private/context.md")
+        self.assertIsNone(parsed.context_capsule)
 
     def test_public_parser_hides_internal_commands(self) -> None:
         help_text = ORCHESTRATOR.build_parser().format_help()

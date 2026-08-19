@@ -30,9 +30,10 @@ panes, file handoffs, relay scripts, or polling loops.
 4. Keep credentials, private documents, provider bodies, raw errors, diffs, and logs out of tasks and structured reports.
 5. Honor explicit user provider/model/thinking requests through `useParentModel` or `modelOverrides`. Use the bounded `models` action to resolve exact available IDs; never invent IDs or inspect credentials. Omitted overrides use the user's global configuration.
 6. Use specialists only where their independent evidence is relevant.
-6. Never claim a synthetic probe or browser smoke is production wire acceptance.
-7. Do not push, merge, publish, deploy, or perform destructive cleanup without explicit authorization.
-8. Idle workers end their turn. A parent that is watching also ends its turn and relies on broker updates. Neither workers nor watching parents run sleeps or poll files, sockets, status, or tmux while waiting.
+7. Before starting from an existing parent conversation, synthesize the tool's bounded `contextCapsule` from only task-relevant state, settled decisions, constraints, acceptance criteria, paths, evidence, open questions, and out-of-scope items. Never copy the full parent transcript.
+8. Never claim a synthetic probe or browser smoke is production wire acceptance.
+9. Do not push, merge, publish, deploy, or perform destructive cleanup without explicit authorization.
+10. Idle workers end their turn. A parent that is watching also ends its turn and relies on broker updates. Neither workers nor watching parents run sleeps or poll files, sockets, status, or tmux while waiting.
 
 ## Coordination model
 
@@ -51,8 +52,12 @@ compatible existing run without taking over the terminal;
 `/orchestrator-attach SESSION` enters its native worker grid, and prefix then
 `L` returns while leaving the grid live for later reattachment.
 The broker stores metadata-only SQLite state and actual provider token totals
-when Pi reports them; it does not persist task, report, prompt, message, diff,
-or log bodies. See [references/protocol-v1.md](references/protocol-v1.md).
+when Pi reports them; it does not persist task, context-capsule, report, prompt,
+message, diff, or log bodies. Each role receives the bounded parent capsule once.
+Later evidence is projected as one rolling latest-per-role run-state capsule, and
+completed assignment assistant/tool turns are excluded from future provider
+context without deleting Pi session history. See
+[references/protocol-v1.md](references/protocol-v1.md).
 
 ## Start a grid
 
@@ -61,7 +66,8 @@ Use the extension or a mode-`0600` temporary task file:
 ```bash
 pi-tmux-agents start \
   --project "$PWD" \
-  --task-file /tmp/pi-agent-task.md
+  --task-file /tmp/pi-agent-task.md \
+  --context-capsule-file /tmp/pi-agent-context.md
 ```
 
 Default roles:

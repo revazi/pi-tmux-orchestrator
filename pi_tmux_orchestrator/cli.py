@@ -173,6 +173,8 @@ def build_parser() -> argparse.ArgumentParser:
     start.add_argument("--project", default=os.getcwd())
     start.add_argument("--task")
     start.add_argument("--task-file")
+    start.add_argument("--context-capsule")
+    start.add_argument("--context-capsule-file")
     start.add_argument("--session")
     start.add_argument("--with-probe", action="store_true")
     start.add_argument("--probe-task")

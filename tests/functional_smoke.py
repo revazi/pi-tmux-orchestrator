@@ -271,6 +271,8 @@ def main() -> int:
         project=str(ROOT),
         task="Synthetic functional smoke. Do not modify project files.",
         task_file=None,
+        context_capsule="### Current state\nSYNTHETIC_CONTEXT_CAPSULE_CANARY",
+        context_capsule_file=None,
         session=session,
         with_probe=True,
         probe_task="Synthetic probe evidence.",
@@ -336,6 +338,8 @@ def main() -> int:
             raise AssertionError("new run did not use manifest v3 broker coordination")
         if set(manifest["roles"]) != roles:
             raise AssertionError("all roles were not started")
+        if "SYNTHETIC_CONTEXT_CAPSULE_CANARY" in json.dumps(manifest):
+            raise AssertionError("manifest persisted the context capsule")
         forbidden = [
             path.name
             for path in coord.iterdir()
@@ -425,6 +429,18 @@ def main() -> int:
                 raise AssertionError(f"broker rejected {role}")
             clients[role] = stream
 
+        for role, stream in clients.items():
+            stream.settimeout(4)
+            baseline = receive(stream)
+            if (
+                baseline.get("type") != "context"
+                or baseline.get("kind") != "baseline"
+                or "SYNTHETIC_CONTEXT_CAPSULE_CANARY" not in baseline.get("content", "")
+            ):
+                raise AssertionError(
+                    f"{role} did not receive the bounded context capsule"
+                )
+
         required_dashboard_text = (
             "PI TMUX ORCHESTRATOR",
             f"SESSION {session}",
@@ -471,8 +487,30 @@ def main() -> int:
                 "broker/dashboard did not become ready: "
                 f"state={snapshot['workflow']['state']} missing={missing}"
             )
-        if "Synthetic functional smoke" in monitor_output:
-            raise AssertionError("broker dashboard exposed task body")
+        if (
+            "Synthetic functional smoke" in monitor_output
+            or "SYNTHETIC_CONTEXT_CAPSULE_CANARY" in monitor_output
+        ):
+            raise AssertionError("broker dashboard exposed a workflow body")
+        if (coord / "startup.json").exists():
+            raise AssertionError("broker retained the startup context capsule")
+        with ORCHESTRATOR.connect_broker_database(coord, readonly=True) as database:
+            database_dump = "\n".join(database.iterdump())
+        if "SYNTHETIC_CONTEXT_CAPSULE_CANARY" in database_dump:
+            raise AssertionError("broker persisted the context capsule in SQLite")
+        capsule_bytes = b"SYNTHETIC_CONTEXT_CAPSULE_CANARY"
+        leaked_metadata_paths = []
+        for path in coord.rglob("*"):
+            relative = path.relative_to(coord)
+            if not path.is_file() or relative.parts[0] == "sessions":
+                continue
+            if capsule_bytes in path.read_bytes():
+                leaked_metadata_paths.append(str(relative))
+        if leaked_metadata_paths:
+            raise AssertionError(
+                "coordination metadata persisted the context capsule: "
+                f"{leaked_metadata_paths}"
+            )
 
         # The authenticated operator path is brokered and acknowledged for both presentations.
         send_id = "a" * 32
@@ -535,6 +573,11 @@ def main() -> int:
             or len(batch["roles"]) != 2
         ):
             raise AssertionError("Supervisor API v2 broker reads failed")
+        public_metadata = json.dumps(
+            {"status": status.data, "supervisor": supervisor, "events": batch}
+        )
+        if "SYNTHETIC_CONTEXT_CAPSULE_CANARY" in public_metadata:
+            raise AssertionError("public metadata exposed the context capsule")
 
         for stream in clients.values():
             stream.close()

@@ -101,8 +101,9 @@ class JsonMainTests(unittest.TestCase):
         self.assert_envelope(envelope, "supervisor", False)
         self.assertEqual(envelope["error"]["code"], "invalid_arguments")
 
-    def test_start_dry_run_is_structured_and_redacts_task_body(self) -> None:
+    def test_start_dry_run_is_structured_and_redacts_workflow_bodies(self) -> None:
         canary = "PRIVATE_TASK_CANARY_JSON_21f3"
+        context_canary = "PRIVATE_CONTEXT_CAPSULE_CANARY_JSON_87cd"
         with (
             mock.patch.object(
                 ORCHESTRATOR, "command_path", return_value="/usr/bin/true"
@@ -117,6 +118,8 @@ class JsonMainTests(unittest.TestCase):
                     str(ROOT),
                     "--task",
                     canary,
+                    "--context-capsule",
+                    context_canary,
                     "--skip-model-check",
                     "--dry-run",
                     "--rpc-workers",
@@ -129,8 +132,13 @@ class JsonMainTests(unittest.TestCase):
         self.assert_envelope(envelope, "start", True)
         self.assertEqual(stderr, "")
         self.assertNotIn(canary, raw)
+        self.assertNotIn(context_canary, raw)
         data = envelope["data"]
         self.assertTrue(data["dry_run"])
+        self.assertEqual(
+            data["context_capsule"],
+            {"present": True, "chars": len(context_canary)},
+        )
         self.assertEqual(data["transport"], "rpc")
         self.assertEqual(
             data["trust"]["policy"],
