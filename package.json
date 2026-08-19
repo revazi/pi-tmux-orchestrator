@@ -53,6 +53,7 @@
     "extensions/orchestrator-worker.js",
     "references/usage.md",
     "references/protocol-v1.md",
+    "references/dashboard-design.md",
     "bin/pi-tmux-agents",
     "pi_tmux_orchestrator/*.py"
   ],

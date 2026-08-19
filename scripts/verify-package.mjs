@@ -17,6 +17,7 @@ const pythonFiles = [
   "configuration.py",
   "constants.py",
   "controller.py",
+  "dashboard.py",
   "models.py",
   "output.py",
   "prompts.py",
@@ -47,6 +48,7 @@ const expectedFiles = [
   "extensions/orchestrator-worker.js",
   "references/usage.md",
   "references/protocol-v1.md",
+  "references/dashboard-design.md",
   ...pythonFiles,
 ];
 const declaredFiles = [
@@ -63,6 +65,7 @@ const declaredFiles = [
   "extensions/orchestrator-worker.js",
   "references/usage.md",
   "references/protocol-v1.md",
+  "references/dashboard-design.md",
   "bin/pi-tmux-agents",
   "pi_tmux_orchestrator/*.py",
 ];
@@ -192,6 +195,7 @@ const packagedDocs = [
   "SECURITY.md",
   "references/usage.md",
   "references/protocol-v1.md",
+  "references/dashboard-design.md",
 ];
 const unrelatedRoadmap = /\b(?:Pi Deck|Herdr|future architecture|neutral core|multiplexer-neutral|terminal-neutral|terminal-independent|terminal-client|process-host)\b/i;
 for (const path of packagedDocs) {

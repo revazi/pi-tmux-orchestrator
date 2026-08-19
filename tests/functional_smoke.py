@@ -421,6 +421,36 @@ def main() -> int:
         else:
             raise AssertionError(f"broker did not enter active state: {snapshot}")
 
+        monitor_output = subprocess.run(
+            [
+                "tmux",
+                "capture-pane",
+                "-p",
+                "-t",
+                manifest["monitor_pane_id"],
+            ],
+            check=True,
+            text=True,
+            capture_output=True,
+        ).stdout
+        required_dashboard_text = (
+            "PI TMUX ORCHESTRATOR",
+            f"SESSION {session}",
+            "ACTIVE   ROUND 1",
+            "TRANSPORT RPC",
+            "PROTOCOL BROKER-V1 / V1",
+            "implementer",
+            "reviewer",
+            "RECENT METADATA EVENTS",
+            "pi-tmux-agents attach",
+        )
+        if any(value not in monitor_output for value in required_dashboard_text):
+            raise AssertionError(
+                "broker pane omitted required metadata dashboard hierarchy"
+            )
+        if "Synthetic functional smoke" in monitor_output:
+            raise AssertionError("broker dashboard exposed task body")
+
         # The authenticated operator path is brokered and acknowledged for both presentations.
         send_id = "a" * 32
         sent = ORCHESTRATOR.send_command(
@@ -538,6 +568,7 @@ def main() -> int:
         print("OK TUI and RPC presentations share manifest-v3 broker-v1")
         print("OK RPC panes render assistant progress plus tool inputs and outputs")
         print("OK owner-only broker accepted five authenticated role bridges")
+        print("OK broker pane rendered the metadata-only adaptive dashboard")
         print(
             "OK new runs created no handoff, readiness, mailbox, or relay payload files"
         )

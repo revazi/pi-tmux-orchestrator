@@ -50,7 +50,9 @@ per-role `modelOverrides` after resolving ambiguous IDs with `models`.
 ### `start`
 
 Creates a detached tmux grid with an implementer, reviewer, broker/status
-monitor, and optional probe, Playwright, and Django roles.
+monitor, and optional probe, Playwright, and Django roles. The monitor is an
+in-place, event-driven dashboard with full, compact, and narrow layouts; it does
+not tail worker output or poll broker state.
 
 Required:
 
@@ -88,8 +90,15 @@ session and project; invalid orchestration metadata is excluded.
 ### `status [SESSION]`
 
 Shows bounded pane metadata, broker workflow state, role lifecycle, actual
-provider token totals when available, and context pressure. It never prints
-workflow payload bodies.
+provider token totals when available, and context pressure. The live broker
+pane presents the same metadata hierarchy with exact configured
+provider/model/thinking values, assignment/generation where available,
+soft-budget warnings, a bounded metadata-event rail, and attach/status/stop
+help. Healthy/success is green, active is cyan, attention/budget is yellow,
+error/uncertainty is red, and secondary metadata is dim. `NO_COLOR`,
+`TERM=dumb`, and non-TTY output remain plain. Neither view prints workflow
+payload bodies. See [broker dashboard design](dashboard-design.md) for the
+operator hierarchy, wireframe, responsive contract, and omissions.
 
 ### `attach [SESSION]`
 

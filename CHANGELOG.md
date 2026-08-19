@@ -4,7 +4,20 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
-_No changes yet._
+### Added
+
+- Added an event-driven broker/status terminal dashboard with explicit state/color semantics, adaptive full/compact/narrow layouts, per-role configured model and actual usage/context data, soft-budget warnings, bounded metadata events, and operator guidance
+- Added deterministic rendering, sanitization, plain/`NO_COLOR`, refresh-hook, and real-tmux dashboard coverage
+- Added a reviewable operator design reference with an ASCII wireframe, hierarchy, semantic tokens, responsive contract, plain-mode behavior, and intentional omissions
+
+### Fixed
+
+- Forced the first successful dashboard refresh after temporary metadata unavailability to repaint even when broker state is unchanged
+- Added portable event-driven `SIGWINCH` refresh so tmux resize/zoom recomputes the dashboard layout without waiting for another workflow transition
+
+### Security
+
+- Kept dashboard output metadata-only, control-byte sanitized, width-bounded, and free of workflow/provider bodies while restoring cursor state on broker exit or error
 
 ## 0.6.3 - 2026-08-14
 

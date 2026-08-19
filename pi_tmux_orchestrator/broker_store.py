@@ -209,12 +209,22 @@ def public_broker_snapshot(coord: Path) -> dict[str, Any]:
         }
         roles = []
         for row in database.execute(
-            "SELECT role,state,connected,generation,input_tokens,output_tokens,"
+            "SELECT role,state,connected,active_assignment_id,generation,input_tokens,output_tokens,"
             "cache_read_tokens,cache_write_tokens,reasoning_tokens,cost_total,"
             "context_tokens,context_window,context_percent,updated_at FROM roles ORDER BY role"
         ):
             value = dict(row)
             value["connected"] = bool(value["connected"])
+            assignment_id = value.pop("active_assignment_id")
+            assignment = None
+            if assignment_id is not None:
+                assignment_row = database.execute(
+                    "SELECT round,kind,state FROM assignments WHERE id=?",
+                    (assignment_id,),
+                ).fetchone()
+                if assignment_row is not None:
+                    assignment = dict(assignment_row)
+            value["assignment"] = assignment
             roles.append(value)
         event_bounds = database.execute(
             "SELECT MIN(sequence) AS earliest, MAX(sequence) AS latest FROM events"
