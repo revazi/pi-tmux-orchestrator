@@ -206,7 +206,7 @@ with live report observation.
 3. It triggers only the implementer and optional initial probe.
 4. The implementer submits a bounded `implementation` report with `orchestrator_report`.
 5. Enabled specialists inspect the shared worktree and submit typed evidence.
-6. Accepted evidence updates one bounded latest-per-role run-state capsule; recipients no longer accumulate one context body for every historical report.
+6. Accepted evidence updates one latest-per-role run-state capsule bounded to 16 KiB of UTF-8; recipients no longer accumulate one context body for every historical report.
 7. The broker supplies the latest run state to the reviewer and wakes it once.
 8. `changes_requested` supplies the updated run state and starts the next implementation round.
 9. Before that provider turn, the worker keeps only the baseline, latest run state, current assignment, and current-turn messages; completed assistant/tool turns remain in Pi history but leave provider context.
@@ -220,12 +220,12 @@ status/tmux. Non-terminal progress does not start a turn when the parent is
 idle; if the parent is already active, progress is steered in before its next
 model step. Timeouts detect failure; they do not schedule workflow transitions.
 
-The deterministic two-round context regression measures provider-visible
-message characters before and after worker filtering. Its current fixture drops
-from 98,091 to 8,069 characters (91.8%); CI requires at least a 50% reduction.
-This is a stable context-size proxy, not invented provider token usage. Runtime
-token and context-window measurements continue to come only from Pi/provider
-usage metadata.
+The deterministic two-round context regression measures serialized
+provider-visible message characters before and after worker filtering. Its
+current fixture drops from 99,170 to 8,678 characters (91.2%); CI requires at
+least a 50% reduction. This is a stable context-size proxy, not provider-specific
+token savings or production-wire acceptance. Runtime token and context-window
+measurements continue to come only from Pi/provider usage metadata.
 
 Report fields, limits, ACLs, acknowledgements, deduplication, retry, crash
 semantics, and token accounting are specified in

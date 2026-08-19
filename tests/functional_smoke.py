@@ -498,6 +498,19 @@ def main() -> int:
             database_dump = "\n".join(database.iterdump())
         if "SYNTHETIC_CONTEXT_CAPSULE_CANARY" in database_dump:
             raise AssertionError("broker persisted the context capsule in SQLite")
+        capsule_bytes = b"SYNTHETIC_CONTEXT_CAPSULE_CANARY"
+        leaked_metadata_paths = []
+        for path in coord.rglob("*"):
+            relative = path.relative_to(coord)
+            if not path.is_file() or relative.parts[0] == "sessions":
+                continue
+            if capsule_bytes in path.read_bytes():
+                leaked_metadata_paths.append(str(relative))
+        if leaked_metadata_paths:
+            raise AssertionError(
+                "coordination metadata persisted the context capsule: "
+                f"{leaked_metadata_paths}"
+            )
 
         # The authenticated operator path is brokered and acknowledged for both presentations.
         send_id = "a" * 32
@@ -560,6 +573,11 @@ def main() -> int:
             or len(batch["roles"]) != 2
         ):
             raise AssertionError("Supervisor API v2 broker reads failed")
+        public_metadata = json.dumps(
+            {"status": status.data, "supervisor": supervisor, "events": batch}
+        )
+        if "SYNTHETIC_CONTEXT_CAPSULE_CANARY" in public_metadata:
+            raise AssertionError("public metadata exposed the context capsule")
 
         for stream in clients.values():
             stream.close()

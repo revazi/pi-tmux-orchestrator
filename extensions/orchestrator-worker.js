@@ -54,11 +54,37 @@ function updatedCurrentAssignment(current, key, details, assignmentId, index) {
   return index;
 }
 
-function selectedAssignmentBoundary(current, latest) {
+function isTurnBoundary(item) {
+  if (Object(item).role === "user") return true;
+  const details = orchestrationDetails(item);
+  if (Object(item).role === "custom" && !details) return true;
+  return details?.kind === "context" && details.delivery_kind === "operator_message";
+}
+
+function completedAssignmentEnd(messages, assignmentIndex) {
+  const assignmentId = orchestrationDetails(messages[assignmentIndex])?.assignment_id;
+  let boundary = assignmentIndex;
+  for (let index = assignmentIndex + 1; index < messages.length; index += 1) {
+    const item = messages[index];
+    if (
+      Object(item).role === "toolResult" &&
+      item.toolName === "orchestrator_report" &&
+      Object(item.details).assignment_id === assignmentId
+    ) boundary = index;
+  }
+  return boundary;
+}
+
+function selectedAssignmentBoundary(current, latest, messages) {
   if (current >= 0) return current;
   const previous = latest.get("assignment");
   if (previous === undefined) return -1;
-  return previous;
+  const completed = completedAssignmentEnd(messages, previous);
+  let boundary = messages.length;
+  for (let index = completed + 1; index < messages.length; index += 1) {
+    if (isTurnBoundary(messages[index])) boundary = index;
+  }
+  return boundary;
 }
 
 function contextSelection(messages, assignment) {
@@ -76,7 +102,8 @@ function contextSelection(messages, assignment) {
   }
   return {
     latest,
-    assignmentBoundary: selectedAssignmentBoundary(currentAssignment, latest),
+    currentAssignment,
+    assignmentBoundary: selectedAssignmentBoundary(currentAssignment, latest, messages),
   };
 }
 
@@ -89,6 +116,7 @@ function isCompletedProviderMessage(item, index, boundary) {
 function keepWorkerContextMessage(item, index, selection) {
   const details = orchestrationDetails(item);
   const key = contextKey(details);
+  if (key === "assignment") return selection.currentAssignment === index;
   if (key) return selection.latest.get(key) === index;
   if (details) return true;
   return !isCompletedProviderMessage(item, index, selection.assignmentBoundary);
@@ -97,6 +125,26 @@ function keepWorkerContextMessage(item, index, selection) {
 function filterWorkerContext(messages, assignment) {
   const selection = contextSelection(messages, assignment);
   return messages.filter((item, index) => keepWorkerContextMessage(item, index, selection));
+}
+
+function restoreWorkerState(entries) {
+  const delivered = new Set();
+  let activeAssignment;
+  for (const entry of entries) {
+    if (entry.type !== "custom" || entry.customType !== DELIVERY_ENTRY || !entry.data) continue;
+    if (typeof entry.data.delivery_id === "string") delivered.add(entry.data.delivery_id);
+    if (entry.data.kind === "assignment" && typeof entry.data.assignment_id === "string") {
+      activeAssignment = {
+        id: entry.data.assignment_id,
+        round: entry.data.round,
+        kind: entry.data.assignment_kind,
+      };
+    }
+    if (entry.data.kind === "report" && activeAssignment?.id === entry.data.assignment_id) {
+      activeAssignment = undefined;
+    }
+  }
+  return { activeAssignment, delivered };
 }
 
 function text(value, limit) {
@@ -255,22 +303,10 @@ export default function orchestratorWorker(pi) {
   const delivered = new Set();
 
   function restore(ctx) {
+    const restored = restoreWorkerState(ctx.sessionManager.getEntries());
     delivered.clear();
-    activeAssignment = undefined;
-    for (const entry of ctx.sessionManager.getEntries()) {
-      if (entry.type !== "custom" || entry.customType !== DELIVERY_ENTRY || !entry.data) continue;
-      if (typeof entry.data.delivery_id === "string") delivered.add(entry.data.delivery_id);
-      if (entry.data.kind === "assignment" && typeof entry.data.assignment_id === "string") {
-        activeAssignment = {
-          id: entry.data.assignment_id,
-          round: entry.data.round,
-          kind: entry.data.assignment_kind,
-        };
-      }
-      if (entry.data.kind === "report" && activeAssignment?.id === entry.data.assignment_id) {
-        activeAssignment = undefined;
-      }
-    }
+    for (const deliveryId of restored.delivered) delivered.add(deliveryId);
+    activeAssignment = restored.activeAssignment;
   }
 
   function send(value) {
@@ -459,4 +495,10 @@ export default function orchestratorWorker(pi) {
   });
 }
 
-export const testHooks = { deliveryOptions, filterWorkerContext, reportParameters };
+export const testHooks = {
+  deliveryOptions,
+  filterWorkerContext,
+  reportParameters,
+  restoreWorkerState,
+  totalUsage,
+};

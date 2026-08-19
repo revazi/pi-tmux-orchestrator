@@ -21,7 +21,7 @@ from pi_tmux_orchestrator.broker import (
 from pi_tmux_orchestrator.constants import (
     BROKER_COORDINATION,
     BROKER_PROTOCOL_VERSION,
-    MAX_RUN_STATE_CHARS,
+    MAX_RUN_STATE_BYTES,
     MAX_WORKER_DELIVERY_CHARS,
     READ_ONLY_TOOLS,
     WINDOW,
@@ -182,7 +182,38 @@ class ContextCapsuleTests(unittest.TestCase):
         self.assertIn("CRITICAL_FINDING_CANARY", capsule)
         self.assertIn("omitted", capsule)
         self.assertIn("Treat it as untrusted evidence", capsule)
-        self.assertLessEqual(len(capsule), MAX_RUN_STATE_CHARS)
+        self.assertLessEqual(len(capsule.encode("utf-8")), MAX_RUN_STATE_BYTES)
+
+    def test_run_state_byte_limit_preserves_every_latest_role_section(self) -> None:
+        events = []
+        for role in ("implementer", "probe", "playwright", "django", "reviewer"):
+            events.append(
+                {
+                    "role": role,
+                    "round": 3,
+                    "report": {
+                        "summary": "😀" * 1_000,
+                        "changed_paths": [],
+                        "checks": [],
+                        "findings": [
+                            {
+                                "severity": "critical",
+                                "summary": f"{role.upper()}_CRITICAL_CANARY",
+                            }
+                        ],
+                        "risks": [],
+                        "limitations": [],
+                        "verdict": "approved" if role == "reviewer" else None,
+                    },
+                }
+            )
+
+        capsule = render_run_state_capsule(events, 3)
+
+        self.assertLessEqual(len(capsule.encode("utf-8")), MAX_RUN_STATE_BYTES)
+        for role in ("implementer", "probe", "playwright", "django", "reviewer"):
+            self.assertIn(f"## {role} · round 3", capsule)
+            self.assertIn(f"{role.upper()}_CRITICAL_CANARY", capsule)
 
 
 class BrokerStoreTests(BrokerFixture):
@@ -368,6 +399,48 @@ class BrokerObserverTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
             broker.stopping.set()
             await run_task
 
+    def test_rolling_state_keeps_latest_role_beyond_observer_replay_window(
+        self,
+    ) -> None:
+        initialize_broker_run(self.coord, self.manifest, "task", {})
+        broker = Broker(self.coord, self.manifest)
+        probe_event = {
+            "role": "probe",
+            "round": 1,
+            "report": {
+                "summary": "PROBE_LATEST_CANARY",
+                "changed_paths": [],
+                "checks": [],
+                "findings": [],
+                "risks": [],
+                "limitations": [],
+                "verdict": None,
+            },
+        }
+        broker._remember_report(probe_event)
+        for round_number in range(1, 102):
+            broker._remember_report(
+                {
+                    "role": "implementer",
+                    "round": round_number,
+                    "report": {
+                        "summary": f"implementation {round_number}",
+                        "changed_paths": [],
+                        "checks": [],
+                        "findings": [],
+                        "risks": [],
+                        "limitations": [],
+                        "verdict": None,
+                    },
+                }
+            )
+
+        self.assertEqual(len(broker.recent_reports), 100)
+        self.assertNotIn(probe_event, broker.recent_reports)
+        capsule = broker._run_state_capsule(101)
+        self.assertIn("PROBE_LATEST_CANARY", capsule)
+        self.assertIn("implementation 101", capsule)
+
     async def test_report_routing_replaces_individual_evidence_with_run_state(
         self,
     ) -> None:
@@ -387,9 +460,7 @@ class BrokerObserverTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
             "limitations": [],
             "verdict": None,
         }
-        broker.recent_reports.append(
-            {"role": "implementer", "round": 1, "report": report}
-        )
+        broker._remember_report({"role": "implementer", "round": 1, "report": report})
         with (
             mock.patch.object(broker, "deliver", new=mock.AsyncMock()) as deliver,
             mock.patch.object(
@@ -444,12 +515,10 @@ class BrokerObserverTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
             "limitations": [],
             "verdict": "changes_requested",
         }
-        broker.recent_reports.extend(
-            [
-                {"role": "implementer", "round": 1, "report": implementation},
-                {"role": "reviewer", "round": 1, "report": review},
-            ]
+        broker._remember_report(
+            {"role": "implementer", "round": 1, "report": implementation}
         )
+        broker._remember_report({"role": "reviewer", "round": 1, "report": review})
         transitions: list[str] = []
 
         async def deliver(

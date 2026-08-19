@@ -54,9 +54,9 @@ poll and must end the turn when there is no active assignment.
 3. Broker triggers the implementer and optional initial probe.
 4. An implementer `implementation` report updates the rolling run-state capsule
    and triggers each enabled round specialist.
-5. Every accepted report replaces recipient evidence with one bounded capsule
-   containing only the latest accepted report per role; recipients are not
-   given an accumulating sequence of historical report bodies.
+5. Every accepted report replaces recipient evidence with one capsule bounded
+   to 16 KiB of UTF-8 containing only the latest accepted report per role;
+   recipients are not given an accumulating sequence of historical report bodies.
 6. After all required evidence exists, broker triggers the reviewer once.
 7. `changes_requested` updates the rolling capsule and triggers the next
    implementer round.
@@ -164,11 +164,12 @@ Soft role and run token thresholds are metadata warnings. A future hard budget
 may prevent a new assignment, but cannot stop an already-started provider
 response at an exact token boundary.
 
-A deterministic synthetic two-round regression separately measures
+A deterministic synthetic two-round regression separately measures serialized
 provider-visible message characters across the assignment projection. CI
-requires at least a 50% reduction and currently observes 98,091 before versus
-8,069 after (91.8%). This character metric is a reproducible context-size proxy,
-not fabricated provider token usage.
+requires at least a 50% reduction and currently observes 99,170 before versus
+8,678 after (91.2%). This serialized-character metric is a reproducible
+context-size proxy, not provider-specific token savings or production-wire
+acceptance.
 
 ## Compatibility
 

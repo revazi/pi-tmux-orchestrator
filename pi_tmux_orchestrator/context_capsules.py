@@ -5,11 +5,11 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from .constants import MAX_RUN_STATE_CHARS, MAX_WORKER_DELIVERY_CHARS
+from .constants import MAX_RUN_STATE_BYTES, MAX_WORKER_DELIVERY_CHARS
 from .models import OrchestrationError
 
 RUN_STATE_ROLE_ORDER = ("implementer", "probe", "playwright", "django", "reviewer")
-RUN_STATE_REPORT_CHARS = 3_000
+RUN_STATE_REPORT_BYTES = 3_000
 
 
 def _javascript_string_length(value: str) -> int:
@@ -23,30 +23,46 @@ def _clip_text(value: object, limit: int) -> str:
     return f"{text[: max(0, limit - 1)].rstrip()}…"
 
 
+def _clip_utf8(value: object, limit: int) -> str:
+    text = str(value)
+    encoded = text.encode("utf-8")
+    if len(encoded) <= limit:
+        return text
+    marker = "…"
+    marker_bytes = marker.encode("utf-8")
+    if limit < len(marker_bytes):
+        return encoded[:limit].decode("utf-8", errors="ignore")
+    prefix = encoded[: limit - len(marker_bytes)].decode("utf-8", errors="ignore")
+    return f"{prefix.rstrip()}{marker}"
+
+
 def _compact_collection(value: object, limit: int) -> str:
     if not isinstance(value, list):
-        return _clip_text(
+        return _clip_utf8(
             json.dumps(value, ensure_ascii=False, separators=(",", ":")),
             limit,
         )
     rendered: list[str] = []
-    used = 2
     for item in value:
-        encoded = _clip_text(
+        encoded = _clip_utf8(
             json.dumps(item, ensure_ascii=False, separators=(",", ":")),
             240,
         )
-        separator = 1 if rendered else 0
-        if used + separator + len(encoded) > limit:
+        candidate = f"[{','.join([*rendered, encoded])}]"
+        if len(candidate.encode("utf-8")) > limit:
             break
         rendered.append(encoded)
-        used += separator + len(encoded)
     omitted = len(value) - len(rendered)
-    body = ",".join(rendered)
-    if omitted:
-        marker = f"…(+{omitted} omitted)"
-        body = f"{body},{marker}" if body else marker
-    return f"[{body}]"
+    while omitted:
+        marker = json.dumps(f"…(+{omitted} omitted)", ensure_ascii=False)
+        candidate = f"[{','.join([*rendered, marker])}]"
+        if len(candidate.encode("utf-8")) <= limit:
+            return candidate
+        if not rendered:
+            return _clip_utf8(candidate, limit)
+        rendered.pop()
+        omitted += 1
+    return f"[{','.join(rendered)}]"
 
 
 def _prioritized_report_items(label: str, value: object) -> object:
@@ -138,7 +154,7 @@ def render_run_state_capsule(
         section = "\n".join(
             [
                 f"## {role} · round {event['round']}",
-                f"Summary: {_clip_text(report.get('summary', ''), 1_000)}",
+                f"Summary: {_clip_utf8(report.get('summary', ''), 1_000)}",
                 f"Verdict: {_clip_text(report.get('verdict') or 'none', 100)}",
                 f"Findings ({len(report.get('findings', []))}): "
                 f"{_compact_collection(_prioritized_report_items('findings', report.get('findings', [])), 700)}",
@@ -152,5 +168,5 @@ def render_run_state_capsule(
                 f"{_compact_collection(report.get('limitations', []), 250)}",
             ]
         )
-        sections.append(_clip_text(section, RUN_STATE_REPORT_CHARS))
-    return _clip_text("\n\n".join(sections), MAX_RUN_STATE_CHARS)
+        sections.append(_clip_utf8(section, RUN_STATE_REPORT_BYTES))
+    return _clip_utf8("\n\n".join(sections), MAX_RUN_STATE_BYTES)

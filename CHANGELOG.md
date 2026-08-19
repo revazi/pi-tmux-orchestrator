@@ -7,8 +7,8 @@ All notable changes to this project are documented here.
 ### Added
 
 - Added an optional 12 KiB structured parent context capsule for task-relevant state, decisions, constraints, acceptance criteria, paths, evidence, open questions, and out-of-scope items without copying the parent transcript or making another model request
-- Added one bounded rolling run-state capsule that replaces historical per-report evidence with the latest accepted report per role
-- Added a deterministic two-round context-efficiency regression that currently reduces provider-visible message characters from 98,091 to 8,069 (91.8%) and enforces at least a 50% reduction
+- Added one 16 KiB UTF-8-bounded rolling run-state capsule that replaces historical per-report evidence with the latest accepted report per role
+- Added a deterministic two-round context-efficiency regression that currently reduces serialized provider-visible message characters from 99,170 to 8,678 (91.2%) and enforces at least a 50% reduction without claiming provider-specific token savings
 
 ### Changed
 

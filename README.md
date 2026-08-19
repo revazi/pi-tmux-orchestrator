@@ -329,9 +329,10 @@ step; terminal updates may trigger parent reasoning. A worker settling without
 a report becomes `waiting`/needs attention rather than entering an unlimited
 reminder loop. Context filtering changes only the provider-visible projection;
 Pi's durable worker session history remains intact. A deterministic two-round
-synthetic regression currently reduces provider-visible context characters from
-98,091 to 8,069 (91.8%) and enforces a minimum 50% reduction in CI. Real token
-usage remains provider-reported and visible in the dashboard/Supervisor API.
+synthetic regression currently reduces serialized provider-visible message
+characters from 99,170 to 8,678 (91.2%) and enforces a minimum 50% reduction in
+CI. This is a reproducible character metric, not provider token acceptance; real
+token usage remains provider-reported and visible in the dashboard/Supervisor API.
 
 ## Manage grids
 

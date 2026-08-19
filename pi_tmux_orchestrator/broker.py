@@ -64,6 +64,7 @@ class Broker:
         self.clients: dict[str, Client] = {}
         self.observers: set[Observer] = set()
         self.recent_reports: list[dict[str, Any]] = []
+        self.latest_reports: dict[str, dict[str, Any]] = {}
         self.server: asyncio.AbstractServer | None = None
         self.stopping = asyncio.Event()
         self.task_bodies = self._load_startup_payload()
@@ -1075,9 +1076,7 @@ class Broker:
             "round": assignment["round"],
             "report": report,
         }
-        self.recent_reports.append(report_event)
-        if len(self.recent_reports) > MAX_OBSERVER_REPORTS:
-            del self.recent_reports[: len(self.recent_reports) - MAX_OBSERVER_REPORTS]
+        self._remember_report(report_event)
         await self.broadcast(report_event)
         try:
             await self.route_report(client.role, assignment["round"], report)
@@ -1098,8 +1097,19 @@ class Broker:
             ) from error
         await self.reply(client, message["id"], True, status="accepted")
 
+    def _remember_report(self, report_event: dict[str, Any]) -> None:
+        role = report_event["role"]
+        current = self.latest_reports.get(role)
+        if current is None or report_event["round"] >= current["round"]:
+            self.latest_reports[role] = report_event
+        self.recent_reports.append(report_event)
+        if len(self.recent_reports) > MAX_OBSERVER_REPORTS:
+            del self.recent_reports[: len(self.recent_reports) - MAX_OBSERVER_REPORTS]
+
     def _run_state_capsule(self, round_number: int) -> str:
-        return render_run_state_capsule(self.recent_reports, round_number)
+        return render_run_state_capsule(
+            list(self.latest_reports.values()), round_number
+        )
 
     async def _deliver_run_state(
         self, roles: list[str] | tuple[str, ...], round_number: int

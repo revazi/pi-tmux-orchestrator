@@ -288,7 +288,19 @@ test("bounded parent context capsules are structured without copying a transcrip
   );
   assert.throws(
     () => testHooks.renderContextCapsule({ decisions: ["x".repeat(500), "y".repeat(500), ...Array(20).fill("z".repeat(500))] }),
-    /invalid_context_capsule_decisions|context_capsule_too_large/,
+    /invalid_context_capsule_decisions/,
+  );
+  assert.throws(
+    () => testHooks.renderContextCapsule({
+      currentState: "s".repeat(3_000),
+      decisions: Array(12).fill("d".repeat(500)),
+      constraints: Array(12).fill("c".repeat(500)),
+    }),
+    /context_capsule_too_large/,
+  );
+  assert.throws(
+    () => testHooks.renderContextCapsule({ currentState: "valid", transcript: "not allowed" }),
+    /invalid_context_capsule_field/,
   );
 });
 
@@ -310,28 +322,155 @@ test("completed assignment pruning cuts synthetic two-round provider context by 
     custom({ kind: "assignment", assignment_id: "b".repeat(32), assignment_kind: "implementation", round: 2 }, "round two"),
     { role: "assistant", content: [{ type: "text", text: "c".repeat(8_000) }] },
   ];
-  const characters = (items) => items.reduce((total, item) => {
-    if (typeof item.content === "string") return total + item.content.length;
-    if (!Array.isArray(item.content)) return total;
-    return total + item.content.reduce((sum, part) => sum + String(part?.text || "").length, 0);
-  }, 0);
+  const serializedCharacters = (items) => JSON.stringify(items).length;
   const originalLength = messages.length;
   const filtered = workerHooks.filterWorkerContext(messages, { id: "b".repeat(32) });
-  const before = characters(messages);
-  const after = characters(filtered);
+  const before = serializedCharacters(messages);
+  const after = serializedCharacters(filtered);
   const reduction = 1 - (after / before);
-  assert.equal(before, 98_091);
-  assert.equal(after, 8_069);
-  t.diagnostic(`synthetic context characters: before=${before}, after=${after}, reduction=${(reduction * 100).toFixed(1)}%`);
+  assert.equal(before, 99_170);
+  assert.equal(after, 8_678);
+  t.diagnostic(`synthetic serialized context characters: before=${before}, after=${after}, reduction=${(reduction * 100).toFixed(1)}%`);
   assert.ok(reduction >= 0.5, `expected >=50% reduction, before=${before}, after=${after}`);
+  assert.equal(filtered.some((item) => item.content === "bounded baseline"), true);
   assert.equal(filtered.some((item) => item.content === "old run state"), false);
   assert.equal(filtered.some((item) => item.content === "latest run state"), true);
   assert.equal(filtered.some((item) => item.content === "round one"), false);
   assert.equal(filtered.some((item) => item.content === "round two"), true);
   assert.equal(filtered.some((item) => item.role === "toolResult"), false);
   assert.equal(filtered.some((item) => item.role === "user"), true);
+  assert.equal(filtered.some((item) => (
+    item.role === "assistant" && item.content[0].text === "c".repeat(8_000)
+  )), true);
   assert.equal(messages.length, originalLength);
   assert.equal(messages.some((item) => item.role === "toolResult"), true);
+});
+
+test("post-report follow-up prunes the completed assignment and keeps current-turn content", () => {
+  const assignmentId = "a".repeat(32);
+  const custom = (details, content) => ({
+    role: "custom",
+    customType: "pi-tmux-orchestrator-message-v1",
+    content,
+    details,
+  });
+  const messages = [
+    custom({ kind: "context", delivery_kind: "baseline", round: 1 }, "bounded baseline"),
+    custom({ kind: "assignment", assignment_id: assignmentId, round: 1 }, "completed assignment"),
+    { role: "assistant", content: [{ type: "text", text: "completed response" }] },
+    { role: "user", content: [{ type: "text", text: "steering during the assignment" }] },
+    { role: "assistant", content: [{ type: "text", text: "completed tool call" }] },
+    { role: "toolResult", content: [{ type: "text", text: "completed tool result" }] },
+    {
+      role: "toolResult",
+      toolName: "orchestrator_report",
+      details: { assignment_id: assignmentId },
+      content: [{ type: "text", text: "accepted report" }],
+    },
+    { role: "user", content: [{ type: "text", text: "post-report follow-up" }] },
+    { role: "assistant", content: [{ type: "text", text: "current tool call" }] },
+    { role: "toolResult", content: [{ type: "text", text: "current tool result" }] },
+  ];
+
+  const filtered = workerHooks.filterWorkerContext(messages, undefined);
+  assert.equal(filtered.some((item) => item.content === "completed assignment"), false);
+  assert.equal(filtered.some((item) => item.content?.[0]?.text === "completed response"), false);
+  assert.equal(filtered.some((item) => item.content?.[0]?.text === "completed tool call"), false);
+  assert.equal(filtered.some((item) => item.content?.[0]?.text === "completed tool result"), false);
+  assert.equal(filtered.some((item) => item.content?.[0]?.text === "steering during the assignment"), true);
+  assert.equal(filtered.some((item) => item.content?.[0]?.text === "post-report follow-up"), true);
+  assert.equal(filtered.some((item) => item.content?.[0]?.text === "current tool call"), true);
+  assert.equal(filtered.some((item) => item.content?.[0]?.text === "current tool result"), true);
+  assert.equal(messages.length, 10);
+
+  const settled = workerHooks.filterWorkerContext(messages.slice(0, 7), undefined);
+  assert.equal(settled.some((item) => ["assistant", "toolResult"].includes(item.role)), false);
+
+  const operatorFollowUp = [
+    ...messages.slice(0, 7),
+    custom({ kind: "context", delivery_kind: "operator_message", round: 1 }, "operator follow-up"),
+    { role: "assistant", content: [{ type: "text", text: "operator-turn response" }] },
+  ];
+  const operatorFiltered = workerHooks.filterWorkerContext(operatorFollowUp, undefined);
+  assert.equal(operatorFiltered.some((item) => item.content === "operator follow-up"), true);
+  assert.equal(operatorFiltered.some((item) => item.content?.[0]?.text === "completed response"), false);
+  assert.equal(operatorFiltered.some((item) => item.content?.[0]?.text === "operator-turn response"), true);
+});
+
+test("worker restart restores assignment and dedup state without changing durable usage", () => {
+  const assignmentId = "b".repeat(32);
+  const entries = [
+    {
+      type: "custom",
+      customType: "pi-tmux-orchestrator-delivery-v1",
+      data: { kind: "context", delivery_id: "1".repeat(32) },
+    },
+    {
+      type: "custom",
+      customType: "pi-tmux-orchestrator-delivery-v1",
+      data: {
+        kind: "assignment",
+        delivery_id: "2".repeat(32),
+        assignment_id: "a".repeat(32),
+        assignment_kind: "implementation",
+        round: 1,
+      },
+    },
+    {
+      type: "custom",
+      customType: "pi-tmux-orchestrator-delivery-v1",
+      data: { kind: "report", assignment_id: "a".repeat(32) },
+    },
+    {
+      type: "message",
+      message: {
+        role: "assistant",
+        usage: {
+          input: 120,
+          output: 30,
+          cacheRead: 20,
+          cacheWrite: 10,
+          reasoning: 5,
+          cost: { total: 0.25 },
+        },
+      },
+    },
+    {
+      type: "custom",
+      customType: "pi-tmux-orchestrator-delivery-v1",
+      data: {
+        kind: "assignment",
+        delivery_id: "3".repeat(32),
+        assignment_id: assignmentId,
+        assignment_kind: "implementation",
+        round: 2,
+      },
+    },
+  ];
+
+  const restored = workerHooks.restoreWorkerState(entries);
+  assert.deepEqual(restored.activeAssignment, {
+    id: assignmentId,
+    round: 2,
+    kind: "implementation",
+  });
+  assert.deepEqual([...restored.delivered], ["1".repeat(32), "2".repeat(32), "3".repeat(32)]);
+
+  const usage = workerHooks.totalUsage({
+    sessionManager: { getEntries: () => entries },
+    getContextUsage: () => ({ tokens: 150, contextWindow: 1_000, percent: 15 }),
+  });
+  assert.deepEqual(usage, {
+    input: 120,
+    output: 30,
+    cacheRead: 20,
+    cacheWrite: 10,
+    reasoning: 5,
+    cost: { total: 0.25 },
+    contextTokens: 150,
+    contextWindow: 1_000,
+    contextPercent: 15,
+  });
 });
 
 test("model discovery uses bounded available metadata and respects scoped models", async () => {
