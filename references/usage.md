@@ -62,6 +62,7 @@ Common options:
 
 - `--project PATH`
 - `--session NAME`
+- `--context-capsule TEXT` or `--context-capsule-file PATH`: optional bounded parent recap
 - `--approve-project`: separately confirmed Pi trust bypass for inspected projects
 - `--with-probe` and optional `--probe-task[-file]`
 - `--with-playwright` and optional `--playwright-task[-file]`
@@ -74,6 +75,15 @@ Common options:
 Model arguments use `--ROLE-provider`, `--ROLE-model`, and `--ROLE-thinking`.
 Thinking levels are `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and
 `max`.
+
+The model tool accepts a structured `contextCapsule` with optional current
+state, settled decisions, constraints, acceptance criteria, relevant paths,
+known evidence, open questions, and out-of-scope arrays. The invoking parent
+synthesizes it from context already present in that Pi turn; no summarizer agent
+or additional model request is used. The rendered capsule is at most 12 KiB.
+Do not copy a transcript, prompts, provider bodies, credentials, logs, or diffs.
+CLI callers may provide equivalent reviewed Markdown with the capsule options.
+The start confirmation shows only presence and character count.
 
 All newly started runs use broker protocol v1. `--rpc-workers` does not select a
 different coordination protocol. RPC panes are a plain headless automation
@@ -192,14 +202,16 @@ with live report observation.
 ## Event-driven workflow
 
 1. Every worker bridge connects to the owner-only run socket.
-2. The broker adds task/role baseline context to each Pi session without waking idle roles.
+2. The broker adds task/role baseline plus the optional parent context capsule to each Pi session without waking idle roles.
 3. It triggers only the implementer and optional initial probe.
 4. The implementer submits a bounded `implementation` report with `orchestrator_report`.
 5. Enabled specialists inspect the shared worktree and submit typed evidence.
-6. The broker supplies all evidence to the reviewer and wakes it once.
-7. `changes_requested` supplies one bounded review to the implementer and starts the next round.
-8. `approved` marks the run ready without waking the implementer for an acknowledgement turn.
-9. An attached parent observer returns the latest structured reports to the parent Pi.
+6. Accepted evidence updates one bounded latest-per-role run-state capsule; recipients no longer accumulate one context body for every historical report.
+7. The broker supplies the latest run state to the reviewer and wakes it once.
+8. `changes_requested` supplies the updated run state and starts the next implementation round.
+9. Before that provider turn, the worker keeps only the baseline, latest run state, current assignment, and current-turn messages; completed assistant/tool turns remain in Pi history but leave provider context.
+10. `approved` marks the run ready without waking the implementer for an acknowledgement turn.
+11. An attached parent observer returns the latest structured reports to the parent Pi.
 
 The terminating report tool avoids an extra post-report provider turn. Idle
 workers end their turn and never sleep or poll. A watching parent also ends its
@@ -207,6 +219,13 @@ turn and relies on broker events instead of sleeping or repeatedly polling
 status/tmux. Non-terminal progress does not start a turn when the parent is
 idle; if the parent is already active, progress is steered in before its next
 model step. Timeouts detect failure; they do not schedule workflow transitions.
+
+The deterministic two-round context regression measures provider-visible
+message characters before and after worker filtering. Its current fixture drops
+from 98,091 to 8,069 characters (91.8%); CI requires at least a 50% reduction.
+This is a stable context-size proxy, not invented provider token usage. Runtime
+token and context-window measurements continue to come only from Pi/provider
+usage metadata.
 
 Report fields, limits, ACLs, acknowledgements, deduplication, retry, crash
 semantics, and token accounting are specified in

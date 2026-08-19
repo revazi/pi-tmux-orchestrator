@@ -26,12 +26,14 @@ from .constants import (
     BROKER_PROTOCOL_VERSION,
     BROKER_READ_ONLY_TOOLS,
     DEFAULT_MODELS,
+    MAX_CONTEXT_CAPSULE_BYTES,
     MAX_JSON_ITEMS,
     READ_ONLY_TOOLS,
     RPC_TRANSPORT,
     TUI_TRANSPORT,
     WINDOW,
 )
+from .context_capsules import render_worker_baseline
 from .models import CommandResult, OrchestrationError
 from .output import bounded_message, human_print, public_role
 from .prompts import role_system_prompt
@@ -236,6 +238,18 @@ def start_command(args: argparse.Namespace) -> CommandResult:
     transport = RPC_TRANSPORT if getattr(args, "rpc_workers", False) else TUI_TRANSPORT
 
     task = read_text_argument(args.task, args.task_file, "task")
+    context_capsule_text = getattr(args, "context_capsule", None)
+    context_capsule_file = getattr(args, "context_capsule_file", None)
+    context_capsule = (
+        read_text_argument(
+            context_capsule_text,
+            context_capsule_file,
+            "context-capsule",
+            max_bytes=MAX_CONTEXT_CAPSULE_BYTES,
+        )
+        if context_capsule_text is not None or context_capsule_file is not None
+        else ""
+    )
     if args.with_probe:
         if args.probe_task is None and args.probe_task_file is None:
             probe_task = (
@@ -289,6 +303,16 @@ def start_command(args: argparse.Namespace) -> CommandResult:
             raise OrchestrationError("--django-task requires --with-django-expert")
         django_task = None
 
+    role_tasks = {
+        role: value
+        for role, value in {
+            "probe": probe_task,
+            "playwright": playwright_task,
+            "django": django_task,
+        }.items()
+        if value is not None
+    }
+
     session = validate_session_name(
         args.session or f"pi-{slugify(project.name)}-agents"
     )
@@ -306,6 +330,14 @@ def start_command(args: argparse.Namespace) -> CommandResult:
         roles.append("django")
     configured_models = load_model_config()
     configs = {role: role_config(args, role, configured_models) for role in roles}
+    for role in roles:
+        render_worker_baseline(
+            str(project),
+            role,
+            task,
+            context_capsule,
+            role_tasks.get(role, ""),
+        )
     if not args.skip_model_check:
         for role, config in configs.items():
             validate_model(role, config)
@@ -348,6 +380,10 @@ def start_command(args: argparse.Namespace) -> CommandResult:
             "observer_socket": None,
         },
         "state_retained_on_stop": True,
+        "context_capsule": {
+            "present": bool(context_capsule),
+            "chars": len(context_capsule.rstrip("\n")),
+        },
     }
     human_print(f"Project: {project}")
     human_print(f"Session: {session}")
@@ -407,16 +443,13 @@ def start_command(args: argparse.Namespace) -> CommandResult:
         if transport == RPC_TRANSPORT:
             for role in roles:
                 rpc_role_paths(coord, role, create=True)
-        role_tasks = {
-            role: value
-            for role, value in {
-                "probe": probe_task,
-                "playwright": playwright_task,
-                "django": django_task,
-            }.items()
-            if value is not None
-        }
-        initialize_broker_run(coord, manifest, task, role_tasks)
+        initialize_broker_run(
+            coord,
+            manifest,
+            task,
+            role_tasks,
+            context_capsule=context_capsule,
+        )
         create_tmux_grid(session, project, coord, roles, manifest)
         secure_write(coord / "startup-state", "RUNNING\n")
     except BaseException:

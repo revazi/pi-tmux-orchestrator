@@ -107,6 +107,10 @@ test("registers one bounded model tool and the exact canonical/alias command sur
   assert.equal(tool.renderResult, undefined);
   assert.match(
     tool.promptGuidelines.join(" "),
+    /synthesize a bounded contextCapsule.*never the full transcript/,
+  );
+  assert.match(
+    tool.promptGuidelines.join(" "),
     /Once watching, end the turn.*never run sleep commands.*poll status\/tmux/,
   );
   assert.deepEqual(
@@ -260,6 +264,74 @@ test("worker queues baseline context before a triggered assignment turn", () => 
     triggerTurn: true,
     deliverAs: "followUp",
   });
+});
+
+test("bounded parent context capsules are structured without copying a transcript", () => {
+  const capsule = testHooks.renderContextCapsule({
+    currentState: "A focused branch already contains reviewed scaffolding.",
+    decisions: ["Keep broker-v1 as the only workflow transport."],
+    constraints: ["Do not persist task or report bodies in SQLite."],
+    acceptanceCriteria: ["Synthetic two-round context shrinks by at least 50%."],
+    relevantPaths: ["extensions/orchestrator-worker.js"],
+    knownEvidence: ["Current worker sessions exceed the soft context budget."],
+    openQuestions: ["None."],
+    outOfScope: ["Copying the parent transcript."],
+  });
+  assert.match(capsule, /### Current state/);
+  assert.match(capsule, /### Decisions already made/);
+  assert.match(capsule, /at least 50%/);
+  assert.doesNotMatch(capsule, /parent transcript\.\n.*parent transcript/s);
+  assert.ok(Buffer.byteLength(capsule, "utf8") <= 12 * 1024);
+  assert.throws(
+    () => testHooks.renderContextCapsule({ currentState: "x".repeat(3001) }),
+    /invalid_context_capsule_current_state/,
+  );
+  assert.throws(
+    () => testHooks.renderContextCapsule({ decisions: ["x".repeat(500), "y".repeat(500), ...Array(20).fill("z".repeat(500))] }),
+    /invalid_context_capsule_decisions|context_capsule_too_large/,
+  );
+});
+
+test("completed assignment pruning cuts synthetic two-round provider context by at least half", (t) => {
+  const custom = (details, content) => ({
+    role: "custom",
+    customType: "pi-tmux-orchestrator-message-v1",
+    content,
+    details,
+  });
+  const messages = [
+    custom({ kind: "context", delivery_kind: "baseline", round: 1 }, "bounded baseline"),
+    custom({ kind: "assignment", assignment_id: "a".repeat(32), assignment_kind: "implementation", round: 1 }, "round one"),
+    { role: "assistant", content: [{ type: "text", text: "r".repeat(45_000) }] },
+    { role: "toolResult", content: [{ type: "text", text: "t".repeat(45_000) }] },
+    { role: "user", content: [{ type: "text", text: "direct user steering remains" }] },
+    custom({ kind: "context", delivery_kind: "run_state", round: 1 }, "old run state"),
+    custom({ kind: "context", delivery_kind: "run_state", round: 2 }, "latest run state"),
+    custom({ kind: "assignment", assignment_id: "b".repeat(32), assignment_kind: "implementation", round: 2 }, "round two"),
+    { role: "assistant", content: [{ type: "text", text: "c".repeat(8_000) }] },
+  ];
+  const characters = (items) => items.reduce((total, item) => {
+    if (typeof item.content === "string") return total + item.content.length;
+    if (!Array.isArray(item.content)) return total;
+    return total + item.content.reduce((sum, part) => sum + String(part?.text || "").length, 0);
+  }, 0);
+  const originalLength = messages.length;
+  const filtered = workerHooks.filterWorkerContext(messages, { id: "b".repeat(32) });
+  const before = characters(messages);
+  const after = characters(filtered);
+  const reduction = 1 - (after / before);
+  assert.equal(before, 98_091);
+  assert.equal(after, 8_069);
+  t.diagnostic(`synthetic context characters: before=${before}, after=${after}, reduction=${(reduction * 100).toFixed(1)}%`);
+  assert.ok(reduction >= 0.5, `expected >=50% reduction, before=${before}, after=${after}`);
+  assert.equal(filtered.some((item) => item.content === "old run state"), false);
+  assert.equal(filtered.some((item) => item.content === "latest run state"), true);
+  assert.equal(filtered.some((item) => item.content === "round one"), false);
+  assert.equal(filtered.some((item) => item.content === "round two"), true);
+  assert.equal(filtered.some((item) => item.role === "toolResult"), false);
+  assert.equal(filtered.some((item) => item.role === "user"), true);
+  assert.equal(messages.length, originalLength);
+  assert.equal(messages.some((item) => item.role === "toolResult"), true);
 });
 
 test("model discovery uses bounded available metadata and respects scoped models", async () => {
@@ -867,16 +939,21 @@ test("start keeps the invoking Pi as parent and starts no separate parent sessio
 
 test("start previews CLI policy, keeps private text out of argv, and cleans mode-0600 files", async () => {
   const canary = "PRIVATE_TASK_CANARY_49a7";
+  const contextCanary = "PRIVATE_CONTEXT_CAPSULE_CANARY_72bf";
   const paths = [];
   let calls = 0;
   const { tool } = harness(async (_command, args, options) => {
     calls += 1;
     assert.equal(args.includes(canary), false);
+    assert.equal(args.includes(contextCanary), false);
     assert.ok(options.signal);
     const taskPath = args[args.indexOf("--task-file") + 1];
-    paths.push(taskPath);
+    const contextPath = args[args.indexOf("--context-capsule-file") + 1];
+    paths.push(taskPath, contextPath);
     assert.equal((await stat(taskPath)).mode & 0o777, 0o600);
+    assert.equal((await stat(contextPath)).mode & 0o777, 0o600);
     assert.equal(await readFile(taskPath, "utf8"), canary);
+    assert.match(await readFile(contextPath, "utf8"), new RegExp(contextCanary));
     const dryRun = args.includes("--dry-run");
     const data = {
       project: process.cwd(),
@@ -893,6 +970,7 @@ test("start previews CLI policy, keeps private text out of argv, and cleans mode
           : "native-prompts",
       },
       dry_run: dryRun,
+      context_capsule: { present: true, chars: contextCanary.length + 18 },
       paths: { state_root: "/tmp/external-state", coordination: dryRun ? null : "/tmp/external-state/run" },
     };
     return { code: 0, stdout: JSON.stringify(success("start", data)) };
@@ -901,7 +979,12 @@ test("start previews CLI policy, keeps private text out of argv, and cleans mode
   const ctx = context({ confirmations: [true], signal });
   const result = await tool.execute(
     "call",
-    { action: "start", task: canary, rpcWorkers: true },
+    {
+      action: "start",
+      task: canary,
+      contextCapsule: { currentState: contextCanary },
+      rpcWorkers: true,
+    },
     signal,
     undefined,
     ctx,
@@ -910,7 +993,9 @@ test("start previews CLI policy, keeps private text out of argv, and cleans mode
   assert.match(ctx.calls.confirmations[0].message, /ignores project executable resources/);
   assert.match(ctx.calls.confirmations[0].message, /Worker transport: rpc/);
   assert.match(ctx.calls.confirmations[0].message, /provider\/writer/);
+  assert.match(ctx.calls.confirmations[0].message, /Parent context capsule: [0-9]+ characters/);
   assert.equal(JSON.stringify(result).includes(canary), false);
+  assert.equal(JSON.stringify(result).includes(contextCanary), false);
   for (const path of paths) await assert.rejects(access(path));
 });
 

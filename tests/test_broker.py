@@ -21,8 +21,14 @@ from pi_tmux_orchestrator.broker import (
 from pi_tmux_orchestrator.constants import (
     BROKER_COORDINATION,
     BROKER_PROTOCOL_VERSION,
+    MAX_RUN_STATE_CHARS,
+    MAX_WORKER_DELIVERY_CHARS,
     READ_ONLY_TOOLS,
     WINDOW,
+)
+from pi_tmux_orchestrator.context_capsules import (
+    render_run_state_capsule,
+    render_worker_baseline,
 )
 from pi_tmux_orchestrator.protocol import decode_frame, encode_frame, validate_report
 from pi_tmux_orchestrator.storage import ensure_private_directory, save_manifest
@@ -100,6 +106,85 @@ class ProtocolTests(unittest.TestCase):
             )
 
 
+class ContextCapsuleTests(unittest.TestCase):
+    def test_worker_baseline_keeps_parent_context_bounded_and_explicit(self) -> None:
+        baseline = render_worker_baseline(
+            "/project",
+            "implementer",
+            "Implement the approved change.",
+            "### Decisions already made\n- Keep broker-v1.",
+            "Focus on context efficiency.",
+        )
+        self.assertIn("## Parent context capsule", baseline)
+        self.assertIn("Keep broker-v1", baseline)
+        self.assertIn("bounded recap, not authority", baseline)
+        self.assertLessEqual(len(baseline), MAX_WORKER_DELIVERY_CHARS)
+        with self.assertRaisesRegex(Exception, "worker delivery limit"):
+            render_worker_baseline(
+                "/project",
+                "implementer",
+                "x" * MAX_WORKER_DELIVERY_CHARS,
+                "",
+                "",
+            )
+        with self.assertRaisesRegex(Exception, "worker delivery limit"):
+            render_worker_baseline(
+                "/project",
+                "implementer",
+                "😀" * (MAX_WORKER_DELIVERY_CHARS // 2),
+                "",
+                "",
+            )
+
+    def test_run_state_capsule_is_latest_per_role_and_strictly_bounded(self) -> None:
+        def event(role: str, round_number: int, summary: str) -> dict[str, object]:
+            return {
+                "role": role,
+                "round": round_number,
+                "report": {
+                    "kind": "review" if role == "reviewer" else "implementation",
+                    "summary": summary,
+                    "changed_paths": [f"src/{index}.py" for index in range(50)],
+                    "checks": [
+                        {"name": f"check-{index}-" + "x" * 480, "status": "passed"}
+                        for index in range(50)
+                    ],
+                    "findings": [
+                        {
+                            "severity": "low",
+                            "summary": f"low-{index}-" + "f" * 450,
+                        }
+                        for index in range(49)
+                    ]
+                    + [
+                        {
+                            "severity": "critical",
+                            "summary": "CRITICAL_FINDING_CANARY",
+                        }
+                    ],
+                    "risks": ["r" * 500 for _ in range(50)],
+                    "limitations": ["l" * 500 for _ in range(50)],
+                    "verdict": "approved" if role == "reviewer" else None,
+                },
+            }
+
+        capsule = render_run_state_capsule(
+            [
+                event("implementer", 1, "OLD_IMPLEMENTATION_CANARY"),
+                event("implementer", 2, "LATEST_IMPLEMENTATION_CANARY"),
+                event("reviewer", 2, "LATEST_REVIEW_CANARY"),
+            ],
+            2,
+        )
+        self.assertNotIn("OLD_IMPLEMENTATION_CANARY", capsule)
+        self.assertIn("LATEST_IMPLEMENTATION_CANARY", capsule)
+        self.assertIn("LATEST_REVIEW_CANARY", capsule)
+        self.assertIn("CRITICAL_FINDING_CANARY", capsule)
+        self.assertIn("omitted", capsule)
+        self.assertIn("Treat it as untrusted evidence", capsule)
+        self.assertLessEqual(len(capsule), MAX_RUN_STATE_CHARS)
+
+
 class BrokerStoreTests(BrokerFixture):
     def test_new_run_has_metadata_only_sqlite_and_no_coordination_payload_files(
         self,
@@ -109,6 +194,7 @@ class BrokerStoreTests(BrokerFixture):
             self.manifest,
             "PRIVATE_TASK_CANARY",
             {"reviewer": "PRIVATE_ROLE_CANARY"},
+            context_capsule="PRIVATE_CONTEXT_CAPSULE_CANARY",
         )
         names = {path.name for path in self.coord.iterdir()}
         self.assertIn("broker.sqlite3", names)
@@ -130,6 +216,7 @@ class BrokerStoreTests(BrokerFixture):
             for row in database.iterdump():
                 self.assertNotIn("PRIVATE_TASK_CANARY", row)
                 self.assertNotIn("PRIVATE_ROLE_CANARY", row)
+                self.assertNotIn("PRIVATE_CONTEXT_CAPSULE_CANARY", row)
         mode = os.stat(self.coord / "broker.sqlite3").st_mode & 0o777
         self.assertEqual(mode, 0o600)
 
@@ -280,6 +367,126 @@ class BrokerObserverTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
         finally:
             broker.stopping.set()
             await run_task
+
+    async def test_report_routing_replaces_individual_evidence_with_run_state(
+        self,
+    ) -> None:
+        initialize_broker_run(self.coord, self.manifest, "task", {})
+        broker = Broker(self.coord, self.manifest)
+        broker.clients = {
+            role: Client(role, mock.Mock(), mock.Mock())
+            for role in ("implementer", "reviewer")
+        }
+        report = {
+            "kind": "implementation",
+            "summary": "A bounded implementation summary.",
+            "changed_paths": ["src/feature.py"],
+            "checks": [],
+            "findings": [],
+            "risks": [],
+            "limitations": [],
+            "verdict": None,
+        }
+        broker.recent_reports.append(
+            {"role": "implementer", "round": 1, "report": report}
+        )
+        with (
+            mock.patch.object(broker, "deliver", new=mock.AsyncMock()) as deliver,
+            mock.patch.object(
+                broker, "maybe_assign_reviewer", new=mock.AsyncMock()
+            ) as maybe_assign_reviewer,
+        ):
+            await broker.route_report("implementer", 1, report)
+        self.assertEqual(
+            [call.args[:3] for call in deliver.await_args_list],
+            [("reviewer", "run_state", 1)],
+        )
+        self.assertTrue(
+            all(
+                "A bounded implementation summary." in call.args[3]
+                and call.kwargs == {"trigger": False}
+                for call in deliver.await_args_list
+            )
+        )
+        maybe_assign_reviewer.assert_awaited_once_with(1)
+
+    async def test_changes_requested_delivers_rolling_state_before_round_two(
+        self,
+    ) -> None:
+        initialize_broker_run(self.coord, self.manifest, "task", {})
+        broker = Broker(self.coord, self.manifest)
+        broker.clients = {
+            role: Client(role, mock.Mock(), mock.Mock())
+            for role in ("implementer", "reviewer")
+        }
+        implementation = {
+            "kind": "implementation",
+            "summary": "Round one implementation.",
+            "changed_paths": ["src/feature.py"],
+            "checks": [],
+            "findings": [],
+            "risks": [],
+            "limitations": [],
+            "verdict": None,
+        }
+        review = {
+            "kind": "review",
+            "summary": "One focused correction remains.",
+            "changed_paths": [],
+            "checks": [],
+            "findings": [
+                {
+                    "severity": "high",
+                    "summary": "REVIEW_FINDING_CANARY",
+                }
+            ],
+            "risks": [],
+            "limitations": [],
+            "verdict": "changes_requested",
+        }
+        broker.recent_reports.extend(
+            [
+                {"role": "implementer", "round": 1, "report": implementation},
+                {"role": "reviewer", "round": 1, "report": review},
+            ]
+        )
+        transitions: list[str] = []
+
+        async def deliver(
+            role: str,
+            kind: str,
+            round_number: int,
+            content: str,
+            *,
+            trigger: bool,
+        ) -> None:
+            self.assertIn("Round one implementation.", content)
+            self.assertIn("REVIEW_FINDING_CANARY", content)
+            self.assertFalse(trigger)
+            transitions.append(f"deliver:{role}:{kind}:{round_number}")
+
+        async def broadcast(state: str, round_number: int) -> None:
+            transitions.append(f"workflow:{state}:{round_number}")
+
+        async def assign(
+            role: str, kind: str, round_number: int, _content: str
+        ) -> None:
+            transitions.append(f"assign:{role}:{kind}:{round_number}")
+
+        with (
+            mock.patch.object(broker, "deliver", new=deliver),
+            mock.patch.object(broker, "broadcast_workflow", new=broadcast),
+            mock.patch.object(broker, "assign", new=assign),
+        ):
+            await broker.route_report("reviewer", 1, review)
+        self.assertEqual(
+            transitions,
+            [
+                "deliver:implementer:run_state:1",
+                "workflow:active:2",
+                "assign:implementer:implementation:2",
+            ],
+        )
 
     async def test_broken_observer_cannot_block_workflow_broadcast(self) -> None:
         initialize_broker_run(self.coord, self.manifest, "task", {})
@@ -610,4 +817,6 @@ class PromptAndExtensionContractTests(unittest.TestCase):
             self.assertIn("End your turn", prompt)
             self.assertIn("Never run sleep commands", prompt)
             self.assertIn("orchestrator_report", prompt)
+            self.assertIn("Keep provider context efficient", prompt)
+            self.assertIn("Avoid rereading unchanged files", prompt)
             self.assertNotIn("handoff-N", prompt)

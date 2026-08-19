@@ -165,7 +165,13 @@ def resolve_session(requested: str | None) -> tuple[str, Path]:
     )
 
 
-def read_text_argument(text: str | None, file_name: str | None, label: str) -> str:
+def read_text_argument(
+    text: str | None,
+    file_name: str | None,
+    label: str,
+    *,
+    max_bytes: int = MAX_TASK_BYTES,
+) -> str:
     if text is not None and file_name is not None:
         raise OrchestrationError(f"Use either --{label} or --{label}-file, not both")
     if file_name is not None:
@@ -182,9 +188,9 @@ def read_text_argument(text: str | None, file_name: str | None, label: str) -> s
         raise OrchestrationError(f"Provide --{label} or --{label}-file")
     if not value.strip():
         raise OrchestrationError(f"{label.capitalize()} cannot be empty")
-    if len(value.encode("utf-8")) > MAX_TASK_BYTES:
+    if len(value.encode("utf-8")) > max_bytes:
         raise OrchestrationError(
-            f"{label.capitalize()} exceeds the {MAX_TASK_BYTES // 1024} KiB safety limit"
+            f"{label.capitalize()} exceeds the {max_bytes // 1024} KiB safety limit"
         )
     return value.strip() + "\n"
 

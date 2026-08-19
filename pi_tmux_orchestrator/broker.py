@@ -27,9 +27,11 @@ from .constants import (
     DEFAULT_SOFT_ROLE_TOKENS,
     DEFAULT_SOFT_TOTAL_TOKENS,
     MAX_BROKER_FRAME_BYTES,
+    MAX_CONTEXT_CAPSULE_BYTES,
     MAX_RPC_COMMANDS,
     RPC_TOKEN_PATTERN,
 )
+from .context_capsules import render_run_state_capsule, render_worker_baseline
 from .dashboard import BrokerDashboard
 from .models import OrchestrationError
 from .output import bounded_message
@@ -79,7 +81,7 @@ class Broker:
                 ).fetchone()["value"]
             if state in {"starting", "connecting", "initializing"}:
                 raise OrchestrationError("Broker startup payload is unavailable")
-            return {"task": ""}
+            return {"task": "", "context_capsule": ""}
         if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
             raise OrchestrationError("Startup payload must be a private regular file")
         if metadata.st_size > MAX_BROKER_FRAME_BYTES:
@@ -89,13 +91,21 @@ class Broker:
                 value = json.load(handle)
         except (OSError, json.JSONDecodeError) as error:
             raise OrchestrationError("Cannot read broker startup payload") from error
-        if not isinstance(value, dict) or set(value) != {"task", "role_tasks"}:
+        valid_fields = (
+            {"task", "role_tasks"},
+            {"task", "context_capsule", "role_tasks"},
+        )
+        if not isinstance(value, dict) or set(value) not in valid_fields:
             raise OrchestrationError("Broker startup payload is invalid")
-        if not isinstance(value["task"], str) or not isinstance(
-            value["role_tasks"], dict
+        context_capsule = value.get("context_capsule", "")
+        if (
+            not isinstance(value["task"], str)
+            or not isinstance(context_capsule, str)
+            or len(context_capsule.encode("utf-8")) > MAX_CONTEXT_CAPSULE_BYTES
+            or not isinstance(value["role_tasks"], dict)
         ):
             raise OrchestrationError("Broker startup payload is invalid")
-        result = {"task": value["task"]}
+        result = {"task": value["task"], "context_capsule": context_capsule}
         for role, body in value["role_tasks"].items():
             if role not in self.manifest["roles"] or not isinstance(body, str):
                 raise OrchestrationError("Broker startup role payload is invalid")
@@ -704,18 +714,15 @@ class Broker:
             (self.coord / "startup.json").unlink()
         except FileNotFoundError:
             pass
-        self.task_bodies = {"task": ""}
+        self.task_bodies = {"task": "", "context_capsule": ""}
 
     def _baseline(self, role: str) -> str:
-        role_guidance = self.task_bodies.get(role, "")
-        return (
-            f"# Orchestration baseline\n\nRole: {role}\nProject: {self.manifest['project']}\n\n"
-            f"## Task\n{self.task_bodies['task'].strip()}\n\n"
-            f"## Role focus\n{role_guidance.strip()}\n\n"
-            "Inspect the shared worktree directly. Never poll files, sockets, or tmux; end your "
-            "turn whenever you have no active assignment. Coordination reports must use the "
-            "orchestrator_report tool and must not copy diffs, logs, prompts, provider bodies, "
-            "credentials, or private project payloads. Only the implementer may modify tracked files."
+        return render_worker_baseline(
+            self.manifest["project"],
+            role,
+            self.task_bodies["task"],
+            self.task_bodies.get("context_capsule", ""),
+            self.task_bodies.get(role, ""),
         )
 
     def _assignment(self, role: str, round_number: int) -> str:
@@ -1091,50 +1098,38 @@ class Broker:
             ) from error
         await self.reply(client, message["id"], True, status="accepted")
 
-    def _report_context(self, role: str, report: dict[str, Any]) -> str:
-        return (
-            f"# {role} evidence\n\n"
-            f"Summary: {report['summary']}\n"
-            f"Verdict: {report['verdict'] or 'none'}\n"
-            f"Changed paths: {json.dumps(report['changed_paths'])}\n"
-            f"Checks: {json.dumps(report['checks'], separators=(',', ':'))}\n"
-            f"Findings: {json.dumps(report['findings'], separators=(',', ':'))}\n"
-            f"Risks: {json.dumps(report['risks'])}\n"
-            f"Limitations: {json.dumps(report['limitations'])}"
-        )
+    def _run_state_capsule(self, round_number: int) -> str:
+        return render_run_state_capsule(self.recent_reports, round_number)
+
+    async def _deliver_run_state(
+        self, roles: list[str] | tuple[str, ...], round_number: int
+    ) -> None:
+        content = self._run_state_capsule(round_number)
+        for recipient in dict.fromkeys(roles):
+            if recipient in self.clients:
+                await self.deliver(
+                    recipient,
+                    "run_state",
+                    round_number,
+                    content,
+                    trigger=False,
+                )
 
     async def route_report(
         self, role: str, round_number: int, report: dict[str, Any]
     ) -> None:
-        context = self._report_context(role, report)
         if role == "probe":
-            await self.deliver(
-                "implementer", "probe_result", round_number, context, trigger=False
-            )
-            await self.deliver(
-                "reviewer", "probe_result", round_number, context, trigger=False
-            )
+            await self._deliver_run_state(("implementer", "reviewer"), round_number)
             return
         if role == "implementer":
-            await self.deliver(
-                "reviewer",
-                "implementation_result",
-                round_number,
-                context,
-                trigger=False,
-            )
             specialists = [
                 name for name in ("playwright", "django") if name in self.clients
             ]
+            await self._deliver_run_state(
+                tuple(["reviewer", *specialists]), round_number
+            )
             if specialists:
                 for specialist in specialists:
-                    await self.deliver(
-                        specialist,
-                        "implementation_result",
-                        round_number,
-                        context,
-                        trigger=False,
-                    )
                     await self.assign(
                         specialist,
                         specialist,
@@ -1145,12 +1140,7 @@ class Broker:
                 await self.maybe_assign_reviewer(round_number)
             return
         if role in {"playwright", "django"}:
-            await self.deliver(
-                "reviewer", f"{role}_result", round_number, context, trigger=False
-            )
-            await self.deliver(
-                "implementer", f"{role}_result", round_number, context, trigger=False
-            )
+            await self._deliver_run_state(("implementer", "reviewer"), round_number)
             await self.maybe_assign_reviewer(round_number)
             return
         if role == "reviewer":
@@ -1166,9 +1156,7 @@ class Broker:
                     )
                 await self.broadcast_workflow("ready", round_number)
                 return
-            await self.deliver(
-                "implementer", "review_result", round_number, context, trigger=False
-            )
+            await self._deliver_run_state(("implementer",), round_number)
             next_round = round_number + 1
             with connect_broker_database(self.coord) as database:
                 set_meta(database, "round", str(next_round))
@@ -1220,6 +1208,7 @@ def initialize_broker_run(
     task: str,
     role_tasks: dict[str, str],
     *,
+    context_capsule: str = "",
     soft_role_tokens: int = DEFAULT_SOFT_ROLE_TOKENS,
     soft_total_tokens: int = DEFAULT_SOFT_TOTAL_TOKENS,
 ) -> None:
@@ -1237,7 +1226,14 @@ def initialize_broker_run(
     )
     secure_write(
         coord / "startup.json",
-        json.dumps({"task": task, "role_tasks": role_tasks}, separators=(",", ":"))
+        json.dumps(
+            {
+                "task": task,
+                "context_capsule": context_capsule,
+                "role_tasks": role_tasks,
+            },
+            separators=(",", ":"),
+        )
         + "\n",
     )
     for role, token in tokens.items():

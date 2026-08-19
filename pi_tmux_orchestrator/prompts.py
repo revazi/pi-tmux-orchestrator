@@ -45,6 +45,12 @@ def role_system_prompt(project: Path, role: str) -> str:
             {role_focus}
 
             - Work only on broker-delivered active assignments.
+            - Treat the bounded parent context capsule as an index, not authority. Start with its
+              relevant paths and settled decisions, then verify against project instructions and
+              the shared worktree instead of rediscovering known context.
+            - Keep provider context efficient: prefer targeted reads, searches, diffs, and scoped
+              test output. Avoid rereading unchanged files or dumping generated bundles, full logs,
+              and broad outputs when a bounded query can answer the same question.
             - Inspect the shared worktree directly; never request copied diffs or logs.
             - Use synthetic/non-secret fixtures unless explicitly authorized otherwise.
             - Never expose credentials, private payloads, prompts, provider responses, endpoints,

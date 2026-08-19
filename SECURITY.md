@@ -66,11 +66,14 @@ The metadata-only SQLite database retains:
 - command/delivery IDs and state;
 - provider-reported token/cost totals and context pressure.
 
-It does not retain task, assignment, report, prompt, message, provider, diff, or
-log bodies. Task and role baseline text enters through one transient private
-startup file deleted immediately after broker ingestion. A bounded report replay
-may exist only in live broker memory for authenticated parent observers. Report
-bodies remain in Pi's own protected session tool results; recipient context and
+It does not retain task, parent-context-capsule, assignment, run-state-capsule,
+report, prompt, message, provider, diff, or log bodies. Task, optional bounded
+parent context, and role baseline text enter through one transient private
+startup file deleted after authenticated baseline delivery. Rolling run-state
+capsules exist only in live broker memory and recipient Pi sessions. A bounded
+report replay may exist only in live broker memory for authenticated parent
+observers. Report bodies remain in Pi's own protected session tool results;
+recipient context and
 parent completion/attention updates remain in their Pi sessions. Pi session
 files and local backups remain the operator's responsibility.
 
@@ -115,9 +118,9 @@ stop an already-started provider response at an exact token boundary.
 Status, the broker dashboard, JSON output, journals, widgets, and Supervisor
 API return only bounded metadata. The dashboard selects only workflow, role,
 assignment-shape, configured model, usage/context, and event metadata; it never
-renders task, prompt, message, report, diff, log, credential, token-secret, or
-provider-response bodies. Dynamic terminal text is control-byte sanitized and
-width-bounded before display. Supervisor API v2 reads retained state without
+renders task, context-capsule, prompt, message, report, diff, log, credential,
+token-secret, or provider-response bodies. Dynamic terminal text is
+control-byte sanitized and width-bounded before display. Supervisor API v2 reads retained state without
 tmux and reports host runtime as `not_observed`; retained PIDs never imply
 liveness. Directory scans and pages remain bounded.
 

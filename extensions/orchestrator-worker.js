@@ -9,6 +9,8 @@ const ROLE = process.env.PI_TMUX_ORCHESTRATOR_ROLE;
 const TOKEN = process.env.PI_TMUX_ORCHESTRATOR_TOKEN;
 const SOCKET_PATH = process.env.PI_TMUX_ORCHESTRATOR_SOCKET;
 const ROLES = new Set(["implementer", "reviewer", "probe", "playwright", "django"]);
+const ORCHESTRATION_MESSAGE_KEY = `custom:${MESSAGE_TYPE}`;
+const PRUNABLE_PROVIDER_ROLES = new Set(["assistant", "toolResult"]);
 
 function id() {
   return randomBytes(16).toString("hex");
@@ -32,6 +34,69 @@ function message(type, extra = {}) {
 
 function deliveryOptions(trigger) {
   return { triggerTurn: trigger, deliverAs: "followUp" };
+}
+
+function orchestrationDetails(item = {}) {
+  if (`${item.role}:${item.customType}` !== ORCHESTRATION_MESSAGE_KEY) return undefined;
+  return Object(item.details);
+}
+
+function contextKey(details = {}) {
+  if (details.kind === "assignment") return "assignment";
+  if (details.kind !== "context") return undefined;
+  if (typeof details.delivery_kind !== "string") return undefined;
+  return `context:${details.delivery_kind}`;
+}
+
+function updatedCurrentAssignment(current, key, details, assignmentId, index) {
+  if (key !== "assignment") return current;
+  if (details.assignment_id !== assignmentId) return current;
+  return index;
+}
+
+function selectedAssignmentBoundary(current, latest) {
+  if (current >= 0) return current;
+  const previous = latest.get("assignment");
+  if (previous === undefined) return -1;
+  return previous;
+}
+
+function contextSelection(messages, assignment) {
+  const latest = new Map();
+  const assignmentId = Object(assignment).id;
+  let currentAssignment = -1;
+  for (const [index, item] of messages.entries()) {
+    const details = orchestrationDetails(item);
+    const key = contextKey(details);
+    if (!key) continue;
+    latest.set(key, index);
+    currentAssignment = updatedCurrentAssignment(
+      currentAssignment, key, details, assignmentId, index,
+    );
+  }
+  return {
+    latest,
+    assignmentBoundary: selectedAssignmentBoundary(currentAssignment, latest),
+  };
+}
+
+function isCompletedProviderMessage(item, index, boundary) {
+  if (boundary < 0) return false;
+  if (index >= boundary) return false;
+  return PRUNABLE_PROVIDER_ROLES.has(Object(item).role);
+}
+
+function keepWorkerContextMessage(item, index, selection) {
+  const details = orchestrationDetails(item);
+  const key = contextKey(details);
+  if (key) return selection.latest.get(key) === index;
+  if (details) return true;
+  return !isCompletedProviderMessage(item, index, selection.assignmentBoundary);
+}
+
+function filterWorkerContext(messages, assignment) {
+  const selection = contextSelection(messages, assignment);
+  return messages.filter((item, index) => keepWorkerContextMessage(item, index, selection));
 }
 
 function text(value, limit) {
@@ -382,32 +447,9 @@ export default function orchestratorWorker(pi) {
     restore(ctx);
     connect();
   });
-  pi.on("context", (event) => {
-    let latestBaseline = -1;
-    const latestRoundKind = new Map();
-    event.messages.forEach((item, index) => {
-      if (item?.role !== "custom" || item.customType !== MESSAGE_TYPE) return;
-      const details = item.details || {};
-      if (details.kind === "context" && details.delivery_kind === "baseline") {
-        latestBaseline = index;
-      }
-      const round = details.round;
-      const kind = details.assignment_kind || details.delivery_kind || "context";
-      if (Number.isInteger(round)) latestRoundKind.set(`${round}:${kind}`, index);
-    });
-    return {
-      messages: event.messages.filter((item, index) => {
-        if (item?.role !== "custom" || item.customType !== MESSAGE_TYPE) return true;
-        const details = item.details || {};
-        if (details.kind === "context" && details.delivery_kind === "baseline") {
-          return index === latestBaseline;
-        }
-        const round = details.round;
-        const kind = details.assignment_kind || details.delivery_kind || "context";
-        return !Number.isInteger(round) || latestRoundKind.get(`${round}:${kind}`) === index;
-      }),
-    };
-  });
+  pi.on("context", (event) => ({
+    messages: filterWorkerContext(event.messages, activeAssignment),
+  }));
   pi.on("agent_start", (_event, ctx) => lifecycle("active", ctx));
   pi.on("agent_settled", (_event, ctx) => lifecycle(activeAssignment ? "waiting" : "idle", ctx, true));
   pi.on("session_shutdown", () => {
@@ -417,4 +459,4 @@ export default function orchestratorWorker(pi) {
   });
 }
 
-export const testHooks = { deliveryOptions, reportParameters };
+export const testHooks = { deliveryOptions, filterWorkerContext, reportParameters };

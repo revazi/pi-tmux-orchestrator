@@ -19,7 +19,8 @@ coordination mechanisms.
   exposes peer credentials.
 
 The control-plane SQLite database stores tokens and metadata but never task,
-assignment, report, prompt, message, provider response, diff, or log bodies.
+parent context capsule, assignment, run-state capsule, report, prompt, message,
+provider response, diff, or log bodies.
 Authenticated parent-observer report bodies are ephemeral in broker memory and
 may become durable only in Pi session history.
 
@@ -36,21 +37,28 @@ A socket close records `disconnected`. A worker settling with an active
 assignment and no report marks the workflow `needs_attention`. Retained PIDs
 never imply liveness.
 
-Every worker receives baseline context once with no model trigger. The broker
-then creates assignments according to the workflow. Workers never poll and
-must end the turn when there is no active assignment.
+Every worker receives baseline context once with no model trigger. Baseline may
+include one parent-authored context capsule of at most 12 KiB. The capsule is a
+structured recap of task-relevant state and decisions, never an automatic copy
+of the parent transcript. It crosses the same private ephemeral startup boundary
+as the task, is deleted after baseline delivery, and may remain only in the
+worker's Pi session.
+
+The broker then creates assignments according to the workflow. Workers never
+poll and must end the turn when there is no active assignment.
 
 ## Workflow state machine
 
 1. All enabled bridges connect.
 2. Broker delivers baseline context without triggering turns.
 3. Broker triggers the implementer and optional initial probe.
-4. An implementer `implementation` report triggers each enabled round
-   specialist.
-5. Specialist evidence is delivered to implementer and reviewer without
-   waking them unnecessarily.
+4. An implementer `implementation` report updates the rolling run-state capsule
+   and triggers each enabled round specialist.
+5. Every accepted report replaces recipient evidence with one bounded capsule
+   containing only the latest accepted report per role; recipients are not
+   given an accumulating sequence of historical report bodies.
 6. After all required evidence exists, broker triggers the reviewer once.
-7. `changes_requested` delivers one bounded review and triggers the next
+7. `changes_requested` updates the rolling capsule and triggers the next
    implementer round.
 8. `approved` marks the workflow `ready`; it does not wake the implementer just
    to acknowledge approval.
@@ -125,6 +133,12 @@ Delivery IDs, assignment IDs, report IDs, and command IDs are 32-character
 lowercase hexadecimal values.
 
 - Bridge custom entries retain accepted delivery IDs outside LLM context.
+- Before a later assignment turn, the bridge projects only the latest baseline,
+  latest run-state capsule, current assignment, and current-turn messages into
+  provider context. Assistant/tool messages from completed assignments remain
+  in the durable Pi session but are filtered from future provider requests.
+- Direct user messages and non-orchestrator custom messages are not discarded by
+  this projection.
 - Replayed delivery IDs are acknowledged as duplicates.
 - One report is accepted per assignment.
 - Operator control command retries deduplicate matching action/role/delivery
@@ -149,6 +163,12 @@ remains unavailable; the broker does not invent estimates.
 Soft role and run token thresholds are metadata warnings. A future hard budget
 may prevent a new assignment, but cannot stop an already-started provider
 response at an exact token boundary.
+
+A deterministic synthetic two-round regression separately measures
+provider-visible message characters across the assignment projection. CI
+requires at least a 50% reduction and currently observes 98,091 before versus
+8,069 after (91.8%). This character metric is a reproducible context-size proxy,
+not fabricated provider token usage.
 
 ## Compatibility
 
