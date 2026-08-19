@@ -316,6 +316,21 @@ def main() -> int:
             ).stdout.strip()
         )
         manifest = ORCHESTRATOR.load_manifest(coord)
+        subprocess.run(
+            [
+                "tmux",
+                "resize-window",
+                "-t",
+                ORCHESTRATOR.exact_window_target(session),
+                "-x",
+                "240",
+                "-y",
+                "90",
+            ],
+            check=True,
+            text=True,
+            capture_output=True,
+        )
         roles = {"implementer", "reviewer", "probe", "playwright", "django"}
         if manifest["version"] != 3 or manifest["coordination"] != "broker-v1":
             raise AssertionError("new run did not use manifest v3 broker coordination")
@@ -410,29 +425,6 @@ def main() -> int:
                 raise AssertionError(f"broker rejected {role}")
             clients[role] = stream
 
-        deadline = time.time() + 4
-        while time.time() < deadline:
-            snapshot = ORCHESTRATOR.public_broker_snapshot(coord)
-            if snapshot["workflow"]["state"] == "active" and all(
-                worker["connected"] for worker in snapshot["roles"]
-            ):
-                break
-            time.sleep(0.05)
-        else:
-            raise AssertionError(f"broker did not enter active state: {snapshot}")
-
-        monitor_output = subprocess.run(
-            [
-                "tmux",
-                "capture-pane",
-                "-p",
-                "-t",
-                manifest["monitor_pane_id"],
-            ],
-            check=True,
-            text=True,
-            capture_output=True,
-        ).stdout
         required_dashboard_text = (
             "PI TMUX ORCHESTRATOR",
             f"SESSION {session}",
@@ -444,9 +436,40 @@ def main() -> int:
             "RECENT METADATA EVENTS",
             "pi-tmux-agents attach",
         )
-        if any(value not in monitor_output for value in required_dashboard_text):
+        deadline = time.time() + 4
+        monitor_output = ""
+        while time.time() < deadline:
+            snapshot = ORCHESTRATOR.public_broker_snapshot(coord)
+            monitor_output = subprocess.run(
+                [
+                    "tmux",
+                    "capture-pane",
+                    "-p",
+                    "-t",
+                    manifest["monitor_pane_id"],
+                ],
+                check=True,
+                text=True,
+                capture_output=True,
+            ).stdout
+            state_ready = snapshot["workflow"]["state"] == "active" and all(
+                worker["connected"] for worker in snapshot["roles"]
+            )
+            dashboard_ready = all(
+                value in monitor_output for value in required_dashboard_text
+            )
+            if state_ready and dashboard_ready:
+                break
+            time.sleep(0.05)
+        else:
+            missing = [
+                value
+                for value in required_dashboard_text
+                if value not in monitor_output
+            ]
             raise AssertionError(
-                "broker pane omitted required metadata dashboard hierarchy"
+                "broker/dashboard did not become ready: "
+                f"state={snapshot['workflow']['state']} missing={missing}"
             )
         if "Synthetic functional smoke" in monitor_output:
             raise AssertionError("broker dashboard exposed task body")
