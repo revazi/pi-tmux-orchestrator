@@ -14,12 +14,14 @@ coordination mechanisms.
 - Authentication: independent random 128-bit role tokens and a separate control
   token, stored in mode-`0600` files under a mode-`0700` run directory.
 - Authorization: a role may update only its own lifecycle and submit only its
-  role-specific report kind. The broker alone routes work.
+  role-specific report kind. Worker `hello` includes the positive broker-issued
+  role generation; stale generations are rejected. The broker alone routes work.
 - Peer identity: the broker rejects a different local UID where the platform
   exposes peer credentials.
 
-The control-plane SQLite database stores tokens and metadata but never task,
-parent context capsule, assignment, run-state capsule, report, prompt, message,
+The control-plane SQLite database stores tokens and metadata, including role
+generations and one assignment-boundary flag/event, but never task, parent
+context capsule, assignment, run-state capsule, report, prompt, message,
 provider response, diff, or log bodies.
 Authenticated parent-observer report bodies are ephemeral in broker memory and
 may become durable only in Pi session history.
@@ -37,12 +39,13 @@ A socket close records `disconnected`. A worker settling with an active
 assignment and no report marks the workflow `needs_attention`. Retained PIDs
 never imply liveness.
 
-Every worker receives baseline context once with no model trigger. Baseline may
+Every worker receives baseline context with no model trigger. Baseline may
 include one parent-authored context capsule of at most 12 KiB. The capsule is a
 structured recap of task-relevant state and decisions, never an automatic copy
 of the parent transcript. It crosses the same private ephemeral startup boundary
-as the task, is deleted after baseline delivery, and may remain only in the
-worker's Pi session.
+as the task, whose file is deleted after baseline delivery. The rendered
+per-role baseline remains only in live broker memory and the worker's Pi session
+so an explicitly confirmed generation handover can replay it.
 
 The broker then creates assignments according to the workflow. Workers never
 poll and must end the turn when there is no active assignment.
@@ -57,10 +60,15 @@ poll and must end the turn when there is no active assignment.
 5. Every accepted report replaces recipient evidence with one capsule bounded
    to 16 KiB of UTF-8 containing only the latest accepted report per role;
    recipients are not given an accumulating sequence of historical report bodies.
+   If a recipient has an active assignment, replacement is deferred and
+   coalesced to the latest capsule until its next assignment boundary.
 6. After all required evidence exists, broker triggers the reviewer once.
 7. `changes_requested` updates the rolling capsule and triggers the next
    implementer round.
-8. `approved` marks the workflow `ready`; it does not wake the implementer just
+8. Accepting each new assignment makes one context boundary effective and emits
+   one body-free `context_boundary` metadata event. Provider calls within that
+   assignment do not emit reset events.
+9. `approved` marks the workflow `ready`; it does not wake the implementer just
    to acknowledge approval.
 
 Only the implementer has normal write tools. Other roles are read-only.
@@ -132,11 +140,16 @@ sleep, or poll after reporting.
 Delivery IDs, assignment IDs, report IDs, and command IDs are 32-character
 lowercase hexadecimal values.
 
-- Bridge custom entries retain accepted delivery IDs outside LLM context.
-- Before a later assignment turn, the bridge projects only the latest baseline,
-  latest run-state capsule, current assignment, and current-turn messages into
-  provider context. Assistant/tool messages from completed assignments remain
-  in the durable Pi session but are filtered from future provider requests.
+- Bridge custom entries retain accepted delivery IDs and assignment-boundary
+  metadata outside LLM context.
+- Pi invokes the bridge's context-projection hook for every provider request.
+  Every projection within one active assignment retains all of that assignment's
+  assistant/tool turns; completed turns leave provider context only when the next
+  distinct assignment boundary changes the pruning policy.
+- At that boundary, the bridge projects the latest baseline, latest delivered
+  run-state capsule, new assignment, direct user/operator messages, and new
+  assignment turns. Replaying the same assignment during confirmed handover is
+  not a new pruning boundary.
 - Direct user messages and non-orchestrator custom messages are not discarded by
   this projection.
 - Replayed delivery IDs are acknowledged as duplicates.
@@ -144,7 +157,22 @@ lowercase hexadecimal values.
 - Operator control command retries deduplicate matching action/role/delivery
   metadata; conflicting reuse is rejected. Supervisor API v2 exposes retained
   command metadata without message bodies.
-- A broken connection in an unprovable delivery window becomes `uncertain`.
+- Explicit restart is an authenticated broker control command that advances the
+  role generation. The replacement bridge must authenticate with that exact
+  generation. Before recovering an accepted active assignment, the broker
+  replays the bounded per-role baseline and materializes the latest coalesced
+  run-state capsule, including any replacement deferred while that assignment
+  was active. It then rotates the assignment delivery ID to trigger confirmed
+  recovery without creating another assignment boundary.
+- If local worker respawn fails after restart preparation is acknowledged, the
+  CLI submits a body-free authenticated `restart_failed` control command. The
+  broker authoritatively marks the role and workflow `uncertain` and records a
+  metadata-only `worker_handover_uncertain` event.
+- A replacement disconnect or broken connection in an unprovable delivery or
+  generation-handover window becomes `uncertain`; delivering/uncertain
+  assignments are never blindly replayed. Broker restart cannot reconstruct
+  private in-memory capsules and
+  therefore fails an interrupted handover closed as uncertain.
 - Uncertain delivery requires explicit operator retry.
 - The protocol does not claim exactly-once delivery.
 
@@ -155,10 +183,11 @@ session. SQLite retains only report shape/count/verdict metadata.
 
 ## Token accounting
 
-The bridge sums actual provider-reported assistant usage from the Pi session:
-input, output, cache read, cache write, optional reasoning, and total cost. It
-also reports Pi's current context usage when available. Missing provider data
-remains unavailable; the broker does not invent estimates.
+The bridge sums actual provider-reported assistant usage across the complete Pi
+session: input, output, cache read, cache write, optional reasoning, and total
+cost. It separately reports Pi's current provider-context occupancy when
+available. Missing provider data remains unavailable; the broker does not invent
+estimates.
 
 Soft role and run token thresholds are metadata warnings. A future hard budget
 may prevent a new assignment, but cannot stop an already-started provider

@@ -53,10 +53,15 @@ compatible existing run without taking over the terminal;
 `L` returns while leaving the grid live for later reattachment.
 The broker stores metadata-only SQLite state and actual provider token totals
 when Pi reports them; it does not persist task, context-capsule, report, prompt,
-message, diff, or log bodies. Each role receives the bounded parent capsule once.
-Later evidence is projected as one rolling latest-per-role run-state capsule, and
-completed assignment assistant/tool turns are excluded from future provider
-context without deleting Pi session history. See
+message, diff, or log bodies. Each role receives a bounded baseline. Later
+evidence is projected as one rolling latest-per-role run-state capsule; updates
+for an active role are coalesced until its next assignment. One metadata-only
+context-boundary event accompanies each new assignment, and only then do
+completed prior-assignment assistant/tool turns leave provider context. Current
+assignment turns and complete Pi JSONL history remain intact. Confirmed restart
+advances a broker generation and replays the live in-memory baseline and latest
+coalesced run state, including deferred evidence, before accepted
+active-assignment recovery. See
 [references/protocol-v1.md](references/protocol-v1.md).
 
 ## Start a grid
@@ -114,7 +119,10 @@ pi-tmux-agents stop SESSION --yes
 A command acknowledgement proves acceptance, not task completion. Optional
 32-character lowercase hexadecimal command IDs provide retry-safe deduplication;
 conflicting reuse is rejected and interrupted delivery may be `uncertain`.
-Restart and stop require explicit confirmation flags.
+Restart and stop require explicit confirmation flags. Restart respawns the
+worker process and reopens its exact Pi session ID, preserving the conversation
+and JSONL history; a failed respawn or interrupted replacement handover remains
+`uncertain`.
 
 Use Supervisor API v2 for retained metadata-only reads after tmux exits:
 

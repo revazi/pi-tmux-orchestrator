@@ -333,7 +333,12 @@ def build_parser() -> argparse.ArgumentParser:
     abort.set_defaults(handler=abort_command)
 
     restart = subparsers.add_parser(
-        "restart", help="restart one role, optionally changing model"
+        "restart",
+        help="restart one role while preserving its brokered Pi session",
+        description=(
+            "Respawn one role's worker process while preserving its brokered Pi "
+            "conversation and JSONL history."
+        ),
     )
     restart.add_argument("session")
     restart.add_argument(
@@ -345,7 +350,11 @@ def build_parser() -> argparse.ArgumentParser:
     restart.add_argument("--model")
     restart.add_argument("--thinking", choices=THINKING_LEVELS)
     restart.add_argument("--skip-model-check", action="store_true")
-    restart.add_argument("--yes", action="store_true")
+    restart.add_argument(
+        "--yes",
+        action="store_true",
+        help="confirm the worker-process respawn",
+    )
     restart.set_defaults(handler=restart_command)
 
     stop = subparsers.add_parser("stop", help="stop one orchestration")
