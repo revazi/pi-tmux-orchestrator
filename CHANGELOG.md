@@ -4,13 +4,10 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
-## 0.8.0 - 2026-08-19
+## 0.8.1 - 2026-08-20
 
 ### Added
 
-- Added an optional 12 KiB structured parent context capsule for task-relevant state, decisions, constraints, acceptance criteria, paths, evidence, open questions, and out-of-scope items without copying the parent transcript or making another model request
-- Added one 16 KiB UTF-8-bounded rolling run-state capsule that replaces historical per-report evidence with the latest accepted report per role
-- Added a deterministic two-round context-efficiency regression that currently reduces serialized provider-visible message characters from 99,170 to 8,678 (91.2%) and enforces at least a 50% reduction without claiming provider-specific token savings
 - Added one metadata-only context-boundary event per distinct new assignment and a regression proving multiple assistant/tool turns remain provider-visible throughout the current assignment
 - Added broker-generation restart handover that replays the bounded in-memory baseline and latest coalesced run-state capsule, including evidence deferred during the active assignment, before recovery
 
@@ -24,6 +21,18 @@ All notable changes to this project are documented here.
 - Fail a same-broker replacement disconnect closed to metadata-only role/workflow `uncertain` while preserving the expected old-generation disconnect during restart preparation
 - Fail a broker-prepared handover closed through authenticated broker control when local tmux respawn fails, rather than leaving the role in `restarting`
 - Clarify that Pi invokes context projection for every provider request while the pruning policy changes only at distinct assignment boundaries, and that restart reopens the exact Pi session and JSONL history
+
+## 0.8.0 - 2026-08-19
+
+### Added
+
+- Added an optional 12 KiB structured parent context capsule for task-relevant state, decisions, constraints, acceptance criteria, paths, evidence, open questions, and out-of-scope items without copying the parent transcript or making another model request
+- Added one 16 KiB UTF-8-bounded rolling run-state capsule that replaces historical per-report evidence with the latest accepted report per role
+- Added a deterministic two-round context-efficiency regression that currently reduces serialized provider-visible message characters from 99,170 to 8,678 (91.2%) and enforces at least a 50% reduction without claiming provider-specific token savings
+
+### Changed
+
+- Exclude completed assignment assistant/tool turns from future provider context while preserving the complete Pi worker session history, latest structured run state, direct user messages, and isolation boundaries
 
 ## 0.7.1 - 2026-08-19
 
