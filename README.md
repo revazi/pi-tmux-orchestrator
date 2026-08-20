@@ -26,7 +26,7 @@ workflow, role, model, usage, context, and recent metadata state.
 - The same worker-bridge protocol for interactive TUI and headless RPC workers
 - Native worker output in TUI panes and assistant/tool input/tool output visibility in RPC panes
 - Parent Pi supervision with event-driven final structured reports and attention alerts
-- Bounded parent context capsules, rolling latest-per-role run state, and completed-assignment context pruning
+- Assignment-boundary context resets with bounded parent capsules, coalesced latest-per-role run state, and complete Pi history
 - Bounded typed reports through a terminating Pi tool
 - No Markdown handoffs, readiness markers, mailbox payload files, relay polling,
   lifecycle sleeps, or tmux key injection in newly started runs
@@ -285,10 +285,11 @@ pi-tmux-agents start \
 ```
 
 The context capsule is limited to 12 KiB, transferred through a private file,
-consumed only by the broker startup path, and deleted after baseline delivery.
-Its body is excluded from SQLite, status, registries, dashboards, and the
-Supervisor API. The worker Pi session retains the delivered baseline as normal
-conversation context.
+and deleted after baseline delivery. Its body is excluded from SQLite, status,
+registries, dashboards, and the Supervisor API. The live broker retains the
+rendered per-role baseline only in memory so a confirmed worker handover can
+replay it; the worker Pi session retains every delivery in its complete JSONL
+history.
 
 Add specialists:
 
@@ -320,11 +321,12 @@ startup trust dialogs.
 4. Implementer submits a bounded `implementation` report through
    `orchestrator_report`; the tool terminates the turn.
 5. Enabled specialists inspect the worktree and submit typed evidence.
-6. Broker replaces prior evidence deliveries with one bounded run-state capsule containing only the latest accepted report per role, then wakes reviewer exactly once.
-7. `changes_requested` starts the next implementation round; before that model turn, the worker context hook keeps the baseline, latest run-state capsule, and current assignment while excluding completed assistant/tool turns from provider context.
-8. `approved` marks the workflow ready without an acknowledgement-only worker
+6. Broker replaces prior evidence deliveries with one bounded run-state capsule containing only the latest accepted report per role, then wakes reviewer exactly once. Updates for a role already working are coalesced until its next assignment.
+7. Each newly accepted assignment emits one metadata-only `context_boundary` event. That boundary changes the projection policy used on every provider request: the worker keeps the baseline, latest run state, assignment, direct messages, and all assistant/tool turns from the new assignment while pruning only prior-assignment assistant/tool turns.
+8. A confirmed role restart advances a broker generation, replays the in-memory baseline, and materializes the latest coalesced run state—including an update deferred during the active assignment—before recovering that assignment. A failed local respawn or interrupted replacement recovery is `uncertain`.
+9. `approved` marks the workflow ready without an acknowledgement-only worker
    turn.
-9. An attached parent observer shows lifecycle and report-received progress,
+10. An attached parent observer shows lifecycle and report-received progress,
    then returns the latest structured role reports when the run is ready or
    requires intervention.
 
@@ -334,8 +336,10 @@ sleeping or repeatedly polling status/tmux. Non-terminal updates remain
 non-triggering while steering an already-active parent before its next model
 step; terminal updates may trigger parent reasoning. A worker settling without
 a report becomes `waiting`/needs attention rather than entering an unlimited
-reminder loop. Context filtering changes only the provider-visible projection;
-Pi's durable worker session history remains intact. A deterministic two-round
+reminder loop. Pi invokes the worker context-projection hook for every provider
+request, but its pruning policy changes only at a distinct assignment boundary.
+Repeated projections retain every assistant/tool turn from the current
+assignment, and Pi's durable worker session history remains intact. A deterministic two-round
 synthetic regression currently reduces serialized provider-visible message
 characters from 99,170 to 8,678 (91.2%) and enforces a minimum 50% reduction in
 CI. This is a reproducible character metric, not provider token acceptance; real
@@ -363,8 +367,11 @@ it does not stop the workers. Attach and detach can be repeated while the run is
 live.
 
 Acknowledgement means acceptance, not completion. Matching role/action/delivery
-command IDs deduplicate; conflicting reuse is rejected. A crash in an
-unprovable delivery window becomes `uncertain`; there is no exactly-once claim.
+command IDs deduplicate; conflicting reuse is rejected. Confirmed restart
+respawns the worker process and reopens its exact Pi session ID, preserving the
+conversation and complete JSONL history. A failed respawn or crash in an
+unprovable delivery or replacement-handover window becomes `uncertain`; there is
+no exactly-once claim.
 
 ## Supervisor API v2
 
@@ -392,11 +399,13 @@ Run state is private and external to target repositories:
 ~/.pi/agent/orchestrations/<session>/<run>/
 ```
 
-Files are retained for manifests, authentication, Pi sessions, metadata-only
-SQLite, and a transient startup payload deleted after broker ingestion. Report
-bodies sent to an attached parent observer are ephemeral in broker memory and
-become durable only in Pi sessions; they never enter SQLite, status, journals,
-or Supervisor API output. Newly started workers never create or poll
+Files are retained for manifests, authentication, complete Pi JSONL sessions,
+metadata-only SQLite, and a transient startup payload deleted after broker
+ingestion. Baselines, bounded latest-per-role evidence, and rolling run-state
+bodies needed for a confirmed handover remain only in live broker memory and Pi
+sessions. Attached-parent report bodies are likewise ephemeral in broker memory
+and become durable only in Pi sessions; none enter SQLite, status, journals,
+registries, or Supervisor API output. Newly started workers never create or poll
 task/handoff/review/specialist payload files or readiness markers.
 
 Retained `0.4.x` runs remain readable and operable through compatibility code.
@@ -406,9 +415,10 @@ is no selectable legacy fallback.
 ## Token policy
 
 The bridge sums actual Pi/provider-reported input, output, cache-read,
-cache-write, optional reasoning tokens, and cost. It exposes current context
-usage when available. Missing data remains unavailable; the orchestrator does
-not invent estimates.
+cache-write, optional reasoning tokens, and cost across complete durable
+history. It separately exposes current provider-context occupancy when Pi makes
+it available. Missing data remains unavailable; the orchestrator does not
+invent estimates.
 
 Structural savings include no waiting turns, no polling, no copied diffs/logs,
 one reviewer wake after all evidence, no approval acknowledgement turn, and

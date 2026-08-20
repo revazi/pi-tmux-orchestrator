@@ -421,6 +421,7 @@ def main() -> int:
                         "role": role,
                         "token": token,
                         "id": (str(len(clients) + 1) * 32)[:32],
+                        "generation": 1,
                     }
                 )
             )

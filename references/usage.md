@@ -136,9 +136,13 @@ does not prove the provider operation reached a terminal state.
 
 ### `restart SESSION --role ROLE ... --yes`
 
-Restarts one role and starts a fresh Pi conversation while preserving the
-worktree and metadata. Pending unprovable work remains `uncertain`; it is not
-blindly replayed.
+Respawns one role's worker process through a broker-authoritative generation
+handover and reopens its exact Pi session ID, preserving the conversation and
+complete JSONL history. The live broker replays the bounded baseline and
+materializes the latest coalesced run-state capsule, including evidence deferred
+while the role was active, before recovering an accepted active assignment. A
+local respawn failure, replacement disconnect, broker interruption, or
+unprovable assignment remains `uncertain`; it is not blindly replayed.
 
 ### `stop SESSION --yes`
 
@@ -206,12 +210,13 @@ with live report observation.
 3. It triggers only the implementer and optional initial probe.
 4. The implementer submits a bounded `implementation` report with `orchestrator_report`.
 5. Enabled specialists inspect the shared worktree and submit typed evidence.
-6. Accepted evidence updates one latest-per-role run-state capsule bounded to 16 KiB of UTF-8; recipients no longer accumulate one context body for every historical report.
+6. Accepted evidence updates one latest-per-role run-state capsule bounded to 16 KiB of UTF-8; recipients no longer accumulate one context body for every historical report. Updates targeting an active role are coalesced until its next assignment.
 7. The broker supplies the latest run state to the reviewer and wakes it once.
-8. `changes_requested` supplies the updated run state and starts the next implementation round.
-9. Before that provider turn, the worker keeps only the baseline, latest run state, current assignment, and current-turn messages; completed assistant/tool turns remain in Pi history but leave provider context.
-10. `approved` marks the run ready without waking the implementer for an acknowledgement turn.
-11. An attached parent observer returns the latest structured reports to the parent Pi.
+8. `changes_requested` supplies the coalesced latest run state and starts the next implementation round.
+9. Acceptance of each distinct new assignment emits one metadata-only `context_boundary` event. Pi still invokes context projection for every provider request, but only that boundary changes the pruning policy; every assistant/tool turn in the current assignment remains visible across requests.
+10. A confirmed restart replays the live in-memory baseline and latest coalesced run state, including a pending replacement deferred during the active assignment, before recovery without creating a second boundary for that assignment.
+11. `approved` marks the run ready without waking the implementer for an acknowledgement turn.
+12. An attached parent observer returns the latest structured reports to the parent Pi.
 
 The terminating report tool avoids an extra post-report provider turn. Idle
 workers end their turn and never sleep or poll. A watching parent also ends its
@@ -221,11 +226,13 @@ idle; if the parent is already active, progress is steered in before its next
 model step. Timeouts detect failure; they do not schedule workflow transitions.
 
 The deterministic two-round context regression measures serialized
-provider-visible message characters before and after worker filtering. Its
-current fixture drops from 99,170 to 8,678 characters (91.2%); CI requires at
-least a 50% reduction. This is a stable context-size proxy, not provider-specific
-token savings or production-wire acceptance. Runtime token and context-window
-measurements continue to come only from Pi/provider usage metadata.
+provider-visible message characters before and after a new assignment boundary.
+Its current fixture drops from 99,170 to 8,678 characters (91.2%); CI requires
+at least a 50% reduction. A separate regression proves multiple assistant/tool
+turns accumulate throughout one assignment and remain until the next boundary.
+These are stable context-size proxies, not provider-specific token savings or
+production-wire acceptance. Cumulative usage and current context occupancy
+remain separate Pi/provider metadata.
 
 Report fields, limits, ACLs, acknowledgements, deduplication, retry, crash
 semantics, and token accounting are specified in
@@ -237,9 +244,15 @@ Files remain for:
 
 - mode-`0700` run/session directories;
 - mode-`0600` manifests and authentication tokens;
-- Pi's own JSONL sessions;
+- Pi's complete JSONL sessions;
 - one mode-`0600` metadata-only SQLite database;
 - a transient startup payload deleted by the broker immediately after reading.
+
+The live broker's rendered role baselines, bounded accepted report evidence, and
+run-state capsules needed for confirmed handover replay are ephemeral. Its
+copies are lost on broker exit and never enter SQLite, status, dashboards,
+registries, journals, or the Supervisor API; an interrupted handover fails
+closed as `uncertain`.
 
 New workers never create or poll Markdown reports, readiness markers, mailbox
 payload files, or relay-seen files. The database excludes task, assignment,
@@ -259,9 +272,10 @@ The worker bridge reports Pi/provider values for:
 - current context tokens/window/percentage.
 
 Unavailable values remain unavailable; no provider token estimate is invented.
-Status and Supervisor API expose per-role and total usage. Soft role/run budgets
-warn before subsequent work. A budget cannot stop an already-started provider
-response at an exact token.
+Status and Supervisor API expose cumulative per-role/total usage separately
+from each role's current context occupancy. Soft role/run budgets warn before
+subsequent work. A budget cannot stop an already-started provider response at an
+exact token.
 
 ## Security boundaries
 

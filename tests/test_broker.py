@@ -30,7 +30,12 @@ from pi_tmux_orchestrator.context_capsules import (
     render_run_state_capsule,
     render_worker_baseline,
 )
-from pi_tmux_orchestrator.protocol import decode_frame, encode_frame, validate_report
+from pi_tmux_orchestrator.protocol import (
+    decode_frame,
+    encode_frame,
+    validate_client_message,
+    validate_report,
+)
 from pi_tmux_orchestrator.storage import ensure_private_directory, save_manifest
 
 
@@ -82,6 +87,21 @@ class ProtocolTests(unittest.TestCase):
         encoded = encode_frame(value)
         self.assertEqual(int.from_bytes(encoded[:4], "big"), len(encoded) - 4)
         self.assertEqual(decode_frame(encoded[4:]), value)
+
+    def test_worker_hello_requires_a_positive_generation(self) -> None:
+        hello = {
+            "version": BROKER_PROTOCOL_VERSION,
+            "type": "hello",
+            "role": "implementer",
+            "token": "a" * 32,
+            "id": "b" * 32,
+            "generation": 2,
+        }
+        self.assertEqual(validate_client_message(hello), hello)
+        for generation in (0, True, "2"):
+            invalid = {**hello, "generation": generation}
+            with self.assertRaisesRegex(Exception, "generation is invalid"):
+                validate_client_message(invalid)
 
     def test_report_acl_and_bounds(self) -> None:
         report = validate_report(
@@ -217,6 +237,36 @@ class ContextCapsuleTests(unittest.TestCase):
 
 
 class BrokerStoreTests(BrokerFixture):
+    def test_schema_one_adds_only_metadata_boundary_state(self) -> None:
+        with broker_store.connect_broker_database(self.coord) as database:
+            database.executescript("""
+                CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+                INSERT INTO meta(key,value) VALUES ('schema_version','1');
+                CREATE TABLE assignments (
+                    id TEXT PRIMARY KEY,
+                    role TEXT NOT NULL,
+                    round INTEGER NOT NULL,
+                    kind TEXT NOT NULL,
+                    state TEXT NOT NULL,
+                    delivery_id TEXT NOT NULL UNIQUE,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                """)
+        broker_store.prepare_broker_database(self.coord)
+        with broker_store.connect_broker_database(
+            self.coord, readonly=True
+        ) as database:
+            schema_version = database.execute(
+                "SELECT value FROM meta WHERE key='schema_version'"
+            ).fetchone()["value"]
+            columns = {
+                row["name"]
+                for row in database.execute("PRAGMA table_info(assignments)")
+            }
+        self.assertEqual(schema_version, "2")
+        self.assertIn("boundary_effective", columns)
+
     def test_new_run_has_metadata_only_sqlite_and_no_coordination_payload_files(
         self,
     ) -> None:
@@ -556,6 +606,439 @@ class BrokerObserverTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
                 "assign:implementer:implementation:2",
             ],
         )
+
+    async def test_active_role_run_state_is_coalesced_until_next_assignment(
+        self,
+    ) -> None:
+        initialize_broker_run(self.coord, self.manifest, "task", {})
+        broker = Broker(self.coord, self.manifest)
+        broker.clients = {
+            role: Client(role, mock.Mock(), mock.Mock())
+            for role in ("implementer", "reviewer")
+        }
+        with broker_store.connect_broker_database(self.coord) as database:
+            database.execute(
+                "UPDATE roles SET active_assignment_id=? WHERE role='implementer'",
+                ("a" * 32,),
+            )
+        deliver = mock.AsyncMock()
+        with mock.patch.object(broker, "deliver", new=deliver):
+            for summary in ("STALE_RUN_STATE_CANARY", "LATEST_RUN_STATE_CANARY"):
+                broker._remember_report(
+                    {
+                        "role": "probe",
+                        "round": 1,
+                        "report": {
+                            "summary": summary,
+                            "changed_paths": [],
+                            "checks": [],
+                            "findings": [],
+                            "risks": [],
+                            "limitations": [],
+                            "verdict": None,
+                        },
+                    }
+                )
+                await broker._deliver_run_state(("implementer",), 1)
+        deliver.assert_not_awaited()
+        self.assertEqual(broker.pending_run_state, {"implementer": 1})
+
+        with broker_store.connect_broker_database(self.coord) as database:
+            database.execute(
+                "UPDATE roles SET active_assignment_id=NULL WHERE role='implementer'"
+            )
+        transitions: list[tuple[str, str]] = []
+
+        async def capture_deliver(
+            _role: str,
+            kind: str,
+            _round_number: int,
+            content: str,
+            *,
+            trigger: bool,
+        ) -> None:
+            self.assertFalse(trigger)
+            transitions.append((kind, content))
+
+        async def capture_send(_client: Client, value: dict[str, object]) -> None:
+            transitions.append((str(value["type"]), str(value.get("content", ""))))
+
+        with (
+            mock.patch.object(broker, "deliver", new=capture_deliver),
+            mock.patch.object(broker, "send", new=capture_send),
+        ):
+            await broker.assign(
+                "implementer",
+                "implementation",
+                2,
+                broker._assignment("implementer", 2),
+            )
+        self.assertEqual([item[0] for item in transitions], ["run_state", "assignment"])
+        self.assertNotIn("STALE_RUN_STATE_CANARY", transitions[0][1])
+        self.assertIn("LATEST_RUN_STATE_CANARY", transitions[0][1])
+        self.assertEqual(broker.pending_run_state, {})
+
+    async def test_assignment_ack_emits_one_metadata_only_context_boundary(
+        self,
+    ) -> None:
+        initialize_broker_run(self.coord, self.manifest, "task", {})
+        broker = Broker(self.coord, self.manifest)
+        assignment_id = "1" * 32
+        delivery_id = "2" * 32
+        now = broker_store.utc_now()
+        with broker_store.connect_broker_database(self.coord) as database:
+            database.execute(
+                "INSERT INTO assignments(id,role,round,kind,state,delivery_id,created_at,updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (
+                    assignment_id,
+                    "implementer",
+                    1,
+                    "implementation",
+                    "delivering",
+                    delivery_id,
+                    now,
+                    now,
+                ),
+            )
+        client = Client("implementer", mock.Mock(), mock.Mock())
+        message = {
+            "id": "3" * 32,
+            "delivery_id": delivery_id,
+            "status": "accepted",
+        }
+        with mock.patch.object(broker, "reply", new=mock.AsyncMock()):
+            await broker.handle_delivery_ack(client, message)
+            message["id"] = "4" * 32
+            message["status"] = "duplicate"
+            await broker.handle_delivery_ack(client, message)
+        events = broker_store.public_broker_events(
+            self.coord, after=0, limit=100, role="implementer"
+        )["events"]
+        boundaries = [event for event in events if event["event"] == "context_boundary"]
+        self.assertEqual(len(boundaries), 1)
+        self.assertEqual(
+            set(boundaries[0]),
+            {
+                "sequence",
+                "timestamp",
+                "event",
+                "role",
+                "round",
+                "assignment_id",
+                "delivery_id",
+                "status",
+            },
+        )
+        self.assertEqual(boundaries[0]["status"], "effective")
+
+    async def test_confirmed_handover_replays_deferred_state_before_active_assignment(
+        self,
+    ) -> None:
+        initialize_broker_run(self.coord, self.manifest, "PRIVATE_STARTUP_CANARY", {})
+        broker = Broker(self.coord, self.manifest)
+        broker.worker_baselines["implementer"] = "PRIVATE_BASELINE_REPLAY_CANARY"
+        broker.role_run_state["implementer"] = "PRIVATE_STALE_RUN_STATE_CANARY"
+        client = Client("implementer", mock.Mock(), mock.Mock(), generation=2)
+        broker.clients = {"implementer": client}
+        assignment_id = "5" * 32
+        now = broker_store.utc_now()
+        with broker_store.connect_broker_database(self.coord) as database:
+            database.execute(
+                "UPDATE roles SET generation=2,state='recovering',active_assignment_id=? "
+                "WHERE role='implementer'",
+                (assignment_id,),
+            )
+            database.execute(
+                "INSERT INTO assignments(id,role,round,kind,state,delivery_id,created_at,updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (
+                    assignment_id,
+                    "implementer",
+                    2,
+                    "implementation",
+                    "accepted",
+                    "6" * 32,
+                    now,
+                    now,
+                ),
+            )
+            database.execute(
+                "UPDATE assignments SET boundary_effective=1 WHERE id=?",
+                (assignment_id,),
+            )
+            broker_store.record_event(
+                database,
+                "context_boundary",
+                role="implementer",
+                round_number=2,
+                assignment_id=assignment_id,
+                delivery_id="6" * 32,
+                status="effective",
+            )
+        broker._remember_report(
+            {
+                "role": "probe",
+                "round": 2,
+                "report": {
+                    "summary": "PRIVATE_DEFERRED_RUN_STATE_CANARY",
+                    "changed_paths": [],
+                    "checks": [],
+                    "findings": [],
+                    "risks": [],
+                    "limitations": [],
+                    "verdict": None,
+                },
+            }
+        )
+        await broker._deliver_run_state(("implementer",), 2)
+        self.assertEqual(broker.pending_run_state, {"implementer": 2})
+        frames: list[dict[str, object]] = []
+
+        async def capture_send(_client: Client, value: dict[str, object]) -> None:
+            frames.append(value)
+
+        with mock.patch.object(broker, "send", new=capture_send):
+            await broker.recover_role(client, handover=True)
+        self.assertEqual(
+            [(frame["type"], frame.get("kind")) for frame in frames],
+            [
+                ("context", "baseline"),
+                ("context", "run_state"),
+                ("assignment", "implementation"),
+            ],
+        )
+        self.assertEqual(frames[0]["content"], "PRIVATE_BASELINE_REPLAY_CANARY")
+        self.assertIn("PRIVATE_DEFERRED_RUN_STATE_CANARY", frames[1]["content"])
+        self.assertNotIn("PRIVATE_STALE_RUN_STATE_CANARY", frames[1]["content"])
+        self.assertEqual(broker.pending_run_state, {})
+        recovered_delivery = str(frames[2]["id"])
+        self.assertNotEqual(recovered_delivery, "6" * 32)
+        with mock.patch.object(broker, "reply", new=mock.AsyncMock()):
+            await broker.handle_delivery_ack(
+                client,
+                {
+                    "id": "7" * 32,
+                    "delivery_id": recovered_delivery,
+                    "status": "accepted",
+                },
+            )
+        with broker_store.connect_broker_database(
+            self.coord, readonly=True
+        ) as database:
+            dump = "\n".join(database.iterdump())
+            role_state = database.execute(
+                "SELECT state FROM roles WHERE role='implementer'"
+            ).fetchone()["state"]
+            boundary_count = database.execute(
+                "SELECT COUNT(*) AS count FROM events "
+                "WHERE event='context_boundary' AND assignment_id=?",
+                (assignment_id,),
+            ).fetchone()["count"]
+        self.assertEqual(role_state, "active")
+        self.assertEqual(boundary_count, 1)
+        self.assertNotIn("PRIVATE_BASELINE_REPLAY_CANARY", dump)
+        self.assertNotIn("PRIVATE_STALE_RUN_STATE_CANARY", dump)
+        self.assertNotIn("PRIVATE_DEFERRED_RUN_STATE_CANARY", dump)
+
+    async def test_replacement_disconnect_during_recovery_fails_closed(self) -> None:
+        initialize_broker_run(self.coord, self.manifest, "task", {})
+        broker = Broker(self.coord, self.manifest)
+        with broker_store.connect_broker_database(self.coord) as database:
+            token = database.execute(
+                "SELECT auth_token FROM roles WHERE role='implementer'"
+            ).fetchone()["auth_token"]
+            database.execute(
+                "UPDATE roles SET generation=2,state='restarting',active_assignment_id=? "
+                "WHERE role='implementer'",
+                ("9" * 32,),
+            )
+            broker_store.set_meta(database, "workflow_state", "active")
+        hello = {
+            "version": BROKER_PROTOCOL_VERSION,
+            "type": "hello",
+            "role": "implementer",
+            "token": token,
+            "id": "a" * 32,
+            "generation": 2,
+        }
+        writer = mock.Mock()
+        writer.wait_closed = mock.AsyncMock()
+        with (
+            mock.patch.object(broker, "_verify_peer"),
+            mock.patch.object(
+                broker, "read_raw_frame", new=mock.AsyncMock(return_value=hello)
+            ),
+            mock.patch.object(broker, "reply", new=mock.AsyncMock()),
+            mock.patch.object(broker, "maybe_start_workflow", new=mock.AsyncMock()),
+            mock.patch.object(broker, "recover_role", new=mock.AsyncMock()),
+            mock.patch.object(
+                broker,
+                "read_frame",
+                new=mock.AsyncMock(side_effect=asyncio.IncompleteReadError(b"", 4)),
+            ),
+            mock.patch.object(
+                broker, "broadcast_workflow", new=mock.AsyncMock()
+            ) as broadcast_workflow,
+        ):
+            await broker.handle_client(mock.Mock(), writer)
+        snapshot = broker_store.public_broker_snapshot(self.coord)
+        implementer = next(
+            role for role in snapshot["roles"] if role["role"] == "implementer"
+        )
+        self.assertEqual(snapshot["workflow"]["state"], "uncertain")
+        self.assertEqual(implementer["state"], "uncertain")
+        self.assertFalse(implementer["connected"])
+        broadcast_workflow.assert_awaited_once_with("uncertain", 1)
+        events = broker_store.public_broker_events(
+            self.coord, after=0, limit=100, role="implementer"
+        )["events"]
+        handover_events = [
+            event for event in events if event["event"] == "worker_handover_uncertain"
+        ]
+        self.assertEqual(len(handover_events), 1)
+        self.assertEqual(handover_events[0]["status"], "uncertain")
+        self.assertIsNone(handover_events[0]["delivery_id"])
+
+    async def test_old_generation_disconnect_preserves_restarting_state(self) -> None:
+        initialize_broker_run(self.coord, self.manifest, "task", {})
+        broker = Broker(self.coord, self.manifest)
+        with broker_store.connect_broker_database(self.coord) as database:
+            token = database.execute(
+                "SELECT auth_token FROM roles WHERE role='implementer'"
+            ).fetchone()["auth_token"]
+            broker_store.set_meta(database, "workflow_state", "active")
+        hello = {
+            "version": BROKER_PROTOCOL_VERSION,
+            "type": "hello",
+            "role": "implementer",
+            "token": token,
+            "id": "b" * 32,
+            "generation": 1,
+        }
+
+        async def prepare_restart(_client: Client, *, handover: bool = False) -> None:
+            self.assertFalse(handover)
+            with broker_store.connect_broker_database(self.coord) as database:
+                database.execute(
+                    "UPDATE roles SET generation=2,state='restarting' "
+                    "WHERE role='implementer'"
+                )
+
+        writer = mock.Mock()
+        writer.wait_closed = mock.AsyncMock()
+        with (
+            mock.patch.object(broker, "_verify_peer"),
+            mock.patch.object(
+                broker, "read_raw_frame", new=mock.AsyncMock(return_value=hello)
+            ),
+            mock.patch.object(broker, "reply", new=mock.AsyncMock()),
+            mock.patch.object(broker, "maybe_start_workflow", new=mock.AsyncMock()),
+            mock.patch.object(broker, "recover_role", new=prepare_restart),
+            mock.patch.object(
+                broker,
+                "read_frame",
+                new=mock.AsyncMock(side_effect=asyncio.IncompleteReadError(b"", 4)),
+            ),
+            mock.patch.object(
+                broker, "broadcast_workflow", new=mock.AsyncMock()
+            ) as broadcast_workflow,
+        ):
+            await broker.handle_client(mock.Mock(), writer)
+        snapshot = broker_store.public_broker_snapshot(self.coord)
+        implementer = next(
+            role for role in snapshot["roles"] if role["role"] == "implementer"
+        )
+        self.assertEqual(snapshot["workflow"]["state"], "active")
+        self.assertEqual(implementer["state"], "restarting")
+        self.assertFalse(implementer["connected"])
+        broadcast_workflow.assert_not_awaited()
+        events = broker_store.public_broker_events(
+            self.coord, after=0, limit=100, role="implementer"
+        )["events"]
+        self.assertFalse(
+            any(event["event"] == "worker_handover_uncertain" for event in events)
+        )
+
+    async def test_restart_control_advances_broker_generation(self) -> None:
+        initialize_broker_run(self.coord, self.manifest, "task", {})
+        broker = Broker(self.coord, self.manifest)
+        worker_writer = mock.Mock()
+        broker.clients = {
+            "implementer": Client("implementer", mock.Mock(), worker_writer)
+        }
+        broker.worker_baselines["implementer"] = "bounded baseline"
+        token = (self.coord / "control.token").read_text(encoding="ascii").strip()
+        message = {
+            "version": BROKER_PROTOCOL_VERSION,
+            "type": "control",
+            "token": token,
+            "id": "8" * 32,
+            "action": "restart",
+            "role": "implementer",
+            "delivery": None,
+            "message": None,
+        }
+        control_writer = mock.Mock()
+        with mock.patch.object(broker, "send_raw", new=mock.AsyncMock()) as send_raw:
+            await broker.handle_control(mock.Mock(), control_writer, message)
+        response = send_raw.await_args.args[1]
+        self.assertTrue(response["success"])
+        worker_writer.close.assert_called_once_with()
+        with broker_store.connect_broker_database(
+            self.coord, readonly=True
+        ) as database:
+            role = database.execute(
+                "SELECT generation,state FROM roles WHERE role='implementer'"
+            ).fetchone()
+        self.assertEqual(dict(role), {"generation": 2, "state": "restarting"})
+
+    async def test_restart_failure_control_marks_handover_uncertain(self) -> None:
+        initialize_broker_run(self.coord, self.manifest, "task", {})
+        broker = Broker(self.coord, self.manifest)
+        with broker_store.connect_broker_database(self.coord) as database:
+            database.execute(
+                "UPDATE roles SET generation=2,state='restarting' "
+                "WHERE role='implementer'"
+            )
+            broker_store.set_meta(database, "workflow_state", "active")
+        token = (self.coord / "control.token").read_text(encoding="ascii").strip()
+        command_id = "c" * 32
+        message = {
+            "version": BROKER_PROTOCOL_VERSION,
+            "type": "control",
+            "token": token,
+            "id": command_id,
+            "action": "restart_failed",
+            "role": "implementer",
+            "delivery": None,
+            "message": None,
+        }
+        with (
+            mock.patch.object(broker, "send_raw", new=mock.AsyncMock()) as send_raw,
+            mock.patch.object(
+                broker, "broadcast_workflow", new=mock.AsyncMock()
+            ) as broadcast_workflow,
+        ):
+            await broker.handle_control(mock.Mock(), mock.Mock(), message)
+        response = send_raw.await_args.args[1]
+        self.assertTrue(response["success"])
+        self.assertEqual(response["status"], "accepted")
+        snapshot = broker_store.public_broker_snapshot(self.coord)
+        implementer = next(
+            role for role in snapshot["roles"] if role["role"] == "implementer"
+        )
+        self.assertEqual(snapshot["workflow"]["state"], "uncertain")
+        self.assertEqual(implementer["state"], "uncertain")
+        broadcast_workflow.assert_awaited_once_with("uncertain", 1)
+        events = broker_store.public_broker_events(
+            self.coord, after=0, limit=100, role="implementer"
+        )["events"]
+        handover = [
+            event for event in events if event["event"] == "worker_handover_uncertain"
+        ]
+        self.assertEqual(len(handover), 1)
+        self.assertEqual(handover[0]["delivery_id"], command_id)
 
     async def test_broken_observer_cannot_block_workflow_broadcast(self) -> None:
         initialize_broker_run(self.coord, self.manifest, "task", {})

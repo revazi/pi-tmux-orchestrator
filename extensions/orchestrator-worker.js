@@ -4,20 +4,29 @@ import { randomBytes } from "node:crypto";
 const VERSION = 1;
 const MAX_FRAME_BYTES = 256 * 1024;
 const DELIVERY_ENTRY = "pi-tmux-orchestrator-delivery-v1";
+const BOUNDARY_ENTRY = "pi-tmux-orchestrator-context-boundary-v1";
 const MESSAGE_TYPE = "pi-tmux-orchestrator-message-v1";
 const ROLE = process.env.PI_TMUX_ORCHESTRATOR_ROLE;
 const TOKEN = process.env.PI_TMUX_ORCHESTRATOR_TOKEN;
 const SOCKET_PATH = process.env.PI_TMUX_ORCHESTRATOR_SOCKET;
+const GENERATION = Number(process.env.PI_TMUX_ORCHESTRATOR_GENERATION);
 const ROLES = new Set(["implementer", "reviewer", "probe", "playwright", "django"]);
 const ORCHESTRATION_MESSAGE_KEY = `custom:${MESSAGE_TYPE}`;
 const PRUNABLE_PROVIDER_ROLES = new Set(["assistant", "toolResult"]);
+const REPLACEABLE_CONTEXT_KINDS = new Set(["baseline", "run_state"]);
 
 function id() {
   return randomBytes(16).toString("hex");
 }
 
 function validEnvironment() {
-  return ROLES.has(ROLE) && /^[a-f0-9]{32}$/.test(TOKEN || "") && Boolean(SOCKET_PATH);
+  const checks = [
+    ROLES.has(ROLE),
+    /^[a-f0-9]{32}$/.test(TOKEN || ""),
+    Boolean(SOCKET_PATH),
+    Number.isInteger(GENERATION) && GENERATION > 0,
+  ];
+  return checks.every(Boolean);
 }
 
 function frame(value) {
@@ -44,99 +53,50 @@ function orchestrationDetails(item = {}) {
 function contextKey(details = {}) {
   if (details.kind === "assignment") return "assignment";
   if (details.kind !== "context") return undefined;
-  if (typeof details.delivery_kind !== "string") return undefined;
-  return `context:${details.delivery_kind}`;
+  return REPLACEABLE_CONTEXT_KINDS.has(details.delivery_kind)
+    ? `context:${details.delivery_kind}`
+    : undefined;
 }
 
-function updatedCurrentAssignment(current, key, details, assignmentId, index) {
-  if (key !== "assignment") return current;
-  if (details.assignment_id !== assignmentId) return current;
-  return index;
-}
-
-function isOperatorMessage(details) {
-  return details?.kind === "context" && details.delivery_kind === "operator_message";
-}
-
-function isUnownedCustomMessage(item, details) {
-  return Object(item).role === "custom" && !details;
-}
-
-function isTurnBoundary(item) {
-  const details = orchestrationDetails(item);
-  return Object(item).role === "user"
-    || isUnownedCustomMessage(item, details)
-    || isOperatorMessage(details);
-}
-
-function isAssignmentReport(item, assignmentId) {
-  if (Object(item).role !== "toolResult") return false;
-  if (item.toolName !== "orchestrator_report") return false;
-  return Object(item.details).assignment_id === assignmentId;
-}
-
-function completedAssignmentEnd(messages, assignmentIndex) {
-  const assignmentId = orchestrationDetails(messages[assignmentIndex])?.assignment_id;
-  let boundary = assignmentIndex;
-  for (let index = assignmentIndex + 1; index < messages.length; index += 1) {
-    if (isAssignmentReport(messages[index], assignmentId)) boundary = index;
-  }
-  return boundary;
-}
-
-function latestTurnBoundary(messages, start) {
-  let boundary = messages.length;
-  for (let index = start; index < messages.length; index += 1) {
-    if (isTurnBoundary(messages[index])) boundary = index;
-  }
-  return boundary;
-}
-
-function selectedAssignmentBoundary(current, latest, messages) {
-  if (current >= 0) return current;
-  const previous = latest.get("assignment");
-  if (previous === undefined) return -1;
-  const completed = completedAssignmentEnd(messages, previous);
-  return latestTurnBoundary(messages, completed + 1);
-}
-
-function contextSelection(messages, assignment) {
+function latestContextIndexes(messages) {
   const latest = new Map();
-  const assignmentId = Object(assignment).id;
-  let currentAssignment = -1;
   for (const [index, item] of messages.entries()) {
-    const details = orchestrationDetails(item);
-    const key = contextKey(details);
-    if (!key) continue;
-    latest.set(key, index);
-    currentAssignment = updatedCurrentAssignment(
-      currentAssignment, key, details, assignmentId, index,
-    );
+    const key = contextKey(orchestrationDetails(item));
+    if (key) latest.set(key, index);
   }
-  return {
-    latest,
-    currentAssignment,
-    assignmentBoundary: selectedAssignmentBoundary(currentAssignment, latest, messages),
-  };
+  return latest;
+}
+
+function assignmentBoundaryIndex(messages, latest) {
+  const current = messages[latest.get("assignment")];
+  const assignmentId = orchestrationDetails(current)?.assignment_id;
+  return messages.findIndex((item) => {
+    const details = orchestrationDetails(item);
+    return details?.kind === "assignment" && details.assignment_id === assignmentId;
+  });
+}
+
+function contextSelection(messages) {
+  const latest = latestContextIndexes(messages);
+  return { latest, assignmentBoundary: assignmentBoundaryIndex(messages, latest) };
 }
 
 function isCompletedProviderMessage(item, index, boundary) {
-  if (boundary < 0) return false;
-  if (index >= boundary) return false;
-  return PRUNABLE_PROVIDER_ROLES.has(Object(item).role);
+  return boundary >= 0
+    && index < boundary
+    && PRUNABLE_PROVIDER_ROLES.has(Object(item).role);
 }
 
 function keepWorkerContextMessage(item, index, selection) {
   const details = orchestrationDetails(item);
   const key = contextKey(details);
-  if (key === "assignment") return selection.currentAssignment === index;
   if (key) return selection.latest.get(key) === index;
   if (details) return true;
   return !isCompletedProviderMessage(item, index, selection.assignmentBoundary);
 }
 
-function filterWorkerContext(messages, assignment) {
-  const selection = contextSelection(messages, assignment);
+function filterWorkerContext(messages) {
+  const selection = contextSelection(messages);
   return messages.filter((item, index) => keepWorkerContextMessage(item, index, selection));
 }
 
@@ -145,6 +105,12 @@ function deliveryEntryData(entry) {
   if (entry.customType !== DELIVERY_ENTRY) return undefined;
   if (!entry.data) return undefined;
   return entry.data;
+}
+
+function boundaryAssignmentId(entry) {
+  if (`${entry.type}:${entry.customType}` !== `custom:${BOUNDARY_ENTRY}`) return undefined;
+  const assignmentId = Object(entry.data).assignment_id;
+  return /^[a-f0-9]{32}$/.test(assignmentId) ? assignmentId : undefined;
 }
 
 function assignmentFromDelivery(data) {
@@ -165,6 +131,7 @@ function applyRestoredDelivery(state, data) {
   if (typeof data.delivery_id === "string") state.delivered.add(data.delivery_id);
   const assignment = assignmentFromDelivery(data);
   if (assignment) {
+    state.assignmentIds.add(assignment.id);
     state.activeAssignment = assignment;
     return;
   }
@@ -174,11 +141,16 @@ function applyRestoredDelivery(state, data) {
 }
 
 function restoreWorkerState(entries) {
-  const state = { activeAssignment: undefined, delivered: new Set() };
+  const state = {
+    activeAssignment: undefined,
+    assignmentIds: new Set(),
+    delivered: new Set(),
+  };
   for (const entry of entries) {
+    const boundaryId = boundaryAssignmentId(entry);
+    if (boundaryId) state.assignmentIds.add(boundaryId);
     const data = deliveryEntryData(entry);
-    if (!data) continue;
-    applyRestoredDelivery(state, data);
+    if (data) applyRestoredDelivery(state, data);
   }
   return state;
 }
@@ -335,6 +307,7 @@ export default function orchestratorWorker(pi) {
   let reconnectDelay = 100;
   let activeAssignment;
   let context;
+  const assignmentIds = new Set();
   const pending = new Map();
   const delivered = new Set();
 
@@ -342,6 +315,8 @@ export default function orchestratorWorker(pi) {
     const restored = restoreWorkerState(ctx.sessionManager.getEntries());
     delivered.clear();
     for (const deliveryId of restored.delivered) delivered.add(deliveryId);
+    assignmentIds.clear();
+    for (const assignmentId of restored.assignmentIds) assignmentIds.add(assignmentId);
     activeAssignment = restored.activeAssignment;
   }
 
@@ -412,6 +387,15 @@ export default function orchestratorWorker(pi) {
       { customType: MESSAGE_TYPE, content: value.content, display: true, details },
       deliveryOptions(value.trigger === true),
     );
+    if (isAssignment && !assignmentIds.has(value.assignment_id)) {
+      pi.appendEntry(BOUNDARY_ENTRY, {
+        assignment_id: value.assignment_id,
+        assignment_kind: value.kind,
+        generation: GENERATION,
+        round: value.round,
+      });
+      assignmentIds.add(value.assignment_id);
+    }
     pi.appendEntry(DELIVERY_ENTRY, details);
     delivered.add(value.id);
     if (isAssignment) activeAssignment = { id: value.assignment_id, round: value.round, kind: value.kind };
@@ -467,7 +451,7 @@ export default function orchestratorWorker(pi) {
     socket.on("connect", async () => {
       reconnectDelay = 100;
       try {
-        await brokerRequest(message("hello"));
+        await brokerRequest(message("hello", { generation: GENERATION }));
         lifecycle(context?.isIdle() ? "idle" : "active", context, true);
       } catch {
         socket.destroy();
@@ -520,7 +504,7 @@ export default function orchestratorWorker(pi) {
     connect();
   });
   pi.on("context", (event) => ({
-    messages: filterWorkerContext(event.messages, activeAssignment),
+    messages: filterWorkerContext(event.messages),
   }));
   pi.on("agent_start", (_event, ctx) => lifecycle("active", ctx));
   pi.on("agent_settled", (_event, ctx) => lifecycle(activeAssignment ? "waiting" : "idle", ctx, true));

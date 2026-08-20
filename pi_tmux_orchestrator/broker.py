@@ -18,6 +18,7 @@ from . import runtime
 from .broker_store import (
     broker_paths,
     connect_broker_database,
+    prepare_broker_database,
     record_event,
     set_meta,
     utc_now,
@@ -44,6 +45,7 @@ class Client:
     role: str
     reader: asyncio.StreamReader
     writer: asyncio.StreamWriter
+    generation: int = 1
     send_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
@@ -65,6 +67,9 @@ class Broker:
         self.observers: set[Observer] = set()
         self.recent_reports: list[dict[str, Any]] = []
         self.latest_reports: dict[str, dict[str, Any]] = {}
+        self.worker_baselines: dict[str, str] = {}
+        self.role_run_state: dict[str, str] = {}
+        self.pending_run_state: dict[str, int] = {}
         self.server: asyncio.AbstractServer | None = None
         self.stopping = asyncio.Event()
         self.task_bodies = self._load_startup_payload()
@@ -122,6 +127,7 @@ class Broker:
                 self.dashboard_active = False
 
     async def _run(self) -> None:
+        prepare_broker_database(self.coord)
         socket_path = self.paths["socket"]
         socket_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         os.chmod(socket_path.parent, 0o700)
@@ -154,6 +160,25 @@ class Broker:
                 current_state = "uncertain"
                 set_meta(database, "workflow_state", current_state)
                 record_event(database, "workflow_uncertain", status=current_state)
+            interrupted_handovers = list(
+                database.execute(
+                    "SELECT role FROM roles WHERE state IN ('restarting','recovering')"
+                )
+            )
+            if interrupted_handovers:
+                current_state = "uncertain"
+                set_meta(database, "workflow_state", current_state)
+                for row in interrupted_handovers:
+                    database.execute(
+                        "UPDATE roles SET state='uncertain',connected=0,updated_at=? WHERE role=?",
+                        (utc_now(), row["role"]),
+                    )
+                    record_event(
+                        database,
+                        "worker_handover_uncertain",
+                        role=row["role"],
+                        status="uncertain",
+                    )
             record_event(database, "broker_started", status=current_state)
         self.refresh_dashboard()
         async with self.server:
@@ -249,7 +274,8 @@ class Broker:
             role = hello["role"]
             with connect_broker_database(self.coord) as database:
                 row = database.execute(
-                    "SELECT auth_token FROM roles WHERE role=?", (role,)
+                    "SELECT auth_token,generation,state FROM roles WHERE role=?",
+                    (role,),
                 ).fetchone()
                 if row is None or not secrets.compare_digest(
                     row["auth_token"], hello["token"]
@@ -257,24 +283,39 @@ class Broker:
                     raise OrchestrationError(
                         "Worker authentication failed", "unauthorized"
                     )
+                if hello["generation"] != row["generation"]:
+                    raise OrchestrationError(
+                        "Worker generation is stale", "unauthorized"
+                    )
                 if role in self.clients:
                     raise OrchestrationError(
                         "Worker role is already connected", "conflict"
                     )
+                handover = row["state"] == "restarting"
+                interrupted_handover = row["state"] == "recovering"
+                connected_state = "recovering" if handover else "idle"
                 database.execute(
-                    "UPDATE roles SET connected=1,state='idle',updated_at=? WHERE role=?",
-                    (utc_now(), role),
+                    "UPDATE roles SET connected=1,state=?,updated_at=? WHERE role=?",
+                    (connected_state, utc_now(), role),
                 )
-                record_event(database, "worker_connected", role=role, status="idle")
+                record_event(
+                    database,
+                    "worker_connected",
+                    role=role,
+                    status=connected_state,
+                )
                 workflow_state = database.execute(
                     "SELECT value FROM meta WHERE key='workflow_state'"
                 ).fetchone()["value"]
-            client = Client(role, reader, writer)
+            client = Client(role, reader, writer, hello["generation"])
             self.clients[role] = client
             await self.reply(client, hello["id"], True, status="connected")
             await self.maybe_start_workflow()
             if workflow_state != "connecting":
-                await self.recover_role(client)
+                if interrupted_handover:
+                    await self.mark_handover_uncertain(client)
+                else:
+                    await self.recover_role(client, handover=handover)
             self.refresh_dashboard()
             while True:
                 message = await self.read_frame(reader)
@@ -302,20 +343,35 @@ class Broker:
                 except (BrokenPipeError, ConnectionError, OSError):
                     pass
         finally:
+            handover_uncertain_round: int | None = None
             if client is not None and self.clients.get(client.role) is client:
                 self.clients.pop(client.role, None)
                 with connect_broker_database(self.coord) as database:
+                    row = database.execute(
+                        "SELECT state,generation FROM roles WHERE role=?",
+                        (client.role,),
+                    ).fetchone()
+                    state = row["state"]
+                    if state == "recovering" and row["generation"] == client.generation:
+                        handover_uncertain_round = self._mark_handover_uncertain(
+                            database, client.role
+                        )
+                        state = "uncertain"
+                    elif state not in {"restarting", "recovering", "uncertain"}:
+                        state = "disconnected"
                     database.execute(
-                        "UPDATE roles SET connected=0,state='disconnected',updated_at=? WHERE role=?",
-                        (utc_now(), client.role),
+                        "UPDATE roles SET connected=0,state=?,updated_at=? WHERE role=?",
+                        (state, utc_now(), client.role),
                     )
                     record_event(
                         database,
                         "worker_disconnected",
                         role=client.role,
-                        status="disconnected",
+                        status=state,
                     )
                 self.refresh_dashboard()
+                if handover_uncertain_round is not None:
+                    await self.broadcast_workflow("uncertain", handover_uncertain_round)
             writer.close()
             try:
                 await writer.wait_closed()
@@ -489,15 +545,17 @@ class Broker:
             or not isinstance(token, str)
             or not RPC_TOKEN_PATTERN.fullmatch(token)
             or role not in self.manifest["roles"]
-            or action not in {"send", "abort"}
+            or action not in {"send", "abort", "restart", "restart_failed"}
             or delivery not in {None, "steer", "follow-up"}
             or (action == "send" and (not isinstance(body, str) or not body.strip()))
-            or (action == "abort" and body is not None)
+            or (action != "send" and (body is not None or delivery is not None))
         ):
             raise OrchestrationError(
                 "Control message fields are invalid", "invalid_protocol"
             )
         resumed_round: int | None = None
+        uncertain_round: int | None = None
+        restarted_client: Client | None = None
         with connect_broker_database(self.coord) as database:
             stored_token = database.execute(
                 "SELECT value FROM meta WHERE key='control_token'"
@@ -532,9 +590,28 @@ class Broker:
             command_count = database.execute(
                 "SELECT COUNT(*) AS count FROM control_commands"
             ).fetchone()["count"]
-            if command_count >= MAX_RPC_COMMANDS:
+            role_state = database.execute(
+                "SELECT state FROM roles WHERE role=?", (role,)
+            ).fetchone()["state"]
+            handover_failure_exception = action == "restart_failed" and role_state in {
+                "restarting",
+                "recovering",
+            }
+            if command_count >= MAX_RPC_COMMANDS and not handover_failure_exception:
                 raise OrchestrationError("Broker command registry is full", "rejected")
-            if role not in self.clients:
+            if action == "restart_failed":
+                if role_state in {"restarting", "recovering"}:
+                    status = "accepted"
+                    uncertain_round = self._mark_handover_uncertain(
+                        database, role, delivery_id=command_id
+                    )
+                elif role_state == "uncertain":
+                    status = "accepted"
+                else:
+                    status = "conflict"
+            elif role not in self.clients or (
+                action == "restart" and role not in self.worker_baselines
+            ):
                 status = "uncertain"
             else:
                 status = "accepted"
@@ -553,7 +630,7 @@ class Broker:
                     if workflow_state == "needs_attention":
                         set_meta(database, "workflow_state", "active")
                         resumed_round = current_round
-                else:
+                elif action == "abort":
                     await self.send(
                         self.clients[role],
                         {
@@ -561,6 +638,20 @@ class Broker:
                             "type": "abort",
                             "id": command_id,
                         },
+                    )
+                else:
+                    restarted_client = self.clients[role]
+                    database.execute(
+                        "UPDATE roles SET generation=generation+1,state='restarting',"
+                        "updated_at=? WHERE role=?",
+                        (utc_now(), role),
+                    )
+                    record_event(
+                        database,
+                        "worker_restart_requested",
+                        role=role,
+                        status="accepted",
+                        delivery_id=command_id,
                     )
             now = utc_now()
             database.execute(
@@ -586,9 +677,13 @@ class Broker:
                 "duplicate": False,
             },
         )
+        if restarted_client is not None:
+            restarted_client.writer.close()
         self.refresh_dashboard()
         if resumed_round is not None:
             await self.broadcast_workflow("active", resumed_round)
+        if uncertain_round is not None:
+            await self.broadcast_workflow("uncertain", uncertain_round)
 
     def current_round(self, database: Any) -> int:
         return int(
@@ -616,6 +711,12 @@ class Broker:
 
     async def handle_message(self, client: Client, message: dict[str, Any]) -> None:
         try:
+            with connect_broker_database(self.coord, readonly=True) as database:
+                generation = database.execute(
+                    "SELECT generation FROM roles WHERE role=?", (client.role,)
+                ).fetchone()["generation"]
+            if generation != client.generation:
+                raise OrchestrationError("Worker generation is stale", "unauthorized")
             if message["type"] == "lifecycle":
                 await self.handle_lifecycle(client, message)
             elif message["type"] == "report":
@@ -629,7 +730,36 @@ class Broker:
         finally:
             self.refresh_dashboard()
 
-    async def recover_role(self, client: Client) -> None:
+    def _mark_handover_uncertain(
+        self, database: Any, role: str, *, delivery_id: str | None = None
+    ) -> int:
+        row = database.execute(
+            "SELECT active_assignment_id FROM roles WHERE role=?", (role,)
+        ).fetchone()
+        assignment_id = row["active_assignment_id"] if row is not None else None
+        round_number = self.current_round(database)
+        database.execute(
+            "UPDATE roles SET state='uncertain',updated_at=? WHERE role=?",
+            (utc_now(), role),
+        )
+        set_meta(database, "workflow_state", "uncertain")
+        record_event(
+            database,
+            "worker_handover_uncertain",
+            role=role,
+            round_number=round_number,
+            assignment_id=assignment_id,
+            delivery_id=delivery_id,
+            status="uncertain",
+        )
+        return round_number
+
+    async def mark_handover_uncertain(self, client: Client) -> None:
+        with connect_broker_database(self.coord) as database:
+            round_number = self._mark_handover_uncertain(database, client.role)
+        await self.broadcast_workflow("uncertain", round_number)
+
+    async def recover_role(self, client: Client, *, handover: bool = False) -> None:
         with connect_broker_database(self.coord) as database:
             assignment = database.execute(
                 "SELECT id,round,kind,delivery_id,state FROM assignments "
@@ -637,9 +767,11 @@ class Broker:
                 "ORDER BY created_at DESC LIMIT 1",
                 (client.role,),
             ).fetchone()
-        if assignment is None:
-            return
-        if assignment["state"] in {"delivering", "uncertain"}:
+            current_round = self.current_round(database)
+        if assignment is not None and assignment["state"] in {
+            "delivering",
+            "uncertain",
+        }:
             with connect_broker_database(self.coord) as database:
                 if assignment["state"] == "delivering":
                     database.execute(
@@ -674,12 +806,53 @@ class Broker:
                     )
             await self.broadcast_workflow("uncertain", assignment["round"])
             return
+        if handover:
+            baseline = self.worker_baselines.get(client.role)
+            if baseline is None:
+                await self.mark_handover_uncertain(client)
+                return
+            await self.deliver(
+                client.role, "baseline", current_round, baseline, trigger=False
+            )
+            run_state = self._materialize_pending_run_state(client.role, current_round)
+            if run_state is not None:
+                await self.deliver(
+                    client.role,
+                    "run_state",
+                    current_round,
+                    run_state,
+                    trigger=False,
+                )
+        if assignment is None:
+            if handover:
+                with connect_broker_database(self.coord) as database:
+                    database.execute(
+                        "UPDATE roles SET state='idle',updated_at=? WHERE role=?",
+                        (utc_now(), client.role),
+                    )
+                    record_event(
+                        database,
+                        "worker_handover_recovered",
+                        role=client.role,
+                        round_number=current_round,
+                        status="idle",
+                    )
+            return
+        delivery_id = assignment["delivery_id"]
+        if handover:
+            delivery_id = secrets.token_hex(16)
+            with connect_broker_database(self.coord) as database:
+                database.execute(
+                    "UPDATE assignments SET delivery_id=?,state='delivering',updated_at=? "
+                    "WHERE id=?",
+                    (delivery_id, utc_now(), assignment["id"]),
+                )
         await self.send(
             client,
             {
                 "version": BROKER_PROTOCOL_VERSION,
                 "type": "assignment",
-                "id": assignment["delivery_id"],
+                "id": delivery_id,
                 "assignment_id": assignment["id"],
                 "round": assignment["round"],
                 "kind": assignment["kind"],
@@ -701,6 +874,7 @@ class Broker:
             record_event(database, "workflow_started", status="initializing")
         for role in self.manifest["roles"]:
             baseline = self._baseline(role)
+            self.worker_baselines[role] = baseline
             await self.deliver(role, "baseline", 1, baseline, trigger=False)
         with connect_broker_database(self.coord) as database:
             set_meta(database, "workflow_state", "active")
@@ -744,6 +918,7 @@ class Broker:
     ) -> None:
         if role not in self.clients:
             return
+        await self._flush_pending_run_state(role, round_number)
         assignment_id = secrets.token_hex(16)
         delivery_id = secrets.token_hex(16)
         now = utc_now()
@@ -827,7 +1002,8 @@ class Broker:
         uncertain_round: int | None = None
         with connect_broker_database(self.coord) as database:
             assignment = database.execute(
-                "SELECT id,round FROM assignments WHERE delivery_id=? AND role=?",
+                "SELECT id,round,boundary_effective FROM assignments "
+                "WHERE delivery_id=? AND role=?",
                 (message["delivery_id"], client.role),
             ).fetchone()
             if assignment is not None:
@@ -849,6 +1025,36 @@ class Broker:
                     delivery_id=message["delivery_id"],
                     status=state,
                 )
+                if state == "accepted" and not assignment["boundary_effective"]:
+                    database.execute(
+                        "UPDATE assignments SET boundary_effective=1 WHERE id=?",
+                        (assignment["id"],),
+                    )
+                    record_event(
+                        database,
+                        "context_boundary",
+                        role=client.role,
+                        round_number=assignment["round"],
+                        assignment_id=assignment["id"],
+                        delivery_id=message["delivery_id"],
+                        status="effective",
+                    )
+                role_state = database.execute(
+                    "SELECT state FROM roles WHERE role=?", (client.role,)
+                ).fetchone()["state"]
+                if state == "accepted" and role_state == "recovering":
+                    database.execute(
+                        "UPDATE roles SET state='active',updated_at=? WHERE role=?",
+                        (utc_now(), client.role),
+                    )
+                    record_event(
+                        database,
+                        "worker_handover_recovered",
+                        role=client.role,
+                        round_number=assignment["round"],
+                        assignment_id=assignment["id"],
+                        status="active",
+                    )
                 if state == "uncertain":
                     uncertain_round = assignment["round"]
                     database.execute(
@@ -1111,19 +1317,48 @@ class Broker:
             list(self.latest_reports.values()), round_number
         )
 
+    def _role_has_active_assignment(self, role: str) -> bool:
+        with connect_broker_database(self.coord, readonly=True) as database:
+            row = database.execute(
+                "SELECT active_assignment_id FROM roles WHERE role=?", (role,)
+            ).fetchone()
+        return row is not None and row["active_assignment_id"] is not None
+
+    def _materialize_pending_run_state(
+        self, role: str, round_number: int
+    ) -> str | None:
+        if role in self.pending_run_state:
+            self.pending_run_state.pop(role, None)
+            self.role_run_state[role] = self._run_state_capsule(round_number)
+        return self.role_run_state.get(role)
+
+    async def _flush_pending_run_state(self, role: str, round_number: int) -> None:
+        if role not in self.pending_run_state:
+            return
+        content = self._materialize_pending_run_state(role, round_number)
+        if content is not None:
+            await self.deliver(role, "run_state", round_number, content, trigger=False)
+
     async def _deliver_run_state(
         self, roles: list[str] | tuple[str, ...], round_number: int
     ) -> None:
         content = self._run_state_capsule(round_number)
         for recipient in dict.fromkeys(roles):
-            if recipient in self.clients:
-                await self.deliver(
-                    recipient,
-                    "run_state",
-                    round_number,
-                    content,
-                    trigger=False,
-                )
+            if recipient not in self.clients:
+                continue
+            if recipient in self.pending_run_state or self._role_has_active_assignment(
+                recipient
+            ):
+                self.pending_run_state[recipient] = round_number
+                continue
+            self.role_run_state[recipient] = content
+            await self.deliver(
+                recipient,
+                "run_state",
+                round_number,
+                content,
+                trigger=False,
+            )
 
     async def route_report(
         self, role: str, round_number: int, report: dict[str, Any]

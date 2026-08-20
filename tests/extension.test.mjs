@@ -346,55 +346,71 @@ test("completed assignment pruning cuts synthetic two-round provider context by 
   assert.equal(messages.some((item) => item.role === "toolResult"), true);
 });
 
-test("post-report follow-up prunes the completed assignment and keeps current-turn content", () => {
-  const assignmentId = "a".repeat(32);
-  const custom = (details, content) => ({
+const FIRST_ASSIGNMENT = "a".repeat(32);
+const PRIOR_ASSIGNMENT_TURNS = [
+  "analysis turn one", "tool result one", "analysis turn two", "tool result two",
+  "recovered assignment turn", "accepted report",
+];
+
+function workerMessage(details, content) {
+  return {
     role: "custom",
     customType: "pi-tmux-orchestrator-message-v1",
     content,
     details,
-  });
-  const messages = [
-    custom({ kind: "context", delivery_kind: "baseline", round: 1 }, "bounded baseline"),
-    custom({ kind: "assignment", assignment_id: assignmentId, round: 1 }, "completed assignment"),
-    { role: "assistant", content: [{ type: "text", text: "completed response" }] },
-    { role: "user", content: [{ type: "text", text: "steering during the assignment" }] },
-    { role: "assistant", content: [{ type: "text", text: "completed tool call" }] },
-    { role: "toolResult", content: [{ type: "text", text: "completed tool result" }] },
+  };
+}
+
+function completedAssignmentHistory() {
+  return [
+    workerMessage({ kind: "context", delivery_kind: "baseline", round: 1 }, "bounded baseline"),
+    workerMessage({ kind: "assignment", assignment_id: FIRST_ASSIGNMENT, round: 1 }, "first assignment"),
+    { role: "assistant", content: [{ type: "text", text: "analysis turn one" }] },
+    { role: "toolResult", content: [{ type: "text", text: "tool result one" }] },
+    { role: "assistant", content: [{ type: "text", text: "analysis turn two" }] },
+    { role: "toolResult", content: [{ type: "text", text: "tool result two" }] },
+    workerMessage({ kind: "assignment", assignment_id: FIRST_ASSIGNMENT, round: 1 }, "handover replay"),
+    { role: "assistant", content: [{ type: "text", text: "recovered assignment turn" }] },
     {
       role: "toolResult",
       toolName: "orchestrator_report",
-      details: { assignment_id: assignmentId },
+      details: { assignment_id: FIRST_ASSIGNMENT },
       content: [{ type: "text", text: "accepted report" }],
     },
-    { role: "user", content: [{ type: "text", text: "post-report follow-up" }] },
-    { role: "assistant", content: [{ type: "text", text: "current tool call" }] },
-    { role: "toolResult", content: [{ type: "text", text: "current tool result" }] },
   ];
+}
 
-  const filtered = workerHooks.filterWorkerContext(messages, undefined);
-  assert.equal(filtered.some((item) => item.content === "completed assignment"), false);
-  assert.equal(filtered.some((item) => item.content?.[0]?.text === "completed response"), false);
-  assert.equal(filtered.some((item) => item.content?.[0]?.text === "completed tool call"), false);
-  assert.equal(filtered.some((item) => item.content?.[0]?.text === "completed tool result"), false);
-  assert.equal(filtered.some((item) => item.content?.[0]?.text === "steering during the assignment"), true);
-  assert.equal(filtered.some((item) => item.content?.[0]?.text === "post-report follow-up"), true);
-  assert.equal(filtered.some((item) => item.content?.[0]?.text === "current tool call"), true);
-  assert.equal(filtered.some((item) => item.content?.[0]?.text === "current tool result"), true);
-  assert.equal(messages.length, 10);
+test("assistant and tool turns accumulate throughout the current assignment", () => {
+  const messages = completedAssignmentHistory();
+  for (let end = 3; end <= 6; end += 1) {
+    const visible = workerHooks.filterWorkerContext(messages.slice(0, end));
+    for (const item of messages.slice(2, end)) {
+      assert.equal(visible.includes(item), true, `current-assignment ${item.role} turn was pruned`);
+    }
+  }
+  const completed = workerHooks.filterWorkerContext(messages);
+  for (const canary of PRIOR_ASSIGNMENT_TURNS) {
+    assert.equal(completed.some((item) => item.content?.[0]?.text === canary), true);
+  }
+});
 
-  const settled = workerHooks.filterWorkerContext(messages.slice(0, 7), undefined);
-  assert.equal(settled.some((item) => ["assistant", "toolResult"].includes(item.role)), false);
-
-  const operatorFollowUp = [
-    ...messages.slice(0, 7),
-    custom({ kind: "context", delivery_kind: "operator_message", round: 1 }, "operator follow-up"),
-    { role: "assistant", content: [{ type: "text", text: "operator-turn response" }] },
-  ];
-  const operatorFiltered = workerHooks.filterWorkerContext(operatorFollowUp, undefined);
-  assert.equal(operatorFiltered.some((item) => item.content === "operator follow-up"), true);
-  assert.equal(operatorFiltered.some((item) => item.content?.[0]?.text === "completed response"), false);
-  assert.equal(operatorFiltered.some((item) => item.content?.[0]?.text === "operator-turn response"), true);
+test("completed turns are pruned only at the next distinct assignment boundary", () => {
+  const messages = completedAssignmentHistory();
+  messages.push(
+    { role: "user", content: [{ type: "text", text: "direct steering remains" }] },
+    workerMessage({ kind: "context", delivery_kind: "run_state", round: 2 }, "latest run state"),
+    workerMessage({ kind: "assignment", assignment_id: "b".repeat(32), round: 2 }, "second assignment"),
+    { role: "assistant", content: [{ type: "text", text: "second assignment turn" }] },
+  );
+  const visible = workerHooks.filterWorkerContext(messages);
+  for (const canary of PRIOR_ASSIGNMENT_TURNS) {
+    assert.equal(visible.some((item) => item.content?.[0]?.text === canary), false);
+  }
+  assert.equal(visible.some((item) => item.content?.[0]?.text === "direct steering remains"), true);
+  assert.equal(visible.some((item) => item.content === "latest run state"), true);
+  assert.equal(visible.some((item) => item.content === "second assignment"), true);
+  assert.equal(visible.some((item) => item.content?.[0]?.text === "second assignment turn"), true);
+  assert.equal(messages.length, 13);
 });
 
 test("worker restart restores assignment and dedup state without changing durable usage", () => {
@@ -404,6 +420,16 @@ test("worker restart restores assignment and dedup state without changing durabl
       type: "custom",
       customType: "pi-tmux-orchestrator-delivery-v1",
       data: { kind: "context", delivery_id: "1".repeat(32) },
+    },
+    {
+      type: "custom",
+      customType: "pi-tmux-orchestrator-context-boundary-v1",
+      data: {
+        assignment_id: "a".repeat(32),
+        assignment_kind: "implementation",
+        generation: 1,
+        round: 1,
+      },
     },
     {
       type: "custom",
@@ -455,6 +481,7 @@ test("worker restart restores assignment and dedup state without changing durabl
     kind: "implementation",
   });
   assert.deepEqual([...restored.delivered], ["1".repeat(32), "2".repeat(32), "3".repeat(32)]);
+  assert.deepEqual([...restored.assignmentIds], ["a".repeat(32), assignmentId]);
 
   const usage = workerHooks.totalUsage({
     sessionManager: { getEntries: () => entries },

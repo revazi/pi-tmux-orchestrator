@@ -16,7 +16,7 @@ from .constants import BROKER_PROTOCOL_VERSION, MAX_BROKER_EVENTS
 from .models import OrchestrationError
 from .storage import ensure_private_directory, validate_coordination_directory
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 def utc_now() -> str:
@@ -107,6 +107,7 @@ def initialize_broker_database(
                 kind TEXT NOT NULL,
                 state TEXT NOT NULL,
                 delivery_id TEXT NOT NULL UNIQUE,
+                boundary_effective INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
@@ -173,6 +174,33 @@ def initialize_broker_database(
         record_event(database, "broker_initialized", status="starting")
 
 
+def prepare_broker_database(coord: Path) -> None:
+    """Apply metadata-only forward migrations needed by the live broker."""
+
+    with connect_broker_database(coord) as database:
+        row = database.execute(
+            "SELECT value FROM meta WHERE key='schema_version'"
+        ).fetchone()
+        if row is None:
+            raise OrchestrationError("Broker database schema is unavailable")
+        try:
+            version = int(row["value"])
+        except ValueError as error:
+            raise OrchestrationError("Broker database schema is invalid") from error
+        if version == 1:
+            database.execute(
+                "ALTER TABLE assignments ADD COLUMN "
+                "boundary_effective INTEGER NOT NULL DEFAULT 0"
+            )
+            database.execute(
+                "UPDATE meta SET value=? WHERE key='schema_version'",
+                (str(SCHEMA_VERSION),),
+            )
+            version = SCHEMA_VERSION
+        if version != SCHEMA_VERSION:
+            raise OrchestrationError("Broker database schema is unsupported")
+
+
 def record_event(
     database: sqlite3.Connection,
     event: str,
@@ -199,6 +227,18 @@ def record_event(
 def set_meta(database: sqlite3.Connection, key: str, value: str) -> None:
     database.execute("UPDATE meta SET value=? WHERE key=?", (value, key))
     database.execute("UPDATE meta SET value=? WHERE key='updated_at'", (utc_now(),))
+
+
+def broker_role_generation(coord: Path, role: str) -> int:
+    """Return the broker-authoritative worker generation without exposing tokens."""
+
+    with connect_broker_database(coord, readonly=True) as database:
+        row = database.execute(
+            "SELECT generation FROM roles WHERE role=?", (role,)
+        ).fetchone()
+    if row is None or type(row["generation"]) is not int or row["generation"] < 1:
+        raise OrchestrationError("Broker worker generation is unavailable")
+    return int(row["generation"])
 
 
 def public_broker_snapshot(coord: Path) -> dict[str, Any]:
