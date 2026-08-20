@@ -134,6 +134,8 @@ class DashboardRenderingTests(DashboardFixture):
         expectations = {
             "ready": "success",
             "active": "active",
+            "recovering": "active",
+            "restarting": "active",
             "needs_attention": "warning",
             "uncertain": "error",
             "starting": "muted",

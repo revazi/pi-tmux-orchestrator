@@ -201,7 +201,7 @@ def validate_client_message(value: object) -> dict[str, Any]:
     message_type = value.get("type")
     base = {"version", "type", "role", "token", "id"}
     if message_type == "hello":
-        expected = base
+        expected = base | {"generation"}
     elif message_type == "report":
         expected = base | {"assignment_id", "report"}
     elif message_type == "lifecycle":
@@ -223,6 +223,12 @@ def validate_client_message(value: object) -> dict[str, Any]:
         raise OrchestrationError("Broker token is invalid", "invalid_protocol")
     if not isinstance(message_id, str) or not RPC_TOKEN_PATTERN.fullmatch(message_id):
         raise OrchestrationError("Broker message ID is invalid", "invalid_protocol")
+    if message_type == "hello" and (
+        type(value.get("generation")) is not int or value["generation"] < 1
+    ):
+        raise OrchestrationError(
+            "Broker worker generation is invalid", "invalid_protocol"
+        )
     return value
 
 

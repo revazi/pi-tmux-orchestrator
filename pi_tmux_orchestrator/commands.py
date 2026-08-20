@@ -14,7 +14,11 @@ from typing import Any
 from . import runtime
 from .broker import initialize_broker_run
 from .broker_client import broker_control_request
-from .broker_store import broker_paths, public_broker_snapshot
+from .broker_store import (
+    broker_paths,
+    broker_role_generation,
+    public_broker_snapshot,
+)
 from .configuration import (
     effective_model_config,
     empty_model_config,
@@ -898,7 +902,8 @@ def abort_command(args: argparse.Namespace) -> CommandResult:
 def restart_command(args: argparse.Namespace) -> CommandResult:
     if not args.yes:
         raise OrchestrationError(
-            "restart replaces the role's Pi conversation; pass --yes"
+            "restart respawns the role's worker process and preserves its brokered "
+            "Pi conversation and JSONL history; pass --yes"
         )
     session, coord = resolve_session(args.session)
     manifest = load_manifest(coord, expected_session=session)
@@ -917,22 +922,37 @@ def restart_command(args: argparse.Namespace) -> CommandResult:
     if not args.skip_model_check:
         validate_model(args.role, role)
     save_manifest(coord, manifest)
-    if manifest_transport(manifest) == RPC_TRANSPORT:
-        rpc_paths = rpc_role_paths(coord, args.role, create=True)
-        unlink_private_regular(rpc_paths["state"], f"{args.role} RPC state")
-    command = shlex.join(
-        [
-            str(runtime.SCRIPT_PATH),
-            "_run-agent",
-            "--state-root",
-            str(coord.parent.parent),
-            "--coord",
-            str(coord),
-            "--role",
-            args.role,
-        ]
-    )
-    tmux(["respawn-pane", "-k", "-t", role["pane_id"], command])
+    broker_handover_prepared = manifest.get("version") == 3
+    if broker_handover_prepared:
+        broker_control_request(coord, args.role, "restart")
+    try:
+        if manifest_transport(manifest) == RPC_TRANSPORT:
+            rpc_paths = rpc_role_paths(coord, args.role, create=True)
+            unlink_private_regular(rpc_paths["state"], f"{args.role} RPC state")
+        command = shlex.join(
+            [
+                str(runtime.SCRIPT_PATH),
+                "_run-agent",
+                "--state-root",
+                str(coord.parent.parent),
+                "--coord",
+                str(coord),
+                "--role",
+                args.role,
+            ]
+        )
+        tmux(["respawn-pane", "-k", "-t", role["pane_id"], command])
+    except Exception:
+        if broker_handover_prepared:
+            try:
+                broker_control_request(coord, args.role, "restart_failed")
+            except OrchestrationError as error:
+                raise OrchestrationError(
+                    "role respawn failed after broker restart preparation; "
+                    "handover failure acknowledgement is uncertain",
+                    "broker_uncertain",
+                ) from error
+        raise
     human_print(
         f"Restarted {session}/{args.role} with "
         f"{role['provider']}/{role['model']} thinking={role['thinking']}"
@@ -1111,6 +1131,10 @@ def run_agent_command(args: argparse.Namespace) -> int:
     role = manifest["roles"].get(args.role)
     if role is None:
         raise OrchestrationError(f"Unknown role in manifest: {args.role}")
+    if manifest.get("version") == 3:
+        os.environ["PI_TMUX_ORCHESTRATOR_GENERATION"] = str(
+            broker_role_generation(coord, args.role)
+        )
     if manifest_transport(manifest) == RPC_TRANSPORT:
         return run_rpc_agent(coord, manifest, args.role, role)
     project = manifest["project"]

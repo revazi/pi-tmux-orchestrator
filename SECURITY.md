@@ -60,22 +60,23 @@ diffs, or logs in task or report fields.
 
 The metadata-only SQLite database retains:
 
-- workflow and role lifecycle;
+- workflow and role lifecycle, worker generations, and body-free context-boundary events;
 - assignment/report IDs and report shape counts;
 - verdicts and bounded statuses;
 - command/delivery IDs and state;
 - provider-reported token/cost totals and context pressure.
 
 It does not retain task, parent-context-capsule, assignment, run-state-capsule,
-report, prompt, message, provider, diff, or log bodies. Task, optional bounded
-parent context, and role baseline text enter through one transient private
-startup file deleted after authenticated baseline delivery. Rolling run-state
-capsules exist only in live broker memory and recipient Pi sessions. A bounded
-report replay may exist only in live broker memory for authenticated parent
-observers. Report bodies remain in Pi's own protected session tool results;
-recipient context and
-parent completion/attention updates remain in their Pi sessions. Pi session
-files and local backups remain the operator's responsibility.
+report, prompt, message, provider, diff, or log bodies. Task and optional bounded
+parent context enter through one transient private startup file deleted after
+authenticated baseline delivery. Rendered role baselines and run-state capsules
+remain only in live broker memory and recipient Pi sessions for confirmed
+generation-handover replay. Bounded latest accepted report bodies may exist only
+in live broker memory for rolling-state rendering and authenticated parent
+observer replay. Report bodies remain in Pi's own protected session tool
+results; recipient context and parent completion/attention updates remain in
+their complete Pi JSONL sessions. Pi
+session files and local backups remain the operator's responsibility.
 
 The package extension transfers start/message input through unique private
 temporary files so payloads do not enter subprocess argv, status, details,
@@ -95,8 +96,20 @@ Broker/bridge acknowledgement proves acceptance, not task completion.
 - Delivery and command IDs are 32-character lowercase hexadecimal values.
 - Matching action/role/delivery command retries deduplicate.
 - Conflicting metadata reuse is rejected.
-- Bridge custom entries deduplicate session delivery without adding state to LLM context.
-- A crash in an unprovable delivery window becomes `uncertain`.
+- Bridge custom entries deduplicate session delivery and record body-free
+  assignment boundaries without adding state to LLM context.
+- Pi invokes context projection for every provider request, but each distinct
+  new assignment emits the only metadata-only boundary event that changes the
+  pruning policy; every projection within an assignment retains all current
+  turns.
+- Confirmed restart advances a broker generation, rejects stale bridges, replays
+  the live in-memory baseline and latest coalesced run state (including a
+  replacement deferred during the active assignment), and preserves the Pi
+  conversation. Replaying the same assignment is not a new pruning boundary.
+- A failed local respawn is reported through a body-free authenticated control
+  command, and either that failure or a replacement disconnect marks role and
+  workflow `uncertain` with metadata-only handover evidence.
+- A crash in any other unprovable delivery or handover window becomes `uncertain`.
 - Uncertain work is not blindly replayed and requires explicit retry.
 - The project makes no exactly-once claim.
 
@@ -108,10 +121,11 @@ rather than schedule workflow work.
 
 ## Token data
 
-Token and cost totals come from Pi/provider assistant usage. Reasoning and
-context values are reported only when available. Missing values are not
-estimated. Soft budgets can warn or prevent a future assignment, but cannot
-stop an already-started provider response at an exact token boundary.
+Cumulative token and cost totals come from complete Pi/provider assistant
+usage. Current provider-context occupancy is reported separately when available.
+Missing values are not estimated. Soft budgets can warn or prevent a future
+assignment, but cannot stop an already-started provider response at an exact
+token boundary.
 
 ## Metadata APIs
 

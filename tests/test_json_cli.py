@@ -74,6 +74,19 @@ class JsonMainTests(unittest.TestCase):
                 self.assertTrue(parsed.json_output)
                 self.assertEqual(parsed.command, command)
 
+    def test_restart_confirmation_describes_preserved_brokered_history(self) -> None:
+        code, envelope, _, stderr = self.run_main(
+            ["--json", "restart", "pi-test", "--role", "implementer"]
+        )
+        self.assertEqual(code, 2)
+        self.assertEqual(stderr, "")
+        self.assert_envelope(envelope, "restart", False)
+        self.assertEqual(
+            envelope["error"]["message"],
+            "restart respawns the role's worker process and preserves its brokered "
+            "Pi conversation and JSONL history; pass --yes",
+        )
+
     def test_supervisor_capabilities_keep_the_versioned_json_boundary(self) -> None:
         code, envelope, raw, stderr = self.run_main(
             ["--json", "supervisor", "capabilities"]
@@ -387,6 +400,116 @@ class JsonMainTests(unittest.TestCase):
             self.assertEqual(code, 0)
             self.assert_envelope(envelope, "stop", True)
             self.assertTrue(envelope["data"]["state_retained"])
+
+    def test_broker_restart_uses_authoritative_generation_handover(self) -> None:
+        manifest = {
+            "version": 3,
+            "project": str(ROOT),
+            "window": ORCHESTRATOR.WINDOW,
+            "transport": "tui",
+            "roles": {
+                "implementer": {
+                    "provider": "provider",
+                    "model": "writer",
+                    "thinking": "high",
+                    "tools": None,
+                    "pane_id": "%1",
+                }
+            },
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            coord = Path(directory)
+            with (
+                mock.patch.object(
+                    ORCHESTRATOR,
+                    "resolve_session",
+                    return_value=("pi-test", coord),
+                ),
+                mock.patch.object(ORCHESTRATOR, "load_manifest", return_value=manifest),
+                mock.patch.object(ORCHESTRATOR, "save_manifest"),
+                mock.patch.object(
+                    ORCHESTRATOR,
+                    "broker_control_request",
+                    return_value={"status": "accepted"},
+                ) as broker_control,
+                mock.patch.object(ORCHESTRATOR, "tmux") as tmux,
+            ):
+                code, envelope, _, _ = self.run_main(
+                    [
+                        "--json",
+                        "restart",
+                        "pi-test",
+                        "--role",
+                        "implementer",
+                        "--yes",
+                        "--skip-model-check",
+                    ]
+                )
+        self.assertEqual(code, 0)
+        self.assert_envelope(envelope, "restart", True)
+        broker_control.assert_called_once_with(coord, "implementer", "restart")
+        tmux.assert_called_once()
+
+    def test_failed_broker_restart_respawn_fails_handover_closed(self) -> None:
+        manifest = {
+            "version": 3,
+            "project": str(ROOT),
+            "window": ORCHESTRATOR.WINDOW,
+            "transport": "tui",
+            "roles": {
+                "implementer": {
+                    "provider": "provider",
+                    "model": "writer",
+                    "thinking": "high",
+                    "tools": None,
+                    "pane_id": "%1",
+                }
+            },
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            coord = Path(directory)
+            with (
+                mock.patch.object(
+                    ORCHESTRATOR,
+                    "resolve_session",
+                    return_value=("pi-test", coord),
+                ),
+                mock.patch.object(ORCHESTRATOR, "load_manifest", return_value=manifest),
+                mock.patch.object(ORCHESTRATOR, "save_manifest"),
+                mock.patch.object(
+                    ORCHESTRATOR,
+                    "broker_control_request",
+                    side_effect=[
+                        {"status": "accepted"},
+                        {"status": "accepted"},
+                    ],
+                ) as broker_control,
+                mock.patch.object(
+                    ORCHESTRATOR,
+                    "tmux",
+                    side_effect=subprocess.CalledProcessError(1, ["tmux"]),
+                ),
+            ):
+                code, envelope, _, _ = self.run_main(
+                    [
+                        "--json",
+                        "restart",
+                        "pi-test",
+                        "--role",
+                        "implementer",
+                        "--yes",
+                        "--skip-model-check",
+                    ]
+                )
+        self.assertEqual(code, 1)
+        self.assert_envelope(envelope, "restart", False)
+        self.assertEqual(
+            broker_control.call_args_list,
+            [
+                mock.call(coord, "implementer", "restart"),
+                mock.call(coord, "implementer", "restart_failed"),
+            ],
+        )
 
     def test_broker_status_exposes_parent_observer_endpoint(self) -> None:
         manifest = {

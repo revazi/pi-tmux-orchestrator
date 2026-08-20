@@ -40,6 +40,8 @@ _ACTIVE_STATES = {
     "connecting",
     "delivering",
     "initializing",
+    "recovering",
+    "restarting",
     "started",
     "streaming",
 }
