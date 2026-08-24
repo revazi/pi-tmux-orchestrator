@@ -95,6 +95,27 @@ is the maximum known role pressure; other run categories use known cumulative
 sums. A proven limit creates a metadata-only `budget_exhausted` attention
 state; missing provider values remain unavailable and cannot trigger a gate.
 
+The worker bridge additionally applies assignment-scope `provider_calls`,
+`context_tokens`, and `context_percent` thresholds at supported Pi boundaries.
+Provider calls are counted from the accepted assignment baseline. The first
+proven warning adds one bounded instruction to the next non-report tool result.
+In explicit hard mode, a proven hard threshold allows the current provider
+response to finish, permits `orchestrator_report`, and blocks every other tool
+call with a terminating result. Parallel non-report calls are all blocked and
+terminating; a report in the same batch remains executable. If no report is
+submitted, normal settled-with-assignment handling moves the workflow to
+`needs_attention`. Trigger facts are immutable assignment-local numeric
+metadata and are visible in status, the dashboard (`G~` warning or `G!` hard),
+and Supervisor snapshots.
+
+Direct native-TUI steering or authenticated `send` can ask the worker to submit
+its final report, but does not bypass the active hard guardrail. The live
+`budget-override` command applies only to a broker `budget_exhausted` downstream
+route and never re-enables in-assignment tools. More discovery requires a newly
+confirmed run whose explicit per-run assignment threshold is higher or `off`.
+A worker restart restores warning/hard markers from its exact Pi session and
+cannot silently reset the assignment provider-call count.
+
 ### `start`
 
 Creates a detached tmux grid with an implementer, reviewer, broker/status
@@ -153,8 +174,9 @@ Shows bounded pane metadata, broker workflow state, role lifecycle, actual
 provider token totals when available, and context pressure. The live broker
 pane presents the same metadata hierarchy with exact configured
 provider/model/thinking values, assignment/generation where available,
-soft-budget warnings, a bounded metadata-event rail, and attach/status/stop
-help. Healthy/success is green, active is cyan, attention/budget is yellow,
+soft-budget warnings, assignment guardrail markers, a bounded metadata-event
+rail, and attach/status/stop help. Healthy/success is green, active is cyan,
+attention/budget is yellow,
 error/uncertainty is red, and secondary metadata is dim. `NO_COLOR`,
 `TERM=dumb`, and non-TTY output remain plain. Neither view prints workflow
 payload bodies. See [broker dashboard design](dashboard-design.md) for the
@@ -365,12 +387,15 @@ Retained reports created before assignment accounting expose usage as unavailabl
 Status and Supervisor API expose cumulative per-role/total usage, each role's
 latest assignment usage, and current context occupancy without payload bodies.
 The packaged policy preserves the existing soft role/run operational-token
-warnings. Hard mode evaluates only authoritative retained usage after the active
-report has committed and before downstream assignments. A proven limit blocks
-new assignment creation, records bounded facts, notifies parent observers, and
-requires authenticated `budget-override --yes`. It never silently skips required
-review or marks the stopped workflow ready. A budget cannot stop an
-already-started provider response at an exact token.
+warnings. Assignment provider-call and context-pressure thresholds are checked
+inside the worker at tool boundaries, with one warning and, in explicit hard
+mode, terminating non-report blocks. Hard mode also evaluates authoritative
+retained usage after the active report commits and before downstream
+assignments. A proven downstream limit blocks new assignment creation, records
+bounded facts, notifies parent observers, and requires authenticated
+`budget-override --yes`. Neither path silently skips required review or marks a
+stopped workflow ready. A budget cannot stop an already-started provider
+response at an exact token.
 
 The categories have different meanings and costs:
 

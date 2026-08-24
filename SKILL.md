@@ -56,9 +56,14 @@ The broker stores metadata-only SQLite state and actual provider token totals
 when Pi reports them; it does not persist task, context-capsule, report, prompt,
 message, diff, or log bodies. In explicit hard-budget mode, a proven retained
 limit stops downstream assignments at `budget_exhausted` and returns bounded
-facts to the parent. Never override automatically: the user must explicitly
-authorize `pi-tmux-agents budget-override SESSION --yes`; a broker restart while
-paused fails closed as uncertain. Each role receives a bounded baseline. Later
+facts to the parent. Assignment provider-call/context-pressure guardrails may
+also warn once and, only under explicit hard policy, terminate every non-report
+tool call while leaving `orchestrator_report` available. Direct steering may ask
+for that report but never bypasses the guardrail; the broker budget override
+applies only to a downstream `budget_exhausted` route. Never override
+automatically: the user must explicitly authorize
+`pi-tmux-agents budget-override SESSION --yes`; a broker restart while paused
+fails closed as uncertain. Each role receives a bounded baseline. Later
 evidence is projected as one rolling latest-per-role run-state capsule; updates
 for an active role are coalesced until its next assignment. One metadata-only
 context-boundary event accompanies each new assignment, and only then do

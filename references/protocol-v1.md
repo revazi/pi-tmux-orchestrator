@@ -20,9 +20,9 @@ coordination mechanisms.
   exposes peer credentials.
 
 The control-plane SQLite database stores tokens and metadata, including role
-generations and one assignment-boundary flag/event, but never task, parent
-context capsule, assignment, run-state capsule, report, prompt, message,
-provider response, diff, or log bodies.
+generations, assignment-boundary state, and bounded assignment guardrail facts,
+but never task, parent context capsule, assignment, run-state capsule, report,
+prompt, message, provider response, diff, or log bodies.
 Authenticated parent-observer report bodies are ephemeral in broker memory and
 may become durable only in Pi session history.
 
@@ -72,8 +72,16 @@ poll and must end the turn when there is no active assignment.
    override is accepted. Missing values cannot trigger a gate.
 9. Accepting each new assignment makes one context boundary effective and emits
    one body-free `context_boundary` metadata event. Provider calls within that
-   assignment do not emit reset events.
-10. `approved` marks the workflow `ready`; it does not wake the implementer just
+   assignment do not emit reset events. The bridge counts those calls from the
+   boundary and evaluates configured assignment provider-call/context-pressure
+   thresholds before each tool executes.
+10. A warning crossing is recorded once and appended as one bounded instruction
+    to the next non-report tool result. In explicit hard mode, a hard crossing
+    permits `orchestrator_report` but blocks every discovery or mutation tool in
+    the assistant batch with `terminate: true`. The provider response already in
+    progress is not interrupted. If the worker settles without reporting, the
+    existing `needs_attention` transition applies.
+11. `approved` marks the workflow `ready`; it does not wake the implementer just
    to acknowledge approval. A budget-stopped path cannot skip required review
    and become ready.
 
@@ -160,6 +168,14 @@ lowercase hexadecimal values.
 - Direct user messages and non-orchestrator custom messages are not discarded by
   this projection.
 - Replayed delivery IDs are acknowledged as duplicates.
+- Warning delivery and warning/hard trigger markers are retained as body-free
+  custom Pi entries. Restarting the exact worker session restores them and the
+  cumulative assignment baseline, so warning delivery and provider-call counts
+  do not reset silently.
+- A worker `guardrail` frame contains only assignment ID, level, metric,
+  observed value, and configured threshold. The broker verifies role ownership
+  and the retained effective policy, then immutably stores at most one warning
+  and one hard fact per assignment. Matching retries are duplicates.
 - One report is accepted per assignment. Current bridges attach cumulative and
   boundary-delta provider usage to the report request. The broker validates and
   stores that numeric snapshot in the same transaction as report acceptance,
@@ -224,9 +240,20 @@ assignment scope for provider calls, distinct token categories, provider-reporte
 cost, and context occupancy. The packaged policy preserves the existing soft
 role/run operational-token warnings and defines no hard defaults. Per-run
 CLI/model-tool overrides take precedence over the user-global external file.
-Warn-only mode remains non-blocking. Hard mode gates only a downstream
-assignment after the active report and its actual usage commit atomically. The
-active report remains accepted. An assignment-local override identity includes
+Warn-only mode remains non-blocking. Assignment `provider_calls`,
+`context_tokens`, and `context_percent` warning thresholds are enforced by the
+worker at tool boundaries. Explicit hard mode makes matching hard thresholds
+terminating for every non-report tool call while leaving `orchestrator_report`
+available. Parallel tool preflight therefore yields all-terminating blocked
+results, except that a report call may execute and terminate normally. Direct
+operator steering can request that report but does not bypass the guardrail;
+the live `budget_override` control applies only to a downstream
+`budget_exhausted` route. More tool work requires a newly confirmed run with a
+higher or disabled assignment threshold.
+
+Hard mode also gates a downstream assignment after the active report and its
+actual usage commit atomically. The active report remains accepted. An
+assignment-local override identity includes
 its assignment ID, while role/run overrides cover that threshold for the
 remainder of the live run. Broker interruption while gated or resuming becomes
 `uncertain` because the private pending route cannot be reconstructed. No budget can stop
@@ -244,8 +271,8 @@ acceptance.
 Retained `0.4.x` manifests remain readable and operable through compatibility
 code. Live parent observation requires a broker process from `0.6.0` or later;
 older live runs remain metadata-readable but cannot gain observer support
-without starting a new run. Broker SQLite schema v1-v3 migrates to metadata-only
-schema v4 when a current broker starts; runs without version-1 budget metadata
+without starting a new run. Broker SQLite schema v1-v4 migrates to metadata-only
+schema v5 when a current broker starts; runs without version-1 budget metadata
 retain packaged warn-only behavior. Every manifest created by `0.5.0` or later is version `3` with
 `coordination: "broker-v1"`; there is no option or fallback that starts the
 legacy file coordination protocol.

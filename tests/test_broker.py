@@ -151,6 +151,30 @@ class ProtocolTests(unittest.TestCase):
         with self.assertRaisesRegex(Exception, "missing or unknown fields"):
             validate_client_message({**current, "unknown": 1})
 
+    def test_guardrail_message_is_bounded_numeric_metadata_only(self) -> None:
+        message = {
+            "version": BROKER_PROTOCOL_VERSION,
+            "type": "guardrail",
+            "role": "implementer",
+            "token": "a" * 32,
+            "id": "b" * 32,
+            "assignment_id": "c" * 32,
+            "level": "hard",
+            "metric": "provider_calls",
+            "observed": 6,
+            "threshold": 6,
+        }
+        self.assertEqual(validate_client_message(message), message)
+        for changes in (
+            {"metric": "cache_read_tokens"},
+            {"observed": 5},
+            {"threshold": 0},
+            {"observed": "6"},
+            {"report": "PRIVATE_REPORT_CANARY"},
+        ):
+            with self.subTest(changes=changes), self.assertRaises(Exception):
+                validate_client_message({**message, **changes})
+
     def test_report_acl_and_bounds(self) -> None:
         report = validate_report(
             {
@@ -330,7 +354,7 @@ class BrokerStoreTests(BrokerFixture):
             report_columns = {
                 row["name"] for row in database.execute("PRAGMA table_info(reports)")
             }
-        self.assertEqual(schema_version, "4")
+        self.assertEqual(schema_version, "5")
         self.assertIn("boundary_effective", assignment_columns)
         self.assertIn("provider_calls", role_columns)
         self.assertIn("peak_context_tokens", report_columns)
@@ -344,6 +368,7 @@ class BrokerStoreTests(BrokerFixture):
                 )
             }
         self.assertIn("budget_exhaustions", budget_tables)
+        self.assertIn("assignment_guardrails", budget_tables)
 
     def test_new_run_has_metadata_only_sqlite_and_no_coordination_payload_files(
         self,
@@ -835,6 +860,137 @@ class BrokerObserverTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
         self.assertIn("latest round=1 kind=review", status_delta)
         self.assertIn("input=40 cache-read=120 cache-write=5 output=15", status_delta)
         self.assertNotIn("Atomic metadata only", status_delta)
+
+    async def test_assignment_guardrail_metadata_is_authenticated_immutable_and_public(
+        self,
+    ) -> None:
+        policy = packaged_budget_policy()
+        policy["enforcement"] = "hard"
+        policy["warning"]["assignment"]["provider_calls"] = 4
+        policy["hard"]["assignment"]["provider_calls"] = 6
+        initialize_broker_run(
+            self.coord,
+            self.manifest,
+            "PRIVATE_TASK_CANARY",
+            {},
+            budget_policy=policy,
+        )
+        broker = Broker(self.coord, self.manifest)
+        assignment_id = "6" * 32
+        now = broker_store.utc_now()
+        with broker_store.connect_broker_database(self.coord) as database:
+            database.execute(
+                "INSERT INTO assignments(id,role,round,kind,state,delivery_id,created_at,updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (
+                    assignment_id,
+                    "implementer",
+                    1,
+                    "implementation",
+                    "accepted",
+                    "7" * 32,
+                    now,
+                    now,
+                ),
+            )
+            database.execute(
+                "UPDATE roles SET active_assignment_id=?,state='active' "
+                "WHERE role='implementer'",
+                (assignment_id,),
+            )
+        client = Client("implementer", mock.Mock(), mock.Mock())
+        warning = {
+            "id": "8" * 32,
+            "assignment_id": assignment_id,
+            "level": "warning",
+            "metric": "provider_calls",
+            "observed": 4,
+            "threshold": 4,
+        }
+        hard = {
+            "id": "9" * 32,
+            "assignment_id": assignment_id,
+            "level": "hard",
+            "metric": "provider_calls",
+            "observed": 6,
+            "threshold": 6,
+        }
+        with mock.patch.object(broker, "reply", new=mock.AsyncMock()) as reply:
+            await broker.handle_guardrail(client, warning)
+            await broker.handle_guardrail(
+                client, {**warning, "id": "a" * 32, "observed": 5}
+            )
+            await broker.handle_guardrail(client, hard)
+        self.assertEqual(
+            [call.kwargs["status"] for call in reply.await_args_list],
+            ["recorded", "duplicate", "recorded"],
+        )
+        with self.assertRaisesRegex(Exception, "not owned"):
+            await broker.handle_guardrail(
+                Client("reviewer", mock.Mock(), mock.Mock()),
+                {**hard, "id": "b" * 32},
+            )
+        with self.assertRaisesRegex(Exception, "not active"):
+            await broker.handle_guardrail(
+                client,
+                {**hard, "id": "c" * 32, "threshold": 7},
+            )
+        snapshot = broker_store.public_broker_snapshot(self.coord)
+        implementer = next(
+            role for role in snapshot["roles"] if role["role"] == "implementer"
+        )
+        self.assertEqual(
+            implementer["assignment_guardrails"],
+            [
+                {
+                    "assignment_id": assignment_id,
+                    "level": "warning",
+                    "metric": "provider_calls",
+                    "observed": 4,
+                    "threshold": 4,
+                },
+                {
+                    "assignment_id": assignment_id,
+                    "level": "hard",
+                    "metric": "provider_calls",
+                    "observed": 6,
+                    "threshold": 6,
+                },
+            ],
+        )
+        self.assertFalse(snapshot["guardrails"]["payload_bodies_included"])
+        from pi_tmux_orchestrator.supervisor_api import supervisor_snapshot
+
+        supervised = supervisor_snapshot(self.manifest["session"], self.coord.name)
+        supervised_implementer = next(
+            role for role in supervised["roles"] if role["name"] == "implementer"
+        )
+        self.assertEqual(
+            supervised_implementer["runtime"]["state"]["assignment_guardrails"],
+            implementer["assignment_guardrails"],
+        )
+        self.assertFalse(supervised["guardrails"]["payload_bodies_included"])
+        encoded = json.dumps(snapshot)
+        self.assertNotIn("PRIVATE_TASK_CANARY", encoded)
+        with broker_store.connect_broker_database(
+            self.coord, readonly=True
+        ) as database:
+            rows = list(
+                database.execute(
+                    "SELECT level,metric,observed,threshold FROM assignment_guardrails "
+                    "ORDER BY level"
+                )
+            )
+            self.assertEqual(len(rows), 2)
+            self.assertEqual(
+                database.execute(
+                    "SELECT COUNT(*) FROM events WHERE event='assignment_guardrail'"
+                ).fetchone()[0],
+                2,
+            )
+            for row in database.iterdump():
+                self.assertNotIn("PRIVATE_TASK_CANARY", row)
+                self.assertNotIn("PRIVATE_REPORT_CANARY", row)
 
     async def test_hard_budget_accepts_report_gates_routing_and_resumes_once(
         self,

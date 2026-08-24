@@ -16,12 +16,13 @@ from .budgeting import (
     BUDGET_INTEGER_METRICS,
     packaged_budget_policy,
     validate_budget_config,
+    worker_assignment_guardrail_policy,
 )
 from .constants import BROKER_PROTOCOL_VERSION, MAX_BROKER_EVENTS, MAX_JSON_ITEMS
 from .models import OrchestrationError
 from .storage import ensure_private_directory, validate_coordination_directory
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 def utc_now() -> str:
@@ -179,6 +180,16 @@ def initialize_broker_database(
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS assignment_guardrails (
+                assignment_id TEXT NOT NULL REFERENCES assignments(id),
+                role TEXT NOT NULL REFERENCES roles(role),
+                level TEXT NOT NULL,
+                metric TEXT NOT NULL,
+                observed REAL NOT NULL,
+                threshold REAL NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY(assignment_id, level)
+            );
             CREATE TABLE IF NOT EXISTS events (
                 sequence INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp TEXT NOT NULL,
@@ -272,6 +283,20 @@ def prepare_broker_database(coord: Path) -> None:
                 )
             """)
             version = 4
+        if version == 4:
+            database.execute("""
+                CREATE TABLE assignment_guardrails (
+                    assignment_id TEXT NOT NULL REFERENCES assignments(id),
+                    role TEXT NOT NULL REFERENCES roles(role),
+                    level TEXT NOT NULL,
+                    metric TEXT NOT NULL,
+                    observed REAL NOT NULL,
+                    threshold REAL NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY(assignment_id, level)
+                )
+            """)
+            version = 5
         if version != SCHEMA_VERSION:
             raise OrchestrationError("Broker database schema is unsupported")
         database.execute(
@@ -305,6 +330,24 @@ def record_event(
 def set_meta(database: sqlite3.Connection, key: str, value: str) -> None:
     database.execute("UPDATE meta SET value=? WHERE key=?", (value, key))
     database.execute("UPDATE meta SET value=? WHERE key='updated_at'", (utc_now(),))
+
+
+def retained_budget_policy(database: sqlite3.Connection) -> dict[str, Any]:
+    row = database.execute(
+        "SELECT value FROM meta WHERE key='budget_policy'"
+    ).fetchone()
+    if row is None:
+        return packaged_budget_policy()
+    try:
+        value = json.loads(row["value"])
+    except (TypeError, json.JSONDecodeError) as error:
+        raise OrchestrationError("Retained budget policy is invalid") from error
+    return validate_budget_config(value)
+
+
+def worker_guardrail_policy(coord: Path) -> dict[str, Any]:
+    with connect_broker_database(coord, readonly=True) as database:
+        return worker_assignment_guardrail_policy(retained_budget_policy(database))
 
 
 def broker_role_generation(coord: Path, role: str) -> int:
@@ -374,6 +417,37 @@ def _public_budget_exhaustion(row: sqlite3.Row | None) -> dict[str, Any] | None:
     }
 
 
+def _public_assignment_guardrails(
+    database: sqlite3.Connection,
+    *,
+    role: str,
+    active_assignment_id: str | None,
+) -> list[dict[str, Any]]:
+    assignment_id = active_assignment_id
+    if assignment_id is None:
+        row = database.execute(
+            "SELECT id FROM assignments WHERE role=? "
+            "ORDER BY created_at DESC,rowid DESC LIMIT 1",
+            (role,),
+        ).fetchone()
+        assignment_id = row["id"] if row is not None else None
+    if assignment_id is None:
+        return []
+    values = []
+    for row in database.execute(
+        "SELECT assignment_id,level,metric,observed,threshold "
+        "FROM assignment_guardrails WHERE role=? AND assignment_id=? "
+        "ORDER BY CASE level WHEN 'warning' THEN 0 ELSE 1 END",
+        (role, assignment_id),
+    ):
+        value = dict(row)
+        if value["metric"] in BUDGET_INTEGER_METRICS:
+            value["observed"] = int(value["observed"])
+            value["threshold"] = int(value["threshold"])
+        values.append(value)
+    return values
+
+
 def public_broker_snapshot(coord: Path) -> dict[str, Any]:
     with connect_broker_database(coord, readonly=True) as database:
         meta = {
@@ -418,6 +492,15 @@ def public_broker_snapshot(coord: Path) -> dict[str, Any]:
                 ).fetchone()
             value["assignment"] = assignment
             value["latest_assignment_usage"] = _public_assignment_usage(latest)
+            value["assignment_guardrails"] = (
+                _public_assignment_guardrails(
+                    database,
+                    role=value["role"],
+                    active_assignment_id=assignment_id,
+                )
+                if schema_version >= 5
+                else []
+            )
             roles.append(value)
         event_bounds = database.execute(
             "SELECT MIN(sequence) AS earliest, MAX(sequence) AS latest FROM events"
@@ -477,6 +560,9 @@ def public_broker_snapshot(coord: Path) -> dict[str, Any]:
                     meta.get("workflow_state") == "budget_exhausted"
                     and exhaustion is not None
                 ),
+                "payload_bodies_included": False,
+            },
+            "guardrails": {
                 "payload_bodies_included": False,
             },
             "usage": {

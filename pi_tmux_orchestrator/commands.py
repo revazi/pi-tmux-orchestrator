@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import json
 import os
 import shlex
 import shutil
@@ -24,6 +25,7 @@ from .broker_store import (
     broker_paths,
     broker_role_generation,
     public_broker_snapshot,
+    worker_guardrail_policy,
 )
 from .configuration import (
     effective_model_config,
@@ -689,6 +691,11 @@ def status_command(args: argparse.Namespace) -> CommandResult:
             latest_usage = _status_assignment_usage(worker)
             if latest_usage is not None:
                 human_print(f"    {latest_usage}")
+            for guardrail in worker.get("assignment_guardrails", []):
+                human_print(
+                    f"    guardrail={guardrail['level']} metric={guardrail['metric']} "
+                    f"observed={guardrail['observed']} threshold={guardrail['threshold']}"
+                )
     else:
         human_print("Legacy coordination files:")
         files = coordination_files(coord)
@@ -1323,9 +1330,13 @@ def run_agent_command(args: argparse.Namespace) -> int:
     environment["PI_SKIP_VERSION_CHECK"] = "1"
     environment["PI_TELEMETRY"] = "0"
     if manifest.get("version") == 3:
+        guardrails = worker_guardrail_policy(coord)
         environment["PI_TMUX_ORCHESTRATOR_ROLE"] = args.role
         environment["PI_TMUX_ORCHESTRATOR_TOKEN"] = token
         environment["PI_TMUX_ORCHESTRATOR_SOCKET"] = str(broker_paths(coord)["socket"])
+        environment["PI_TMUX_ORCHESTRATOR_GUARDRAILS"] = json.dumps(
+            guardrails, separators=(",", ":"), sort_keys=True
+        )
     os.chdir(project)
     os.execvpe(command[0], command, environment)
     return 0

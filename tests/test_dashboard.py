@@ -143,6 +143,30 @@ class DashboardRenderingTests(DashboardFixture):
         self.assertIn("pi-tmux-agents stop pi-dashboard-test --yes", rendered)
         self.assertIn("prefix + L return", rendered)
 
+    def test_assignment_guardrail_markers_are_visible_in_every_layout(self) -> None:
+        snapshot = copy.deepcopy(self.snapshot)
+        snapshot["roles"][0]["assignment_guardrails"] = [
+            {
+                "assignment_id": "c" * 32,
+                "level": "hard",
+                "metric": "provider_calls",
+                "observed": 6,
+                "threshold": 6,
+            }
+        ]
+        for width, height in ((180, 30), (80, 18), (45, 14)):
+            with self.subTest(width=width):
+                rendered = render_dashboard(
+                    self.manifest,
+                    snapshot,
+                    self.events,
+                    width=width,
+                    height=height,
+                    color=False,
+                )
+                self.assertIn("G!", rendered)
+                self.assertNotIn("c" * 32, rendered)
+
     def test_state_and_color_semantics_are_bounded_and_consistent(self) -> None:
         expectations = {
             "ready": "success",

@@ -110,6 +110,8 @@ def supervisor_capabilities() -> dict[str, Any]:
             "provider_reported_only": True,
             "hard_assignment_gate": True,
             "authenticated_budget_override": True,
+            "in_assignment_guardrails": True,
+            "guardrail_metadata": True,
         },
         "limits": {
             "page_items": MAX_JSON_ITEMS,
@@ -369,6 +371,7 @@ def supervisor_snapshot(session: str, run_id: str | None) -> dict[str, Any]:
             "host_adapter": {"name": "tmux", "runtime_status": "not_observed"},
             "workflow": snapshot["workflow"],
             "budget": snapshot["budget"],
+            "guardrails": snapshot["guardrails"],
             "usage": snapshot["usage"],
             "roles": roles,
             "paths": {"coordination": str(coord)},

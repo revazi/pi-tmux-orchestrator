@@ -12,6 +12,7 @@ All notable changes to this project are documented here.
 - Added bounded Supervisor API/CLI assignment-usage analytics grouped by run, role, round, and assignment kind, plus compact cumulative/latest-delta indicators in status and the broker dashboard
 - Added a strict versioned user-global provider-usage budget policy with warning/hard run, role, and assignment thresholds, explicit CLI/model-tool per-run overrides, dry-run confirmation metadata, and retained numeric policy state
 - Added report-time hard-budget gates that preserve the accepted report, stop downstream assignments in an explicit metadata-only attention state, notify parent observers with bounded facts, and require a deduplicated authenticated operator override to resume
+- Added restart-safe in-assignment provider-call and context-pressure guardrails that warn once, deterministically terminate parallel non-report tools at explicit hard thresholds, preserve final reporting, and retain only bounded assignment-local metadata
 
 ## 0.8.1 - 2026-08-20
 

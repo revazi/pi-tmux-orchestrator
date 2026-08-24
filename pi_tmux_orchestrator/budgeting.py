@@ -33,6 +33,9 @@ BUDGET_INTEGER_METRICS = frozenset(
 )
 BUDGET_NUMBER_METRICS = frozenset({"cost_total", "context_percent"})
 BUDGET_METRICS = BUDGET_INTEGER_METRICS | BUDGET_NUMBER_METRICS
+ASSIGNMENT_GUARDRAIL_METRICS = frozenset(
+    {"provider_calls", "context_tokens", "context_percent"}
+)
 BUDGET_CONFIG_FIELDS = frozenset({"version", "enforcement", *BUDGET_LEVELS})
 MAX_BUDGET_INTEGER = 10**12
 MAX_BUDGET_COST = 10**9
@@ -52,6 +55,23 @@ _PACKAGED_BUDGET_POLICY = {
 
 def packaged_budget_policy() -> dict[str, Any]:
     return deepcopy(_PACKAGED_BUDGET_POLICY)
+
+
+def worker_assignment_guardrail_policy(policy: object) -> dict[str, Any]:
+    """Project only thresholds enforceable at a supported worker boundary."""
+
+    validated = validate_budget_config(policy)
+    return {
+        "enforcement": validated["enforcement"],
+        **{
+            level: {
+                metric: value
+                for metric, value in validated[level]["assignment"].items()
+                if metric in ASSIGNMENT_GUARDRAIL_METRICS
+            }
+            for level in BUDGET_LEVELS
+        },
+    }
 
 
 def budget_config_path(project: Path | None = None) -> Path:

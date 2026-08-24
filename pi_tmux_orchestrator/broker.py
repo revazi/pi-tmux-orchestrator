@@ -24,6 +24,7 @@ from .broker_store import (
     prepare_broker_database,
     public_broker_snapshot,
     record_event,
+    retained_budget_policy,
     set_meta,
     utc_now,
 )
@@ -849,6 +850,8 @@ class Broker:
                 await self.handle_lifecycle(client, message)
             elif message["type"] == "report":
                 await self.handle_report(client, message)
+            elif message["type"] == "guardrail":
+                await self.handle_guardrail(client, message)
             elif message["type"] == "ack":
                 await self.handle_delivery_ack(client, message)
             else:
@@ -1208,6 +1211,59 @@ class Broker:
         if uncertain_round is not None:
             await self.broadcast_workflow("uncertain", uncertain_round)
         await self.reply(client, message["id"], True, status="recorded")
+
+    async def handle_guardrail(self, client: Client, message: dict[str, Any]) -> None:
+        assignment_id = message["assignment_id"]
+        level = message["level"]
+        metric = message["metric"]
+        threshold = message["threshold"]
+        with connect_broker_database(self.coord) as database:
+            assignment = database.execute(
+                "SELECT role,round FROM assignments WHERE id=?",
+                (assignment_id,),
+            ).fetchone()
+            if assignment is None or assignment["role"] != client.role:
+                raise OrchestrationError(
+                    "Guardrail assignment is not owned by this role", "forbidden"
+                )
+            policy = retained_budget_policy(database)
+            configured = policy[level]["assignment"].get(metric)
+            if configured != threshold or (
+                level == "hard" and policy["enforcement"] != "hard"
+            ):
+                raise OrchestrationError(
+                    "Guardrail threshold is not active for this run", "forbidden"
+                )
+            cursor = database.execute(
+                "INSERT OR IGNORE INTO assignment_guardrails("
+                "assignment_id,role,level,metric,observed,threshold,created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    assignment_id,
+                    client.role,
+                    level,
+                    metric,
+                    message["observed"],
+                    threshold,
+                    utc_now(),
+                ),
+            )
+            duplicate = cursor.rowcount == 0
+            if not duplicate:
+                record_event(
+                    database,
+                    "assignment_guardrail",
+                    role=client.role,
+                    round_number=assignment["round"],
+                    assignment_id=assignment_id,
+                    status=level,
+                )
+        await self.reply(
+            client,
+            message["id"],
+            True,
+            status="duplicate" if duplicate else "recorded",
+        )
 
     async def handle_lifecycle(self, client: Client, message: dict[str, Any]) -> None:
         state = message["state"]

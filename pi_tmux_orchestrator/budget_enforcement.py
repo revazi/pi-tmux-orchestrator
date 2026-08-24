@@ -6,8 +6,8 @@ import hashlib
 import json
 from typing import Any
 
-from .budgeting import BUDGET_METRICS, packaged_budget_policy, validate_budget_config
-from .models import OrchestrationError
+from .broker_store import retained_budget_policy
+from .budgeting import BUDGET_METRICS
 
 _USAGE_COLUMNS = {
     "provider_calls": "provider_calls",
@@ -20,19 +20,6 @@ _USAGE_COLUMNS = {
     "context_tokens": "context_tokens",
     "context_percent": "context_percent",
 }
-
-
-def retained_budget_policy(database: Any) -> dict[str, Any]:
-    row = database.execute(
-        "SELECT value FROM meta WHERE key='budget_policy'"
-    ).fetchone()
-    if row is None:
-        return packaged_budget_policy()
-    try:
-        value = json.loads(row["value"])
-    except (TypeError, json.JSONDecodeError) as error:
-        raise OrchestrationError("Retained budget policy is invalid") from error
-    return validate_budget_config(value)
 
 
 def budget_fingerprint(finding: dict[str, Any]) -> str:

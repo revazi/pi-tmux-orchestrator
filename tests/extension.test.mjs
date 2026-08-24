@@ -269,6 +269,116 @@ test("worker report schemas expose only fields valid for each role", () => {
   assert.deepEqual(reviewer.required, ["kind", "summary", "verdict"]);
 });
 
+test("worker guardrail policy is strict and preserves supported assignment thresholds", () => {
+  const policy = workerHooks.parseGuardrailPolicy(JSON.stringify({
+    enforcement: "hard",
+    warning: { provider_calls: 4, context_percent: 70 },
+    hard: { provider_calls: 6, context_percent: 85 },
+  }));
+  assert.deepEqual(policy, {
+    enforcement: "hard",
+    warning: { provider_calls: 4, context_percent: 70 },
+    hard: { provider_calls: 6, context_percent: 85 },
+  });
+  assert.equal(workerHooks.parseGuardrailPolicy("{}"), undefined);
+  assert.equal(workerHooks.parseGuardrailPolicy(JSON.stringify({
+    enforcement: "hard", warning: {}, hard: { cache_read_tokens: 10 },
+  })), undefined);
+  assert.equal(workerHooks.parseGuardrailPolicy(JSON.stringify({
+    enforcement: "hard", warning: { provider_calls: 7 }, hard: { provider_calls: 6 },
+  })), undefined);
+  assert.deepEqual(workerHooks.hardGuardrailThresholds({
+    enforcement: "warn-only", hard: { provider_calls: 6 },
+  }), {});
+});
+
+test("worker counts provider turns from the assignment boundary and observes context pressure", () => {
+  const entries = [
+    {
+      type: "message",
+      message: { role: "assistant", usage: { input: 10, output: 2, cacheRead: 3, cacheWrite: 0, cost: { total: 0.01 } } },
+    },
+    {
+      type: "message",
+      message: { role: "assistant", usage: { input: 20, output: 4, cacheRead: 6, cacheWrite: 1, cost: { total: 0.02 } } },
+    },
+  ];
+  const ctx = {
+    sessionManager: { getEntries: () => entries },
+    getContextUsage: () => ({ tokens: 850, contextWindow: 1_000, percent: 85 }),
+  };
+  assert.deepEqual(workerHooks.guardrailObservations(ctx, {
+    providerCalls: 1,
+    input: 10,
+    output: 2,
+    cacheRead: 3,
+    cacheWrite: 0,
+    cost: { total: 0.01 },
+  }), {
+    provider_calls: 1,
+    context_tokens: 850,
+    context_percent: 85,
+  });
+  assert.deepEqual(
+    workerHooks.firstGuardrailFinding(
+      { provider_calls: 2, context_percent: 80 },
+      { provider_calls: 1, context_tokens: 850, context_percent: 85 },
+    ),
+    { metric: "context_percent", observed: 85, threshold: 80 },
+  );
+});
+
+test("hard assignment guardrails terminate every parallel discovery or mutation call but allow reports", () => {
+  const finding = { metric: "provider_calls", observed: 6, threshold: 6 };
+  const decisions = ["read", "bash", "edit", "write", "unknown_tool"]
+    .map((toolName) => workerHooks.hardGuardrailDecision(toolName, finding));
+  assert.equal(decisions.every((decision) => decision.block && decision.terminate), true);
+  assert.equal(
+    decisions.every((decision) => /Only orchestrator_report remains available/.test(decision.reason)),
+    true,
+  );
+  assert.equal(workerHooks.hardGuardrailDecision("orchestrator_report", finding), undefined);
+  assert.equal(workerHooks.hardGuardrailDecision("read", undefined), undefined);
+});
+
+test("assignment guardrail warning is bounded and restart state prevents duplicate warning or hard facts", () => {
+  const assignmentId = "d".repeat(32);
+  const finding = { metric: "context_percent", observed: 75, threshold: 70 };
+  const content = workerHooks.appendGuardrailWarning([{ type: "text", text: "tool output" }], finding);
+  assert.equal(content.length, 2);
+  assert.match(content[1].text, /Assignment guardrail warning/);
+  assert.ok(content[1].text.length < 300);
+  const restored = workerHooks.restoreGuardrailState([
+    {
+      type: "custom",
+      customType: "pi-tmux-orchestrator-guardrail-v1",
+      data: { assignment_id: assignmentId, level: "warning", status: "triggered", ...finding },
+    },
+    {
+      type: "custom",
+      customType: "pi-tmux-orchestrator-guardrail-v1",
+      data: { assignment_id: assignmentId, level: "warning", status: "delivered" },
+    },
+    {
+      type: "custom",
+      customType: "pi-tmux-orchestrator-guardrail-v1",
+      data: {
+        assignment_id: assignmentId,
+        level: "hard",
+        status: "triggered",
+        metric: "provider_calls",
+        observed: 6,
+        threshold: 6,
+      },
+    },
+  ], assignmentId);
+  assert.deepEqual(restored, {
+    warning: finding,
+    hard: { metric: "provider_calls", observed: 6, threshold: 6 },
+    warningDelivered: true,
+  });
+});
+
 test("worker queues baseline context before a triggered assignment turn", () => {
   assert.deepEqual(workerHooks.deliveryOptions(false), {
     triggerTurn: false,
