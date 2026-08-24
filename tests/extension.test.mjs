@@ -496,6 +496,28 @@ test("worker restart restores assignment and dedup state without changing durabl
     },
     {
       type: "custom",
+      customType: "pi-tmux-orchestrator-context-boundary-v1",
+      data: {
+        assignment_id: assignmentId,
+        assignment_kind: "implementation",
+        generation: 1,
+        round: 2,
+        usage_baseline: {
+          providerCalls: 1,
+          input: 120,
+          output: 30,
+          cacheRead: 20,
+          cacheWrite: 10,
+          reasoning: 5,
+          cost: { total: 0.25 },
+          contextTokens: 150,
+          contextWindow: 1_000,
+          contextPercent: 15,
+        },
+      },
+    },
+    {
+      type: "custom",
       customType: "pi-tmux-orchestrator-delivery-v1",
       data: {
         kind: "assignment",
@@ -505,6 +527,21 @@ test("worker restart restores assignment and dedup state without changing durabl
         round: 2,
       },
     },
+    {
+      type: "message",
+      message: {
+        role: "assistant",
+        usage: {
+          input: 20,
+          output: 10,
+          cacheRead: 5,
+          cacheWrite: 0,
+          reasoning: 2,
+          totalTokens: 190,
+          cost: { total: 0.05 },
+        },
+      },
+    },
   ];
 
   const restored = workerHooks.restoreWorkerState(entries);
@@ -512,25 +549,121 @@ test("worker restart restores assignment and dedup state without changing durabl
     id: assignmentId,
     round: 2,
     kind: "implementation",
+    usageBaseline: {
+      providerCalls: 1,
+      input: 120,
+      output: 30,
+      cacheRead: 20,
+      cacheWrite: 10,
+      reasoning: 5,
+      cost: { total: 0.25 },
+      contextTokens: 150,
+      contextWindow: 1_000,
+      contextPercent: 15,
+    },
   });
   assert.deepEqual([...restored.delivered], ["1".repeat(32), "2".repeat(32), "3".repeat(32)]);
   assert.deepEqual([...restored.assignmentIds], ["a".repeat(32), assignmentId]);
 
-  const usage = workerHooks.totalUsage({
+  const ctx = {
     sessionManager: { getEntries: () => entries },
-    getContextUsage: () => ({ tokens: 150, contextWindow: 1_000, percent: 15 }),
-  });
-  assert.deepEqual(usage, {
-    input: 120,
-    output: 30,
-    cacheRead: 20,
+    getContextUsage: () => ({ tokens: 190, contextWindow: 1_000, percent: 19 }),
+  };
+  assert.deepEqual(workerHooks.totalUsage(ctx), {
+    providerCalls: 2,
+    input: 140,
+    output: 40,
+    cacheRead: 25,
     cacheWrite: 10,
-    reasoning: 5,
-    cost: { total: 0.25 },
-    contextTokens: 150,
+    reasoning: 7,
+    cost: { total: 0.3 },
+    contextTokens: 190,
     contextWindow: 1_000,
-    contextPercent: 15,
+    contextPercent: 19,
   });
+  assert.deepEqual(
+    workerHooks.reportUsage(ctx, restored.activeAssignment.usageBaseline).assignment,
+    {
+      providerCalls: 1,
+      input: 20,
+      output: 10,
+      cacheRead: 5,
+      cacheWrite: 0,
+      reasoning: 2,
+      cost: { total: 0.05 },
+      contextTokens: 190,
+      contextWindow: 1_000,
+      contextPercent: 19,
+      peakContextTokens: 190,
+    },
+  );
+});
+
+test("assignment usage is an immutable delta from the accepted boundary", () => {
+  const entries = [
+    {
+      type: "message",
+      message: {
+        role: "assistant",
+        usage: {
+          input: 100, output: 20, cacheRead: 30, cacheWrite: 10,
+          reasoning: 4, totalTokens: 160, cost: { total: 0.2 },
+        },
+      },
+    },
+    {
+      type: "message",
+      message: {
+        role: "assistant",
+        usage: {
+          input: 40, output: 15, cacheRead: 120, cacheWrite: 5,
+          reasoning: 6, totalTokens: 180, cost: { total: 0.15 },
+        },
+      },
+    },
+  ];
+  const ctx = {
+    sessionManager: { getEntries: () => entries },
+    getContextUsage: () => ({ tokens: 175, contextWindow: 1_000, percent: 17.5 }),
+  };
+  const baseline = {
+    providerCalls: 1,
+    input: 100,
+    output: 20,
+    cacheRead: 30,
+    cacheWrite: 10,
+    reasoning: 4,
+    cost: { total: 0.2 },
+  };
+
+  assert.deepEqual(workerHooks.reportUsage(ctx, baseline), {
+    cumulative: {
+      providerCalls: 2,
+      input: 140,
+      output: 35,
+      cacheRead: 150,
+      cacheWrite: 15,
+      reasoning: 10,
+      cost: { total: 0.35 },
+      contextTokens: 175,
+      contextWindow: 1_000,
+      contextPercent: 17.5,
+    },
+    assignment: {
+      providerCalls: 1,
+      input: 40,
+      output: 15,
+      cacheRead: 120,
+      cacheWrite: 5,
+      reasoning: 6,
+      cost: { total: 0.15 },
+      contextTokens: 175,
+      contextWindow: 1_000,
+      contextPercent: 17.5,
+      peakContextTokens: 180,
+    },
+  });
+  assert.equal(workerHooks.reportUsage(ctx, { providerCalls: -1 }), null);
 });
 
 test("model discovery uses bounded available metadata and respects scoped models", async () => {
@@ -657,6 +790,19 @@ test("authenticated broker observer steers progress and returns structured final
           role: "reviewer",
           round: 2,
           report: { kind: "review", summary: "The implementation is ready.", verdict: "approved" },
+          usage: {
+            providerCalls: 1,
+            input: 40,
+            output: 15,
+            cacheRead: 120,
+            cacheWrite: 5,
+            reasoning: 6,
+            cost: { total: 0.15 },
+            contextTokens: 175,
+            contextWindow: 1_000,
+            contextPercent: 17.5,
+            peakContextTokens: 180,
+          },
         }));
         socket.write(testHooks.brokerFrame({
           version: 1, type: "workflow", session, state: "ready", round: 2,
@@ -728,6 +874,43 @@ test("observer snapshots require bounded report replay metadata", () => {
   assert.throws(
     () => testHooks.validateObserverFrame({ version: 1, type: "toString", session: "pi-test" }, "pi-test", "a".repeat(32)),
     /unsupported_observer_frame/,
+  );
+});
+
+test("observer report usage is bounded numeric metadata", () => {
+  const value = {
+    version: 1,
+    type: "report",
+    session: "pi-test",
+    id: "a".repeat(32),
+    assignment_id: "b".repeat(32),
+    role: "reviewer",
+    round: 1,
+    report: { kind: "review", summary: "Ready.", verdict: "approved" },
+    usage: {
+      providerCalls: 1,
+      input: 40,
+      output: 15,
+      cacheRead: 120,
+      cacheWrite: 5,
+      cost: { total: 0.15 },
+      peakContextTokens: 180,
+    },
+  };
+  assert.equal(testHooks.validateObserverFrame(value, "pi-test", "c".repeat(32)), value);
+  assert.throws(
+    () => testHooks.validateObserverFrame({
+      ...value,
+      usage: { ...value.usage, input: -1 },
+    }, "pi-test", "c".repeat(32)),
+    /invalid_observer_report/,
+  );
+  assert.throws(
+    () => testHooks.validateObserverFrame({
+      ...value,
+      usage: { ...value.usage, private_body: "not metadata" },
+    }, "pi-test", "c".repeat(32)),
+    /invalid_observer_report/,
   );
 });
 

@@ -107,10 +107,11 @@ function deliveryEntryData(entry) {
   return entry.data;
 }
 
-function boundaryAssignmentId(entry) {
+function boundaryData(entry) {
   if (`${entry.type}:${entry.customType}` !== `custom:${BOUNDARY_ENTRY}`) return undefined;
-  const assignmentId = Object(entry.data).assignment_id;
-  return /^[a-f0-9]{32}$/.test(assignmentId) ? assignmentId : undefined;
+  const data = Object(entry.data);
+  if (!/^[a-f0-9]{32}$/.test(data.assignment_id)) return undefined;
+  return { assignmentId: data.assignment_id, usageBaseline: validUsageBaseline(data.usage_baseline) };
 }
 
 function assignmentFromDelivery(data) {
@@ -140,18 +141,31 @@ function applyRestoredDelivery(state, data) {
   }
 }
 
+function applyRestoredBoundary(state, baselines, entry) {
+  const boundary = boundaryData(entry);
+  if (!boundary) return;
+  state.assignmentIds.add(boundary.assignmentId);
+  if (boundary.usageBaseline) baselines.set(boundary.assignmentId, boundary.usageBaseline);
+}
+
+function attachRestoredBaseline(state, baselines) {
+  const baseline = baselines.get(state.activeAssignment?.id);
+  if (baseline) state.activeAssignment.usageBaseline = baseline;
+}
+
 function restoreWorkerState(entries) {
   const state = {
     activeAssignment: undefined,
     assignmentIds: new Set(),
     delivered: new Set(),
   };
+  const baselines = new Map();
   for (const entry of entries) {
-    const boundaryId = boundaryAssignmentId(entry);
-    if (boundaryId) state.assignmentIds.add(boundaryId);
+    applyRestoredBoundary(state, baselines, entry);
     const data = deliveryEntryData(entry);
     if (data) applyRestoredDelivery(state, data);
   }
+  attachRestoredBaseline(state, baselines);
   return state;
 }
 
@@ -271,29 +285,132 @@ function normalizeReport(input) {
   };
 }
 
+const TOKEN_USAGE_KEYS = ["input", "output", "cacheRead", "cacheWrite"];
+const CONTEXT_USAGE_KEYS = ["contextTokens", "contextWindow", "contextPercent"];
+
+function assistantEntries(entries) {
+  return entries.filter((entry) => entry.type === "message" && entry.message?.role === "assistant");
+}
+
+function nonnegativeInteger(value) {
+  return Number.isInteger(value) && value >= 0;
+}
+
+function baselineIntegersAreValid(value) {
+  return ["providerCalls", ...TOKEN_USAGE_KEYS].every((key) => nonnegativeInteger(value[key]));
+}
+
+function baselineCostIsValid(value) {
+  return Number.isFinite(value.cost?.total) && value.cost.total >= 0;
+}
+
+function baselineReasoningIsValid(value) {
+  return value.reasoning === undefined || nonnegativeInteger(value.reasoning);
+}
+
+function baselineObject(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function validUsageBaseline(value) {
+  if (!baselineObject(value)) return undefined;
+  const checks = [
+    baselineIntegersAreValid(value),
+    baselineCostIsValid(value),
+    baselineReasoningIsValid(value),
+  ];
+  return checks.every(Boolean) ? value : undefined;
+}
+
 function totalUsage(ctx) {
-  const totals = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: null, cost: { total: 0 } };
+  const totals = {
+    providerCalls: 0,
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    cost: { total: 0 },
+  };
+  let reasoning = 0;
   let hasReasoning = false;
-  for (const entry of ctx.sessionManager.getEntries()) {
-    if (entry.type !== "message" || entry.message?.role !== "assistant" || !entry.message.usage) continue;
+  for (const entry of assistantEntries(ctx.sessionManager.getEntries())) {
+    totals.providerCalls += 1;
     const usage = entry.message.usage;
-    for (const key of ["input", "output", "cacheRead", "cacheWrite"]) {
+    if (!usage) continue;
+    for (const key of TOKEN_USAGE_KEYS) {
       if (Number.isFinite(usage[key]) && usage[key] >= 0) totals[key] += usage[key];
     }
     if (Number.isFinite(usage.reasoning) && usage.reasoning >= 0) {
-      totals.reasoning = (totals.reasoning || 0) + usage.reasoning;
+      reasoning += usage.reasoning;
       hasReasoning = true;
     }
     if (Number.isFinite(usage.cost?.total) && usage.cost.total >= 0) totals.cost.total += usage.cost.total;
   }
-  if (!hasReasoning) delete totals.reasoning;
-  const context = ctx.getContextUsage();
-  if (context) {
-    totals.contextTokens = context.tokens;
-    totals.contextWindow = context.contextWindow;
-    totals.contextPercent = context.percent;
+  if (hasReasoning) totals.reasoning = reasoning;
+  const current = ctx.getContextUsage();
+  if (current) {
+    totals.contextTokens = current.tokens;
+    totals.contextWindow = current.contextWindow;
+    totals.contextPercent = current.percent;
   }
   return totals;
+}
+
+function availableContextUsage(usage) {
+  return Object.fromEntries(
+    CONTEXT_USAGE_KEYS.filter((key) => usage[key] !== undefined).map((key) => [key, usage[key]]),
+  );
+}
+
+function optionalReasoningDelta(current, baseline) {
+  if (current.reasoning === undefined) return {};
+  return { reasoning: current.reasoning - (baseline.reasoning || 0) };
+}
+
+function usageDelta(current, baseline) {
+  return {
+    providerCalls: current.providerCalls - baseline.providerCalls,
+    input: current.input - baseline.input,
+    output: current.output - baseline.output,
+    cacheRead: current.cacheRead - baseline.cacheRead,
+    cacheWrite: current.cacheWrite - baseline.cacheWrite,
+    cost: {
+      total: Number((current.cost.total - baseline.cost.total).toFixed(12)),
+    },
+    ...optionalReasoningDelta(current, baseline),
+    ...availableContextUsage(current),
+  };
+}
+
+function assignmentPeakContext(entries, baselineCalls) {
+  const tokens = assistantEntries(entries)
+    .slice(baselineCalls)
+    .map((entry) => entry.message.usage?.totalTokens)
+    .filter(nonnegativeInteger);
+  return tokens.length ? Math.max(...tokens) : undefined;
+}
+
+function addPeakContext(assignment, observedPeak) {
+  const candidates = [observedPeak, assignment.contextTokens].filter(nonnegativeInteger);
+  if (candidates.length) assignment.peakContextTokens = Math.max(...candidates);
+}
+
+function reportUsage(ctx, baseline) {
+  const acceptedBaseline = validUsageBaseline(baseline);
+  if (!acceptedBaseline) return null;
+  const cumulative = totalUsage(ctx);
+  const assignment = usageDelta(cumulative, acceptedBaseline);
+  const peak = assignmentPeakContext(
+    ctx.sessionManager.getEntries(), acceptedBaseline.providerCalls,
+  );
+  addPeakContext(assignment, peak);
+  return { cumulative, assignment };
+}
+
+function assignmentUsageBaseline(isAssignment, value, activeAssignment, ctx) {
+  if (!isAssignment) return undefined;
+  if (activeAssignment?.id === value.assignment_id) return activeAssignment.usageBaseline;
+  return totalUsage(ctx);
 }
 
 // fallow-ignore-next-line unused-export -- loaded explicitly by Python worker launch commands
@@ -383,6 +500,9 @@ export default function orchestratorWorker(pi) {
       assignment_kind: isAssignment ? value.kind : null,
       round: value.round,
     };
+    const usageBaseline = assignmentUsageBaseline(
+      isAssignment, value, activeAssignment, context,
+    );
     pi.sendMessage(
       { customType: MESSAGE_TYPE, content: value.content, display: true, details },
       deliveryOptions(value.trigger === true),
@@ -393,12 +513,20 @@ export default function orchestratorWorker(pi) {
         assignment_kind: value.kind,
         generation: GENERATION,
         round: value.round,
+        usage_baseline: usageBaseline,
       });
       assignmentIds.add(value.assignment_id);
     }
     pi.appendEntry(DELIVERY_ENTRY, details);
     delivered.add(value.id);
-    if (isAssignment) activeAssignment = { id: value.assignment_id, round: value.round, kind: value.kind };
+    if (isAssignment) {
+      activeAssignment = {
+        id: value.assignment_id,
+        round: value.round,
+        kind: value.kind,
+        usageBaseline,
+      };
+    }
     acknowledge(value.id, "accepted");
   }
 
@@ -482,11 +610,16 @@ export default function orchestratorWorker(pi) {
       "After reporting, end the turn. Never wait, sleep, or poll for coordination work.",
     ],
     parameters: reportParameters(ROLE),
-    async execute(_toolCallId, input) {
+    async execute(_toolCallId, input, _signal, _onUpdate, ctx) {
       if (!activeAssignment) throw new Error("no_active_orchestration_assignment");
       const report = normalizeReport(input);
       const assignment = activeAssignment;
-      const response = await brokerRequest(message("report", { assignment_id: assignment.id, report }));
+      const usage = reportUsage(ctx, assignment.usageBaseline);
+      const response = await brokerRequest(message("report", {
+        assignment_id: assignment.id,
+        report,
+        usage,
+      }));
       if (!response.success) throw new Error("orchestration_report_rejected");
       pi.appendEntry(DELIVERY_ENTRY, { kind: "report", assignment_id: assignment.id, report_id: response.id });
       activeAssignment = undefined;
@@ -519,6 +652,7 @@ export const testHooks = {
   deliveryOptions,
   filterWorkerContext,
   reportParameters,
+  reportUsage,
   restoreWorkerState,
   totalUsage,
 };

@@ -265,17 +265,28 @@ controls. There is no option to start that protocol in current releases.
 
 The worker bridge reports Pi/provider values for:
 
+- provider-call count;
 - input and output tokens;
 - cache-read and cache-write tokens;
 - reasoning tokens when exposed;
 - total cost;
-- current context tokens/window/percentage.
+- current context tokens/window/percentage;
+- peak observed context tokens for each assignment when available.
+
+At each accepted assignment boundary the worker records a numeric cumulative
+baseline outside model context. Its terminating report carries current
+cumulative usage and the assignment-local delta. Report metadata, cumulative
+role usage, and one immutable assignment usage result commit together before
+any specialist/reviewer/next-round routing. Duplicate reports cannot overwrite
+that result, and restart recovery reuses the recorded baseline rather than
+starting from zero.
 
 Unavailable values remain unavailable; no provider token estimate is invented.
-Status and Supervisor API expose cumulative per-role/total usage separately
-from each role's current context occupancy. Soft role/run budgets warn before
-subsequent work. A budget cannot stop an already-started provider response at an
-exact token.
+Retained reports created before assignment accounting expose usage as unavailable.
+Status and Supervisor API expose cumulative per-role/total usage, each role's
+latest assignment usage, and current context occupancy without payload bodies.
+Soft role/run budgets warn before subsequent work. A budget cannot stop an
+already-started provider response at an exact token.
 
 The categories have different meanings and costs:
 

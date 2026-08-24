@@ -201,16 +201,17 @@ def validate_client_message(value: object) -> dict[str, Any]:
     message_type = value.get("type")
     base = {"version", "type", "role", "token", "id"}
     if message_type == "hello":
-        expected = base | {"generation"}
+        expected = (base | {"generation"},)
     elif message_type == "report":
-        expected = base | {"assignment_id", "report"}
+        legacy = base | {"assignment_id", "report"}
+        expected = (legacy, legacy | {"usage"})
     elif message_type == "lifecycle":
-        expected = base | {"state", "usage"}
+        expected = (base | {"state", "usage"},)
     elif message_type == "ack":
-        expected = base | {"delivery_id", "status"}
+        expected = (base | {"delivery_id", "status"},)
     else:
         raise OrchestrationError("Unsupported broker message type", "invalid_protocol")
-    if set(value) != expected:
+    if set(value) not in expected:
         raise OrchestrationError(
             "Broker message has missing or unknown fields", "invalid_protocol"
         )

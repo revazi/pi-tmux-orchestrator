@@ -81,6 +81,36 @@ class BrokerFixture(unittest.TestCase):
         save_manifest(self.coord, self.manifest)
 
 
+def assignment_usage_snapshot(*, assignment_input: int = 40) -> dict[str, object]:
+    return {
+        "cumulative": {
+            "providerCalls": 3,
+            "input": 140,
+            "output": 35,
+            "cacheRead": 150,
+            "cacheWrite": 15,
+            "reasoning": 10,
+            "cost": {"total": 0.35},
+            "contextTokens": 175,
+            "contextWindow": 1_000,
+            "contextPercent": 17.5,
+        },
+        "assignment": {
+            "providerCalls": 1,
+            "input": assignment_input,
+            "output": 15,
+            "cacheRead": 120,
+            "cacheWrite": 5,
+            "reasoning": 6,
+            "cost": {"total": 0.15},
+            "contextTokens": 175,
+            "contextWindow": 1_000,
+            "contextPercent": 17.5,
+            "peakContextTokens": 180,
+        },
+    }
+
+
 class ProtocolTests(unittest.TestCase):
     def test_frame_round_trip_is_strict_and_bounded(self) -> None:
         value = {"version": 1, "type": "response", "success": True}
@@ -102,6 +132,22 @@ class ProtocolTests(unittest.TestCase):
             invalid = {**hello, "generation": generation}
             with self.assertRaisesRegex(Exception, "generation is invalid"):
                 validate_client_message(invalid)
+
+    def test_report_message_accepts_bounded_usage_and_legacy_shape(self) -> None:
+        message = {
+            "version": BROKER_PROTOCOL_VERSION,
+            "type": "report",
+            "role": "reviewer",
+            "token": "a" * 32,
+            "id": "b" * 32,
+            "assignment_id": "c" * 32,
+            "report": {"kind": "review", "summary": "Ready.", "verdict": "approved"},
+        }
+        self.assertEqual(validate_client_message(message), message)
+        current = {**message, "usage": assignment_usage_snapshot()}
+        self.assertEqual(validate_client_message(current), current)
+        with self.assertRaisesRegex(Exception, "missing or unknown fields"):
+            validate_client_message({**current, "unknown": 1})
 
     def test_report_acl_and_bounds(self) -> None:
         report = validate_report(
@@ -237,11 +283,15 @@ class ContextCapsuleTests(unittest.TestCase):
 
 
 class BrokerStoreTests(BrokerFixture):
-    def test_schema_one_adds_only_metadata_boundary_state(self) -> None:
+    def test_schema_one_migrates_boundary_and_assignment_usage_metadata(self) -> None:
         with broker_store.connect_broker_database(self.coord) as database:
             database.executescript("""
                 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
                 INSERT INTO meta(key,value) VALUES ('schema_version','1');
+                CREATE TABLE roles (
+                    role TEXT PRIMARY KEY,
+                    generation INTEGER NOT NULL DEFAULT 1
+                );
                 CREATE TABLE assignments (
                     id TEXT PRIMARY KEY,
                     role TEXT NOT NULL,
@@ -252,6 +302,14 @@ class BrokerStoreTests(BrokerFixture):
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
+                CREATE TABLE reports (
+                    id TEXT PRIMARY KEY,
+                    assignment_id TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    round INTEGER NOT NULL,
+                    kind TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
                 """)
         broker_store.prepare_broker_database(self.coord)
         with broker_store.connect_broker_database(
@@ -260,12 +318,20 @@ class BrokerStoreTests(BrokerFixture):
             schema_version = database.execute(
                 "SELECT value FROM meta WHERE key='schema_version'"
             ).fetchone()["value"]
-            columns = {
+            assignment_columns = {
                 row["name"]
                 for row in database.execute("PRAGMA table_info(assignments)")
             }
-        self.assertEqual(schema_version, "2")
-        self.assertIn("boundary_effective", columns)
+            role_columns = {
+                row["name"] for row in database.execute("PRAGMA table_info(roles)")
+            }
+            report_columns = {
+                row["name"] for row in database.execute("PRAGMA table_info(reports)")
+            }
+        self.assertEqual(schema_version, "3")
+        self.assertIn("boundary_effective", assignment_columns)
+        self.assertIn("provider_calls", role_columns)
+        self.assertIn("peak_context_tokens", report_columns)
 
     def test_new_run_has_metadata_only_sqlite_and_no_coordination_payload_files(
         self,
@@ -307,6 +373,7 @@ class BrokerStoreTests(BrokerFixture):
         self.assertLess(len(os.fsencode(socket_path)), 100)
         snapshot = broker_store.public_broker_snapshot(self.coord)
         self.assertEqual(snapshot["workflow"]["state"], "starting")
+        self.assertEqual(snapshot["usage"]["provider_calls"], 0)
         self.assertEqual(snapshot["usage"]["total_tokens"], 0)
         self.assertTrue(snapshot["usage"]["actual_provider_usage_only"])
         self.assertFalse(snapshot["usage"]["soft_total_budget_exceeded"])
@@ -315,9 +382,61 @@ class BrokerStoreTests(BrokerFixture):
             {role["state"] for role in snapshot["roles"]}, {"disconnected"}
         )
         self.assertEqual({role["assignment"] for role in snapshot["roles"]}, {None})
+        self.assertEqual(
+            {role["latest_assignment_usage"] for role in snapshot["roles"]}, {None}
+        )
         self.assertFalse(
             any("active_assignment_id" in role for role in snapshot["roles"])
         )
+
+    def test_protocol_v1_retained_reports_keep_assignment_usage_unavailable(
+        self,
+    ) -> None:
+        initialize_broker_run(self.coord, self.manifest, "task", {})
+        now = broker_store.utc_now()
+        with broker_store.connect_broker_database(self.coord) as database:
+            database.execute(
+                "INSERT INTO assignments(id,role,round,kind,state,delivery_id,created_at,updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (
+                    "4" * 32,
+                    "reviewer",
+                    1,
+                    "review",
+                    "completed",
+                    "5" * 32,
+                    now,
+                    now,
+                ),
+            )
+            database.execute(
+                "INSERT INTO reports(id,assignment_id,role,round,kind,verdict,summary_chars,"
+                "changed_path_count,check_count,finding_count,risk_count,limitation_count,created_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    "6" * 32,
+                    "4" * 32,
+                    "reviewer",
+                    1,
+                    "review",
+                    "approved",
+                    10,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    now,
+                ),
+            )
+            database.execute("UPDATE meta SET value='2' WHERE key='schema_version'")
+        snapshot = broker_store.public_broker_snapshot(self.coord)
+        reviewer = next(
+            role for role in snapshot["roles"] if role["role"] == "reviewer"
+        )
+        self.assertIsNone(snapshot["usage"]["provider_calls"])
+        self.assertEqual(reviewer["latest_assignment_usage"]["assignment_id"], "4" * 32)
+        self.assertIsNone(reviewer["latest_assignment_usage"]["usage"])
 
     def test_supervisor_command_status_reads_broker_metadata(self) -> None:
         from pi_tmux_orchestrator.supervisor_api import supervisor_command_status
@@ -448,6 +567,121 @@ class BrokerObserverTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
         finally:
             broker.stopping.set()
             await run_task
+
+    async def test_report_usage_is_atomic_immutable_and_rejects_malformed_input(
+        self,
+    ) -> None:
+        initialize_broker_run(self.coord, self.manifest, "task", {})
+        broker = Broker(self.coord, self.manifest)
+        assignment_id = "d" * 32
+        now = broker_store.utc_now()
+        with broker_store.connect_broker_database(self.coord) as database:
+            database.execute(
+                "INSERT INTO assignments(id,role,round,kind,state,delivery_id,created_at,updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (
+                    assignment_id,
+                    "reviewer",
+                    1,
+                    "review",
+                    "accepted",
+                    "e" * 32,
+                    now,
+                    now,
+                ),
+            )
+            database.execute(
+                "UPDATE roles SET active_assignment_id=?,state='active' WHERE role='reviewer'",
+                (assignment_id,),
+            )
+        client = Client("reviewer", mock.Mock(), mock.Mock())
+        report = {
+            "kind": "review",
+            "summary": "Atomic metadata only.",
+            "verdict": "approved",
+        }
+        malformed = assignment_usage_snapshot()
+        malformed["assignment"]["input"] = -1  # type: ignore[index]
+        with self.assertRaisesRegex(Exception, "provider usage is invalid"):
+            await broker.handle_report(
+                client,
+                {
+                    "id": "1" * 32,
+                    "assignment_id": assignment_id,
+                    "report": report,
+                    "usage": malformed,
+                },
+            )
+        with broker_store.connect_broker_database(
+            self.coord, readonly=True
+        ) as database:
+            self.assertEqual(
+                database.execute("SELECT COUNT(*) FROM reports").fetchone()[0], 0
+            )
+
+        async def assert_usage_precedes_routing(*_args: object) -> None:
+            snapshot = broker_store.public_broker_snapshot(self.coord)
+            reviewer = next(
+                role for role in snapshot["roles"] if role["role"] == "reviewer"
+            )
+            self.assertEqual(reviewer["provider_calls"], 3)
+            self.assertEqual(
+                reviewer["latest_assignment_usage"]["usage"]["input_tokens"], 40
+            )
+
+        with (
+            mock.patch.object(
+                broker, "route_report", side_effect=assert_usage_precedes_routing
+            ) as route_report,
+            mock.patch.object(broker, "broadcast", new=mock.AsyncMock()) as broadcast,
+            mock.patch.object(broker, "reply", new=mock.AsyncMock()) as reply,
+        ):
+            await broker.handle_report(
+                client,
+                {
+                    "id": "2" * 32,
+                    "assignment_id": assignment_id,
+                    "report": report,
+                    "usage": assignment_usage_snapshot(),
+                },
+            )
+            changed = assignment_usage_snapshot(assignment_input=99)
+            await broker.handle_report(
+                client,
+                {
+                    "id": "3" * 32,
+                    "assignment_id": assignment_id,
+                    "report": report,
+                    "usage": changed,
+                },
+            )
+
+        route_report.assert_awaited_once_with("reviewer", 1, mock.ANY)
+        self.assertEqual(broadcast.await_args.args[0]["usage"]["input"], 40)
+        self.assertEqual(
+            [call.kwargs["status"] for call in reply.await_args_list],
+            ["accepted", "duplicate"],
+        )
+        snapshot = broker_store.public_broker_snapshot(self.coord)
+        reviewer = next(
+            role for role in snapshot["roles"] if role["role"] == "reviewer"
+        )
+        self.assertEqual(
+            reviewer["latest_assignment_usage"]["usage"]["input_tokens"], 40
+        )
+        self.assertEqual(snapshot["usage"]["provider_calls"], 3)
+        from pi_tmux_orchestrator.supervisor_api import supervisor_snapshot
+
+        supervisor = supervisor_snapshot(self.manifest["session"], self.coord.name)
+        supervised_reviewer = next(
+            role for role in supervisor["roles"] if role["name"] == "reviewer"
+        )
+        self.assertEqual(
+            supervised_reviewer["runtime"]["state"]["latest_assignment_usage"][
+                "assignment_id"
+            ],
+            assignment_id,
+        )
 
     def test_rolling_state_keeps_latest_role_beyond_observer_replay_window(
         self,
