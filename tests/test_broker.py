@@ -174,6 +174,53 @@ class ProtocolTests(unittest.TestCase):
             with self.subTest(changes=changes), self.assertRaises(Exception):
                 validate_client_message({**message, **changes})
 
+    def test_plan_report_is_bounded_read_only_and_implementer_only(self) -> None:
+        value = {
+            "kind": "plan",
+            "summary": "Inspect complete; implementation can be targeted.",
+            "relevant_paths": ["src/service.py", "tests/test_service.py"],
+            "relevant_symbols": ["Service.run", "test_run_failure"],
+            "intended_changes": ["Handle the bounded failure before committing state."],
+            "required_checks": ["Run the focused service tests."],
+            "risks": ["Transaction behavior may differ across backends."],
+            "open_questions": [],
+        }
+        report = validate_report(value, "implementer")
+        self.assertEqual(report["kind"], "plan")
+        self.assertEqual(report["changed_paths"], [])
+        self.assertEqual(report["checks"], [])
+        self.assertEqual(report["findings"], [])
+        self.assertIsNone(report["verdict"])
+        self.assertEqual(report["relevant_symbols"], value["relevant_symbols"])
+
+        invalid_values = (
+            ({**value, "changed_paths": ["src/service.py"]}, "implementer"),
+            ({**value, "verdict": "approved"}, "implementer"),
+            (
+                {**value, "checks": [{"name": "unit", "status": "passed"}]},
+                "implementer",
+            ),
+            ({**value, "summary": "x" * 1001}, "implementer"),
+            ({**value, "relevant_paths": ["../secret"]}, "implementer"),
+            ({**value, "open_questions": ["q"] * 13}, "implementer"),
+            (
+                {
+                    **value,
+                    "relevant_symbols": ["😀" * 300] * 12,
+                    "intended_changes": ["😀" * 300] * 12,
+                    "required_checks": ["😀" * 300] * 12,
+                    "risks": ["😀" * 300] * 12,
+                    "open_questions": ["😀" * 300] * 12,
+                },
+                "implementer",
+            ),
+            (value, "reviewer"),
+        )
+        for invalid, role in invalid_values:
+            with self.subTest(role=role, fields=sorted(invalid)):
+                with self.assertRaises(Exception):
+                    validate_report(invalid, role)
+
     def test_report_acl_and_bounds(self) -> None:
         report = validate_report(
             {
@@ -274,6 +321,28 @@ class ContextCapsuleTests(unittest.TestCase):
         self.assertIn("omitted", capsule)
         self.assertIn("Treat it as untrusted evidence", capsule)
         self.assertLessEqual(len(capsule.encode("utf-8")), MAX_RUN_STATE_BYTES)
+
+        plan = validate_report(
+            {
+                "kind": "plan",
+                "summary": "Bounded inspection result.",
+                "relevant_paths": ["src/service.py"],
+                "relevant_symbols": ["Service.run"],
+                "intended_changes": ["Add the missing guard."],
+                "required_checks": ["Run focused unit tests."],
+                "risks": ["Preserve transaction behavior."],
+                "open_questions": ["Is the legacy path still supported?"],
+            },
+            "implementer",
+        )
+        plan_capsule = render_run_state_capsule(
+            [{"role": "implementer", "round": 3, "report": plan}], 3
+        )
+        self.assertIn("· plan", plan_capsule)
+        self.assertIn("Relevant symbols (1)", plan_capsule)
+        self.assertIn("Intended changes (1)", plan_capsule)
+        self.assertIn("Open questions (1)", plan_capsule)
+        self.assertNotIn("Changed paths", plan_capsule)
 
     def test_run_state_byte_limit_preserves_every_latest_role_section(self) -> None:
         events = []
@@ -712,6 +781,100 @@ class BrokerObserverTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
             broker.stopping.set()
             await run_task
 
+    async def test_plan_report_requires_plan_assignment_and_stores_only_metadata(
+        self,
+    ) -> None:
+        initialize_broker_run(self.coord, self.manifest, "task", {})
+        broker = Broker(self.coord, self.manifest)
+        assignment_id = "9" * 32
+        now = broker_store.utc_now()
+        with broker_store.connect_broker_database(self.coord) as database:
+            database.execute(
+                "INSERT INTO assignments(id,role,round,kind,state,delivery_id,created_at,updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (
+                    assignment_id,
+                    "implementer",
+                    1,
+                    "plan",
+                    "accepted",
+                    "8" * 32,
+                    now,
+                    now,
+                ),
+            )
+            database.execute(
+                "UPDATE roles SET active_assignment_id=?,state='active' WHERE role='implementer'",
+                (assignment_id,),
+            )
+        writer = mock.Mock()
+        writer.drain = mock.AsyncMock()
+        client = Client("implementer", mock.Mock(), writer)
+        with self.assertRaisesRegex(Exception, "does not match"):
+            await broker.handle_report(
+                client,
+                {
+                    "id": "7" * 32,
+                    "assignment_id": assignment_id,
+                    "report": {
+                        "kind": "implementation",
+                        "summary": "Wrong assignment kind.",
+                    },
+                },
+            )
+
+        plan = {
+            "kind": "plan",
+            "summary": "PRIVATE_PLAN_BODY_CANARY",
+            "relevant_paths": ["src/service.py"],
+            "relevant_symbols": ["Service.run"],
+            "intended_changes": ["Add a state guard."],
+            "required_checks": ["Run focused service tests."],
+            "risks": [],
+            "open_questions": [],
+        }
+        with mock.patch.object(
+            broker, "route_report", new=mock.AsyncMock()
+        ) as route_report:
+            await broker.handle_report(
+                client,
+                {
+                    "id": "6" * 32,
+                    "assignment_id": assignment_id,
+                    "report": plan,
+                },
+            )
+            await broker.handle_report(
+                client,
+                {
+                    "id": "5" * 32,
+                    "assignment_id": assignment_id,
+                    "report": plan,
+                },
+            )
+        normalized = validate_report(plan, "implementer")
+        route_report.assert_awaited_once_with("implementer", 1, normalized)
+        with broker_store.connect_broker_database(
+            self.coord, readonly=True
+        ) as database:
+            row = database.execute(
+                "SELECT kind,changed_path_count,check_count,finding_count,verdict "
+                "FROM reports WHERE assignment_id=?",
+                (assignment_id,),
+            ).fetchone()
+            dump = "\n".join(database.iterdump())
+        self.assertEqual(
+            dict(row),
+            {
+                "kind": "plan",
+                "changed_path_count": 0,
+                "check_count": 0,
+                "finding_count": 0,
+                "verdict": None,
+            },
+        )
+        self.assertNotIn("PRIVATE_PLAN_BODY_CANARY", dump)
+
     async def test_report_usage_is_atomic_immutable_and_rejects_malformed_input(
         self,
     ) -> None:
@@ -1072,6 +1235,47 @@ class BrokerObserverTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
             )
         )
         maybe_assign_reviewer.assert_awaited_once_with(1)
+
+    async def test_plan_report_projects_run_state_without_claiming_phase_routing(
+        self,
+    ) -> None:
+        initialize_broker_run(self.coord, self.manifest, "task", {})
+        broker = Broker(self.coord, self.manifest)
+        broker.clients = {
+            "implementer": Client("implementer", mock.Mock(), mock.Mock())
+        }
+        plan_assignment = broker._assignment("implementer", 1, "plan")
+        self.assertIn("read-only", plan_assignment)
+        self.assertIn("Do not modify files", plan_assignment)
+        self.assertIn("relevant paths/symbols", plan_assignment)
+        plan = validate_report(
+            {
+                "kind": "plan",
+                "summary": "Inspection found the focused change surface.",
+                "relevant_paths": ["src/feature.py"],
+                "relevant_symbols": ["Feature.apply"],
+                "intended_changes": ["Guard the state transition."],
+                "required_checks": ["Run focused feature tests."],
+                "risks": [],
+                "open_questions": [],
+            },
+            "implementer",
+        )
+        broker._remember_report({"role": "implementer", "round": 1, "report": plan})
+        with (
+            mock.patch.object(broker, "deliver", new=mock.AsyncMock()) as deliver,
+            mock.patch.object(
+                broker, "maybe_assign_reviewer", new=mock.AsyncMock()
+            ) as reviewer,
+            mock.patch.object(broker, "assign", new=mock.AsyncMock()) as assign,
+        ):
+            await broker.route_report("implementer", 1, plan)
+        deliver.assert_awaited_once()
+        self.assertEqual(deliver.await_args.args[:3], ("implementer", "run_state", 1))
+        self.assertIn("Relevant symbols (1)", deliver.await_args.args[3])
+        self.assertEqual(deliver.await_args.kwargs, {"trigger": False})
+        reviewer.assert_not_awaited()
+        assign.assert_not_awaited()
 
     async def test_changes_requested_delivers_rolling_state_before_round_two(
         self,

@@ -273,8 +273,13 @@ test("startup update notices honor opt-out and skip orchestration worker session
 
 test("worker report schemas expose only fields valid for each role", () => {
   const implementer = workerHooks.reportParameters("implementer");
-  assert.deepEqual(implementer.properties.kind.enum, ["implementation"]);
+  assert.deepEqual(implementer.properties.kind.enum, ["plan", "implementation"]);
   assert.ok(implementer.properties.changed_paths);
+  assert.equal(implementer.properties.relevant_paths.maxItems, 12);
+  assert.equal(implementer.properties.relevant_symbols.items.maxLength, 300);
+  assert.equal(implementer.properties.intended_changes.maxItems, 12);
+  assert.equal(implementer.properties.required_checks.maxItems, 12);
+  assert.equal(implementer.properties.open_questions.maxItems, 12);
   assert.equal(implementer.properties.verdict, undefined);
   assert.deepEqual(implementer.required, ["kind", "summary"]);
 
@@ -283,6 +288,84 @@ test("worker report schemas expose only fields valid for each role", () => {
   assert.equal(reviewer.properties.changed_paths, undefined);
   assert.deepEqual(reviewer.properties.verdict.enum, ["approved", "changes_requested"]);
   assert.deepEqual(reviewer.required, ["kind", "summary", "verdict"]);
+});
+
+test("implementer plan reports and active tools are strictly read-only and bounded", () => {
+  const input = {
+    kind: "plan",
+    summary: "The change surface is bounded.",
+    relevant_paths: ["src/service.js", "tests/service.test.js"],
+    relevant_symbols: ["runService", "service failure test"],
+    intended_changes: ["Guard the transition before committing state."],
+    required_checks: ["Run the focused service tests."],
+    risks: ["Preserve retry behavior."],
+    open_questions: [],
+  };
+  const report = workerHooks.normalizeReport(input, "plan", "implementer");
+  assert.equal(report.kind, "plan");
+  assert.deepEqual(report.changed_paths, []);
+  assert.deepEqual(report.checks, []);
+  assert.deepEqual(report.findings, []);
+  assert.equal(report.verdict, null);
+  assert.deepEqual(report.relevant_paths, input.relevant_paths);
+
+  for (const invalid of [
+    { ...input, changed_paths: ["src/service.js"] },
+    { ...input, verdict: "approved" },
+    { ...input, checks: [{ name: "unit", status: "passed" }] },
+    { ...input, summary: "x".repeat(1001) },
+    { ...input, relevant_paths: ["../secret"] },
+    { ...input, open_questions: Array(13).fill("question") },
+  ]) {
+    assert.throws(
+      () => workerHooks.normalizeReport(invalid, "plan", "implementer"),
+      /invalid_/,
+    );
+  }
+  assert.throws(
+    () => workerHooks.normalizeReport(input, "implementation", "implementer"),
+    /invalid_report_kind/,
+  );
+  assert.throws(
+    () => workerHooks.normalizeReport(input, "plan", "reviewer"),
+    /invalid_report_kind/,
+  );
+
+  const normalTools = ["read", "bash", "edit", "write", "grep", "find", "ls", "orchestrator_report"];
+  assert.deepEqual(
+    workerHooks.assignmentToolNames(normalTools, "implementer", "plan"),
+    ["read", "bash", "grep", "find", "ls", "orchestrator_report"],
+  );
+  assert.deepEqual(
+    workerHooks.assignmentToolNames(normalTools, "implementer", "implementation"),
+    normalTools,
+  );
+  assert.equal(workerHooks.planToolDecision({ kind: "plan" }, "implementer", "read"), undefined);
+  assert.match(
+    workerHooks.planToolDecision({ kind: "plan" }, "implementer", "edit").reason,
+    /read-only/,
+  );
+  assert.equal(
+    workerHooks.planToolDecision({ kind: "implementation" }, "implementer", "edit"),
+    undefined,
+  );
+
+  const restored = workerHooks.restoreWorkerState([{
+    type: "custom",
+    customType: "pi-tmux-orchestrator-delivery-v1",
+    data: {
+      delivery_id: "a".repeat(32),
+      kind: "assignment",
+      assignment_id: "b".repeat(32),
+      assignment_kind: "plan",
+      round: 2,
+    },
+  }]);
+  assert.equal(restored.activeAssignment.kind, "plan");
+  assert.deepEqual(
+    workerHooks.assignmentToolNames(normalTools, "implementer", restored.activeAssignment.kind),
+    ["read", "bash", "grep", "find", "ls", "orchestrator_report"],
+  );
 });
 
 test("worker guardrail policy is strict and preserves supported assignment thresholds", () => {

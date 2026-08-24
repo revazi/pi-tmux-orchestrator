@@ -203,6 +203,28 @@ model-free built-prompt fixture for Pi 0.84.1 records 5,000 before and 2,479
 after normalized reviewer characters (50.4%); these are serialized prompt-size
 proxies, not provider tokens, cost, cache efficiency, or production acceptance.
 
+#### Implementer inspect/plan reports
+
+A broker assignment whose retained role/kind is `implementer`/`plan` switches the
+shared worker bridge to `read,bash,grep,find,ls,orchestrator_report`. Edit, write,
+and any other non-plan tool call are removed and blocked until the terminating
+plan is accepted; restart reapplies this policy from the retained assignment.
+`bash` remains available for bounded inspection and is not an OS sandbox, so the
+worker is also explicitly instructed not to modify the worktree.
+
+The report requires exactly `kind`, `summary`, `relevant_paths`,
+`relevant_symbols`, `intended_changes`, `required_checks`, `risks`, and
+`open_questions`. Summary is at most 1,000 characters; each array has at most 12
+strings of at most 300 characters; paths are relative; the canonical result
+remains at most 32 KiB. Changed paths, executed checks, findings, limitations,
+approval, and verdict fields are invalid. The broker also verifies that report
+kind matches the active assignment before atomically accepting one report.
+
+The latest plan is projected into the rolling run-state capsule. Only existing
+kind/count/usage metadata enters SQLite or Supervisor/status output; the plan
+body remains ephemeral/Pi-session state. Defining the contract does not itself
+change the normal workflow to create plan assignments.
+
 #### Worker result-volume limits
 
 The worker bridge, and not ordinary Pi, applies these fixed orchestration-only

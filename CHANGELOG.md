@@ -17,6 +17,7 @@ All notable changes to this project are documented here.
 - Added orchestration-only read, grep, and bash input/result caps with UTF-8-safe continuation guidance, preserved bash failure diagnostics, mode-`0600` full-output paths, and metadata-only truncation/immediate-follow-up observations
 - Added a checked synthetic result-volume benchmark covering context reduction and additional read/grep pagination calls without making provider token, cost, or quality claims
 - Added deterministic immutable `economy`, `balanced`, and `thorough` thinking profiles, strict user-global custom profile mappings, explicit per-run selection and override precedence, and bounded manifest/status/Supervisor metadata
+- Added a bounded implementer `plan` report contract with assignment-kind matching, temporary read-only active tools, restart-safe policy restoration, rolling run-state projection, and metadata-only durable acceptance
 
 ### Changed
 

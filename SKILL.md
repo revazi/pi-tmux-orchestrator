@@ -72,7 +72,13 @@ assignment turns and complete Pi JSONL history remain intact. The shared worker
 bridge also enforces orchestration-only read/grep/bash input and emitted-result
 caps for both TUI and RPC panes, preserving actionable pagination/refinement,
 bash failure diagnostics, and a private full-output path while recording only
-bounded numeric/classification metadata. Confirmed restart
+bounded numeric/classification metadata. An implementer assignment explicitly
+retained as `plan` temporarily removes edit/write and accepts only a bounded plan
+with relevant paths/symbols, intended changes, required checks, risks, and open
+questions; it cannot claim changes, executed checks, findings, approval, or a
+verdict. Accepted plan evidence replaces the implementer's rolling run-state
+section, while SQLite retains only existing shape/count/usage metadata. Normal
+workflow phase routing is defined separately. Confirmed restart
 advances a broker generation and replays the live in-memory baseline and latest
 coalesced run state, including deferred evidence, before accepted
 active-assignment recovery. See
