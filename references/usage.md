@@ -277,6 +277,37 @@ from each role's current context occupancy. Soft role/run budgets warn before
 subsequent work. A budget cannot stop an already-started provider response at an
 exact token.
 
+The categories have different meanings and costs:
+
+- input is provider-reported non-cached or otherwise provider-classified input;
+- cache read/write records provider-reported cache activity and must not be
+  presented as uncached input;
+- output is generated assistant output;
+- reasoning is separate only when the provider exposes it;
+- context occupancy is a current-window measurement, not cumulative usage;
+- cost is authoritative only when the provider reports it.
+
+For development comparison, `operational_tokens` means input + output + cache
+read + cache write. It is deliberately labeled as an operational aggregate, not
+a billing unit or estimate of provider charges.
+
+The source repository includes a checked-in model-free baseline:
+
+```bash
+node scripts/token-efficiency-baseline.mjs --check
+```
+
+It measures serialized provider-visible characters/UTF-8 bytes by synthetic
+provider call and tool-result characters by tool across simple, medium, and
+multi-round fixtures. These values are reproducible proxies only. The retained
+usage analyzer reads public broker metadata without reading Pi histories or any
+workflow/provider body:
+
+```bash
+python -m pi_tmux_orchestrator.token_efficiency \
+  --state-root ~/.pi/agent/orchestrations --max-runs 100
+```
+
 ## Security boundaries
 
 - Only the implementer receives normal write tools.

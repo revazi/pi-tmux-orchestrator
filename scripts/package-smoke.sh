@@ -50,6 +50,7 @@ EXPECTED_FILES=(
   pi_tmux_orchestrator/supervisor_api.py
   pi_tmux_orchestrator/supervisor_commands.py
   pi_tmux_orchestrator/tmux.py
+  pi_tmux_orchestrator/token_efficiency.py
   references/usage.md
   references/protocol-v1.md
   references/dashboard-design.md

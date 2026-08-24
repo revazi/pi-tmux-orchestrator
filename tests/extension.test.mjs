@@ -7,6 +7,7 @@ import { test } from "node:test";
 import extension, { testHooks } from "../extensions/tmux-orchestrator.js";
 import { updateTestHooks as updateHooks } from "../extensions/orchestrator-update.js";
 import { testHooks as workerHooks } from "../extensions/orchestrator-worker.js";
+import { buildTokenEfficiencyBaseline } from "../scripts/token-efficiency-baseline.mjs";
 
 const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 
@@ -411,6 +412,38 @@ test("completed turns are pruned only at the next distinct assignment boundary",
   assert.equal(visible.some((item) => item.content === "second assignment"), true);
   assert.equal(visible.some((item) => item.content?.[0]?.text === "second assignment turn"), true);
   assert.equal(messages.length, 13);
+});
+
+test("token-efficiency fixtures expose first-assignment growth and boundary reduction", async () => {
+  const baseline = buildTokenEfficiencyBaseline();
+  const checkedIn = JSON.parse(
+    await readFile(new URL("fixtures/token-efficiency-baseline.json", import.meta.url), "utf8"),
+  );
+  assert.deepEqual(baseline, checkedIn);
+  assert.deepEqual(Object.keys(baseline.fixtures), ["simple", "medium", "multi_round"]);
+  assert.ok(
+    baseline.fixtures.simple.provider_context.total_utf8_bytes
+      > baseline.fixtures.simple.provider_context.total_characters,
+    "the fixture must distinguish serialized characters from UTF-8 bytes",
+  );
+
+  const mediumCalls = baseline.fixtures.medium.provider_context.by_call;
+  assert.equal(baseline.fixtures.medium.provider_calls, 5);
+  assert.ok(
+    mediumCalls.at(-1).characters > mediumCalls[0].characters * 30,
+    "the medium fixture must expose within-assignment context growth",
+  );
+  assert.equal(baseline.fixtures.medium.tool_results.by_tool.read.count, 3);
+
+  const multiRoundCalls = baseline.fixtures.multi_round.provider_context.by_call;
+  const firstRoundPeak = Math.max(...multiRoundCalls.slice(0, 3).map((item) => item.characters));
+  const secondRoundStart = multiRoundCalls[3].characters;
+  assert.ok(
+    secondRoundStart < firstRoundPeak / 10,
+    `the assignment boundary must cut context by at least 90% (${firstRoundPeak} -> ${secondRoundStart})`,
+  );
+  assert.equal(baseline.metric_scope, "model-free-provider-context-proxy");
+  assert.match(baseline.caveat, /not provider tokens, billing, or production-wire acceptance/);
 });
 
 test("worker restart restores assignment and dedup state without changing durable usage", () => {

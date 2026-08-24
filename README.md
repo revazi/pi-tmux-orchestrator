@@ -425,6 +425,36 @@ one reviewer wake after all evidence, no approval acknowledgement turn, and
 terminating report calls. Soft role/run budgets warn before additional work. No
 budget can stop an already-started provider response at an exact token.
 
+### Development token-efficiency baseline
+
+The repository keeps three model-free provider-context fixtures covering a
+simple assignment, a larger single assignment, and a multi-round boundary. The
+baseline records provider-call count, serialized provider-visible characters
+and UTF-8 bytes by call, plus tool-result characters by tool:
+
+```bash
+node scripts/token-efficiency-baseline.mjs --check
+```
+
+These measurements are deterministic context-size proxies, not provider tokens,
+billing, cache acceptance, or production-wire evidence. Intentional changes are
+reviewed before regenerating
+`tests/fixtures/token-efficiency-baseline.json` with `--write`.
+
+A separate bounded analyzer aggregates only public metadata from retained broker
+SQLite state. It does not read Pi session histories or task, report, prompt,
+message, diff, log, credential, or provider bodies:
+
+```bash
+python -m pi_tmux_orchestrator.token_efficiency \
+  --state-root ~/.pi/agent/orchestrations --max-runs 100
+```
+
+Its `operational_tokens` field is the sum of input, output, cache-read, and
+cache-write categories for comparison; it is not a billing unit. Cost is shown
+only when reported by the provider, and unavailable reasoning usage remains
+explicitly unavailable.
+
 ## Persistent controller
 
 ```bash
