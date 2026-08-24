@@ -21,6 +21,10 @@ function runPi(args, options = {}) {
   return checked(spawnSync("pi", args, { encoding: "utf8", ...options }), "pi");
 }
 
+function workerPromptRuntimeAvailable() {
+  return spawnSync("pi", ["--version"], { encoding: "utf8" }).status === 0;
+}
+
 function generateAfterPrompt() {
   return checked(spawnSync("python3", [
     "-c",
@@ -164,7 +168,7 @@ function baselineData(piVersion, beforePrompt, afterPrompt) {
   };
 }
 
-export async function buildWorkerPromptBaseline() {
+async function buildWorkerPromptBaseline() {
   const temporaryRoot = await mkdtemp(join(tmpdir(), "pi-worker-prompt-"));
   try {
     const fixture = await prepareFixture(temporaryRoot);
@@ -191,6 +195,11 @@ export async function buildWorkerPromptBaseline() {
   }
 }
 
+export async function buildWorkerPromptBaselineIfAvailable() {
+  if (!workerPromptRuntimeAvailable()) return null;
+  return buildWorkerPromptBaseline();
+}
+
 function canonical(value) {
   return `${JSON.stringify(value, null, 2)}\n`;
 }
@@ -208,12 +217,23 @@ async function checkBaseline(baseline) {
   console.log(`Verified worker prompt baseline: ${baseline.before.characters} -> ${baseline.after.characters} normalized characters.`);
 }
 
-async function main() {
-  const baseline = await buildWorkerPromptBaseline();
-  const mode = process.argv[2] || "print";
+function modeHandler(mode) {
   const handlers = { "--write": writeBaseline, "--check": checkBaseline, print: async (value) => process.stdout.write(canonical(value)) };
   const handler = handlers[mode];
   if (!handler) throw new Error(`Unknown mode: ${mode}`);
+  return handler;
+}
+
+function unavailableBaseline(mode) {
+  if (mode === "--write") throw new Error("Cannot write the worker prompt baseline without Pi");
+  console.log("SKIP actual-Pi worker prompt baseline check (pi not available).");
+}
+
+async function main() {
+  const mode = process.argv[2] || "print";
+  const handler = modeHandler(mode);
+  const baseline = await buildWorkerPromptBaselineIfAvailable();
+  if (baseline === null) return unavailableBaseline(mode);
   await handler(baseline);
 }
 
