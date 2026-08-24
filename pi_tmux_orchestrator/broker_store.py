@@ -12,7 +12,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from .constants import BROKER_PROTOCOL_VERSION, MAX_BROKER_EVENTS
+from .constants import BROKER_PROTOCOL_VERSION, MAX_BROKER_EVENTS, MAX_JSON_ITEMS
 from .models import OrchestrationError
 from .storage import ensure_private_directory, validate_coordination_directory
 
@@ -278,6 +278,8 @@ def _public_assignment_usage(row: sqlite3.Row | None) -> dict[str, Any] | None:
         "kind": row["kind"],
         "usage": None,
     }
+    if "role" in row.keys():
+        value["role"] = row["role"]
     if "provider_calls" not in row.keys() or row["provider_calls"] is None:
         return value
     usage = {
@@ -292,6 +294,12 @@ def _public_assignment_usage(row: sqlite3.Row | None) -> dict[str, Any] | None:
         "context_window": row["context_window"],
         "context_percent": row["context_percent"],
         "peak_context_tokens": row["peak_context_tokens"],
+        "operational_tokens": (
+            row["input_tokens"]
+            + row["output_tokens"]
+            + row["cache_read_tokens"]
+            + row["cache_write_tokens"]
+        ),
         "actual_provider_usage_only": True,
     }
     value["usage"] = usage
@@ -390,6 +398,51 @@ def public_broker_snapshot(coord: Path) -> dict[str, Any]:
                 "latest": event_bounds["latest"] or 0,
             },
         }
+
+
+def public_assignment_usage(coord: Path, *, limit: int) -> dict[str, Any]:
+    """Return a bounded latest assignment-usage page without payload bodies."""
+
+    if type(limit) is not int or not 1 <= limit <= MAX_JSON_ITEMS:
+        raise OrchestrationError(
+            f"Assignment usage limit must be between 1 and {MAX_JSON_ITEMS}",
+            "invalid_arguments",
+        )
+    with connect_broker_database(coord, readonly=True) as database:
+        row = database.execute(
+            "SELECT value FROM meta WHERE key='schema_version'"
+        ).fetchone()
+        if row is None:
+            raise OrchestrationError("Broker database schema is unavailable")
+        schema_version = int(row["value"])
+        if schema_version >= 3:
+            fields = (
+                "assignment_id,role,round,kind,provider_calls,input_tokens,output_tokens,"
+                "cache_read_tokens,cache_write_tokens,reasoning_tokens,cost_total,"
+                "context_tokens,context_window,context_percent,peak_context_tokens"
+            )
+        else:
+            fields = "assignment_id,role,round,kind"
+        rows = list(
+            database.execute(
+                f"SELECT {fields} FROM reports ORDER BY created_at DESC,rowid DESC LIMIT ?",
+                (limit + 1,),
+            )
+        )
+    selected = [_public_assignment_usage(row) for row in rows[:limit]]
+    selected.sort(
+        key=lambda value: (
+            value["round"],
+            value.get("role", ""),
+            value["kind"],
+            value["assignment_id"],
+        )
+    )
+    return {
+        "assignments": selected,
+        "truncated": len(rows) > limit,
+        "limit": limit,
+    }
 
 
 def public_broker_events(

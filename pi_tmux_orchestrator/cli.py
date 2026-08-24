@@ -46,6 +46,7 @@ from .supervisor_commands import (
     supervisor_runs_command,
     supervisor_sessions_command,
     supervisor_snapshot_command,
+    supervisor_usage_command,
 )
 
 
@@ -79,6 +80,18 @@ def supervisor_run_limit(value: str) -> int:
     if not 1 <= parsed <= MAX_JSON_ITEMS:
         raise argparse.ArgumentTypeError(
             f"run limit must be between 1 and {MAX_JSON_ITEMS}"
+        )
+    return parsed
+
+
+def supervisor_usage_limit(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("usage limit must be an integer") from error
+    if not 1 <= parsed <= MAX_JSON_ITEMS:
+        raise argparse.ArgumentTypeError(
+            f"usage limit must be between 1 and {MAX_JSON_ITEMS}"
         )
     return parsed
 
@@ -230,6 +243,16 @@ def build_parser() -> argparse.ArgumentParser:
     supervisor_snapshot.add_argument("session")
     supervisor_snapshot.add_argument("--run", help="exact retained coordination run ID")
     supervisor_snapshot.set_defaults(handler=supervisor_snapshot_command)
+    supervisor_usage = supervisor_actions.add_parser(
+        "usage",
+        help="summarize bounded cumulative and assignment-local provider usage",
+    )
+    supervisor_usage.add_argument("session")
+    supervisor_usage.add_argument("--run", help="exact retained coordination run ID")
+    supervisor_usage.add_argument(
+        "--limit", type=supervisor_usage_limit, default=MAX_JSON_ITEMS
+    )
+    supervisor_usage.set_defaults(handler=supervisor_usage_command)
     supervisor_events = supervisor_actions.add_parser(
         "events",
         help="read per-role durable event pages with independent cursors",

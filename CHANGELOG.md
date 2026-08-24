@@ -9,6 +9,7 @@ All notable changes to this project are documented here.
 - Added checked-in simple, medium, and multi-round model-free token-efficiency fixtures that measure provider-visible context growth, assignment-boundary reduction, provider-call count, and tool-result volume
 - Added a bounded metadata-only retained usage analyzer that aggregates public broker token categories and provider-reported cost without reading Pi histories or workflow/provider bodies
 - Added atomic per-assignment provider-call, token-category, cost, and context-occupancy usage results captured at report time before downstream routing, with immutable duplicate handling and restart-safe numeric boundaries
+- Added bounded Supervisor API/CLI assignment-usage analytics grouped by run, role, round, and assignment kind, plus compact cumulative/latest-delta indicators in status and the broker dashboard
 
 ## 0.8.1 - 2026-08-20
 

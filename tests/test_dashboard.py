@@ -65,6 +65,12 @@ class DashboardFixture(unittest.TestCase):
                     "total_tokens": 12_000,
                     "soft_budget_exceeded": False,
                     "context_percent": 47.2,
+                    "latest_assignment_usage": {
+                        "assignment_id": "a" * 32,
+                        "round": 1,
+                        "kind": "implementation",
+                        "usage": {"operational_tokens": 1_000},
+                    },
                     "assignment": {
                         "kind": "implementation",
                         "round": 2,
@@ -79,6 +85,12 @@ class DashboardFixture(unittest.TestCase):
                     "total_tokens": 345,
                     "soft_budget_exceeded": True,
                     "context_percent": 82.5,
+                    "latest_assignment_usage": {
+                        "assignment_id": "b" * 32,
+                        "round": 1,
+                        "kind": "review",
+                        "usage": {"operational_tokens": 345},
+                    },
                     "assignment": {"kind": "review", "round": 2, "state": "accepted"},
                 },
             ],
@@ -122,7 +134,8 @@ class DashboardRenderingTests(DashboardFixture):
         self.assertIn("google/gemini-3.1-pro-preview", rendered)
         self.assertIn("r2 implementation", rendered)
         self.assertIn("● up · g2", rendered)
-        self.assertIn("12k", rendered)
+        self.assertIn("TOTAL/Δ", rendered)
+        self.assertIn("12k/+1k", rendered)
         self.assertIn("47.2%", rendered)
         self.assertIn("! 345", rendered)
         self.assertIn("#00007", rendered)

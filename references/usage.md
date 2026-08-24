@@ -163,11 +163,20 @@ pi-tmux-agents --json supervisor capabilities
 pi-tmux-agents --json supervisor sessions
 pi-tmux-agents --json supervisor runs SESSION
 pi-tmux-agents --json supervisor snapshot SESSION --run RUN_ID
+pi-tmux-agents --json supervisor usage SESSION --run RUN_ID --limit 100
 pi-tmux-agents --json supervisor events SESSION --run RUN_ID \
   --cursor implementer=0 --cursor reviewer=0 --limit 50
 ```
 
 Host liveness is `not_observed`; retained PIDs do not imply a running process.
+`supervisor usage` is a bounded metadata-only page grouped by run, role, round,
+and assignment kind. Each role contains separately labeled cumulative usage and
+immutable assignment-local deltas. Input, cache read, cache write, output,
+optional reasoning, provider-call count, provider-reported cost, operational
+tokens, and context pressure remain separate fields. Legacy assignments expose
+usage as unavailable rather than estimated. `--limit` selects the latest retained
+assignments across the run and the response reports when older results were
+truncated.
 
 ## Parent Pi supervision
 
@@ -194,7 +203,10 @@ progress, sends bounded structured role reports when the workflow becomes
 `ready`, and sends attention/uncertainty updates when parent intervention is
 required. Terminal updates trigger the parent Pi to assess results and decide
 follow-up. Metadata-only `status` summaries include the workflow and role states
-so completion is legible even before an observer is attached.
+so completion is legible even before an observer is attached. For current
+broker runs, status adds one bounded latest-assignment usage line per role, and
+the dashboard token cell uses `cumulative/+latest-assignment` without adding a
+new payload hierarchy.
 
 Observer report bodies are bounded, held only in broker memory while live, and
 stored only in the relevant Pi sessions. They are excluded from SQLite, status,

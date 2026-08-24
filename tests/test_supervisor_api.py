@@ -5,7 +5,7 @@ import io
 import json
 import tempfile
 import unittest
-from contextlib import redirect_stderr
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
@@ -109,7 +109,15 @@ class SupervisorApiTests(SupervisorApiFixture):
         self.assertEqual(capabilities["api_version"], "2")
         self.assertEqual(
             capabilities["read_operations"],
-            ["capabilities", "sessions", "runs", "snapshot", "events", "command"],
+            [
+                "capabilities",
+                "sessions",
+                "runs",
+                "snapshot",
+                "usage",
+                "events",
+                "command",
+            ],
         )
         self.assertFalse(capabilities["host_adapter"]["runtime_observed_by_read_api"])
         self.assertEqual(
@@ -153,6 +161,85 @@ class SupervisorApiTests(SupervisorApiFixture):
         self.assertEqual(snapshot["roles"][0]["worker"]["last_event_sequence"], 1)
         self.assertEqual(snapshot["roles"][0]["runtime"]["liveness"], "not-observed")
         self.assertIsNone(snapshot["roles"][0]["runtime"]["state"])
+
+    def test_legacy_usage_capability_is_explicitly_unavailable(self) -> None:
+        usage = ORCHESTRATOR.supervisor_usage(self.session, "run-1", limit=10)
+        self.assertFalse(usage["available"])
+        self.assertEqual(usage["availability"], "unavailable_legacy_coordination")
+        self.assertIsNone(usage["cumulative"])
+        self.assertEqual(usage["roles"], [])
+        self.assertFalse(usage["semantics"]["payload_bodies_included"])
+
+    def test_usage_human_output_separates_cache_and_assignment_delta(self) -> None:
+        data = {
+            "session": self.session,
+            "run_id": "run-1",
+            "availability": "available",
+            "cumulative": {
+                "provider_calls": 3,
+                "input_tokens": 100,
+                "output_tokens": 20,
+                "cache_read_tokens": 500,
+                "cache_write_tokens": 5,
+                "reasoning_tokens": None,
+                "cost_total": 1.25,
+                "operational_tokens": 625,
+            },
+            "roles": [
+                {
+                    "role": "implementer",
+                    "cumulative": {
+                        "provider_calls": 3,
+                        "input_tokens": 100,
+                        "output_tokens": 20,
+                        "cache_read_tokens": 500,
+                        "cache_write_tokens": 5,
+                        "reasoning_tokens": None,
+                        "cost_total": 1.25,
+                        "operational_tokens": 625,
+                    },
+                    "assignments": [
+                        {
+                            "assignment_id": "a" * 32,
+                            "round": 1,
+                            "kind": "implementation",
+                            "usage": {
+                                "provider_calls": 1,
+                                "input_tokens": 40,
+                                "output_tokens": 10,
+                                "cache_read_tokens": 120,
+                                "cache_write_tokens": 5,
+                                "reasoning_tokens": None,
+                                "cost_total": 0.25,
+                                "operational_tokens": 175,
+                                "context_tokens": 180,
+                                "context_window": 1_000,
+                                "context_percent": 18.0,
+                                "peak_context_tokens": 200,
+                            },
+                        }
+                    ],
+                }
+            ],
+            "truncated": False,
+            "limit": 10,
+        }
+        output = io.StringIO()
+        with (
+            mock.patch.object(ORCHESTRATOR, "supervisor_usage", return_value=data),
+            mock.patch.object(ORCHESTRATOR, "JSON_MODE", False),
+            redirect_stdout(output),
+        ):
+            result = ORCHESTRATOR.supervisor_usage_command(
+                argparse.Namespace(session=self.session, run="run-1", limit=10)
+            )
+        rendered = output.getvalue()
+        self.assertIn("cumulative:", rendered)
+        self.assertIn("round=1 kind=implementation", rendered)
+        self.assertIn("input=40 cache-read=120 cache-write=5 output=10", rendered)
+        self.assertIn("reasoning=unavailable", rendered)
+        self.assertIn("context=180/1000 context-percent=18.0 peak=200", rendered)
+        self.assertEqual(result.data, data)
 
     def test_state_scans_are_bounded_and_do_not_follow_session_symlinks(self) -> None:
         outside = Path(self.temporary.name) / "outside"
@@ -216,6 +303,7 @@ class SupervisorApiTests(SupervisorApiFixture):
         views = {
             "sessions": ORCHESTRATOR.retained_sessions(),
             "snapshot": ORCHESTRATOR.supervisor_snapshot(self.session, "run-1"),
+            "usage": ORCHESTRATOR.supervisor_usage(self.session, "run-1", limit=10),
             "events": ORCHESTRATOR.supervisor_event_batch(
                 self.session,
                 "run-1",
@@ -270,6 +358,8 @@ class SupervisorApiTests(SupervisorApiFixture):
     def test_service_methods_validate_limits_cursors_and_command_ids(self) -> None:
         with self.assertRaises(ORCHESTRATOR.OrchestrationError):
             ORCHESTRATOR.retained_runs(self.session, limit=101)
+        with self.assertRaises(ORCHESTRATOR.OrchestrationError):
+            ORCHESTRATOR.supervisor_usage(self.session, "run-1", limit=0)
         with self.assertRaises(ORCHESTRATOR.OrchestrationError):
             ORCHESTRATOR.rpc_event_page([], after=-1, limit=1)
         with self.assertRaises(ORCHESTRATOR.OrchestrationError):
@@ -377,6 +467,15 @@ class SupervisorApiTests(SupervisorApiFixture):
             ["supervisor", "snapshot", self.session, "--run", "run-1"],
             [
                 "supervisor",
+                "usage",
+                self.session,
+                "--run",
+                "run-1",
+                "--limit",
+                "25",
+            ],
+            [
+                "supervisor",
                 "events",
                 self.session,
                 "--role",
@@ -402,6 +501,8 @@ class SupervisorApiTests(SupervisorApiFixture):
             parser.parse_args(
                 ["supervisor", "events", self.session, "--cursor", "reviewer=-1"]
             )
+        with redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            parser.parse_args(["supervisor", "usage", self.session, "--limit", "0"])
 
 
 if __name__ == "__main__":

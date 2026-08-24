@@ -200,10 +200,13 @@ broker commits report metadata, immutable assignment usage, and current
 cumulative role usage atomically before routing. Missing provider data
 and pre-upgrade assignment usage remain unavailable; the broker does not invent
 estimates. Input, cache activity, output, optional reasoning, current/peak
-context occupancy, and cost remain distinct categories. The development-only
-`operational_tokens` aggregate sums input, output, cache read, and cache write
-for comparison; it is not a billing unit. Provider-reported cost is the only
-cost authority.
+context occupancy, and cost remain distinct categories. Supervisor API v2
+advertises a bounded assignment-usage page through capabilities and exposes it
+through `supervisor usage`. Results group one retained run by role, round, and
+assignment kind while labeling cumulative and assignment-local usage separately.
+Legacy results remain unavailable. The development-only `operational_tokens`
+aggregate sums input, output, cache read, and cache write for comparison; it is
+not a billing unit. Provider-reported cost is the only cost authority.
 
 Soft role and run token thresholds are metadata warnings. A future hard budget
 may prevent a new assignment, but cannot stop an already-started provider
