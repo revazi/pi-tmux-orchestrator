@@ -13,6 +13,12 @@ from typing import Any
 
 from . import runtime
 from .broker import initialize_broker_run
+from .budgeting import (
+    budget_config_path,
+    effective_budget_policy,
+    load_budget_config,
+    packaged_budget_policy,
+)
 from .broker_client import broker_control_request
 from .broker_store import (
     broker_paths,
@@ -334,6 +340,12 @@ def start_command(args: argparse.Namespace) -> CommandResult:
         roles.append("django")
     configured_models = load_model_config()
     configs = {role: role_config(args, role, configured_models) for role in roles}
+    configured_budget = load_budget_config(project=project)
+    budget_policy = effective_budget_policy(
+        configured_budget,
+        enforcement=getattr(args, "budget_enforcement", None),
+        overrides=getattr(args, "budget_override", None),
+    )
     for role in roles:
         render_worker_baseline(
             str(project),
@@ -365,6 +377,7 @@ def start_command(args: argparse.Namespace) -> CommandResult:
             "payload_files": False,
             "polling": False,
         },
+        "budget_policy": budget_policy,
         "trust": {
             "child_bypass": bool(args.approve_project),
             "policy": (
@@ -400,6 +413,14 @@ def start_command(args: argparse.Namespace) -> CommandResult:
         )
     human_print("  monitor: broker/status")
     human_print(f"Worker transport: {transport}")
+    human_print(f"Budget enforcement: {budget_policy['enforcement']}")
+    for level in ("warning", "hard"):
+        for scope in ("run", "role", "assignment"):
+            thresholds = budget_policy[level][scope]
+            rendered = ", ".join(
+                f"{metric}={value}" for metric, value in sorted(thresholds.items())
+            )
+            human_print(f"  {level}.{scope}: {rendered or 'off'}")
     human_print(
         f"Child project trust bypass: {'enabled' if args.approve_project else 'disabled'}"
     )
@@ -453,6 +474,7 @@ def start_command(args: argparse.Namespace) -> CommandResult:
             task,
             role_tasks,
             context_capsule=context_capsule,
+            budget_policy=budget_policy,
         )
         create_tmux_grid(session, project, coord, roles, manifest)
         secure_write(coord / "startup-state", "RUNNING\n")
@@ -1041,6 +1063,14 @@ def doctor_command(_: argparse.Namespace) -> CommandResult:
     config_in_use = bool(
         configured_models["defaults"] or any(configured_models["roles"].values())
     )
+    configured_budget = load_budget_config()
+    budget_path = budget_config_path()
+    budget_in_use = configured_budget != packaged_budget_policy()
+    budget_data = {
+        "config_path": str(budget_path),
+        "configured": budget_in_use,
+        "effective": configured_budget,
+    }
     ok = True
     command_checks: list[dict[str, Any]] = []
     for name in ("pi", "tmux", "python3"):
@@ -1063,9 +1093,11 @@ def doctor_command(_: argparse.Namespace) -> CommandResult:
                     "config_path": str(config_path),
                     "configured": config_in_use,
                 },
+                "budget_policy": budget_data,
                 "paths": {
                     "state_root": str(absolute_path(runtime.STATE_ROOT)),
                     "model_config": str(config_path),
+                    "budget_config": str(budget_path),
                 },
             },
             code=1,
@@ -1133,6 +1165,11 @@ def doctor_command(_: argparse.Namespace) -> CommandResult:
     human_print(
         f"OK   model config: {config_path} ({'configured' if config_in_use else 'packaged defaults'})"
     )
+    human_print(
+        f"OK   budget config: {budget_path} "
+        f"({'configured' if budget_in_use else 'packaged defaults'}; "
+        f"enforcement={configured_budget['enforcement']})"
+    )
     human_print(f"OK   state root: {runtime.STATE_ROOT}")
     return CommandResult(
         data={
@@ -1143,9 +1180,11 @@ def doctor_command(_: argparse.Namespace) -> CommandResult:
                 "config_path": str(config_path),
                 "configured": config_in_use,
             },
+            "budget_policy": budget_data,
             "paths": {
                 "state_root": str(absolute_path(runtime.STATE_ROOT)),
                 "model_config": str(config_path),
+                "budget_config": str(budget_path),
             },
         }
     )

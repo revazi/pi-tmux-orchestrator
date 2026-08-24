@@ -29,11 +29,12 @@ panes, file handoffs, relay scripts, or polling loops.
 3. Keep one writer: only the implementer may edit tracked files. Other roles are workflow-read-only but retain `bash` for verification and are not OS-sandboxed.
 4. Keep credentials, private documents, provider bodies, raw errors, diffs, and logs out of tasks and structured reports.
 5. Honor explicit user provider/model/thinking requests through `useParentModel` or `modelOverrides`. Use the bounded `models` action to resolve exact available IDs; never invent IDs or inspect credentials. Omitted overrides use the user's global configuration.
-6. Use specialists only where their independent evidence is relevant.
-7. Before starting from an existing parent conversation, synthesize the tool's bounded `contextCapsule` from only task-relevant state, settled decisions, constraints, acceptance criteria, paths, evidence, open questions, and out-of-scope items. Never copy the full parent transcript.
-8. Never claim a synthetic probe or browser smoke is production wire acceptance.
-9. Do not push, merge, publish, deploy, or perform destructive cleanup without explicit authorization.
-10. Idle workers end their turn. A parent that is watching also ends its turn and relies on broker updates. Neither workers nor watching parents run sleeps or poll files, sockets, status, or tmux while waiting.
+6. Honor explicit per-run budget requests through `budgetOverrides`; never infer hard thresholds. Omitted values use the strict external user-global policy and packaged warn-only defaults.
+7. Use specialists only where their independent evidence is relevant.
+8. Before starting from an existing parent conversation, synthesize the tool's bounded `contextCapsule` from only task-relevant state, settled decisions, constraints, acceptance criteria, paths, evidence, open questions, and out-of-scope items. Never copy the full parent transcript.
+9. Never claim a synthetic probe or browser smoke is production wire acceptance.
+10. Do not push, merge, publish, deploy, or perform destructive cleanup without explicit authorization.
+11. Idle workers end their turn. A parent that is watching also ends its turn and relies on broker updates. Neither workers nor watching parents run sleeps or poll files, sockets, status, or tmux while waiting.
 
 ## Coordination model
 

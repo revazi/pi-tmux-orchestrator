@@ -48,6 +48,7 @@
     "VERSION",
     "extensions/tmux-orchestrator.js",
     "extensions/orchestrator-context.js",
+    "extensions/orchestrator-budgets.js",
     "extensions/orchestrator-models.js",
     "extensions/orchestrator-update.js",
     "extensions/orchestrator-parent.js",

@@ -19,6 +19,7 @@ EXPECTED_FILES=(
   bin/pi-tmux-agents
   extensions/tmux-orchestrator.js
   extensions/orchestrator-context.js
+  extensions/orchestrator-budgets.js
   extensions/orchestrator-models.js
   extensions/orchestrator-update.js
   extensions/orchestrator-parent.js
@@ -29,6 +30,7 @@ EXPECTED_FILES=(
   pi_tmux_orchestrator/broker.py
   pi_tmux_orchestrator/broker_client.py
   pi_tmux_orchestrator/broker_store.py
+  pi_tmux_orchestrator/budgeting.py
   pi_tmux_orchestrator/cli.py
   pi_tmux_orchestrator/commands.py
   pi_tmux_orchestrator/configuration.py

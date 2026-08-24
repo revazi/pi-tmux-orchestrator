@@ -316,6 +316,60 @@ class JsonMainTests(unittest.TestCase):
             ("google", "configured-reviewer", "low"),
         )
 
+    def test_start_budget_policy_uses_global_then_explicit_override_precedence(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            budget_path = Path(directory) / "budgets.json"
+            budget_path.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "warning": {"run": {"provider_calls": 10}},
+                        "hard": {"run": {"provider_calls": 20}},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with (
+                mock.patch.dict(
+                    os.environ,
+                    {"PI_TMUX_ORCHESTRATOR_BUDGET_CONFIG": str(budget_path)},
+                ),
+                mock.patch.object(
+                    ORCHESTRATOR, "command_path", return_value="/usr/bin/true"
+                ),
+                mock.patch.object(ORCHESTRATOR, "session_exists", return_value=False),
+            ):
+                code, envelope, raw, stderr = self.run_main(
+                    [
+                        "--json",
+                        "start",
+                        "--project",
+                        str(ROOT),
+                        "--task",
+                        "synthetic",
+                        "--budget-enforcement",
+                        "hard",
+                        "--budget-override",
+                        "warning.run.provider_calls=12",
+                        "--budget-override",
+                        "hard.assignment.cost_total=2.5",
+                        "--skip-model-check",
+                        "--dry-run",
+                    ]
+                )
+        self.assertEqual(code, 0)
+        self.assertEqual(stderr, "")
+        policy = envelope["data"]["budget_policy"]
+        self.assertEqual(policy["enforcement"], "hard")
+        self.assertEqual(policy["warning"]["run"]["provider_calls"], 12)
+        self.assertEqual(policy["hard"]["run"]["provider_calls"], 20)
+        self.assertEqual(policy["hard"]["assignment"]["cost_total"], 2.5)
+        self.assertEqual(policy["warning"]["role"]["operational_tokens"], 200_000)
+        self.assertNotIn("apiKey", raw)
+        self.assertNotIn("endpoint", raw)
+
     def test_start_success_returns_paths_without_payload_bodies(self) -> None:
         canary = "PRIVATE_FULL_START_CANARY_JSON_a12d"
         with tempfile.TemporaryDirectory() as directory:
@@ -893,6 +947,11 @@ class JsonMainTests(unittest.TestCase):
         self.assert_envelope(envelope, "doctor", True)
         self.assertIsInstance(envelope["data"]["commands"], list)
         self.assertIsInstance(envelope["data"]["model_checks"], list)
+        self.assertEqual(
+            envelope["data"]["budget_policy"]["effective"]["enforcement"],
+            "warn-only",
+        )
+        self.assertIn("budget_config", envelope["data"]["paths"])
         self.assertIsInstance(envelope["data"]["paths"], dict)
 
     def test_unexpected_exception_fails_closed_as_one_generic_json_object(self) -> None:

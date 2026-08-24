@@ -17,6 +17,7 @@ from .constants import (
     VERSION,
 )
 from .broker import broker_command
+from .budgeting import BUDGET_ENFORCEMENT, parse_budget_override
 from .controller import (
     controller_attach_command,
     controller_start_command,
@@ -94,6 +95,15 @@ def supervisor_usage_limit(value: str) -> int:
             f"usage limit must be between 1 and {MAX_JSON_ITEMS}"
         )
     return parsed
+
+
+def budget_override(
+    value: str,
+) -> tuple[str, str, str, int | float | None]:
+    try:
+        return parse_budget_override(value)
+    except OrchestrationError as error:
+        raise argparse.ArgumentTypeError(str(error)) from error
 
 
 def rpc_command_id(value: str) -> str:
@@ -207,6 +217,19 @@ def build_parser() -> argparse.ArgumentParser:
     start.add_argument("--attach", action="store_true")
     start.add_argument("--dry-run", action="store_true")
     start.add_argument("--skip-model-check", action="store_true")
+    start.add_argument(
+        "--budget-enforcement",
+        choices=BUDGET_ENFORCEMENT,
+        help="override the user-global budget enforcement mode for this run",
+    )
+    start.add_argument(
+        "--budget-override",
+        action="append",
+        type=budget_override,
+        default=[],
+        metavar="LEVEL.SCOPE.METRIC=VALUE",
+        help="override one warning/hard run/role/assignment threshold; use =off to disable",
+    )
     for role_name in ("implementer", "reviewer", "probe", "playwright", "django"):
         add_model_arguments(start, role_name)
     start.set_defaults(handler=start_command)

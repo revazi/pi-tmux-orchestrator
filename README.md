@@ -35,7 +35,7 @@ workflow, role, model, usage, context, and recent metadata state.
 - User-configurable provider/model/thinking policy for every role, including Pi
   custom providers, with exact natural-language overrides through the model tool
 - Actual provider token/cost accounting when Pi exposes it, plus context pressure
-  and soft budgets
+  and strict user-global/per-run budget policy
 - A versioned JSON CLI and tmux-independent Supervisor API v2
 - A persistent project-neutral controller Pi session
 - Explicit project trust, one-writer policy, bounded output, and confirmations
@@ -211,6 +211,47 @@ The file is read for every new start. `defaults` applies to every role and
 are rejected. Set `PI_TMUX_ORCHESTRATOR_CONFIG` to an absolute path to keep the
 file elsewhere. Precedence is: explicit CLI/model-tool role override, role
 configuration, global configuration, then packaged fallback defaults.
+
+### Provider-usage budget configuration
+
+A separate strict user-global file, `~/.pi/agent/tmux-orchestrator-budgets.json`,
+defines versioned warning and hard thresholds without entering target
+repositories:
+
+```json
+{
+  "version": 1,
+  "enforcement": "warn-only",
+  "warning": {
+    "run": { "provider_calls": 50, "operational_tokens": 600000 },
+    "role": { "operational_tokens": 200000 },
+    "assignment": { "context_percent": 80 }
+  },
+  "hard": {
+    "run": { "cost_total": 25 },
+    "role": {},
+    "assignment": { "context_percent": 95 }
+  }
+}
+```
+
+Scopes are `run`, `role`, and `assignment`. Metrics are provider calls, input,
+output, cache read, cache write, optional reasoning, operational tokens,
+provider-reported cost, context tokens, and context percentage. Categories stay
+separate; `operational_tokens` is not billing. Unknown, credential, endpoint,
+non-finite, non-positive, oversized, duplicate, and warning-above-hard values
+are rejected. `null` removes an inherited threshold. The packaged migration
+default is warn-only with the existing 600,000 run and 200,000 role operational
+warnings and no hard thresholds.
+
+Set `PI_TMUX_ORCHESTRATOR_BUDGET_CONFIG` to an absolute external path. A budget
+file in the target project is rejected. Explicit `--budget-enforcement` and
+repeatable `--budget-override LEVEL.SCOPE.METRIC=VALUE` (or `=off`) values win
+for one run; the model tool exposes the same strict native `budgetOverrides`
+object. Dry-run JSON and Pi's start confirmation show the effective policy.
+The policy is retained as numeric/enum broker metadata. This policy PR does not
+yet activate hard assignment gates; existing workflows continue with warnings
+until the separate enforcement change lands.
 
 Natural-language requests are supported by the `tmux_orchestrator` tool. For
 example, users can ask Pi to “use my current model for every worker,” “use
@@ -434,8 +475,10 @@ the orchestrator does not invent estimates.
 
 Structural savings include no waiting turns, no polling, no copied diffs/logs,
 one reviewer wake after all evidence, no approval acknowledgement turn, and
-terminating report calls. Soft role/run budgets warn before additional work. No
-budget can stop an already-started provider response at an exact token.
+terminating report calls. Current soft role/run operational-token budgets warn
+before additional work. Versioned warning/hard policy is validated and retained
+for each new run, but hard assignment gates remain a separate change. No budget
+can stop an already-started provider response at an exact token.
 
 ### Development token-efficiency baseline
 
