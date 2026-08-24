@@ -389,7 +389,10 @@ pi-tmux-agents --json supervisor command SESSION --run RUN_ID \
 Retained-state reads do not query tmux and never infer liveness from retained
 PIDs. Host runtime is reported as `not_observed`. Snapshot/status include role
 lifecycle, workflow round/state, actual provider usage totals when available,
-and context pressure without workflow payload bodies.
+latest immutable assignment usage, and context pressure without workflow payload
+bodies. In Supervisor snapshots, the latest result is
+`roles[].runtime.state.latest_assignment_usage`; retained pre-upgrade reports
+keep its `usage` value unavailable.
 
 ## Durable state and compatibility
 
@@ -415,10 +418,13 @@ is no selectable legacy fallback.
 ## Token policy
 
 The bridge sums actual Pi/provider-reported input, output, cache-read,
-cache-write, optional reasoning tokens, and cost across complete durable
-history. It separately exposes current provider-context occupancy when Pi makes
-it available. Missing data remains unavailable; the orchestrator does not
-invent estimates.
+cache-write, optional reasoning tokens, provider-call count, and cost across
+complete durable history. Each accepted assignment records the delta from its
+numeric session boundary, plus current and peak context occupancy when available,
+in the same SQLite transaction as its report metadata. Downstream routing starts
+only after that commit. Duplicate reports cannot replace the immutable usage
+result. Missing data and usage from older retained reports remain unavailable;
+the orchestrator does not invent estimates.
 
 Structural savings include no waiting turns, no polling, no copied diffs/logs,
 one reviewer wake after all evidence, no approval acknowledgement turn, and

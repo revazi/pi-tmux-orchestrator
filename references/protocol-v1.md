@@ -82,7 +82,7 @@ watch a compatible existing run through the package extension. An observer:
 - authenticates with the separate control token and same-user socket boundary;
 - sends a strict `observe` hello and sends no frames after authentication;
 - receives lifecycle and workflow-state frames plus accepted structured report
-  bodies;
+  bodies and bounded numeric assignment usage;
 - produces bounded lifecycle/report-received progress in the watching Pi while
   keeping raw assistant/tool output in tmux;
 - receives a bounded in-memory replay of up to 100 reports from the current
@@ -140,8 +140,9 @@ sleep, or poll after reporting.
 Delivery IDs, assignment IDs, report IDs, and command IDs are 32-character
 lowercase hexadecimal values.
 
-- Bridge custom entries retain accepted delivery IDs and assignment-boundary
-  metadata outside LLM context.
+- Bridge custom entries retain accepted delivery IDs and numeric cumulative
+  usage at each assignment boundary outside LLM context. They retain no task,
+  prompt, report, message, provider, diff, or log body.
 - Pi invokes the bridge's context-projection hook for every provider request.
   Every projection within one active assignment retains all of that assignment's
   assistant/tool turns; completed turns leave provider context only when the next
@@ -153,7 +154,12 @@ lowercase hexadecimal values.
 - Direct user messages and non-orchestrator custom messages are not discarded by
   this projection.
 - Replayed delivery IDs are acknowledged as duplicates.
-- One report is accepted per assignment.
+- One report is accepted per assignment. Current bridges attach cumulative and
+  boundary-delta provider usage to the report request. The broker validates and
+  stores that numeric snapshot in the same transaction as report acceptance,
+  before any downstream routing. A duplicate report receives a duplicate
+  acknowledgement and cannot replace the first usage result; legacy reports
+  without a snapshot remain accepted with assignment usage unavailable.
 - Operator control command retries deduplicate matching action/role/delivery
   metadata; conflicting reuse is rejected. Supervisor API v2 exposes retained
   command metadata without message bodies.
@@ -179,16 +185,22 @@ lowercase hexadecimal values.
 Report bodies remain durable in the submitting Pi session's tool result, while
 delivery context remains in recipient Pi sessions. When a parent observer is
 attached, returned structured reports also become part of the parent Pi
-session. SQLite retains only report shape/count/verdict metadata.
+session. SQLite retains only report shape/count/verdict metadata and numeric
+cumulative/assignment usage; it never stores report or provider bodies.
 
 ## Token accounting
 
 The bridge sums actual provider-reported assistant usage across the complete Pi
-session: input, output, cache read, cache write, optional reasoning, and total
-cost. It separately reports Pi's current provider-context occupancy when
-available. Missing provider data remains unavailable; the broker does not invent
-estimates. Input, cache activity, output, optional reasoning, current context
-occupancy, and cost remain distinct categories. The development-only
+session: provider-call count, input, output, cache read, cache write, optional
+reasoning, and total cost. At assignment acceptance it records a numeric
+cumulative baseline outside model context. `orchestrator_report` submits both the
+current cumulative snapshot and its delta from that baseline, including current
+context occupancy and the peak observed context tokens when available. The
+broker commits report metadata, immutable assignment usage, and current
+cumulative role usage atomically before routing. Missing provider data
+and pre-upgrade assignment usage remain unavailable; the broker does not invent
+estimates. Input, cache activity, output, optional reasoning, current/peak
+context occupancy, and cost remain distinct categories. The development-only
 `operational_tokens` aggregate sums input, output, cache read, and cache write
 for comparison; it is not a billing unit. Provider-reported cost is the only
 cost authority.

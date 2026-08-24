@@ -90,6 +90,13 @@ def supervisor_capabilities() -> dict[str, Any]:
             "argument": "--cursor ROLE=SEQUENCE",
             "retention_gap_reported": True,
         },
+        "usage_accounting": {
+            "cumulative_role_usage": True,
+            "latest_assignment_usage": True,
+            "assignment_result_immutable": True,
+            "legacy_assignment_usage": "unavailable",
+            "provider_reported_only": True,
+        },
         "limits": {
             "page_items": MAX_JSON_ITEMS,
             "events_per_role": MAX_RPC_EVENTS,

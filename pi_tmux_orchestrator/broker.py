@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import math
 import os
 import secrets
 import signal
@@ -1100,6 +1101,8 @@ class Broker:
                     "context_window": usage.get("contextWindow"),
                     "context_percent": usage.get("contextPercent"),
                 }
+                if "providerCalls" in usage:
+                    fields["provider_calls"] = usage["providerCalls"]
                 for field, value in fields.items():
                     changes.append(f"{field}=?")
                     values.append(value)
@@ -1180,16 +1183,36 @@ class Broker:
             await self.broadcast_workflow(workflow_transition, round_number)
         await self.reply(client, message["id"], True, status="recorded")
 
-    def _valid_usage(self, usage: object) -> bool:
+    def _valid_usage(
+        self,
+        usage: object,
+        *,
+        require_provider_calls: bool = False,
+        allow_peak_context: bool = False,
+    ) -> bool:
         if not isinstance(usage, dict):
             return False
         required = {"input", "output", "cacheRead", "cacheWrite", "cost"}
-        optional = {"reasoning", "contextTokens", "contextWindow", "contextPercent"}
+        if require_provider_calls:
+            required.add("providerCalls")
+        optional = {
+            "providerCalls",
+            "reasoning",
+            "contextTokens",
+            "contextWindow",
+            "contextPercent",
+        }
+        if allow_peak_context:
+            optional.add("peakContextTokens")
         if not required.issubset(usage) or not set(usage).issubset(required | optional):
             return False
         for key in required - {"cost"}:
             if type(usage[key]) is not int or usage[key] < 0:
                 return False
+        if usage.get("providerCalls") is not None and (
+            type(usage["providerCalls"]) is not int or usage["providerCalls"] < 0
+        ):
+            return False
         if usage.get("reasoning") is not None and (
             type(usage["reasoning"]) is not int or usage["reasoning"] < 0
         ):
@@ -1198,23 +1221,44 @@ class Broker:
         if (
             not isinstance(cost, dict)
             or set(cost) != {"total"}
-            or not isinstance(cost["total"], (int, float))
+            or type(cost["total"]) not in {int, float}
+            or not math.isfinite(cost["total"])
             or cost["total"] < 0
         ):
             return False
-        for key in ("contextTokens", "contextWindow"):
+        for key in ("contextTokens", "contextWindow", "peakContextTokens"):
             if usage.get(key) is not None and (
                 type(usage[key]) is not int or usage[key] < 0
             ):
                 return False
-        if usage.get("contextPercent") is not None and not isinstance(
-            usage["contextPercent"], (int, float)
+        percent = usage.get("contextPercent")
+        if percent is not None and (
+            type(percent) not in {int, float}
+            or not math.isfinite(percent)
+            or percent < 0
         ):
             return False
         return True
 
+    def _valid_report_usage(self, usage: object) -> bool:
+        return (
+            isinstance(usage, dict)
+            and set(usage) == {"cumulative", "assignment"}
+            and self._valid_usage(usage["cumulative"], require_provider_calls=True)
+            and self._valid_usage(
+                usage["assignment"],
+                require_provider_calls=True,
+                allow_peak_context=True,
+            )
+        )
+
     async def handle_report(self, client: Client, message: dict[str, Any]) -> None:
         report = validate_report(message["report"], client.role)
+        report_usage = message.get("usage")
+        if report_usage is not None and not self._valid_report_usage(report_usage):
+            raise OrchestrationError(
+                "Assignment provider usage is invalid", "invalid_protocol"
+            )
         assignment_id = message["assignment_id"]
         if not isinstance(assignment_id, str) or not RPC_TOKEN_PATTERN.fullmatch(
             assignment_id
@@ -1236,10 +1280,15 @@ class Broker:
                 await self.reply(client, message["id"], True, status="duplicate")
                 return
             report_id = secrets.token_hex(16)
+            assignment_usage = (
+                report_usage["assignment"] if report_usage is not None else {}
+            )
             database.execute(
                 "INSERT INTO reports(id,assignment_id,role,round,kind,verdict,summary_chars,"
-                "changed_path_count,check_count,finding_count,risk_count,limitation_count,created_at) "
-                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "changed_path_count,check_count,finding_count,risk_count,limitation_count,"
+                "provider_calls,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,"
+                "reasoning_tokens,cost_total,context_tokens,context_window,context_percent,"
+                "peak_context_tokens,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     report_id,
                     assignment_id,
@@ -1253,9 +1302,40 @@ class Broker:
                     len(report["findings"]),
                     len(report["risks"]),
                     len(report["limitations"]),
+                    assignment_usage.get("providerCalls"),
+                    assignment_usage.get("input"),
+                    assignment_usage.get("output"),
+                    assignment_usage.get("cacheRead"),
+                    assignment_usage.get("cacheWrite"),
+                    assignment_usage.get("reasoning"),
+                    assignment_usage.get("cost", {}).get("total"),
+                    assignment_usage.get("contextTokens"),
+                    assignment_usage.get("contextWindow"),
+                    assignment_usage.get("contextPercent"),
+                    assignment_usage.get("peakContextTokens"),
                     utc_now(),
                 ),
             )
+            if report_usage is not None:
+                cumulative = report_usage["cumulative"]
+                database.execute(
+                    "UPDATE roles SET provider_calls=?,input_tokens=?,output_tokens=?,"
+                    "cache_read_tokens=?,cache_write_tokens=?,reasoning_tokens=?,cost_total=?,"
+                    "context_tokens=?,context_window=?,context_percent=? WHERE role=?",
+                    (
+                        cumulative["providerCalls"],
+                        cumulative["input"],
+                        cumulative["output"],
+                        cumulative["cacheRead"],
+                        cumulative["cacheWrite"],
+                        cumulative.get("reasoning"),
+                        cumulative["cost"]["total"],
+                        cumulative.get("contextTokens"),
+                        cumulative.get("contextWindow"),
+                        cumulative.get("contextPercent"),
+                        client.role,
+                    ),
+                )
             database.execute(
                 "UPDATE assignments SET state='completed',updated_at=? WHERE id=?",
                 (utc_now(), assignment_id),
@@ -1281,6 +1361,7 @@ class Broker:
             "role": client.role,
             "round": assignment["round"],
             "report": report,
+            "usage": report_usage["assignment"] if report_usage is not None else None,
         }
         self._remember_report(report_event)
         await self.broadcast(report_event)

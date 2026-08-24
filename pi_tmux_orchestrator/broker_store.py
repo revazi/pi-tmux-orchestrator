@@ -16,7 +16,7 @@ from .constants import BROKER_PROTOCOL_VERSION, MAX_BROKER_EVENTS
 from .models import OrchestrationError
 from .storage import ensure_private_directory, validate_coordination_directory
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def utc_now() -> str:
@@ -89,6 +89,7 @@ def initialize_broker_database(
                 connected INTEGER NOT NULL DEFAULT 0,
                 active_assignment_id TEXT,
                 generation INTEGER NOT NULL DEFAULT 1,
+                provider_calls INTEGER DEFAULT 0,
                 input_tokens INTEGER NOT NULL DEFAULT 0,
                 output_tokens INTEGER NOT NULL DEFAULT 0,
                 cache_read_tokens INTEGER NOT NULL DEFAULT 0,
@@ -124,6 +125,17 @@ def initialize_broker_database(
                 finding_count INTEGER NOT NULL,
                 risk_count INTEGER NOT NULL,
                 limitation_count INTEGER NOT NULL,
+                provider_calls INTEGER,
+                input_tokens INTEGER,
+                output_tokens INTEGER,
+                cache_read_tokens INTEGER,
+                cache_write_tokens INTEGER,
+                reasoning_tokens INTEGER,
+                cost_total REAL,
+                context_tokens INTEGER,
+                context_window INTEGER,
+                context_percent REAL,
+                peak_context_tokens INTEGER,
                 created_at TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS control_commands (
@@ -192,13 +204,29 @@ def prepare_broker_database(coord: Path) -> None:
                 "ALTER TABLE assignments ADD COLUMN "
                 "boundary_effective INTEGER NOT NULL DEFAULT 0"
             )
-            database.execute(
-                "UPDATE meta SET value=? WHERE key='schema_version'",
-                (str(SCHEMA_VERSION),),
-            )
-            version = SCHEMA_VERSION
+            version = 2
+        if version == 2:
+            database.execute("ALTER TABLE roles ADD COLUMN provider_calls INTEGER")
+            for column, kind in (
+                ("provider_calls", "INTEGER"),
+                ("input_tokens", "INTEGER"),
+                ("output_tokens", "INTEGER"),
+                ("cache_read_tokens", "INTEGER"),
+                ("cache_write_tokens", "INTEGER"),
+                ("reasoning_tokens", "INTEGER"),
+                ("cost_total", "REAL"),
+                ("context_tokens", "INTEGER"),
+                ("context_window", "INTEGER"),
+                ("context_percent", "REAL"),
+                ("peak_context_tokens", "INTEGER"),
+            ):
+                database.execute(f"ALTER TABLE reports ADD COLUMN {column} {kind}")
+            version = 3
         if version != SCHEMA_VERSION:
             raise OrchestrationError("Broker database schema is unsupported")
+        database.execute(
+            "UPDATE meta SET value=? WHERE key='schema_version'", (str(version),)
+        )
 
 
 def record_event(
@@ -241,17 +269,51 @@ def broker_role_generation(coord: Path, role: str) -> int:
     return int(row["generation"])
 
 
+def _public_assignment_usage(row: sqlite3.Row | None) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    value = {
+        "assignment_id": row["assignment_id"],
+        "round": row["round"],
+        "kind": row["kind"],
+        "usage": None,
+    }
+    if "provider_calls" not in row.keys() or row["provider_calls"] is None:
+        return value
+    usage = {
+        "provider_calls": row["provider_calls"],
+        "input_tokens": row["input_tokens"],
+        "output_tokens": row["output_tokens"],
+        "cache_read_tokens": row["cache_read_tokens"],
+        "cache_write_tokens": row["cache_write_tokens"],
+        "reasoning_tokens": row["reasoning_tokens"],
+        "cost_total": row["cost_total"],
+        "context_tokens": row["context_tokens"],
+        "context_window": row["context_window"],
+        "context_percent": row["context_percent"],
+        "peak_context_tokens": row["peak_context_tokens"],
+        "actual_provider_usage_only": True,
+    }
+    value["usage"] = usage
+    return value
+
+
 def public_broker_snapshot(coord: Path) -> dict[str, Any]:
     with connect_broker_database(coord, readonly=True) as database:
         meta = {
             row["key"]: row["value"]
             for row in database.execute("SELECT key,value FROM meta")
         }
+        schema_version = int(meta.get("schema_version", "0"))
+        provider_calls = (
+            "provider_calls" if schema_version >= 3 else "NULL AS provider_calls"
+        )
         roles = []
         for row in database.execute(
-            "SELECT role,state,connected,active_assignment_id,generation,input_tokens,output_tokens,"
-            "cache_read_tokens,cache_write_tokens,reasoning_tokens,cost_total,"
-            "context_tokens,context_window,context_percent,updated_at FROM roles ORDER BY role"
+            f"SELECT role,state,connected,active_assignment_id,generation,{provider_calls},"
+            "input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,reasoning_tokens,"
+            "cost_total,context_tokens,context_window,context_percent,updated_at "
+            "FROM roles ORDER BY role"
         ):
             value = dict(row)
             value["connected"] = bool(value["connected"])
@@ -264,7 +326,22 @@ def public_broker_snapshot(coord: Path) -> dict[str, Any]:
                 ).fetchone()
                 if assignment_row is not None:
                     assignment = dict(assignment_row)
+            if schema_version >= 3:
+                latest = database.execute(
+                    "SELECT assignment_id,round,kind,provider_calls,input_tokens,output_tokens,"
+                    "cache_read_tokens,cache_write_tokens,reasoning_tokens,cost_total,"
+                    "context_tokens,context_window,context_percent,peak_context_tokens "
+                    "FROM reports WHERE role=? ORDER BY round DESC,created_at DESC LIMIT 1",
+                    (value["role"],),
+                ).fetchone()
+            else:
+                latest = database.execute(
+                    "SELECT assignment_id,round,kind FROM reports WHERE role=? "
+                    "ORDER BY round DESC,created_at DESC LIMIT 1",
+                    (value["role"],),
+                ).fetchone()
             value["assignment"] = assignment
+            value["latest_assignment_usage"] = _public_assignment_usage(latest)
             roles.append(value)
         event_bounds = database.execute(
             "SELECT MIN(sequence) AS earliest, MAX(sequence) AS latest FROM events"
@@ -296,6 +373,11 @@ def public_broker_snapshot(coord: Path) -> dict[str, Any]:
             },
             "roles": roles,
             "usage": {
+                "provider_calls": (
+                    sum(role["provider_calls"] for role in roles)
+                    if all(role["provider_calls"] is not None for role in roles)
+                    else None
+                ),
                 "total_tokens": total_tokens,
                 "soft_role_tokens": role_budget,
                 "soft_total_tokens": total_budget,

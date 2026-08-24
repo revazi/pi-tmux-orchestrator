@@ -121,6 +121,11 @@ class SupervisorApiTests(SupervisorApiFixture):
             "acceptance-or-queueing",
         )
         self.assertFalse(capabilities["control_semantics"]["exactly_once"])
+        self.assertTrue(capabilities["usage_accounting"]["latest_assignment_usage"])
+        self.assertEqual(
+            capabilities["usage_accounting"]["legacy_assignment_usage"],
+            "unavailable",
+        )
         self.assertTrue(capabilities["metadata_only"])
 
     def test_sessions_runs_and_snapshot_use_only_retained_state(self) -> None:

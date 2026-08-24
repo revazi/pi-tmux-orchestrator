@@ -96,12 +96,70 @@ function validateLifecycle(value) {
   );
 }
 
+const REPORT_USAGE_REQUIRED = ["providerCalls", "input", "output", "cacheRead", "cacheWrite", "cost"];
+const REPORT_USAGE_OPTIONAL = ["reasoning", "contextTokens", "contextWindow", "contextPercent", "peakContextTokens"];
+const REPORT_USAGE_INTEGERS = ["providerCalls", "input", "output", "cacheRead", "cacheWrite"];
+const REPORT_USAGE_OPTIONAL_INTEGERS = ["reasoning", "contextTokens", "contextWindow", "peakContextTokens"];
+const REPORT_USAGE_KEYS = new Set([...REPORT_USAGE_REQUIRED, ...REPORT_USAGE_OPTIONAL]);
+
+function plainObject(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function nonnegativeInteger(value) {
+  return Number.isInteger(value) && value >= 0;
+}
+
+function hasRequiredUsageKeys(value) {
+  return REPORT_USAGE_REQUIRED.every((key) => Object.hasOwn(value, key));
+}
+
+function hasOnlyUsageKeys(value) {
+  return Object.keys(value).every((key) => REPORT_USAGE_KEYS.has(key));
+}
+
+function requiredUsageIntegersAreValid(value) {
+  return REPORT_USAGE_INTEGERS.every((key) => nonnegativeInteger(value[key]));
+}
+
+function optionalUsageIntegersAreValid(value) {
+  return REPORT_USAGE_OPTIONAL_INTEGERS.every(
+    (key) => value[key] === undefined || nonnegativeInteger(value[key]),
+  );
+}
+
+function usagePercentIsValid(value) {
+  return value.contextPercent === undefined
+    || (Number.isFinite(value.contextPercent) && value.contextPercent >= 0);
+}
+
+function usageCostIsValid(value) {
+  return exactKeys(value.cost, ["total"])
+    && Number.isFinite(value.cost.total)
+    && value.cost.total >= 0;
+}
+
+function validReportUsage(value) {
+  if (value === null) return true;
+  if (!plainObject(value)) return false;
+  return [
+    hasRequiredUsageKeys(value),
+    hasOnlyUsageKeys(value),
+    requiredUsageIntegersAreValid(value),
+    optionalUsageIntegersAreValid(value),
+    usagePercentIsValid(value),
+    usageCostIsValid(value),
+  ].every(Boolean);
+}
+
 function validateReport(value) {
   const encodedReport = Buffer.from(JSON.stringify(value.report ?? null), "utf8");
+  const legacyKeys = [
+    "version", "type", "session", "id", "assignment_id", "role", "round", "report",
+  ];
   invalidUnless(
-    exactKeys(value, [
-      "version", "type", "session", "id", "assignment_id", "role", "round", "report",
-    ])
+    (exactKeys(value, legacyKeys) || exactKeys(value, [...legacyKeys, "usage"]))
+      && (value.usage === undefined || validReportUsage(value.usage))
       && /^[a-f0-9]{32}$/.test(value.id)
       && /^[a-f0-9]{32}$/.test(value.assignment_id)
       && ROLES.includes(value.role)
