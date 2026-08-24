@@ -1,0 +1,174 @@
+{
+  "schema_version": 1,
+  "metric_scope": "model-free-provider-context-proxy",
+  "caveat": "Serialized characters and UTF-8 bytes are deterministic proxies, not provider tokens, billing, or production-wire acceptance.",
+  "fixtures": {
+    "simple": {
+      "provider_calls": 2,
+      "provider_context": {
+        "by_call": [
+          {
+            "call": 1,
+            "messages": 2,
+            "characters": 453,
+            "utf8Bytes": 453
+          },
+          {
+            "call": 2,
+            "messages": 4,
+            "characters": 2707,
+            "utf8Bytes": 2710
+          }
+        ],
+        "total_characters": 3160,
+        "peak_characters": 2707,
+        "total_utf8_bytes": 3163,
+        "peak_utf8_bytes": 2710
+      },
+      "tool_results": {
+        "count": 2,
+        "characters": 2008,
+        "by_tool": {
+          "orchestrator_report": {
+            "count": 1,
+            "characters": 8
+          },
+          "read": {
+            "count": 1,
+            "characters": 2000
+          }
+        }
+      }
+    },
+    "medium": {
+      "provider_calls": 5,
+      "provider_context": {
+        "by_call": [
+          {
+            "call": 1,
+            "messages": 2,
+            "characters": 453,
+            "utf8Bytes": 453
+          },
+          {
+            "call": 2,
+            "messages": 5,
+            "characters": 2140,
+            "utf8Bytes": 2140
+          },
+          {
+            "call": 3,
+            "messages": 9,
+            "characters": 14849,
+            "utf8Bytes": 14849
+          },
+          {
+            "call": 4,
+            "messages": 11,
+            "characters": 15139,
+            "utf8Bytes": 15139
+          },
+          {
+            "call": 5,
+            "messages": 13,
+            "characters": 17407,
+            "utf8Bytes": 17407
+          }
+        ],
+        "total_characters": 49988,
+        "peak_characters": 17407,
+        "total_utf8_bytes": 49988,
+        "peak_utf8_bytes": 17407
+      },
+      "tool_results": {
+        "count": 8,
+        "characters": 15215,
+        "by_tool": {
+          "bash": {
+            "count": 1,
+            "characters": 2000
+          },
+          "edit": {
+            "count": 1,
+            "characters": 7
+          },
+          "find": {
+            "count": 1,
+            "characters": 600
+          },
+          "grep": {
+            "count": 1,
+            "characters": 600
+          },
+          "orchestrator_report": {
+            "count": 1,
+            "characters": 8
+          },
+          "read": {
+            "count": 3,
+            "characters": 12000
+          }
+        }
+      }
+    },
+    "multi_round": {
+      "provider_calls": 5,
+      "provider_context": {
+        "by_call": [
+          {
+            "call": 1,
+            "messages": 2,
+            "characters": 453,
+            "utf8Bytes": 453
+          },
+          {
+            "call": 2,
+            "messages": 4,
+            "characters": 30711,
+            "utf8Bytes": 30711
+          },
+          {
+            "call": 3,
+            "messages": 6,
+            "characters": 45965,
+            "utf8Bytes": 45965
+          },
+          {
+            "call": 4,
+            "messages": 4,
+            "characters": 752,
+            "utf8Bytes": 752
+          },
+          {
+            "call": 5,
+            "messages": 6,
+            "characters": 4022,
+            "utf8Bytes": 4022
+          }
+        ],
+        "total_characters": 81903,
+        "peak_characters": 45965,
+        "total_utf8_bytes": 81903,
+        "peak_utf8_bytes": 45965
+      },
+      "tool_results": {
+        "count": 5,
+        "characters": 48016,
+        "by_tool": {
+          "bash": {
+            "count": 1,
+            "characters": 15000
+          },
+          "orchestrator_report": {
+            "count": 2,
+            "characters": 16
+          },
+          "read": {
+            "count": 2,
+            "characters": 33000
+          }
+        }
+      }
+    }
+  }
+}

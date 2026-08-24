@@ -187,7 +187,11 @@ The bridge sums actual provider-reported assistant usage across the complete Pi
 session: input, output, cache read, cache write, optional reasoning, and total
 cost. It separately reports Pi's current provider-context occupancy when
 available. Missing provider data remains unavailable; the broker does not invent
-estimates.
+estimates. Input, cache activity, output, optional reasoning, current context
+occupancy, and cost remain distinct categories. The development-only
+`operational_tokens` aggregate sums input, output, cache read, and cache write
+for comparison; it is not a billing unit. Provider-reported cost is the only
+cost authority.
 
 Soft role and run token thresholds are metadata warnings. A future hard budget
 may prevent a new assignment, but cannot stop an already-started provider
