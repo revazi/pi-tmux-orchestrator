@@ -6,6 +6,7 @@ import datetime as dt
 import hashlib
 import json
 import os
+import re
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -26,9 +27,15 @@ from .constants import (
     MAX_JSON_ITEMS,
 )
 from .models import OrchestrationError
+from .specialist_activation import (
+    ACTIVATION_DECISIONS,
+    SPECIALIST_ROLES,
+    validate_forced_specialists,
+)
 from .storage import ensure_private_directory, validate_coordination_directory
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
+_ACTIVATION_RULE_PATTERN = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
 
 
 def validate_implementation_flow(value: object) -> str:
@@ -95,6 +102,7 @@ def initialize_broker_database(
     soft_total_tokens: int,
     budget_policy: dict[str, Any] | None = None,
     implementation_flow: str = DEFAULT_IMPLEMENTATION_FLOW,
+    forced_specialists: tuple[str, ...] | list[str] = (),
 ) -> None:
     selected_policy = (
         packaged_budget_policy() if budget_policy is None else budget_policy
@@ -110,6 +118,9 @@ def initialize_broker_database(
                 selected_policy["warning"][scope]["operational_tokens"] = threshold
     policy = validate_budget_config(selected_policy)
     selected_flow = validate_implementation_flow(implementation_flow)
+    selected_forced = validate_forced_specialists(
+        forced_specialists, set(manifest["roles"])
+    )
     with connect_broker_database(coord) as database:
         database.executescript("""
             CREATE TABLE IF NOT EXISTS meta (
@@ -191,6 +202,15 @@ def initialize_broker_database(
                 created_at TEXT NOT NULL,
                 PRIMARY KEY(assignment_id, level)
             );
+            CREATE TABLE IF NOT EXISTS specialist_activations (
+                role TEXT NOT NULL REFERENCES roles(role),
+                round INTEGER NOT NULL,
+                decision TEXT NOT NULL,
+                rule_id TEXT NOT NULL,
+                forced INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY(role, round)
+            );
             CREATE TABLE IF NOT EXISTS events (
                 sequence INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp TEXT NOT NULL,
@@ -219,6 +239,7 @@ def initialize_broker_database(
             "soft_total_tokens": str(soft_total_tokens),
             "budget_policy": json.dumps(policy, separators=(",", ":"), sort_keys=True),
             "implementation_flow": selected_flow,
+            "forced_specialists": json.dumps(selected_forced, separators=(",", ":")),
             "created_at": now,
             "updated_at": now,
         }
@@ -288,6 +309,23 @@ def prepare_broker_database(coord: Path) -> None:
                 (DEFAULT_IMPLEMENTATION_FLOW,),
             )
             version = 6
+        if version == 6:
+            database.execute("""
+                CREATE TABLE IF NOT EXISTS specialist_activations (
+                    role TEXT NOT NULL REFERENCES roles(role),
+                    round INTEGER NOT NULL,
+                    decision TEXT NOT NULL,
+                    rule_id TEXT NOT NULL,
+                    forced INTEGER NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY(role, round)
+                )
+            """)
+            database.execute(
+                "INSERT OR IGNORE INTO meta(key,value) VALUES "
+                "('forced_specialists','[]')"
+            )
+            version = 7
         if version != SCHEMA_VERSION:
             raise OrchestrationError("Broker database schema is unsupported")
         database.execute(
@@ -330,6 +368,101 @@ def retained_implementation_flow(database: sqlite3.Connection) -> str:
     if row is None:
         return DEFAULT_IMPLEMENTATION_FLOW
     return validate_implementation_flow(row["value"])
+
+
+def retained_forced_specialists(
+    database: sqlite3.Connection,
+    configured_roles: list[str] | tuple[str, ...] | set[str],
+) -> tuple[str, ...]:
+    row = database.execute(
+        "SELECT value FROM meta WHERE key='forced_specialists'"
+    ).fetchone()
+    if row is None:
+        return ()
+    try:
+        value = json.loads(row["value"])
+    except (TypeError, json.JSONDecodeError) as error:
+        raise OrchestrationError("Retained forced specialists are invalid") from error
+    return validate_forced_specialists(value, configured_roles)
+
+
+def record_specialist_activation(
+    database: sqlite3.Connection,
+    *,
+    role: str,
+    round_number: int,
+    decision: str,
+    rule_id: str,
+    forced: bool,
+) -> dict[str, Any]:
+    valid = (
+        role in SPECIALIST_ROLES
+        and type(round_number) is int
+        and round_number > 0
+        and decision in ACTIVATION_DECISIONS
+        and isinstance(rule_id, str)
+        and _ACTIVATION_RULE_PATTERN.fullmatch(rule_id) is not None
+        and rule_id.startswith(f"{role}-")
+        and type(forced) is bool
+    )
+    if not valid:
+        raise OrchestrationError("Specialist activation decision is invalid")
+    existing = database.execute(
+        "SELECT decision,rule_id,forced FROM specialist_activations "
+        "WHERE role=? AND round=?",
+        (role, round_number),
+    ).fetchone()
+    expected = {"decision": decision, "rule_id": rule_id, "forced": int(forced)}
+    if existing is not None:
+        if dict(existing) != expected:
+            raise OrchestrationError(
+                "Specialist activation decision is immutable", "conflict"
+            )
+    else:
+        database.execute(
+            "INSERT INTO specialist_activations"
+            "(role,round,decision,rule_id,forced,created_at) VALUES (?,?,?,?,?,?)",
+            (role, round_number, decision, rule_id, int(forced), utc_now()),
+        )
+        record_event(
+            database,
+            "specialist_activation",
+            role=role,
+            round_number=round_number,
+            status=decision,
+        )
+    return {
+        "role": role,
+        "round": round_number,
+        "decision": decision,
+        "rule_id": rule_id,
+        "forced": forced,
+    }
+
+
+def public_specialist_activations(
+    database: sqlite3.Connection, *, round_number: int
+) -> list[dict[str, Any]]:
+    values = []
+    for row in database.execute(
+        "SELECT role,round,decision,rule_id,forced FROM specialist_activations "
+        "WHERE round=? ORDER BY CASE role "
+        "WHEN 'probe' THEN 0 WHEN 'playwright' THEN 1 ELSE 2 END",
+        (round_number,),
+    ):
+        value = dict(row)
+        if (
+            value["role"] not in SPECIALIST_ROLES
+            or value["decision"] not in ACTIVATION_DECISIONS
+            or not isinstance(value["rule_id"], str)
+            or _ACTIVATION_RULE_PATTERN.fullmatch(value["rule_id"]) is None
+            or not value["rule_id"].startswith(f"{value['role']}-")
+            or value["forced"] not in {0, 1}
+        ):
+            raise OrchestrationError("Retained specialist activation is invalid")
+        value["forced"] = bool(value["forced"])
+        values.append(value)
+    return values
 
 
 def retained_budget_policy(database: sqlite3.Connection) -> dict[str, Any]:
@@ -506,15 +639,26 @@ def public_broker_snapshot(coord: Path) -> dict[str, Any]:
             role["soft_budget_exceeded"] = (
                 role_budget > 0 and role["total_tokens"] >= role_budget
             )
+        current_round = int(meta.get("round", "0"))
         return {
             "workflow": {
                 "state": meta.get("workflow_state", "unknown"),
-                "round": int(meta.get("round", "0")),
+                "round": current_round,
                 "implementation_flow": validate_implementation_flow(
                     meta.get("implementation_flow", DEFAULT_IMPLEMENTATION_FLOW)
                 ),
+                "forced_specialists": list(
+                    retained_forced_specialists(
+                        database, {role["role"] for role in roles}
+                    )
+                ),
                 "updated_at": meta.get("updated_at"),
             },
+            "specialist_activations": (
+                public_specialist_activations(database, round_number=current_round)
+                if schema_version >= 7
+                else []
+            ),
             "roles": roles,
             "guardrails": {
                 "mode": "observational",

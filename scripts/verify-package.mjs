@@ -31,6 +31,7 @@ const pythonFiles = [
   "rpc_store.py",
   "rpc_supervisor.py",
   "runtime.py",
+  "specialist_activation.py",
   "storage.py",
   "supervisor_api.py",
   "supervisor_commands.py",

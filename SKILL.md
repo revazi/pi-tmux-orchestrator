@@ -32,7 +32,7 @@ panes, file handoffs, relay scripts, or polling loops.
 6. Select `implementationFlow: "phased"` for complex work that benefits from read-only discovery before editing; select `single` for simple work or compatibility. Do not make a separate classifier model request.
 7. Honor explicit user provider/model/thinking requests through `useParentModel` or `modelOverrides`; these win over profile thinking. Use the bounded `models` action to resolve exact available IDs; never invent IDs or inspect credentials.
 8. Honor explicit per-run budget requests through `budgetOverrides`; never infer hard thresholds. Omitted values use the strict external user-global policy and packaged warn-only defaults.
-9. Use specialists only where their independent evidence is relevant.
+9. Configured specialists use conservative deterministic gates. Pass `forceSpecialists` or `--force-specialist ROLE` only when the user explicitly requires that enabled role to run regardless of a skip predicate; never add a classifier model call.
 10. Worker skill discovery is disabled. Pass `workerSkills` or `--worker-skill ROLE=PATH` only for exact Markdown files the user explicitly reviewed; never infer or auto-load a skill.
 11. Orchestration workers bound read/grep/bash results before the next provider call. Follow emitted offset, refined-search, and targeted full-output guidance instead of requesting another broad dump.
 12. Before starting from an existing parent conversation, synthesize the tool's bounded `contextCapsule` from only task-relevant state, settled decisions, constraints, acceptance criteria, paths, evidence, open questions, and out-of-scope items. Never copy the full parent transcript.
@@ -81,7 +81,11 @@ verdict. In phased flow, accepted plan evidence replaces the implementer's
 rolling run-state section before a distinct same-round implementation assignment;
 in single flow the initial assignment is implementation. SQLite retains only
 existing shape/count/usage metadata. Repair rounds start directly from latest
-review evidence. Confirmed restart
+review evidence. Probe, Playwright, and Django activation uses fixed versioned
+rules: ambiguous/high-risk evidence runs, exact low-risk skips are recorded, and
+forced roles always require a real report before review. Reviewer capsules carry
+only bounded decision/rule/evidence metadata; synthetic specialist evidence is
+never production acceptance. Confirmed restart
 advances a broker generation and replays the live in-memory baseline and latest
 coalesced run state, including deferred evidence, before accepted
 active-assignment recovery. See
@@ -97,6 +101,8 @@ pi-tmux-agents start \
   --task-file /tmp/pi-agent-task.md \
   --context-capsule-file /tmp/pi-agent-context.md \
   --implementation-flow phased \
+  --with-playwright \
+  --force-specialist playwright \
   --profile balanced
 ```
 

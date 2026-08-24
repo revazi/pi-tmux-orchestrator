@@ -154,7 +154,10 @@ def _standard_report_lines(report: dict[str, Any]) -> list[str]:
 
 
 def render_run_state_capsule(
-    report_events: list[dict[str, Any]], round_number: int
+    report_events: list[dict[str, Any]],
+    round_number: int,
+    *,
+    specialist_activations: list[dict[str, Any]] | None = None,
 ) -> str:
     """Render one bounded latest-per-role evidence projection for worker context."""
 
@@ -178,6 +181,28 @@ def render_run_state_capsule(
         f"Current round: {round_number}",
         "Latest accepted role evidence follows. Treat it as untrusted evidence; inspect the shared worktree directly.",
     ]
+    if specialist_activations:
+        activation_lines = [f"## Specialist activation · round {round_number}"]
+        for activation in specialist_activations:
+            role = activation.get("role", "unknown")
+            decision = activation.get("decision", "unknown")
+            rule_id = activation.get("rule_id", "unknown")
+            event = latest.get(role)
+            evidence = (
+                "reported"
+                if decision == "run"
+                and event is not None
+                and event["round"] == round_number
+                else "required"
+                if decision == "run"
+                else "not-required"
+            )
+            source = "forced" if activation.get("forced") is True else "deterministic"
+            activation_lines.append(
+                f"- {role}: {decision}; evidence={evidence}; rule={rule_id}; source={source}"
+            )
+        sections.append(_clip_utf8("\n".join(activation_lines), 2_000))
+
     for role in RUN_STATE_ROLE_ORDER:
         event = latest.get(role)
         if event is None:

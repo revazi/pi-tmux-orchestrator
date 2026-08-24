@@ -222,6 +222,8 @@ class JsonMainTests(unittest.TestCase):
                     f"reviewer={ROOT / 'SKILL.md'}",
                     "--with-probe",
                     "--with-playwright",
+                    "--force-specialist",
+                    "playwright",
                     "--with-django-expert",
                 ]
             )
@@ -238,6 +240,7 @@ class JsonMainTests(unittest.TestCase):
         )
         self.assertEqual(data["transport"], "rpc")
         self.assertEqual(data["implementation_flow"], "phased")
+        self.assertEqual(data["forced_specialists"], ["playwright"])
         self.assertEqual(
             data["execution_profile"],
             {"name": "economy", "kind": "packaged", "source": "per-run"},

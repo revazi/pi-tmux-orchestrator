@@ -40,6 +40,7 @@ from pathlib import Path
 for path in (
     Path("$ROOT/bin/pi-tmux-agents"),
     *sorted(Path("$ROOT/pi_tmux_orchestrator").glob("*.py")),
+    Path("$ROOT/scripts/specialist-activation-baseline.py"),
     Path("$ROOT/tests/support.py"),
     Path("$ROOT/tests/test_orchestrator.py"),
     Path("$ROOT/tests/test_hardening.py"),
@@ -49,6 +50,7 @@ for path in (
     Path("$ROOT/tests/test_broker.py"),
     Path("$ROOT/tests/test_dashboard.py"),
     Path("$ROOT/tests/test_rpc_rendering.py"),
+    Path("$ROOT/tests/test_specialist_activation.py"),
     Path("$ROOT/tests/test_token_efficiency.py"),
 ):
     ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -79,6 +81,7 @@ node "$ROOT/scripts/result-volume-baseline.mjs" --check
 node "$ROOT/scripts/execution-profile-baseline.mjs" --check
 node "$ROOT/scripts/phased-implementation-baseline.mjs" --check
 node "$ROOT/scripts/worker-prompt-baseline.mjs" --check
+python3 "$ROOT/scripts/specialist-activation-baseline.py" --check
 
 printf '%s\n' '==> Package verification, npm/Pi local-package install + RPC discovery, and offline publication dry run'
 node "$ROOT/scripts/verify-package.mjs"

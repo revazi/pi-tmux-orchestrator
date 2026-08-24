@@ -21,8 +21,11 @@ from .broker_store import (
     broker_paths,
     connect_broker_database,
     prepare_broker_database,
+    public_specialist_activations,
     record_event,
+    record_specialist_activation,
     retained_budget_policy,
+    retained_forced_specialists,
     retained_implementation_flow,
     set_meta,
     utc_now,
@@ -40,6 +43,7 @@ from .dashboard import BrokerDashboard
 from .models import OrchestrationError
 from .output import bounded_message
 from .protocol import encode_frame, validate_client_message, validate_report
+from .specialist_activation import decide_initial_probe, decide_specialist
 from .storage import load_manifest, secure_write
 
 
@@ -886,9 +890,20 @@ class Broker:
         with connect_broker_database(self.coord) as database:
             set_meta(database, "workflow_state", "active")
             record_event(database, "workflow_active", status="active")
-        await self.broadcast_workflow("active", 1)
-        with connect_broker_database(self.coord, readonly=True) as database:
+        probe_decision = None
+        with connect_broker_database(self.coord) as database:
             implementation_flow = retained_implementation_flow(database)
+            forced = retained_forced_specialists(database, set(self.manifest["roles"]))
+            if "probe" in self.manifest["roles"]:
+                probe_decision = decide_initial_probe(
+                    self.task_bodies["task"], forced="probe" in forced
+                )
+                record_specialist_activation(
+                    database,
+                    round_number=1,
+                    **probe_decision,
+                )
+        await self.broadcast_workflow("active", 1)
         initial_kind = "plan" if implementation_flow == "phased" else "implementation"
         await self.assign(
             "implementer",
@@ -896,7 +911,7 @@ class Broker:
             1,
             self._assignment("implementer", 1, initial_kind),
         )
-        if "probe" in self.clients:
+        if probe_decision is not None and probe_decision["decision"] == "run":
             await self.assign("probe", "probe", 1, self._assignment("probe", 1))
         try:
             (self.coord / "startup.json").unlink()
@@ -1467,8 +1482,14 @@ class Broker:
             del self.recent_reports[: len(self.recent_reports) - MAX_OBSERVER_REPORTS]
 
     def _run_state_capsule(self, round_number: int) -> str:
+        with connect_broker_database(self.coord, readonly=True) as database:
+            activations = public_specialist_activations(
+                database, round_number=round_number
+            )
         return render_run_state_capsule(
-            list(self.latest_reports.values()), round_number
+            list(self.latest_reports.values()),
+            round_number,
+            specialist_activations=activations,
         )
 
     def _role_has_active_assignment(self, role: str) -> bool:
@@ -1519,6 +1540,7 @@ class Broker:
     ) -> None:
         if role == "probe":
             await self._deliver_run_state(("implementer", "reviewer"), round_number)
+            await self.maybe_assign_reviewer(round_number)
             return
         if role == "implementer" and report["kind"] == "plan":
             await self._deliver_run_state(("implementer",), round_number)
@@ -1533,22 +1555,46 @@ class Broker:
                 )
             return
         if role == "implementer":
-            specialists = [
-                name for name in ("playwright", "django") if name in self.clients
+            configured = [
+                name
+                for name in ("probe", "playwright", "django")
+                if name in self.manifest["roles"]
             ]
-            await self._deliver_run_state(
-                tuple(["reviewer", *specialists]), round_number
-            )
-            if specialists:
-                for specialist in specialists:
-                    await self.assign(
-                        specialist,
-                        specialist,
-                        round_number,
-                        self._assignment(specialist, round_number),
+            activated: list[str] = []
+            with connect_broker_database(self.coord) as database:
+                existing = {
+                    value["role"]: value
+                    for value in public_specialist_activations(
+                        database, round_number=round_number
                     )
-            else:
-                await self.maybe_assign_reviewer(round_number)
+                }
+                forced = retained_forced_specialists(
+                    database, set(self.manifest["roles"])
+                )
+                for specialist in configured:
+                    if specialist in existing:
+                        continue
+                    decision = decide_specialist(
+                        specialist,
+                        report["changed_paths"],
+                        forced=specialist in forced,
+                    )
+                    record_specialist_activation(
+                        database,
+                        round_number=round_number,
+                        **decision,
+                    )
+                    if decision["decision"] == "run":
+                        activated.append(specialist)
+            await self._deliver_run_state(tuple(["reviewer", *activated]), round_number)
+            for specialist in activated:
+                await self.assign(
+                    specialist,
+                    specialist,
+                    round_number,
+                    self._assignment(specialist, round_number),
+                )
+            await self.maybe_assign_reviewer(round_number)
             return
         if role in {"playwright", "django"}:
             await self._deliver_run_state(("implementer", "reviewer"), round_number)
@@ -1582,27 +1628,45 @@ class Broker:
 
     async def maybe_assign_reviewer(self, round_number: int) -> None:
         specialists = [
-            name for name in ("playwright", "django") if name in self.manifest["roles"]
+            name
+            for name in ("probe", "playwright", "django")
+            if name in self.manifest["roles"]
         ]
         with connect_broker_database(self.coord) as database:
             implementation = database.execute(
-                "SELECT 1 FROM reports WHERE role='implementer' AND round=?",
+                "SELECT 1 FROM reports WHERE role='implementer' AND round=? "
+                "AND kind='implementation'",
                 (round_number,),
             ).fetchone()
             completed = {
                 row["role"]
                 for row in database.execute(
-                    "SELECT role FROM reports WHERE round=? AND role IN ('playwright','django')",
+                    "SELECT role FROM reports WHERE round=? "
+                    "AND role IN ('probe','playwright','django')",
                     (round_number,),
+                )
+            }
+            activations = {
+                value["role"]: value
+                for value in public_specialist_activations(
+                    database, round_number=round_number
                 )
             }
             reviewer_assignment = database.execute(
                 "SELECT 1 FROM assignments WHERE role='reviewer' AND round=?",
                 (round_number,),
             ).fetchone()
+        specialists_ready = all(
+            specialist in activations
+            and (
+                activations[specialist]["decision"] == "skipped"
+                or specialist in completed
+            )
+            for specialist in specialists
+        )
         if (
             implementation is not None
-            and set(specialists).issubset(completed)
+            and specialists_ready
             and reviewer_assignment is None
         ):
             await self.assign(
@@ -1622,6 +1686,7 @@ def initialize_broker_run(
     context_capsule: str = "",
     budget_policy: dict[str, Any] | None = None,
     implementation_flow: str = DEFAULT_IMPLEMENTATION_FLOW,
+    forced_specialists: tuple[str, ...] | list[str] = (),
     soft_role_tokens: int | None = None,
     soft_total_tokens: int | None = None,
 ) -> None:
@@ -1652,6 +1717,7 @@ def initialize_broker_run(
         soft_total_tokens=int(policy["warning"]["run"].get("operational_tokens", 0)),
         budget_policy=policy,
         implementation_flow=implementation_flow,
+        forced_specialists=forced_specialists,
     )
     secure_write(
         coord / "startup.json",

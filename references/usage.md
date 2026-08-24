@@ -165,6 +165,7 @@ Common options:
 - `--approve-project`: separately confirmed Pi trust bypass for inspected projects
 - repeatable `--worker-skill ROLE=/absolute/path/SKILL.md`: explicit reviewed per-role skill opt-in
 - `--with-probe` and optional `--probe-task[-file]`
+- repeatable `--force-specialist probe|playwright|django` for an enabled role
 - `--with-playwright` and optional `--playwright-task[-file]`
 - `--with-django-expert` and optional `--django-task[-file]`
 - `--rpc-workers`: headless RPC event panes instead of interactive TUI panes
@@ -242,6 +243,37 @@ reduction. It explicitly records provider calls, provider tokens/cost, failed
 checks, and missed findings as unavailable and makes no savings or quality
 claim. Validate it with
 `node scripts/phased-implementation-baseline.mjs --check`.
+
+#### Specialist activation gates
+
+Enabling a specialist configures it; it does not mean every deterministic skip
+predicate must wake it. The broker uses no extra model call and stores no task or
+path body in its decision state. Rules are fixed and versioned:
+
+| Role | Run | Skip |
+|---|---|---|
+| probe | forced; initial high-risk task terms; ambiguous task/path evidence; non-documentation repair paths | clear initial docs/typo task or docs-only repair paths |
+| playwright | forced; browser/frontend suffix; empty or ambiguous non-documentation paths | docs-only changed paths |
+| django | forced; Django file/directory marker; empty or ambiguous paths | docs-only or clearly frontend-only changed paths |
+
+Initial probe classification uses the ephemeral task before startup payload
+deletion. Later decisions use the bounded implementation `changed_paths` array.
+Unknown, empty, or malformed evidence runs the configured role. Repeat
+`--force-specialist ROLE` or pass model-tool `forceSpecialists` only for enabled
+roles that the operator explicitly requires. Forced roles always produce an
+actual report before reviewer assignment; no deterministic skip can satisfy
+that requirement.
+
+SQLite schema v7 and public projections contain only role, round, `run|skipped`,
+versioned rule ID, and forced boolean. The rolling capsule adds the same bounded
+decision and `required|reported|not-required` evidence status. The reviewer
+therefore sees which configured roles ran or were skipped without receiving a
+classifier prompt or persisted task/path content. Probe and Playwright reports
+remain synthetic/local evidence and cannot claim production acceptance. The
+checked docs/frontend/Django/empty-path fixture selects 8 of 12 configured
+assignment opportunities, a 4-assignment proxy reduction. Provider calls,
+tokens, cost, and quality are explicitly unavailable; validate the no-claim
+fixture with `python3 scripts/specialist-activation-baseline.py --check`.
 
 #### Worker result-volume limits
 
@@ -421,9 +453,13 @@ with live report observation.
 4. In phased flow the accepted plan becomes rolling run state and a distinct
    same-round `implementation` assignment; in both flows the implementer ends
    implementation with `orchestrator_report`.
-5. Enabled specialists inspect the shared worktree only after implementation and
-   submit typed evidence.
-6. Accepted evidence updates one latest-per-role run-state capsule bounded to 16 KiB of UTF-8; recipients no longer accumulate one context body for every historical report. Updates targeting an active role are coalesced until its next assignment.
+5. The initial probe and each round's configured specialists are deterministically
+   run or skipped. Forced roles run, and reviewer assignment waits for every
+   activated report while exact skips count as not required.
+6. Accepted evidence and bounded activation metadata update one latest-per-role
+   run-state capsule bounded to 16 KiB of UTF-8; recipients no longer accumulate
+   one context body for every historical report. Updates targeting an active
+   role are coalesced until its next assignment.
 7. The broker supplies the latest run state to the reviewer and wakes it once.
 8. `changes_requested` supplies the coalesced latest run state and starts the next implementation round.
 9. Acceptance of each distinct new assignment emits one metadata-only `context_boundary` event. Pi still invokes context projection for every provider request, but only that boundary changes the pruning policy; every assistant/tool turn in the current assignment remains visible across requests.

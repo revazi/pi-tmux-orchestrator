@@ -33,6 +33,7 @@ class SkillMetadataTests(unittest.TestCase):
             "rpc_protocol.py",
             "rpc_store.py",
             "rpc_supervisor.py",
+            "specialist_activation.py",
             "storage.py",
             "supervisor_api.py",
             "supervisor_commands.py",
@@ -256,6 +257,17 @@ class UtilityTests(unittest.TestCase):
             ]
         )
         self.assertEqual(phased.implementation_flow, "phased")
+        forced = ORCHESTRATOR.build_parser().parse_args(
+            [
+                "start",
+                "--task",
+                "Browser task",
+                "--with-playwright",
+                "--force-specialist",
+                "playwright",
+            ]
+        )
+        self.assertEqual(forced.force_specialist, ["playwright"])
 
     def test_worker_skills_are_explicit_per_role_digest_bound_and_bounded(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

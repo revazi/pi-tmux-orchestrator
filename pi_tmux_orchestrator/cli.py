@@ -52,6 +52,7 @@ from .supervisor_commands import (
     supervisor_snapshot_command,
     supervisor_usage_command,
 )
+from .specialist_activation import SPECIALIST_ROLES
 from .worker_resources import worker_skill_argument
 
 
@@ -227,6 +228,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--profile",
         type=execution_profile,
         help="select a packaged or user-defined execution profile",
+    )
+    start.add_argument(
+        "--force-specialist",
+        action="append",
+        choices=SPECIALIST_ROLES,
+        default=[],
+        help="force one enabled specialist to run whenever applicable; repeatable",
     )
     start.add_argument("--with-probe", action="store_true")
     start.add_argument("--probe-task")
