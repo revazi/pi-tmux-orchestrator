@@ -124,6 +124,7 @@ Common options:
 - `--session NAME`
 - `--context-capsule TEXT` or `--context-capsule-file PATH`: optional bounded parent recap
 - `--approve-project`: separately confirmed Pi trust bypass for inspected projects
+- repeatable `--worker-skill ROLE=/absolute/path/SKILL.md`: explicit reviewed per-role skill opt-in
 - `--with-probe` and optional `--probe-task[-file]`
 - `--with-playwright` and optional `--playwright-task[-file]`
 - `--with-django-expert` and optional `--django-task[-file]`
@@ -146,6 +147,23 @@ or additional model request is used. The rendered capsule is at most 12 KiB.
 Do not copy a transcript, prompts, provider bodies, credentials, logs, or diffs.
 CLI callers may provide equivalent reviewed Markdown with the capsule options.
 The start confirmation shows only presence and character count.
+
+Worker skill discovery is disabled by default for both TUI and RPC starts. The
+CLI option above and the model tool's `workerSkills` object are the only new-run
+skill opt-in surfaces. A selected role must be enabled; each Markdown file must
+be a non-symlink readable UTF-8 file no larger than 256 KiB, with at most eight
+skills per role. The start preview lists exact paths and private manifest
+metadata binds each path to its reviewed SHA-256 digest. Worker launch and
+restart fail closed if a selected file disappears or changes. Skills cannot
+expand a role's tool allowlist, so read-only roles stay without `edit`/`write`.
+
+Workers replace Pi's general coding prompt plus appended role prompt with one
+lean role prompt. The stable common prefix contains active-tool guidance before
+role/project-specific authority and safety rules. Pi still appends governing
+`AGENTS.md`/`CLAUDE.md` context and any explicitly selected skill. The
+model-free built-prompt fixture for Pi 0.84.1 records 5,000 before and 2,479
+after normalized reviewer characters (50.4%); these are serialized prompt-size
+proxies, not provider tokens, cost, cache efficiency, or production acceptance.
 
 All newly started runs use broker protocol v1. `--rpc-workers` does not select a
 different coordination protocol. RPC panes are a plain headless automation

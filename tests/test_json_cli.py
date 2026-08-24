@@ -214,6 +214,8 @@ class JsonMainTests(unittest.TestCase):
                     "--skip-model-check",
                     "--dry-run",
                     "--rpc-workers",
+                    "--worker-skill",
+                    f"reviewer={ROOT / 'SKILL.md'}",
                     "--with-probe",
                     "--with-playwright",
                     "--with-django-expert",
@@ -231,6 +233,11 @@ class JsonMainTests(unittest.TestCase):
             {"present": True, "chars": len(context_canary)},
         )
         self.assertEqual(data["transport"], "rpc")
+        self.assertFalse(data["worker_resources"]["skill_discovery"])
+        self.assertEqual(
+            data["worker_resources"]["skills"]["reviewer"],
+            [str(ROOT / "SKILL.md")],
+        )
         self.assertEqual(
             data["trust"]["policy"],
             "saved-or-global-policy",

@@ -41,6 +41,7 @@ from .rpc_store import (
 )
 from .storage import ensure_private_directory, read_regular_file
 from .tmux import command_path
+from .worker_resources import append_worker_resource_args
 
 
 MAX_RPC_DISPLAY_CHARS = 64 * 1024
@@ -153,13 +154,12 @@ def run_rpc_agent(
             system_prompt_path,
             role_system_prompt(Path(manifest["project"]), role_name),
         )
-        command.extend(
-            [
-                "--extension",
-                str(runtime.WORKER_EXTENSION_PATH),
-                "--append-system-prompt",
-                str(system_prompt_path),
-            ]
+        append_worker_resource_args(
+            command,
+            role,
+            role_name,
+            runtime.WORKER_EXTENSION_PATH,
+            system_prompt_path,
         )
     environment = os.environ.copy()
     environment.pop("PI_TMUX_CONTROLLER", None)

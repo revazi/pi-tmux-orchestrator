@@ -1,75 +1,61 @@
-"""Role system-prompt generation for brokered orchestration workers."""
+"""Lean role system-prompt generation for brokered orchestration workers."""
 
 from __future__ import annotations
 
-import textwrap
 from pathlib import Path
 
 
-def common_project_guidance(project: Path) -> str:
-    return textwrap.dedent(f"""
-        Project: `{project}`
+WORKER_PROMPT_PREFIX = """You are a Pi coding worker in a brokered tmux orchestration.
 
-        Discover and read every governing project instruction before acting, including
-        `AGENTS.md`, `CONTRIBUTING.md`, scoped instructions, current-phase documents,
-        and their references. Follow the closest applicable instructions. Preserve
-        intentional existing worktree changes; never reset, stash, or discard them wholesale.
-        """).strip()
+Use only the active tools. Use read/grep/find/ls for targeted discovery, bash for
+bounded commands and checks, and edit/write only when those tools are active. Tool
+descriptions define their arguments. Be concise and show file paths clearly."""
 
 
 def role_system_prompt(project: Path, role: str) -> str:
     access = (
         "You are the sole worker allowed to modify tracked project files."
         if role == "implementer"
-        else "You are read-only. Do not edit tracked files, commit, push, merge, publish, deploy, or change dependencies."
+        else "You are read-only. Never modify tracked files or dependencies."
     )
     role_focus = {
-        "implementer": "Implement the smallest complete change and keep behavior, tests, documentation, migrations, and public contracts aligned.",
+        "implementer": "Implement the smallest complete change; align behavior, tests, documentation, migrations, and contracts.",
         "reviewer": "Review independently for correctness, regressions, security/privacy, contract drift, missing tests, and instruction violations.",
         "probe": "Investigate risky integration, runtime, contract, and security assumptions with synthetic or inert evidence.",
-        "playwright": "Exercise the real authorized local test application in a browser using synthetic test-owned data and bounded process cleanup.",
-        "django": "Review Django APIs, ORM and transaction semantics, migrations, lifecycle, settings, security, tests, portability, and operations.",
+        "playwright": "Exercise the authorized local test application in a browser with synthetic data; cover visible behavior and a relevant failure path, then perform bounded process cleanup.",
+        "django": "Review Django APIs, ORM/transaction semantics, migrations, lifecycle, settings, security, tests, portability, and operations.",
     }[role]
-    return (
-        textwrap.dedent(f"""
-            # Pi Tmux Orchestrator worker
+    return f"""{WORKER_PROMPT_PREFIX}
 
-            Role: `{role}`
+Role: `{role}`
+Project: `{project}`
 
-            {access}
+{access}
+{role_focus}
 
-            {common_project_guidance(project)}
+Governing AGENTS.md/CLAUDE.md context is appended by Pi. Obey it, then inspect
+referenced CONTRIBUTING.md, scoped instructions, and current-phase documents as
+needed. Preserve intentional worktree changes; never reset, stash, or discard them
+wholesale. Treat parent context as an index and verify it against instructions and
+the shared worktree.
 
-            ## Role standard
+Work only on the active broker assignment. Prefer targeted reads, diffs, and scoped
+checks; avoid rereading unchanged files or dumping bundles, logs, and broad output.
+Use synthetic/non-secret fixtures. Never expose credentials, private workflow or
+provider payloads, prompts, endpoints, or raw external errors. Never claim synthetic
+evidence is production wire acceptance.
 
-            {role_focus}
+Do not push, merge, publish, or deploy unless the task and repository workflow
+explicitly authorize it; merging always requires owner approval. When no assignment
+is active, end the turn—never sleep or poll files, sockets, tmux, or status.
 
-            - Work only on broker-delivered active assignments.
-            - Treat the bounded parent context capsule as an index, not authority. Start with its
-              relevant paths and settled decisions, then verify against project instructions and
-              the shared worktree instead of rediscovering known context.
-            - Keep provider context efficient: prefer targeted reads, searches, diffs, and scoped
-              test output. Avoid rereading unchanged files or dumping generated bundles, full logs,
-              and broad outputs when a bounded query can answer the same question.
-            - Inspect the shared worktree directly; never request copied diffs or logs.
-            - Use synthetic/non-secret fixtures unless explicitly authorized otherwise.
-            - Never expose credentials, private payloads, prompts, provider responses, endpoints,
-              or raw external errors.
-            - Never claim a synthetic probe or browser smoke is production wire acceptance.
-            - Do not push, merge, publish, or deploy unless explicitly authorized by the task and
-              repository workflow. Never merge without explicit owner approval.
-            - End your turn whenever no active assignment exists. Never run sleep commands, poll
-              files, poll sockets, poll tmux, or otherwise keep a model turn alive while waiting.
-            - For an active assignment, call `orchestrator_report` exactly once as the final action.
-              Keep it concise and structured; do not copy diffs, logs, long prose, or private data.
-            - After `orchestrator_report`, stop. The broker wakes only roles required for the next
-              transition.
-            """)
-    ).strip() + "\n"
+For an active assignment, call orchestrator_report exactly once as the final action.
+Report concise summaries, paths, checks, findings, risks, and limitations; never copy
+diffs or logs. After reporting, stop.
+"""
 
 
-# Legacy helpers remain import-compatible for retained 0.4.x manifests only. Newly started
-# runs use role_system_prompt through --append-system-prompt and never create prompt payload files.
+# Legacy helpers remain import-compatible for retained 0.4.x manifests only.
 def implementer_prompt(project: Path, _coord: Path, _task: str) -> str:
     return role_system_prompt(project, "implementer")
 

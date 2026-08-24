@@ -212,7 +212,13 @@ def main() -> int:
     fake_pi = temporary_root / "pi"
     fake_pi.write_text(
         "#!/usr/bin/env python3\n"
-        "import json, sys, time\n"
+        "import json, os, sys, time\n"
+        "mode='rpc' if '--mode' in sys.argv else 'tui'\n"
+        "role=os.environ.get('PI_TMUX_ORCHESTRATOR_ROLE','unknown')\n"
+        "argv_dir=os.environ.get('SMOKE_PI_ARGV_DIR')\n"
+        "if argv_dir:\n"
+        "    with open(os.path.join(argv_dir, f'{mode}-{role}.json'), 'w', encoding='utf-8') as handle:\n"
+        "        json.dump(sys.argv[1:], handle)\n"
         "if '--mode' not in sys.argv:\n"
         "    time.sleep(60)\n"
         "    raise SystemExit(0)\n"
@@ -239,6 +245,7 @@ def main() -> int:
         "set -euo pipefail\n"
         'if [[ "$1" == "_broker" || "$1" == "_run-agent" ]]; then\n'
         f"  export PATH={shlex.quote(str(temporary_root))}:$PATH\n"
+        f"  export SMOKE_PI_ARGV_DIR={shlex.quote(str(temporary_root))}\n"
         f'  exec {shlex.quote(str(SCRIPT))} "$@"\n'
         "fi\n"
         "exec sleep 60\n",
@@ -374,6 +381,15 @@ def main() -> int:
             if "SYNTHETIC_RPC_VISIBLE_OUTPUT" in rpc_output:
                 break
             time.sleep(0.05)
+        rpc_argv = json.loads(
+            (temporary_root / "rpc-implementer.json").read_text(encoding="utf-8")
+        )
+        if (
+            "--no-skills" not in rpc_argv
+            or "--system-prompt" not in rpc_argv
+            or "--append-system-prompt" in rpc_argv
+        ):
+            raise AssertionError(f"RPC worker resource policy drifted: {rpc_argv}")
         if (
             "[assistant]" not in rpc_output
             or "Synthetic assistant progress." not in rpc_output
@@ -618,6 +634,17 @@ def main() -> int:
             or tui_manifest["coordination"] != "broker-v1"
         ):
             raise AssertionError("TUI did not share broker protocol")
+        deadline = time.time() + 3
+        tui_argv_path = temporary_root / "tui-implementer.json"
+        while not tui_argv_path.exists() and time.time() < deadline:
+            time.sleep(0.05)
+        tui_argv = json.loads(tui_argv_path.read_text(encoding="utf-8"))
+        if (
+            "--no-skills" not in tui_argv
+            or "--system-prompt" not in tui_argv
+            or "--append-system-prompt" in tui_argv
+        ):
+            raise AssertionError(f"TUI worker resource policy drifted: {tui_argv}")
         ORCHESTRATOR.stop_command(argparse.Namespace(session=tui_session, yes=True))
         deadline = time.time() + 3
         for path in (

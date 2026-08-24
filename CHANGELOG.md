@@ -12,10 +12,13 @@ All notable changes to this project are documented here.
 - Added bounded Supervisor API/CLI assignment-usage analytics grouped by run, role, round, and assignment kind, plus compact cumulative/latest-delta indicators in status and the broker dashboard
 - Added a strict versioned user-global provider-usage budget policy with warning/hard run, role, and assignment thresholds, explicit CLI/model-tool per-run overrides, dry-run confirmation metadata, and retained numeric policy state
 - Added restart-safe in-assignment provider-call and context-pressure visibility that warns once, records higher-severity threshold facts, leaves every tool and workflow route available, and retains only bounded assignment-local metadata
+- Added explicit per-role worker skill opt-in with strict Markdown bounds, private digest-bound manifest metadata, confirmation paths, and restart-time change detection
+- Added a model-free actual-Pi built-prompt fixture covering skill discovery, explicit skills, governing context files, active read-only tools, and normalized serialized prompt size
 
 ### Changed
 
 - Changed all provider-usage budget thresholds to observational metadata: hard-configured runs no longer block tools or downstream assignments and no budget-resume control is exposed
+- Changed TUI and RPC workers to disable automatic skill discovery and use one lean custom role prompt while preserving governing `AGENTS.md`/`CLAUDE.md` discovery, role authority, tool guidance, and final reporting
 
 ## 0.8.1 - 2026-08-20
 

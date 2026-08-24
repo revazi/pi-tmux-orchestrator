@@ -31,10 +31,11 @@ panes, file handoffs, relay scripts, or polling loops.
 5. Honor explicit user provider/model/thinking requests through `useParentModel` or `modelOverrides`. Use the bounded `models` action to resolve exact available IDs; never invent IDs or inspect credentials. Omitted overrides use the user's global configuration.
 6. Honor explicit per-run budget requests through `budgetOverrides`; never infer hard thresholds. Omitted values use the strict external user-global policy and packaged warn-only defaults.
 7. Use specialists only where their independent evidence is relevant.
-8. Before starting from an existing parent conversation, synthesize the tool's bounded `contextCapsule` from only task-relevant state, settled decisions, constraints, acceptance criteria, paths, evidence, open questions, and out-of-scope items. Never copy the full parent transcript.
-9. Never claim a synthetic probe or browser smoke is production wire acceptance.
-10. Do not push, merge, publish, deploy, or perform destructive cleanup without explicit authorization.
-11. Idle workers end their turn. A parent that is watching also ends its turn and relies on broker updates. Neither workers nor watching parents run sleeps or poll files, sockets, status, or tmux while waiting.
+8. Worker skill discovery is disabled. Pass `workerSkills` or `--worker-skill ROLE=PATH` only for exact Markdown files the user explicitly reviewed; never infer or auto-load a skill.
+9. Before starting from an existing parent conversation, synthesize the tool's bounded `contextCapsule` from only task-relevant state, settled decisions, constraints, acceptance criteria, paths, evidence, open questions, and out-of-scope items. Never copy the full parent transcript.
+10. Never claim a synthetic probe or browser smoke is production wire acceptance.
+11. Do not push, merge, publish, deploy, or perform destructive cleanup without explicit authorization.
+12. Idle workers end their turn. A parent that is watching also ends its turn and relies on broker updates. Neither workers nor watching parents run sleeps or poll files, sockets, status, or tmux while waiting.
 
 ## Coordination model
 
@@ -109,6 +110,12 @@ plus bounded tool inputs and outputs, but use it only after an explicit request
 for headless presentation. Otherwise workers are native interactive Pi TUIs
 with Pi's normal highlighting, tool rendering, and input editor. Both use broker delivery; neither uses report files, mailbox payload
 files, polling, or tmux key injection for workflow transitions.
+Worker Pi processes use a lean role prompt while retaining governing
+`AGENTS.md`/`CLAUDE.md` discovery. Automatic skills are disabled. Opt in only an
+explicitly reviewed per-role Markdown file, for example
+`--worker-skill reviewer=/absolute/path/SKILL.md`; the model tool equivalent is
+`workerSkills: { reviewer: ["/absolute/path/SKILL.md"] }`. Skill files are
+digest-bound for restart and never expand read-only tool allowlists.
 Use `--approve-project` only after separately inspecting and trusting the target.
 
 ## Operate a grid

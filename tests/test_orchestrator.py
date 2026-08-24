@@ -36,6 +36,7 @@ class SkillMetadataTests(unittest.TestCase):
             "supervisor_api.py",
             "supervisor_commands.py",
             "tmux.py",
+            "worker_resources.py",
         }
         self.assertTrue(launcher.is_file())
         self.assertLessEqual(len(launcher.read_text(encoding="utf-8").splitlines()), 20)
@@ -70,13 +71,13 @@ class PromptTests(unittest.TestCase):
         self.task = "First criterion.\nSecond criterion.\n"
 
     def assert_normalized(self, prompt: str, role: str) -> None:
-        self.assertTrue(prompt.startswith("# Pi Tmux Orchestrator worker"))
+        self.assertTrue(prompt.startswith("You are a Pi coding worker"))
         self.assertFalse(prompt.startswith(" "))
         self.assertIn(f"Role: `{role}`", prompt)
         self.assertIn(str(self.project), prompt)
         self.assertIn("orchestrator_report", prompt)
-        self.assertIn("End your turn", prompt)
-        self.assertIn("Never run sleep commands", prompt)
+        self.assertIn("end the turn", prompt)
+        self.assertIn("never sleep or poll", prompt)
         self.assertNotIn("handoff-N", prompt)
         self.assertNotIn(str(self.coord), prompt)
         self.assertNotIn("First criterion", prompt)
@@ -86,6 +87,7 @@ class PromptTests(unittest.TestCase):
         prompt = ORCHESTRATOR.role_system_prompt(self.project, "implementer")
         self.assert_normalized(prompt, "implementer")
         self.assertIn("sole worker allowed", prompt)
+        self.assertIn("edit/write only when those tools are active", prompt)
 
     def test_reviewer_prompt(self) -> None:
         prompt = ORCHESTRATOR.role_system_prompt(self.project, "reviewer")
@@ -239,6 +241,73 @@ class UtilityTests(unittest.TestCase):
         )
         self.assertEqual(parsed.context_capsule_file, "/private/context.md")
         self.assertIsNone(parsed.context_capsule)
+
+    def test_worker_skills_are_explicit_per_role_digest_bound_and_bounded(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            skill = root / "SKILL.md"
+            skill.write_text(
+                "---\nname: synthetic\ndescription: Synthetic reviewed skill.\n---\n\n# Skill\n",
+                encoding="utf-8",
+            )
+            parsed = ORCHESTRATOR.build_parser().parse_args(
+                [
+                    "start",
+                    "--task",
+                    "Focused task",
+                    "--worker-skill",
+                    f"reviewer={skill}",
+                ]
+            )
+            resolved = ORCHESTRATOR.resolve_worker_skills(
+                parsed.worker_skill,
+                ["implementer", "reviewer"],
+            )
+            self.assertEqual(resolved["implementer"], [])
+            self.assertEqual(resolved["reviewer"][0]["path"], str(skill))
+            self.assertRegex(resolved["reviewer"][0]["sha256"], r"^[a-f0-9]{64}$")
+
+            command = ["pi"]
+            ORCHESTRATOR.append_worker_resource_args(
+                command,
+                {"skills": resolved["reviewer"]},
+                "reviewer",
+                root / "worker.js",
+                root / "system.md",
+            )
+            self.assertEqual(command.count("--no-skills"), 1)
+            self.assertIn("--system-prompt", command)
+            self.assertNotIn("--append-system-prompt", command)
+            self.assertEqual(command[command.index("--skill") + 1], str(skill))
+
+            skill.write_text("changed after review\n", encoding="utf-8")
+            with self.assertRaisesRegex(Exception, "changed after approval"):
+                ORCHESTRATOR.verified_worker_skill_paths(
+                    {"skills": resolved["reviewer"]}, "reviewer"
+                )
+
+    def test_worker_skill_opt_in_rejects_disabled_roles_duplicates_and_symlinks(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            skill = root / "skill.md"
+            skill.write_text("reviewed\n", encoding="utf-8")
+            with self.assertRaisesRegex(Exception, "disabled role"):
+                ORCHESTRATOR.resolve_worker_skills(
+                    [("probe", str(skill))], ["implementer", "reviewer"]
+                )
+            with self.assertRaisesRegex(Exception, "Duplicate"):
+                ORCHESTRATOR.resolve_worker_skills(
+                    [("reviewer", str(skill)), ("reviewer", str(skill))],
+                    ["implementer", "reviewer"],
+                )
+            linked = root / "linked.md"
+            linked.symlink_to(skill)
+            with self.assertRaisesRegex(Exception, "non-symlink regular file"):
+                ORCHESTRATOR.resolve_worker_skills(
+                    [("reviewer", str(linked))], ["implementer", "reviewer"]
+                )
 
     def test_public_parser_hides_internal_commands(self) -> None:
         help_text = ORCHESTRATOR.build_parser().format_help()

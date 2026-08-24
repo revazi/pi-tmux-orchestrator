@@ -30,6 +30,7 @@ from pi_tmux_orchestrator import (
     supervisor_api,
     supervisor_commands,
     tmux,
+    worker_resources,
 )
 
 _TEST_MODEL_CONFIG = (
@@ -68,6 +69,7 @@ class ModuleFacade:
                 supervisor_api,
                 supervisor_commands,
                 tmux,
+                worker_resources,
                 output,
                 prompts,
                 protocol,

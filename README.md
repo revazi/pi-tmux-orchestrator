@@ -27,6 +27,7 @@ workflow, role, model, usage, context, and recent metadata state.
 - Native worker output in TUI panes and assistant/tool input/tool output visibility in RPC panes
 - Parent Pi supervision with event-driven final structured reports and attention alerts
 - Assignment-boundary context resets with bounded parent capsules, coalesced latest-per-role run state, and complete Pi history
+- Lean worker system prompts, disabled automatic skill discovery, and explicit digest-bound per-role skill opt-in
 - Bounded typed reports through a terminating Pi tool
 - No Markdown handoffs, readiness markers, mailbox payload files, relay polling,
   lifecycle sleeps, or tmux key injection in newly started runs
@@ -263,6 +264,31 @@ facts. Operators use that visibility to decide whether to steer, request a
 report, restart, or stop the run; there is no live budget-resume command because
 budgets never pause routing.
 
+### Worker prompts and skill opt-in
+
+New TUI and RPC workers use the same lean custom system prompt instead of Pi's
+full general-purpose coding prompt plus repeated role guidance. The lean prompt
+keeps active-tool guidance, role authority, one-writer and safety rules, final
+report behavior, and context efficiency guidance. Pi still discovers and
+appends governing `AGENTS.md`/`CLAUDE.md` files; the orchestrator does not pass
+`--no-context-files`.
+
+Automatic worker skill discovery is disabled with `--no-skills`. Load a reviewed
+Markdown skill for one role only with repeatable
+`--worker-skill ROLE=/absolute/path/SKILL.md`, or the model tool's strict
+`workerSkills` role arrays. The dry-run and interactive confirmation show the
+exact paths. Each selected file is size-bounded, UTF-8 validated, and bound to a
+SHA-256 digest in private manifest metadata; launch or restart fails closed if
+it changes. Skills add instructions, not tools: reviewer and specialist Pi
+processes retain their enforced read/verification tool allowlist and cannot gain
+`edit` or `write` through a skill.
+
+The checked-in model-free Pi 0.84.1 fixture captures the actual built prompt
+options with a synthetic context file and skills. Its normalized reviewer prompt
+changes from 5,000 to 2,479 serialized characters (50.4%). This is a deterministic
+prompt-size proxy, not provider tokens, billing, cache efficiency, or a savings
+claim; provider metadata remains authoritative.
+
 Natural-language requests are supported by the `tmux_orchestrator` tool. For
 example, users can ask Pi to “use my current model for every worker,” “use
 Anthropic model X with high thinking for the implementer,” or “use configured
@@ -332,6 +358,7 @@ pi-tmux-agents start \
   --project "$PWD" \
   --task-file /tmp/pi-agent-task.md \
   --context-capsule-file /tmp/pi-agent-context.md \
+  --worker-skill reviewer=/absolute/path/to/review-skill/SKILL.md \
   --attach
 ```
 

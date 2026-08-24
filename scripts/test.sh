@@ -66,9 +66,11 @@ node --check "$ROOT/extensions/orchestrator-models.js"
 node --check "$ROOT/extensions/orchestrator-parent.js"
 node --check "$ROOT/extensions/orchestrator-worker.js"
 node --check "$ROOT/scripts/token-efficiency-baseline.mjs"
+node --check "$ROOT/scripts/worker-prompt-baseline.mjs"
 node --check "$ROOT/tests/fixtures/token-efficiency-fixtures.mjs"
 node --test "$ROOT/tests/extension.test.mjs"
 node "$ROOT/scripts/token-efficiency-baseline.mjs" --check
+node "$ROOT/scripts/worker-prompt-baseline.mjs" --check
 
 printf '%s\n' '==> Package verification, npm/Pi local-package install + RPC discovery, and offline publication dry run'
 node "$ROOT/scripts/verify-package.mjs"
