@@ -5,6 +5,7 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 export PYTHONDONTWRITEBYTECODE=1
 TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/pi-tmux-orchestrator-tests.XXXXXX")
 export PI_TMUX_ORCHESTRATOR_CONFIG="$TEST_ROOT/missing-model-config.json"
+export PI_TMUX_ORCHESTRATOR_BUDGET_CONFIG="$TEST_ROOT/missing-budget-config.json"
 
 cleanup() {
   if [[ -n "${TEMP_BIN:-}" ]]; then
@@ -60,6 +61,7 @@ python3 -m unittest discover -s "$ROOT/tests" -p 'test_*.py' -v
 printf '%s\n' '==> Extension syntax and unit tests'
 node --check "$ROOT/extensions/tmux-orchestrator.js"
 node --check "$ROOT/extensions/orchestrator-context.js"
+node --check "$ROOT/extensions/orchestrator-budgets.js"
 node --check "$ROOT/extensions/orchestrator-models.js"
 node --check "$ROOT/extensions/orchestrator-parent.js"
 node --check "$ROOT/extensions/orchestrator-worker.js"

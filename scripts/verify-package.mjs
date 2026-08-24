@@ -12,6 +12,7 @@ const pythonFiles = [
   "broker.py",
   "broker_client.py",
   "broker_store.py",
+  "budgeting.py",
   "cli.py",
   "commands.py",
   "configuration.py",
@@ -45,6 +46,7 @@ const expectedFiles = [
   "bin/pi-tmux-agents",
   "extensions/tmux-orchestrator.js",
   "extensions/orchestrator-context.js",
+  "extensions/orchestrator-budgets.js",
   "extensions/orchestrator-models.js",
   "extensions/orchestrator-update.js",
   "extensions/orchestrator-parent.js",
@@ -63,6 +65,7 @@ const declaredFiles = [
   "VERSION",
   "extensions/tmux-orchestrator.js",
   "extensions/orchestrator-context.js",
+  "extensions/orchestrator-budgets.js",
   "extensions/orchestrator-models.js",
   "extensions/orchestrator-update.js",
   "extensions/orchestrator-parent.js",
@@ -183,6 +186,7 @@ for (const badge of requiredBadges) {
 }
 const extensionSources = await Promise.all([
   "extensions/tmux-orchestrator.js",
+  "extensions/orchestrator-budgets.js",
   "extensions/orchestrator-models.js",
   "extensions/orchestrator-update.js",
   "extensions/orchestrator-parent.js",

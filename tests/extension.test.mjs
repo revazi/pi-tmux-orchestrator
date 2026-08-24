@@ -104,6 +104,19 @@ test("registers one bounded model tool and the exact canonical/alias command sur
   assert.deepEqual(tool.parameters.properties.action.enum, ["doctor", "models", "list", "status", "watch", "attach", "start", "send"]);
   assert.equal(tool.parameters.properties.action.enum.includes("restart"), false);
   assert.equal(tool.parameters.properties.action.enum.includes("stop"), false);
+  assert.equal(tool.parameters.properties.budgetOverrides.additionalProperties, false);
+  assert.deepEqual(
+    Object.keys(tool.parameters.properties.budgetOverrides.properties),
+    ["enforcement", "warning", "hard"],
+  );
+  assert.equal(
+    Object.hasOwn(tool.parameters.properties.budgetOverrides.properties, "apiKey"),
+    false,
+  );
+  const budgetRun = tool.parameters.properties.budgetOverrides.properties.warning
+    .properties.run;
+  assert.equal(budgetRun.additionalProperties, false);
+  assert.equal(Object.hasOwn(budgetRun.properties, "endpoint"), false);
   assert.equal(tool.renderCall, undefined);
   assert.equal(tool.renderResult, undefined);
   assert.match(
@@ -741,6 +754,43 @@ test("natural-language starts can use the parent model with exact per-role overr
   assert.equal(value("--probe-model"), "claude-parent-model");
 });
 
+test("natural-language starts pass strict native per-run budget overrides", () => {
+  const args = testHooks.buildStartArgs(
+    {
+      budgetOverrides: {
+        enforcement: "hard",
+        warning: {
+          run: { provider_calls: 20, cache_read_tokens: 5000 },
+        },
+        hard: {
+          assignment: { cost_total: 2.5, context_percent: null },
+        },
+      },
+    },
+    "/project",
+    { task: "/private/task" },
+  );
+  const pairs = [];
+  for (let index = 0; index < args.length; index += 1) {
+    if (args[index] === "--budget-override") pairs.push(args[index + 1]);
+  }
+  assert.equal(args[args.indexOf("--budget-enforcement") + 1], "hard");
+  assert.deepEqual(pairs, [
+    "warning.run.provider_calls=20",
+    "warning.run.cache_read_tokens=5000",
+    "hard.assignment.cost_total=2.5",
+    "hard.assignment.context_percent=off",
+  ]);
+  assert.throws(
+    () => testHooks.buildStartArgs(
+      { budgetOverrides: { hard: { run: { provider_calls: -1 } } } },
+      "/project",
+      { task: "/private/task" },
+    ),
+    /invalid_budget_override/,
+  );
+});
+
 test("authenticated broker observer steers progress and returns structured final reports to the parent Pi", async () => {
   const directory = await mkdtemp(join(tmpdir(), "pi-tmux-parent-observer-test-"));
   await chmod(directory, 0o700);
@@ -1353,6 +1403,11 @@ test("start previews CLI policy, keeps private text out of argv, and cleans mode
       },
       dry_run: dryRun,
       context_capsule: { present: true, chars: contextCanary.length + 18 },
+      budget_policy: {
+        enforcement: "warn-only",
+        warning: { run: { operational_tokens: 600000 }, role: {}, assignment: {} },
+        hard: { run: {}, role: {}, assignment: {} },
+      },
       paths: { state_root: "/tmp/external-state", coordination: dryRun ? null : "/tmp/external-state/run" },
     };
     return { code: 0, stdout: JSON.stringify(success("start", data)) };
@@ -1375,6 +1430,7 @@ test("start previews CLI policy, keeps private text out of argv, and cleans mode
   assert.match(ctx.calls.confirmations[0].message, /ignores project executable resources/);
   assert.match(ctx.calls.confirmations[0].message, /Worker transport: rpc/);
   assert.match(ctx.calls.confirmations[0].message, /provider\/writer/);
+  assert.match(ctx.calls.confirmations[0].message, /warning\.run: operational_tokens=600000/);
   assert.match(ctx.calls.confirmations[0].message, /Parent context capsule: [0-9]+ characters/);
   assert.equal(JSON.stringify(result).includes(canary), false);
   assert.equal(JSON.stringify(result).includes(contextCanary), false);

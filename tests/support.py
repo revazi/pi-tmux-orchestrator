@@ -10,6 +10,7 @@ from pi_tmux_orchestrator import (
     broker,
     broker_client,
     broker_store,
+    budgeting,
     cli,
     commands,
     configuration,
@@ -35,6 +36,10 @@ _TEST_MODEL_CONFIG = (
     Path(tempfile.gettempdir()) / f"pi-tmux-test-model-config-{os.getpid()}.json"
 )
 os.environ.setdefault("PI_TMUX_ORCHESTRATOR_CONFIG", str(_TEST_MODEL_CONFIG))
+_TEST_BUDGET_CONFIG = (
+    Path(tempfile.gettempdir()) / f"pi-tmux-test-budget-config-{os.getpid()}.json"
+)
+os.environ.setdefault("PI_TMUX_ORCHESTRATOR_BUDGET_CONFIG", str(_TEST_BUDGET_CONFIG))
 
 
 class ModuleFacade:
@@ -49,6 +54,7 @@ class ModuleFacade:
                 broker,
                 broker_client,
                 broker_store,
+                budgeting,
                 cli,
                 commands,
                 configuration,

@@ -364,6 +364,17 @@ class BrokerStoreTests(BrokerFixture):
                 self.assertNotIn("PRIVATE_TASK_CANARY", row)
                 self.assertNotIn("PRIVATE_ROLE_CANARY", row)
                 self.assertNotIn("PRIVATE_CONTEXT_CAPSULE_CANARY", row)
+            retained_policy = json.loads(
+                database.execute(
+                    "SELECT value FROM meta WHERE key='budget_policy'"
+                ).fetchone()["value"]
+            )
+            self.assertEqual(retained_policy["enforcement"], "warn-only")
+            self.assertEqual(
+                retained_policy["warning"]["role"]["operational_tokens"],
+                200_000,
+            )
+            self.assertEqual(retained_policy["hard"]["assignment"], {})
         mode = os.stat(self.coord / "broker.sqlite3").st_mode & 0o777
         self.assertEqual(mode, 0o600)
 

@@ -12,6 +12,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+from .budgeting import packaged_budget_policy, validate_budget_config
 from .constants import BROKER_PROTOCOL_VERSION, MAX_BROKER_EVENTS, MAX_JSON_ITEMS
 from .models import OrchestrationError
 from .storage import ensure_private_directory, validate_coordination_directory
@@ -75,7 +76,21 @@ def initialize_broker_database(
     *,
     soft_role_tokens: int,
     soft_total_tokens: int,
+    budget_policy: dict[str, Any] | None = None,
 ) -> None:
+    selected_policy = (
+        packaged_budget_policy() if budget_policy is None else budget_policy
+    )
+    if budget_policy is None:
+        for scope, threshold in (
+            ("role", soft_role_tokens),
+            ("run", soft_total_tokens),
+        ):
+            if threshold == 0:
+                selected_policy["warning"][scope].pop("operational_tokens", None)
+            else:
+                selected_policy["warning"][scope]["operational_tokens"] = threshold
+    policy = validate_budget_config(selected_policy)
     with connect_broker_database(coord) as database:
         database.executescript("""
             CREATE TABLE IF NOT EXISTS meta (
@@ -173,6 +188,7 @@ def initialize_broker_database(
             "control_token": control_token,
             "soft_role_tokens": str(soft_role_tokens),
             "soft_total_tokens": str(soft_total_tokens),
+            "budget_policy": json.dumps(policy, separators=(",", ":"), sort_keys=True),
             "created_at": now,
             "updated_at": now,
         }

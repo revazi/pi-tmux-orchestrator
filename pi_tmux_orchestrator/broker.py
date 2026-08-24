@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from . import runtime
+from .budgeting import packaged_budget_policy, validate_budget_config
 from .broker_store import (
     broker_paths,
     connect_broker_database,
@@ -26,8 +27,6 @@ from .broker_store import (
 )
 from .constants import (
     BROKER_PROTOCOL_VERSION,
-    DEFAULT_SOFT_ROLE_TOKENS,
-    DEFAULT_SOFT_TOTAL_TOKENS,
     MAX_BROKER_FRAME_BYTES,
     MAX_CONTEXT_CAPSULE_BYTES,
     MAX_RPC_COMMANDS,
@@ -1535,20 +1534,36 @@ def initialize_broker_run(
     role_tasks: dict[str, str],
     *,
     context_capsule: str = "",
-    soft_role_tokens: int = DEFAULT_SOFT_ROLE_TOKENS,
-    soft_total_tokens: int = DEFAULT_SOFT_TOTAL_TOKENS,
+    budget_policy: dict[str, Any] | None = None,
+    soft_role_tokens: int | None = None,
+    soft_total_tokens: int | None = None,
 ) -> None:
     from .broker_store import initialize_broker_database
 
     tokens = {role: secrets.token_hex(16) for role in manifest["roles"]}
     control_token = secrets.token_hex(16)
+    policy = validate_budget_config(
+        packaged_budget_policy() if budget_policy is None else budget_policy
+    )
+    for scope, threshold in (
+        ("role", soft_role_tokens),
+        ("run", soft_total_tokens),
+    ):
+        if threshold is None:
+            continue
+        if threshold == 0:
+            policy["warning"][scope].pop("operational_tokens", None)
+        else:
+            policy["warning"][scope]["operational_tokens"] = threshold
+    policy = validate_budget_config(policy)
     initialize_broker_database(
         coord,
         manifest,
         tokens,
         control_token,
-        soft_role_tokens=soft_role_tokens,
-        soft_total_tokens=soft_total_tokens,
+        soft_role_tokens=int(policy["warning"]["role"].get("operational_tokens", 0)),
+        soft_total_tokens=int(policy["warning"]["run"].get("operational_tokens", 0)),
+        budget_policy=policy,
     )
     secure_write(
         coord / "startup.json",

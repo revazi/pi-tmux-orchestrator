@@ -208,9 +208,15 @@ Legacy results remain unavailable. The development-only `operational_tokens`
 aggregate sums input, output, cache read, and cache write for comparison; it is
 not a billing unit. Provider-reported cost is the only cost authority.
 
-Soft role and run token thresholds are metadata warnings. A future hard budget
-may prevent a new assignment, but cannot stop an already-started provider
-response at an exact token boundary.
+Every new run retains its effective strict budget policy as numeric/enum broker
+metadata. Version 1 supports warning and hard thresholds at run, role, and
+assignment scope for provider calls, distinct token categories, provider-reported
+cost, and context occupancy. The packaged policy preserves the existing soft
+role/run operational-token warnings and defines no hard defaults. Per-run
+CLI/model-tool overrides take precedence over the user-global external file.
+This policy-only stage does not yet enforce hard gates; that remains a separate
+broker change. No budget can stop an already-started provider response at an
+exact token boundary.
 
 A deterministic synthetic two-round regression separately measures serialized
 provider-visible message characters across the assignment projection. CI

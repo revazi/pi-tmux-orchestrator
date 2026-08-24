@@ -47,6 +47,49 @@ models and never exposing authentication. Natural-language requests can use
 `useParentModel` for the current Pi provider/model/thinking or exact `all` and
 per-role `modelOverrides` after resolving ambiguous IDs with `models`.
 
+### Budget policy
+
+The strict version-1 user-global file
+`~/.pi/agent/tmux-orchestrator-budgets.json` has this shape:
+
+```json
+{
+  "version": 1,
+  "enforcement": "warn-only",
+  "warning": {
+    "run": { "operational_tokens": 600000 },
+    "role": { "operational_tokens": 200000 },
+    "assignment": {}
+  },
+  "hard": {
+    "run": {},
+    "role": {},
+    "assignment": {}
+  }
+}
+```
+
+`PI_TMUX_ORCHESTRATOR_BUDGET_CONFIG` may select another absolute path outside
+the target project. The scopes are run, role, and assignment. Allowed metrics
+are `provider_calls`, `input_tokens`, `output_tokens`, `cache_read_tokens`,
+`cache_write_tokens`, `reasoning_tokens`, `operational_tokens`, `cost_total`,
+`context_tokens`, and `context_percent`. Integer thresholds are 1 through
+1,000,000,000,000; cost is at most 1,000,000,000; context percentage is at most
+100. Values must be positive and finite. Unknown/duplicate fields, credential or
+endpoint fields, unsafe files, and warning thresholds above matching hard
+thresholds fail closed. `null` disables an inherited file threshold.
+
+Precedence is per-run CLI/model-tool override, user-global file, then packaged
+warn-only defaults. CLI starts use `--budget-enforcement warn-only|hard` and
+repeatable `--budget-override LEVEL.SCOPE.METRIC=VALUE`; `=off` disables one
+inherited threshold. Overrides cannot repeat a threshold and are bounded by the
+60 possible level/scope/metric combinations. The Pi tool uses a native
+`budgetOverrides` object. Dry-run
+and confirmation metadata show the fully effective policy without payloads.
+New broker databases retain that numeric/enum policy. Hard assignment gating is
+intentionally not activated by this policy-only change; current operational
+warnings continue until the separate gate implementation lands.
+
 ### `start`
 
 Creates a detached tmux grid with an implementer, reviewer, broker/status
@@ -71,6 +114,8 @@ Common options:
 - `--attach`
 - `--dry-run`
 - `--skip-model-check`
+- `--budget-enforcement warn-only|hard`
+- repeatable `--budget-override LEVEL.SCOPE.METRIC=VALUE` (`=off` disables one)
 
 Model arguments use `--ROLE-provider`, `--ROLE-model`, and `--ROLE-thinking`.
 Thinking levels are `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and
@@ -151,8 +196,9 @@ remain under `~/.pi/agent/orchestrations/`.
 
 ### `doctor`
 
-Checks Pi, Python, tmux, tmux extended-key settings, the model configuration
-path, and effective configured model availability without a provider request.
+Checks Pi, Python, tmux, tmux extended-key settings, model and budget
+configuration paths, the effective budget policy, and configured model
+availability without a provider request.
 
 ### `supervisor ...`
 
@@ -297,8 +343,10 @@ Unavailable values remain unavailable; no provider token estimate is invented.
 Retained reports created before assignment accounting expose usage as unavailable.
 Status and Supervisor API expose cumulative per-role/total usage, each role's
 latest assignment usage, and current context occupancy without payload bodies.
-Soft role/run budgets warn before subsequent work. A budget cannot stop an
-already-started provider response at an exact token.
+The packaged policy preserves the existing soft role/run operational-token
+warnings. New runs also retain their fully effective strict warning/hard policy
+for later gate evaluation. This policy-only stage does not enforce hard gates.
+A budget cannot stop an already-started provider response at an exact token.
 
 The categories have different meanings and costs:
 

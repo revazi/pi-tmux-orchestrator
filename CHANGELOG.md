@@ -10,6 +10,7 @@ All notable changes to this project are documented here.
 - Added a bounded metadata-only retained usage analyzer that aggregates public broker token categories and provider-reported cost without reading Pi histories or workflow/provider bodies
 - Added atomic per-assignment provider-call, token-category, cost, and context-occupancy usage results captured at report time before downstream routing, with immutable duplicate handling and restart-safe numeric boundaries
 - Added bounded Supervisor API/CLI assignment-usage analytics grouped by run, role, round, and assignment kind, plus compact cumulative/latest-delta indicators in status and the broker dashboard
+- Added a strict versioned user-global provider-usage budget policy with warning/hard run, role, and assignment thresholds, explicit CLI/model-tool per-run overrides, dry-run confirmation metadata, and retained numeric policy state
 
 ## 0.8.1 - 2026-08-20
 
