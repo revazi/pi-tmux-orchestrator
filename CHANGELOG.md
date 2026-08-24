@@ -16,11 +16,13 @@ All notable changes to this project are documented here.
 - Added a model-free actual-Pi built-prompt fixture covering skill discovery, explicit skills, governing context files, active read-only tools, and normalized serialized prompt size
 - Added orchestration-only read, grep, and bash input/result caps with UTF-8-safe continuation guidance, preserved bash failure diagnostics, mode-`0600` full-output paths, and metadata-only truncation/immediate-follow-up observations
 - Added a checked synthetic result-volume benchmark covering context reduction and additional read/grep pagination calls without making provider token, cost, or quality claims
+- Added deterministic immutable `economy`, `balanced`, and `thorough` thinking profiles, strict user-global custom profile mappings, explicit per-run selection and override precedence, and bounded manifest/status/Supervisor metadata
 
 ### Changed
 
 - Changed all provider-usage budget thresholds to observational metadata: hard-configured runs no longer block tools or downstream assignments and no budget-resume control is exposed
 - Changed TUI and RPC workers to disable automatic skill discovery and use one lean custom role prompt while preserving governing `AGENTS.md`/`CLAUDE.md` discovery, role authority, tool guidance, and final reporting
+- Preserved the pre-profile xhigh/high packaged thinking behavior as the `thorough` compatibility default until fixed-benchmark provider usage and quality evidence supports a different default
 
 ## 0.8.1 - 2026-08-20
 

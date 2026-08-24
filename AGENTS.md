@@ -13,6 +13,7 @@ Provide a small, reusable, intentionally tmux-scoped Pi skill and modular standa
 - `SKILL.md`: Pi Agent Skill entry point
 - `pi_tmux_orchestrator/`: authoritative dependency-free Python orchestration package
 - `pi_tmux_orchestrator/configuration.py`: strict user-global worker model policy
+- `pi_tmux_orchestrator/profiles.py`: immutable packaged and strict custom execution-profile policy
 - `pi_tmux_orchestrator/budgeting.py`: strict user-global and per-run usage budget policy
 - `pi_tmux_orchestrator/context_capsules.py`: bounded worker baseline and rolling run-state projections
 - `pi_tmux_orchestrator/worker_resources.py`: strict digest-bound per-role skill opt-ins and shared launch policy

@@ -94,7 +94,7 @@ def run_rpc_agent(
     role: dict[str, Any],
 ) -> int:
     paths = rpc_role_paths(coord, role_name, create=True)
-    brokered = manifest.get("version") == 3
+    brokered = manifest.get("version", 0) >= 3
     if brokered:
         initial_message = None
     else:

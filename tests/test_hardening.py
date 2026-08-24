@@ -159,6 +159,38 @@ class ManifestValidationTests(PrivateStateFixture):
             manifest,
         )
 
+    def test_valid_v4_manifest_binds_execution_profile_metadata(self) -> None:
+        manifest = self.manifest()
+        manifest["version"] = 4
+        manifest["transport"] = ORCHESTRATOR.TUI_TRANSPORT
+        manifest["coordination"] = ORCHESTRATOR.BROKER_COORDINATION
+        manifest["protocol_version"] = ORCHESTRATOR.BROKER_PROTOCOL_VERSION
+        manifest["execution_profile"] = {
+            "name": "balanced",
+            "kind": "packaged",
+            "source": "per-run",
+        }
+        for role, value in manifest["roles"].items():
+            del value["prompt_path"]
+            value["session_id"] = f"run-1-{role}"
+        ORCHESTRATOR.save_manifest(self.coord, manifest)
+        loaded = ORCHESTRATOR.load_manifest(self.coord, expected_session=self.session)
+        self.assertEqual(loaded["execution_profile"], manifest["execution_profile"])
+
+        for invalid_profile in (
+            {"name": "balanced", "kind": "custom", "source": "per-run"},
+            {"name": "unknown", "kind": "packaged", "source": "per-run"},
+            {"name": "balanced", "kind": "packaged", "source": "project"},
+        ):
+            with self.subTest(profile=invalid_profile):
+                invalid = copy.deepcopy(manifest)
+                invalid["execution_profile"] = invalid_profile
+                self.write_raw_manifest(invalid)
+                with self.assertRaises(ORCHESTRATOR.OrchestrationError):
+                    ORCHESTRATOR.load_manifest(
+                        self.coord, expected_session=self.session
+                    )
+
     def test_malformed_unknown_role_and_path_tampering_are_rejected(self) -> None:
         base = self.manifest()
         cases: list[tuple[str, object]] = []

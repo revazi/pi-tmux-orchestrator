@@ -253,6 +253,7 @@ code. Live parent observation requires a broker process from `0.6.0` or later;
 older live runs remain metadata-readable but cannot gain observer support
 without starting a new run. Broker SQLite schema v1-v4 migrates to metadata-only
 schema v5 when a current broker starts; runs without version-1 budget metadata
-retain packaged warn-only behavior. Every manifest created by `0.5.0` or later is version `3` with
-`coordination: "broker-v1"`; there is no option or fallback that starts the
-legacy file coordination protocol.
+retain packaged warn-only behavior. Manifest v3 introduced
+`coordination: "broker-v1"`; manifest v4 adds only bounded selected-profile
+metadata while retaining that protocol. Both remain readable, and there is no
+option or fallback that starts the legacy file coordination protocol.

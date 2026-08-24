@@ -188,31 +188,68 @@ worker defaults outside project repositories in
 
 ```json
 {
-  "version": 1,
+  "version": 2,
+  "defaultProfile": "balanced",
+  "profiles": {
+    "review-heavy-economy": {
+      "implementer": "medium",
+      "reviewer": "high",
+      "probe": "low",
+      "playwright": "medium",
+      "django": "medium"
+    }
+  },
   "defaults": {
     "provider": "anthropic",
-    "model": "claude-sonnet-4-6",
-    "thinking": "high"
+    "model": "claude-sonnet-4-6"
   },
   "roles": {
     "reviewer": {
       "provider": "google",
-      "model": "gemini-3.1-pro-preview",
-      "thinking": "medium"
-    },
-    "probe": {
-      "thinking": "low"
+      "model": "gemini-3.1-pro-preview"
     }
   }
 }
 ```
 
-The file is read for every new start. `defaults` applies to every role and
-`roles` overrides individual roles. Only
-`provider`, `model`, and `thinking` are accepted; credential or endpoint fields
-are rejected. Set `PI_TMUX_ORCHESTRATOR_CONFIG` to an absolute path to keep the
-file elsewhere. Precedence is: explicit CLI/model-tool role override, role
-configuration, global configuration, then packaged fallback defaults.
+The file is read for every new start. Version-1 model files remain accepted and
+are normalized without changing their prior thinking choices. Version 2 adds a
+default profile and up to 16 strict custom profiles. A custom name matches
+`[a-z][a-z0-9-]{0,31}`, cannot replace a packaged name, and must map all five
+known roles to supported thinking levels. Profiles never select provider/model,
+change tools or authority, create roles, disable review, or control routing.
+Credential and endpoint fields are rejected, and a configuration path inside the
+target project fails closed.
+
+Packaged profiles are immutable:
+
+| Profile | Implementer | Reviewer | Probe | Playwright | Django |
+|---|---|---|---|---|---|
+| `economy` | `medium` | `medium` | `low` | `medium` | `medium` |
+| `balanced` | `high` | `high` | `medium` | `medium` | `medium` |
+| `thorough` | `xhigh` | `high` | `high` | `high` | `high` |
+
+`thorough` is the compatibility default because it exactly preserves the
+pre-profile packaged thinking settings. This is not a quality or cost
+recommendation. The checked profile baseline defines simple, medium, and
+multi-round cases plus required provider-call/token/cost and acceptance-test/
+review metrics, but comparative provider usage and quality are currently marked
+unavailable. It therefore makes no savings, equivalence, recommended-default,
+or billing claim. Validate that policy record with
+`node scripts/execution-profile-baseline.mjs --check`.
+
+Select a profile with `--profile NAME` or
+the model tool's `profile`. The effective name, kind, source, and per-role
+thinking levels appear in dry-run, confirmation, private manifest v4 metadata,
+status, and Supervisor reads. Older manifests report profile metadata as
+unavailable.
+
+`defaults` applies to every role and `roles` overrides individual roles. Set
+`PI_TMUX_ORCHESTRATOR_CONFIG` to an absolute path to keep the file elsewhere.
+Precedence is: explicit per-role/all-role CLI or model-tool override, user-global
+role override, user-global defaults, selected custom/packaged profile, then the
+compatibility fallback. The selected profile comes from a per-run request,
+`defaultProfile`, or the packaged compatibility default, in that order.
 
 ### Provider-usage budget configuration
 
@@ -527,8 +564,9 @@ registries, or Supervisor API output. Newly started workers never create or poll
 task/handoff/review/specialist payload files or readiness markers.
 
 Retained `0.4.x` runs remain readable and operable through compatibility code.
-Every `0.5.0` start creates manifest v3 with `coordination: "broker-v1"`; there
-is no selectable legacy fallback.
+Retained manifest-v3 broker runs remain readable. Current starts create manifest
+v4 with `coordination: "broker-v1"` and bounded execution-profile metadata;
+there is no selectable legacy fallback.
 
 ## Token policy
 

@@ -23,6 +23,7 @@ const pythonFiles = [
   "models.py",
   "output.py",
   "prompts.py",
+  "profiles.py",
   "protocol.py",
   "relay.py",
   "rpc.py",

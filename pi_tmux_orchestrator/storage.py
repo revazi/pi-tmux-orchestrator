@@ -24,6 +24,7 @@ from .constants import (
     MANIFEST_FIELDS,
     MANIFEST_V1_FIELDS,
     MANIFEST_V3_FIELDS,
+    MANIFEST_V4_FIELDS,
     MAX_CONTROLLER_STATE_BYTES,
     MAX_MANIFEST_BYTES,
     PANE_ID_PATTERN,
@@ -37,6 +38,7 @@ from .constants import (
     WINDOW,
 )
 from .models import OrchestrationError
+from .profiles import validate_manifest_execution_profile
 from .tmux import validate_session_name
 
 
@@ -293,12 +295,13 @@ def validate_manifest(
     if not isinstance(value, dict):
         raise OrchestrationError("Orchestration manifest must be a JSON object")
     version = value.get("version")
-    if type(version) is not int or version not in {1, 2, 3}:
+    if type(version) is not int or version not in {1, 2, 3, 4}:
         raise OrchestrationError("Unsupported orchestration manifest version")
     expected_fields = {
         1: MANIFEST_V1_FIELDS,
         2: MANIFEST_FIELDS,
         3: MANIFEST_V3_FIELDS,
+        4: MANIFEST_V4_FIELDS,
     }[version]
     if set(value) != expected_fields:
         raise OrchestrationError(
@@ -331,11 +334,13 @@ def validate_manifest(
         raise OrchestrationError("Manifest approve_project must be a boolean")
     if version >= 2 and value["transport"] not in {TUI_TRANSPORT, RPC_TRANSPORT}:
         raise OrchestrationError("Manifest transport is invalid")
-    if version == 3 and (
+    if version >= 3 and (
         value["coordination"] != BROKER_COORDINATION
         or value["protocol_version"] != BROKER_PROTOCOL_VERSION
     ):
         raise OrchestrationError("Manifest broker coordination protocol is invalid")
+    if version >= 4:
+        validate_manifest_execution_profile(value["execution_profile"])
 
     project_value = value["project"]
     if not isinstance(project_value, str):
@@ -368,7 +373,7 @@ def validate_manifest(
         if not isinstance(role, dict):
             raise OrchestrationError(f"Manifest role {role_name} has invalid fields")
         expected_role_fields = ROLE_FIELDS
-        if version == 3:
+        if version >= 3:
             expected_role_fields = (
                 ROLE_V3_RESOURCE_FIELDS if "skills" in role else ROLE_V3_FIELDS
             )
@@ -408,7 +413,7 @@ def validate_manifest(
         expected_session_dir = coord / "sessions" / role_name
         if Path(session_value) != expected_session_dir:
             raise OrchestrationError(f"Manifest role {role_name} paths are invalid")
-        if version == 3:
+        if version >= 3:
             session_id = role["session_id"]
             if not isinstance(session_id, str) or not re.fullmatch(
                 r"[A-Za-z0-9_.-]{1,128}", session_id

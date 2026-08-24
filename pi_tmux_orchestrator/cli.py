@@ -39,6 +39,7 @@ from .commands import (
 )
 from .models import CommandResult, OrchestrationArgumentParser, OrchestrationError
 from .output import bounded_message, emit_json, eprint
+from .profiles import profile_name
 from .relay import relay_command
 from .supervisor_commands import (
     capabilities_command,
@@ -55,6 +56,13 @@ from .worker_resources import worker_skill_argument
 def worker_skill(value: str) -> tuple[str, str]:
     try:
         return worker_skill_argument(value)
+    except OrchestrationError as error:
+        raise argparse.ArgumentTypeError(str(error)) from error
+
+
+def execution_profile(value: str) -> str:
+    try:
+        return profile_name(value)
     except OrchestrationError as error:
         raise argparse.ArgumentTypeError(str(error)) from error
 
@@ -207,6 +215,11 @@ def build_parser() -> argparse.ArgumentParser:
     start.add_argument("--context-capsule")
     start.add_argument("--context-capsule-file")
     start.add_argument("--session")
+    start.add_argument(
+        "--profile",
+        type=execution_profile,
+        help="select a packaged or user-defined execution profile",
+    )
     start.add_argument("--with-probe", action="store_true")
     start.add_argument("--probe-task")
     start.add_argument("--probe-task-file")

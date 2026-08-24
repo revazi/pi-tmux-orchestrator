@@ -19,27 +19,64 @@ The strict user-global file `~/.pi/agent/tmux-orchestrator.json` supports:
 
 ```json
 {
-  "version": 1,
+  "version": 2,
+  "defaultProfile": "balanced",
+  "profiles": {
+    "review-heavy-economy": {
+      "implementer": "medium",
+      "reviewer": "high",
+      "probe": "low",
+      "playwright": "medium",
+      "django": "medium"
+    }
+  },
   "defaults": {
     "provider": "anthropic",
-    "model": "claude-sonnet-4-5",
-    "thinking": "high"
+    "model": "claude-sonnet-4-5"
   },
   "roles": {
     "reviewer": {
       "provider": "google",
-      "model": "gemini-3.1-pro-preview",
-      "thinking": "medium"
+      "model": "gemini-3.1-pro-preview"
     }
   }
 }
 ```
 
 The file is relative to `PI_CODING_AGENT_DIR`; an absolute
-`PI_TMUX_ORCHESTRATOR_CONFIG` overrides its location. Only version, defaults,
-roles, provider, model, and thinking fields are accepted. It must never contain
-credentials. Explicit `--ROLE-*` or model-tool `modelOverrides` values win over
-role configuration, global defaults, and packaged fallbacks, in that order.
+`PI_TMUX_ORCHESTRATOR_CONFIG` overrides its location. Legacy version 1 remains
+accepted. Version 2 may select one default profile and define at most 16 complete
+custom thinking mappings. Names match `[a-z][a-z0-9-]{0,31}`; packaged names
+cannot be replaced; every custom map must contain exactly implementer, reviewer,
+probe, Playwright, and Django. Unknown fields/roles, partial mappings,
+unsupported levels, credentials, and configuration paths inside the target
+project fail closed.
+
+Packaged thinking mappings are:
+
+| Profile | Implementer | Reviewer | Probe | Playwright | Django |
+|---|---|---|---|---|---|
+| `economy` | `medium` | `medium` | `low` | `medium` | `medium` |
+| `balanced` | `high` | `high` | `medium` | `medium` | `medium` |
+| `thorough` | `xhigh` | `high` | `high` | `high` | `high` |
+
+`thorough` is the compatibility default and preserves the old packaged values.
+The checked simple/medium/multi-round profile baseline explicitly records
+comparative provider usage and quality as unavailable, so it supports no
+savings, equivalence, billing, recommended-default, or production claim. Run
+`node scripts/execution-profile-baseline.mjs --check` to validate that evidence
+availability record. Profiles change only thinking levels. They do not
+select models, add/remove roles, change tool authority, skip required review,
+alter result caps, or route workflow.
+
+Select a profile with `--profile NAME` or model-tool `profile`. Selection
+precedence is per-run profile, user-global `defaultProfile`, then packaged
+compatibility default. Thinking precedence is explicit per-role/all-role
+override, user role configuration, user global defaults, then the selected
+profile. Provider/model resolution retains its existing explicit, role, global,
+and packaged precedence. Dry-run, confirmation, manifest v4, status, list, and
+Supervisor reads expose bounded profile metadata and effective role levels;
+legacy runs report profile metadata as unavailable.
 
 The model tool's `models` action and `/or-models [query]` expose a maximum of 100
 available model metadata rows from the current Pi registry, respecting scoped
@@ -122,6 +159,7 @@ Common options:
 
 - `--project PATH`
 - `--session NAME`
+- `--profile NAME`: packaged or strict user-global execution profile
 - `--context-capsule TEXT` or `--context-capsule-file PATH`: optional bounded parent recap
 - `--approve-project`: separately confirmed Pi trust bypass for inspected projects
 - repeatable `--worker-skill ROLE=/absolute/path/SKILL.md`: explicit reviewed per-role skill opt-in
