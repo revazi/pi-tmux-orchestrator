@@ -269,6 +269,109 @@ test("worker report schemas expose only fields valid for each role", () => {
   assert.deepEqual(reviewer.required, ["kind", "summary", "verdict"]);
 });
 
+test("worker guardrail policy is strict and preserves supported assignment thresholds", () => {
+  const policy = workerHooks.parseGuardrailPolicy(JSON.stringify({
+    enforcement: "hard",
+    warning: { provider_calls: 4, context_percent: 70 },
+    hard: { provider_calls: 6, context_percent: 85 },
+  }));
+  assert.deepEqual(policy, {
+    enforcement: "hard",
+    warning: { provider_calls: 4, context_percent: 70 },
+    hard: { provider_calls: 6, context_percent: 85 },
+  });
+  assert.equal(workerHooks.parseGuardrailPolicy("{}"), undefined);
+  assert.equal(workerHooks.parseGuardrailPolicy(JSON.stringify({
+    enforcement: "hard", warning: {}, hard: { cache_read_tokens: 10 },
+  })), undefined);
+  assert.equal(workerHooks.parseGuardrailPolicy(JSON.stringify({
+    enforcement: "hard", warning: { provider_calls: 7 }, hard: { provider_calls: 6 },
+  })), undefined);
+  assert.deepEqual(workerHooks.hardGuardrailThresholds({
+    enforcement: "warn-only", hard: { provider_calls: 6 },
+  }), { provider_calls: 6 });
+});
+
+test("worker counts provider turns from the assignment boundary and observes context pressure", () => {
+  const entries = [
+    {
+      type: "message",
+      message: { role: "assistant", usage: { input: 10, output: 2, cacheRead: 3, cacheWrite: 0, cost: { total: 0.01 } } },
+    },
+    {
+      type: "message",
+      message: { role: "assistant", usage: { input: 20, output: 4, cacheRead: 6, cacheWrite: 1, cost: { total: 0.02 } } },
+    },
+  ];
+  const ctx = {
+    sessionManager: { getEntries: () => entries },
+    getContextUsage: () => ({ tokens: 850, contextWindow: 1_000, percent: 85 }),
+  };
+  assert.deepEqual(workerHooks.guardrailObservations(ctx, {
+    providerCalls: 1,
+    input: 10,
+    output: 2,
+    cacheRead: 3,
+    cacheWrite: 0,
+    cost: { total: 0.01 },
+  }), {
+    provider_calls: 1,
+    context_tokens: 850,
+    context_percent: 85,
+  });
+  assert.deepEqual(
+    workerHooks.firstGuardrailFinding(
+      { provider_calls: 2, context_percent: 80 },
+      { provider_calls: 1, context_tokens: 850, context_percent: 85 },
+    ),
+    { metric: "context_percent", observed: 85, threshold: 80 },
+  );
+});
+
+test("assignment guardrails remain observational for every parallel tool and final report", () => {
+  const tools = ["read", "bash", "edit", "write", "unknown_tool", "orchestrator_report"];
+  const decisions = tools.map(() => workerHooks.observationalGuardrailDecision());
+  assert.deepEqual(decisions, Array(tools.length).fill(undefined));
+});
+
+test("assignment guardrail warning is bounded and restart state prevents duplicate warning or hard facts", () => {
+  const assignmentId = "d".repeat(32);
+  const finding = { metric: "context_percent", observed: 75, threshold: 70 };
+  const content = workerHooks.appendGuardrailWarning([{ type: "text", text: "tool output" }], finding);
+  assert.equal(content.length, 2);
+  assert.match(content[1].text, /Assignment guardrail warning/);
+  assert.ok(content[1].text.length < 300);
+  const restored = workerHooks.restoreGuardrailState([
+    {
+      type: "custom",
+      customType: "pi-tmux-orchestrator-guardrail-v1",
+      data: { assignment_id: assignmentId, level: "warning", status: "triggered", ...finding },
+    },
+    {
+      type: "custom",
+      customType: "pi-tmux-orchestrator-guardrail-v1",
+      data: { assignment_id: assignmentId, level: "warning", status: "delivered" },
+    },
+    {
+      type: "custom",
+      customType: "pi-tmux-orchestrator-guardrail-v1",
+      data: {
+        assignment_id: assignmentId,
+        level: "hard",
+        status: "triggered",
+        metric: "provider_calls",
+        observed: 6,
+        threshold: 6,
+      },
+    },
+  ], assignmentId);
+  assert.deepEqual(restored, {
+    warning: finding,
+    hard: { metric: "provider_calls", observed: 6, threshold: 6 },
+    warningDelivered: true,
+  });
+});
+
 test("worker queues baseline context before a triggered assignment turn", () => {
   assert.deepEqual(workerHooks.deliveryOptions(false), {
     triggerTurn: false,
@@ -855,25 +958,6 @@ test("authenticated broker observer steers progress and returns structured final
           },
         }));
         socket.write(testHooks.brokerFrame({
-          version: 1,
-          type: "budget",
-          session,
-          state: "budget_exhausted",
-          round: 2,
-          scope: "assignment",
-          role: "reviewer",
-          assignment_id: assignmentId,
-          metric: "provider_calls",
-          observed: 1,
-          threshold: 1,
-        }));
-        socket.write(testHooks.brokerFrame({
-          version: 1, type: "workflow", session, state: "budget_exhausted", round: 2,
-        }));
-        socket.write(testHooks.brokerFrame({
-          version: 1, type: "workflow", session, state: "active", round: 2,
-        }));
-        socket.write(testHooks.brokerFrame({
           version: 1, type: "workflow", session, state: "ready", round: 2,
         }));
       });
@@ -910,20 +994,8 @@ test("authenticated broker observer steers progress and returns structured final
     assert.match(delivered.message.content, /The implementation is ready/);
     assert.deepEqual(delivered.options, { triggerTurn: true, deliverAs: "steer" });
     assert.equal(stopped, true);
-    const budgetMessage = deliveredMessages.find(
-      ({ message }) => message.details.state === "budget_exhausted",
-    );
-    assert.match(budgetMessage.message.content, /scope=assignment/);
-    assert.match(budgetMessage.message.content, /provider_calls/);
-    assert.deepEqual(
-      budgetMessage.options,
-      { triggerTurn: true, deliverAs: "steer" },
-    );
     const progress = deliveredMessages.filter(({ message }) => message.details.event);
-    assert.deepEqual(
-      progress.map(({ message }) => message.details.event),
-      ["attached", "lifecycle", "report", "workflow"],
-    );
+    assert.deepEqual(progress.map(({ message }) => message.details.event), ["attached", "lifecycle", "report"]);
     assert.ok(progress.every(({ options }) => (
       options.triggerTurn === false && options.deliverAs === "steer"
     )));
@@ -956,69 +1028,6 @@ test("observer snapshots require bounded report replay metadata", () => {
     () => testHooks.validateObserverFrame({ version: 1, type: "toString", session: "pi-test" }, "pi-test", "a".repeat(32)),
     /unsupported_observer_frame/,
   );
-});
-
-test("observer hard-budget facts are bounded metadata and actionable", () => {
-  const facts = {
-    scope: "assignment",
-    role: "implementer",
-    assignment_id: "b".repeat(32),
-    metric: "cache_read_tokens",
-    observed: 1200,
-    threshold: 1000,
-  };
-  const value = {
-    version: 1,
-    type: "budget",
-    session: "pi-test",
-    state: "budget_exhausted",
-    round: 2,
-    ...facts,
-  };
-  assert.equal(testHooks.validateObserverFrame(value, "pi-test", "c".repeat(32)), value);
-  const snapshot = {
-    version: 1,
-    type: "snapshot",
-    session: "pi-test",
-    state: "budget_exhausted",
-    round: 2,
-    roles: [{ role: "implementer", state: "idle" }],
-    report_count: 1,
-    report_replay_complete: true,
-    budget: facts,
-  };
-  assert.equal(
-    testHooks.validateObserverFrame(snapshot, "pi-test", "c".repeat(32)),
-    snapshot,
-  );
-  assert.throws(
-    () => testHooks.validateObserverFrame(
-      { ...value, observed: 999 },
-      "pi-test",
-      "c".repeat(32),
-    ),
-    /invalid_observer_budget/,
-  );
-  assert.throws(
-    () => testHooks.validateObserverFrame(
-      { ...value, private_body: "forbidden" },
-      "pi-test",
-      "c".repeat(32),
-    ),
-    /invalid_observer_budget/,
-  );
-  const update = testHooks.parentUpdateContent(
-    "pi-test",
-    "budget_exhausted",
-    2,
-    [],
-    facts,
-  );
-  assert.match(update.content, /proven hard usage budget stopped/);
-  assert.match(update.content, /scope=assignment/);
-  assert.match(update.content, /cache_read_tokens/);
-  assert.match(update.content, /budget-override pi-test --yes/);
-  assert.doesNotMatch(update.content, /private_body/);
 });
 
 test("observer report usage is bounded numeric metadata", () => {

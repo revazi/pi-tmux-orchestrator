@@ -15,7 +15,8 @@ The pane answers these questions in order:
 3. **How is it coordinated?** Worker transport, broker protocol, and actual
    provider-reported run tokens.
 4. **Who is doing what?** One row per role: connection/generation, lifecycle,
-   active assignment, configured provider/model/thinking, tokens, and context.
+   active assignment, configured provider/model/thinking, tokens, context, and
+   a body-free assignment-guardrail marker when present.
 5. **What just changed?** Up to eight newest metadata events, without IDs or
    bodies.
 6. **What can I do?** Exact attach, status, confirmed stop, return, and zoom
@@ -52,7 +53,7 @@ never the only state signal.
 |---|---|---|
 | `success` | green | `ready`, connected/idle health, accepted/completed/delivered |
 | `active` | cyan | `active`, `connecting`, `initializing`, delivering/streaming |
-| `warning` | yellow | `needs_attention`, `waiting`, soft-budget warnings, context at 80%+ |
+| `warning` | yellow | `needs_attention`, `waiting`, soft-budget warnings, assignment guardrails, context at 80%+ |
 | `error` | red | `uncertain`, disconnected, error/failed/rejected/conflict |
 | `muted` | dim neutral | secondary labels, timestamps, unknown/starting metadata |
 
@@ -64,8 +65,8 @@ identity color, so the same state always has the same meaning across rows.
 | Layout | Breakpoint | Preserved information |
 |---|---|---|
 | Full | width >= 100 and height >= 22 | Project, assignment, full role columns, bounded event rail, two-line actions |
-| Compact | width >= 64 and height >= 12 | Identity/state, transport/protocol, one role row with generation, lifecycle, usage/context, thinking/model; events when height remains |
-| Narrow | otherwise | Identity/state first, one role health row each; model/thinking/assignment details and events only when height remains; hidden roles are counted |
+| Compact | width >= 64 and height >= 12 | Identity/state, transport/protocol, one role row with generation, lifecycle, usage/context, assignment-guardrail marker, thinking/model; events when height remains |
+| Narrow | otherwise | Identity/state first, one role health row each with assignment-guardrail marker; model/thinking/assignment details and events only when height remains; hidden roles are counted |
 
 Every rendered line is limited to one column less than the pane width to avoid
 a terminal auto-wrap, and frames never exceed pane height. Dynamic cells use a
@@ -105,7 +106,9 @@ The dashboard is a control-plane summary, not another worker log:
   yield to state and role legibility at constrained sizes; exact retained data
   remains available through status/Supervisor APIs.
 - Spinners, animations, progress estimates, and hard-budget gauges are omitted
-  because they would imply polling or precision the broker does not have.
+  because they would imply polling or precision the broker does not have. A
+  compact `G~`/`G!` prefix denotes a retained assignment warning/hard fact
+  without presenting it as a live gauge.
 
 These omissions keep the pane bounded, metadata-only, and useful for deciding
 whether to attach, inspect status, intervene, or stop the exact session.

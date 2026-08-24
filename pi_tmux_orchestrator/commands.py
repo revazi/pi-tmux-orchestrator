@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import json
 import os
 import shlex
 import shutil
@@ -24,6 +25,7 @@ from .broker_store import (
     broker_paths,
     broker_role_generation,
     public_broker_snapshot,
+    worker_guardrail_policy,
 )
 from .configuration import (
     effective_model_config,
@@ -413,7 +415,7 @@ def start_command(args: argparse.Namespace) -> CommandResult:
         )
     human_print("  monitor: broker/status")
     human_print(f"Worker transport: {transport}")
-    human_print(f"Budget enforcement: {budget_policy['enforcement']}")
+    human_print(f"Budget policy mode: {budget_policy['enforcement']} (observational)")
     for level in ("warning", "hard"):
         for scope in ("run", "role", "assignment"):
             thresholds = budget_policy[level][scope]
@@ -669,17 +671,6 @@ def status_command(args: argparse.Namespace) -> CommandResult:
             f"Workflow: {workflow['state']} round={workflow['round']} "
             f"tokens={usage['total_tokens']}{total_warning}"
         )
-        budget_state = broker_snapshot.get("budget", {})
-        exhaustion = budget_state.get("exhaustion")
-        if exhaustion is not None:
-            human_print(
-                "Budget exhaustion: "
-                f"scope={exhaustion['scope']} role={exhaustion['role']} "
-                f"metric={exhaustion['metric']} observed={exhaustion['observed']} "
-                f"threshold={exhaustion['threshold']}"
-            )
-            if budget_state.get("override_required") is True:
-                human_print(f"Override: pi-tmux-agents budget-override {session} --yes")
         for worker in broker_snapshot["roles"]:
             human_print(
                 f"  {worker['role']}: {worker['state']} connected={worker['connected']} "
@@ -689,6 +680,11 @@ def status_command(args: argparse.Namespace) -> CommandResult:
             latest_usage = _status_assignment_usage(worker)
             if latest_usage is not None:
                 human_print(f"    {latest_usage}")
+            for guardrail in worker.get("assignment_guardrails", []):
+                human_print(
+                    f"    guardrail={guardrail['level']} metric={guardrail['metric']} "
+                    f"observed={guardrail['observed']} threshold={guardrail['threshold']}"
+                )
     else:
         human_print("Legacy coordination files:")
         files = coordination_files(coord)
@@ -902,53 +898,6 @@ def send_command(args: argparse.Namespace) -> CommandResult:
             "event_sequence": (
                 acknowledgement.get("event_sequence") if acknowledgement else None
             ),
-        }
-    )
-
-
-def budget_override_command(args: argparse.Namespace) -> CommandResult:
-    if not args.yes:
-        raise OrchestrationError(
-            "budget-override resumes provider-triggering assignments; pass --yes"
-        )
-    if args.run is not None:
-        coord, manifest = resolve_supervisor_target(
-            args.session, args.run, require_rpc=False
-        )
-        session = manifest["session"]
-    else:
-        session, coord = resolve_session(args.session)
-        manifest = load_manifest(coord, expected_session=session)
-    if manifest.get("version") != 3:
-        raise OrchestrationError(
-            "Budget override is unavailable for legacy coordination",
-            "unsupported_coordination",
-        )
-    snapshot = public_broker_snapshot(coord)
-    exhaustion = snapshot["budget"]["exhaustion"]
-    if snapshot["workflow"]["state"] != "budget_exhausted" or exhaustion is None:
-        raise OrchestrationError(
-            "No resumable hard-budget exhaustion is active", "budget_not_exhausted"
-        )
-    acknowledgement = broker_control_request(
-        coord,
-        exhaustion["role"],
-        "budget_override",
-        command_id=args.command_id,
-    )
-    human_print(
-        f"Budget override acknowledged for {session}: "
-        f"scope={exhaustion['scope']} role={exhaustion['role']} "
-        f"metric={exhaustion['metric']} observed={exhaustion['observed']} "
-        f"threshold={exhaustion['threshold']}"
-    )
-    return CommandResult(
-        data={
-            "session": session,
-            "run_id": coord.name,
-            "override": exhaustion,
-            "acknowledgement": acknowledgement,
-            "paths": {"coordination": str(coord)},
         }
     )
 
@@ -1226,7 +1175,7 @@ def doctor_command(_: argparse.Namespace) -> CommandResult:
     human_print(
         f"OK   budget config: {budget_path} "
         f"({'configured' if budget_in_use else 'packaged defaults'}; "
-        f"enforcement={configured_budget['enforcement']})"
+        f"mode={configured_budget['enforcement']}, observational=true)"
     )
     human_print(f"OK   state root: {runtime.STATE_ROOT}")
     return CommandResult(
@@ -1323,9 +1272,13 @@ def run_agent_command(args: argparse.Namespace) -> int:
     environment["PI_SKIP_VERSION_CHECK"] = "1"
     environment["PI_TELEMETRY"] = "0"
     if manifest.get("version") == 3:
+        guardrails = worker_guardrail_policy(coord)
         environment["PI_TMUX_ORCHESTRATOR_ROLE"] = args.role
         environment["PI_TMUX_ORCHESTRATOR_TOKEN"] = token
         environment["PI_TMUX_ORCHESTRATOR_SOCKET"] = str(broker_paths(coord)["socket"])
+        environment["PI_TMUX_ORCHESTRATOR_GUARDRAILS"] = json.dumps(
+            guardrails, separators=(",", ":"), sort_keys=True
+        )
     os.chdir(project)
     os.execvpe(command[0], command, environment)
     return 0

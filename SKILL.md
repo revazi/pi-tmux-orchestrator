@@ -54,11 +54,13 @@ compatible existing run without taking over the terminal;
 `L` returns while leaving the grid live for later reattachment.
 The broker stores metadata-only SQLite state and actual provider token totals
 when Pi reports them; it does not persist task, context-capsule, report, prompt,
-message, diff, or log bodies. In explicit hard-budget mode, a proven retained
-limit stops downstream assignments at `budget_exhausted` and returns bounded
-facts to the parent. Never override automatically: the user must explicitly
-authorize `pi-tmux-agents budget-override SESSION --yes`; a broker restart while
-paused fails closed as uncertain. Each role receives a bounded baseline. Later
+message, diff, or log bodies. Provider-usage thresholds are observational:
+they expose bounded assignment-local provider-call/context-pressure warning and
+higher-severity facts but never block a tool, interrupt a response, or change
+workflow routing. Direct steering can ask for a report or other follow-up; the
+operator alone decides whether to steer, restart, or stop. There is no budget
+resume command because budgets never pause work. Each role receives a bounded
+baseline. Later
 evidence is projected as one rolling latest-per-role run-state capsule; updates
 for an active role are coalesced until its next assignment. One metadata-only
 context-boundary event accompanies each new assignment, and only then do
@@ -117,7 +119,6 @@ pi-tmux-agents status SESSION
 pi-tmux-agents attach SESSION
 pi-tmux-agents send SESSION --role implementer --message-file /tmp/message.txt
 pi-tmux-agents abort SESSION --role implementer
-pi-tmux-agents budget-override SESSION --yes
 pi-tmux-agents restart SESSION --role implementer --yes
 pi-tmux-agents stop SESSION --yes
 ```
@@ -125,7 +126,7 @@ pi-tmux-agents stop SESSION --yes
 A command acknowledgement proves acceptance, not task completion. Optional
 32-character lowercase hexadecimal command IDs provide retry-safe deduplication;
 conflicting reuse is rejected and interrupted delivery may be `uncertain`.
-Budget override, restart, and stop require explicit confirmation flags. Restart respawns the
+Restart and stop require explicit confirmation flags. Restart respawns the
 worker process and reopens its exact Pi session ID, preserving the conversation
 and JSONL history; a failed respawn or interrupted replacement handover remains
 `uncertain`.

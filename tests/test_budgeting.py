@@ -20,6 +20,28 @@ class BudgetPolicyTests(unittest.TestCase):
         self.assertEqual(policy["warning"]["assignment"], {})
         self.assertTrue(all(not policy["hard"][scope] for scope in policy["hard"]))
 
+    def test_worker_guardrails_project_only_supported_assignment_metrics(self) -> None:
+        policy = ORCHESTRATOR.packaged_budget_policy()
+        policy["enforcement"] = "hard"
+        policy["warning"]["assignment"] = {
+            "provider_calls": 8,
+            "context_percent": 70,
+            "cache_read_tokens": 10_000,
+        }
+        policy["hard"]["assignment"] = {
+            "provider_calls": 12,
+            "context_percent": 85,
+            "cache_read_tokens": 20_000,
+        }
+        self.assertEqual(
+            ORCHESTRATOR.worker_assignment_guardrail_policy(policy),
+            {
+                "enforcement": "hard",
+                "warning": {"provider_calls": 8, "context_percent": 70.0},
+                "hard": {"provider_calls": 12, "context_percent": 85.0},
+            },
+        )
+
     def test_missing_user_file_migrates_to_packaged_warn_only_policy(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             missing = Path(directory) / "missing.json"

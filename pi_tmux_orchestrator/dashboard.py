@@ -45,7 +45,7 @@ _ACTIVE_STATES = {
     "started",
     "streaming",
 }
-_WARNING_STATES = {"budget_exhausted", "needs_attention", "waiting", "warning"}
+_WARNING_STATES = {"needs_attention", "waiting", "warning"}
 _ERROR_STATES = {
     "aborted",
     "conflict",
@@ -226,12 +226,16 @@ def _format_role_tokens(role: dict[str, Any]) -> str:
     cumulative = _format_tokens(role.get("total_tokens"))
     latest = role.get("latest_assignment_usage")
     if not isinstance(latest, dict):
-        return cumulative
-    usage = latest.get("usage")
-    if not isinstance(usage, dict):
-        return f"{cumulative}/+—"
-    assignment = _format_tokens(usage.get("operational_tokens"))
-    return f"{cumulative}/+{assignment}"
+        rendered = cumulative
+    else:
+        usage = latest.get("usage")
+        if not isinstance(usage, dict):
+            rendered = f"{cumulative}/+—"
+        else:
+            assignment = _format_tokens(usage.get("operational_tokens"))
+            rendered = f"{cumulative}/+{assignment}"
+    marker = _assignment_guardrail_marker(role)
+    return f"G{marker}{rendered}" if marker else rendered
 
 
 def _format_context(role: dict[str, Any]) -> str:
@@ -253,6 +257,18 @@ def _connection(role: dict[str, Any], *, unicode: bool, compact: bool = False) -
     if compact:
         return f"{marker}{generation_text}"
     return f"{marker} {'up' if connected else 'dn'} · {generation_text}"
+
+
+def _assignment_guardrail_marker(role: dict[str, Any]) -> str:
+    guardrails = role.get("assignment_guardrails")
+    if not isinstance(guardrails, list):
+        return ""
+    levels = {value.get("level") for value in guardrails if isinstance(value, dict)}
+    if "hard" in levels:
+        return "!"
+    if "warning" in levels:
+        return "~"
+    return ""
 
 
 def _assignment(role: dict[str, Any]) -> str:
@@ -334,21 +350,6 @@ def _header_lines(
     if usage.get("soft_total_budget_exceeded") is True:
         state_line.extend([Span("   ", "normal"), Span("SOFT RUN BUDGET", "warning")])
     lines.append(state_line)
-    exhaustion = snapshot.get("budget", {}).get("exhaustion")
-    if isinstance(exhaustion, dict):
-        lines.append(
-            [
-                Span("HARD BUDGET ", "warning"),
-                Span(
-                    f"{sanitize_terminal_text(exhaustion.get('scope'))}."
-                    f"{sanitize_terminal_text(exhaustion.get('role'))} "
-                    f"{sanitize_terminal_text(exhaustion.get('metric'))} "
-                    f"{sanitize_terminal_text(exhaustion.get('observed'))}/"
-                    f"{sanitize_terminal_text(exhaustion.get('threshold'))}",
-                    "warning",
-                ),
-            ]
-        )
     return lines
 
 

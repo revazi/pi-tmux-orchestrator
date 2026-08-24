@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from typing import Any
 
@@ -32,6 +33,11 @@ VERDICTS = frozenset(
 CHECK_STATUSES = frozenset({"passed", "failed", "skipped", "unknown"})
 SEVERITIES = frozenset({"critical", "high", "medium", "low", "info"})
 PATH_PATTERN = re.compile(r"[^\x00-\x1f\x7f]{1,500}")
+ASSIGNMENT_GUARDRAIL_LEVELS = frozenset({"warning", "hard"})
+ASSIGNMENT_GUARDRAIL_METRICS = frozenset(
+    {"provider_calls", "context_tokens", "context_percent"}
+)
+ASSIGNMENT_GUARDRAIL_INTEGER_METRICS = frozenset({"provider_calls", "context_tokens"})
 
 
 def _bounded_string(
@@ -193,6 +199,43 @@ def validate_report(value: object, role: str) -> dict[str, Any]:
     return report
 
 
+def _valid_guardrail_number(value: object, *, integer: bool) -> bool:
+    if integer:
+        return type(value) is int and value >= 0
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+        and value >= 0
+    )
+
+
+def _validate_guardrail_message(value: dict[str, Any]) -> None:
+    assignment_id = value.get("assignment_id")
+    level = value.get("level")
+    metric = value.get("metric")
+    observed = value.get("observed")
+    threshold = value.get("threshold")
+    if not isinstance(assignment_id, str) or not RPC_TOKEN_PATTERN.fullmatch(
+        assignment_id
+    ):
+        raise OrchestrationError(
+            "Guardrail assignment ID is invalid", "invalid_protocol"
+        )
+    if level not in ASSIGNMENT_GUARDRAIL_LEVELS:
+        raise OrchestrationError("Guardrail level is invalid", "invalid_protocol")
+    if metric not in ASSIGNMENT_GUARDRAIL_METRICS:
+        raise OrchestrationError("Guardrail metric is invalid", "invalid_protocol")
+    integer = metric in ASSIGNMENT_GUARDRAIL_INTEGER_METRICS
+    if (
+        not _valid_guardrail_number(observed, integer=integer)
+        or not _valid_guardrail_number(threshold, integer=integer)
+        or threshold <= 0
+        or observed < threshold
+    ):
+        raise OrchestrationError("Guardrail values are invalid", "invalid_protocol")
+
+
 def validate_client_message(value: object) -> dict[str, Any]:
     if not isinstance(value, dict) or value.get("version") != BROKER_PROTOCOL_VERSION:
         raise OrchestrationError(
@@ -207,6 +250,10 @@ def validate_client_message(value: object) -> dict[str, Any]:
         expected = (legacy, legacy | {"usage"})
     elif message_type == "lifecycle":
         expected = (base | {"state", "usage"},)
+    elif message_type == "guardrail":
+        expected = (
+            base | {"assignment_id", "level", "metric", "observed", "threshold"},
+        )
     elif message_type == "ack":
         expected = (base | {"delivery_id", "status"},)
     else:
@@ -230,6 +277,8 @@ def validate_client_message(value: object) -> dict[str, Any]:
         raise OrchestrationError(
             "Broker worker generation is invalid", "invalid_protocol"
         )
+    if message_type == "guardrail":
+        _validate_guardrail_message(value)
     return value
 
 

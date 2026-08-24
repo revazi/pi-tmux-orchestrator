@@ -16,14 +16,13 @@ from pathlib import Path
 from typing import Any
 
 from . import runtime
-from .budget_enforcement import first_hard_budget_exhaustion
 from .budgeting import packaged_budget_policy, validate_budget_config
 from .broker_store import (
     broker_paths,
     connect_broker_database,
     prepare_broker_database,
-    public_broker_snapshot,
     record_event,
+    retained_budget_policy,
     set_meta,
     utc_now,
 )
@@ -72,7 +71,6 @@ class Broker:
         self.worker_baselines: dict[str, str] = {}
         self.role_run_state: dict[str, str] = {}
         self.pending_run_state: dict[str, int] = {}
-        self.budget_pending_route: tuple[str, int, dict[str, Any]] | None = None
         self.server: asyncio.AbstractServer | None = None
         self.stopping = asyncio.Event()
         self.task_bodies = self._load_startup_payload()
@@ -160,27 +158,9 @@ class Broker:
                 current_state = "connecting"
                 set_meta(database, "workflow_state", current_state)
             elif current_state in {"routing", "initializing"}:
-                interrupted_state = current_state
                 current_state = "uncertain"
                 set_meta(database, "workflow_state", current_state)
-                if interrupted_state == "routing":
-                    database.execute(
-                        "UPDATE control_commands SET status='uncertain',updated_at=? "
-                        "WHERE id=(SELECT override_command_id FROM budget_exhaustions "
-                        "WHERE override_command_id IS NOT NULL "
-                        "ORDER BY updated_at DESC LIMIT 1) AND action='budget_override' "
-                        "AND status='accepted'",
-                        (utc_now(),),
-                    )
                 record_event(database, "workflow_uncertain", status=current_state)
-            elif current_state == "budget_exhausted":
-                current_state = "uncertain"
-                set_meta(database, "workflow_state", current_state)
-                record_event(
-                    database,
-                    "budget_resume_uncertain",
-                    status=current_state,
-                )
             interrupted_handovers = list(
                 database.execute(
                     "SELECT role FROM roles WHERE state IN ('restarting','recovering')"
@@ -460,8 +440,7 @@ class Broker:
             report_count = database.execute(
                 "SELECT COUNT(*) AS count FROM reports"
             ).fetchone()["count"]
-        budget = public_broker_snapshot(self.coord)["budget"]["exhaustion"]
-        snapshot = {
+        return {
             "version": BROKER_PROTOCOL_VERSION,
             "type": "snapshot",
             "session": self.manifest["session"],
@@ -471,28 +450,6 @@ class Broker:
             "report_count": report_count,
             "report_replay_complete": report_count <= len(self.recent_reports),
         }
-        if budget is not None:
-            snapshot["budget"] = budget
-        return snapshot
-
-    async def broadcast_budget(
-        self, finding: dict[str, Any], round_number: int
-    ) -> None:
-        await self.broadcast(
-            {
-                "version": BROKER_PROTOCOL_VERSION,
-                "type": "budget",
-                "session": self.manifest["session"],
-                "state": "budget_exhausted",
-                "round": round_number,
-                "scope": finding["scope"],
-                "role": finding["role"],
-                "assignment_id": finding["assignment_id"],
-                "metric": finding["metric"],
-                "observed": finding["observed"],
-                "threshold": finding["threshold"],
-            }
-        )
 
     async def broadcast_workflow(self, state: str, round_number: int) -> None:
         await self.broadcast(
@@ -589,8 +546,7 @@ class Broker:
             or not isinstance(token, str)
             or not RPC_TOKEN_PATTERN.fullmatch(token)
             or role not in self.manifest["roles"]
-            or action
-            not in {"send", "abort", "restart", "restart_failed", "budget_override"}
+            or action not in {"send", "abort", "restart", "restart_failed"}
             or delivery not in {None, "steer", "follow-up"}
             or (action == "send" and (not isinstance(body, str) or not body.strip()))
             or (action != "send" and (body is not None or delivery is not None))
@@ -601,7 +557,6 @@ class Broker:
         resumed_round: int | None = None
         uncertain_round: int | None = None
         restarted_client: Client | None = None
-        budget_resume: tuple[str, int, dict[str, Any]] | None = None
         with connect_broker_database(self.coord) as database:
             stored_token = database.execute(
                 "SELECT value FROM meta WHERE key='control_token'"
@@ -639,24 +594,11 @@ class Broker:
             role_state = database.execute(
                 "SELECT state FROM roles WHERE role=?", (role,)
             ).fetchone()["state"]
-            budget_override_exception = (
-                action == "budget_override"
-                and self.budget_pending_route is not None
-                and set(self.clients) == set(self.manifest["roles"])
-                and database.execute(
-                    "SELECT value FROM meta WHERE key='workflow_state'"
-                ).fetchone()["value"]
-                == "budget_exhausted"
-                and database.execute(
-                    "SELECT 1 FROM budget_exhaustions WHERE status='active' LIMIT 1"
-                ).fetchone()
-                is not None
-            )
-            registry_capacity_exception = budget_override_exception or (
-                action == "restart_failed"
-                and role_state in {"restarting", "recovering"}
-            )
-            if command_count >= MAX_RPC_COMMANDS and not registry_capacity_exception:
+            handover_failure_exception = action == "restart_failed" and role_state in {
+                "restarting",
+                "recovering",
+            }
+            if command_count >= MAX_RPC_COMMANDS and not handover_failure_exception:
                 raise OrchestrationError("Broker command registry is full", "rejected")
             if action == "restart_failed":
                 if role_state in {"restarting", "recovering"}:
@@ -668,38 +610,6 @@ class Broker:
                     status = "accepted"
                 else:
                     status = "conflict"
-            elif action == "budget_override":
-                workflow_state = database.execute(
-                    "SELECT value FROM meta WHERE key='workflow_state'"
-                ).fetchone()["value"]
-                active_exhaustion = database.execute(
-                    "SELECT 1 FROM budget_exhaustions WHERE status='active' LIMIT 1"
-                ).fetchone()
-                if workflow_state != "budget_exhausted":
-                    status = "conflict"
-                elif (
-                    self.budget_pending_route is None
-                    or active_exhaustion is None
-                    or set(self.clients) != set(self.manifest["roles"])
-                ):
-                    status = "uncertain"
-                else:
-                    status = "accepted"
-                    budget_resume = self.budget_pending_route
-                    database.execute(
-                        "UPDATE budget_exhaustions SET status='overridden',"
-                        "override_command_id=?,updated_at=? WHERE status='active'",
-                        (command_id, utc_now()),
-                    )
-                    set_meta(database, "workflow_state", "routing")
-                    record_event(
-                        database,
-                        "budget_override_accepted",
-                        role=role,
-                        round_number=budget_resume[1],
-                        delivery_id=command_id,
-                        status="accepted",
-                    )
             elif role not in self.clients or (
                 action == "restart" and role not in self.worker_baselines
             ):
@@ -757,43 +667,6 @@ class Broker:
                 status=status,
                 delivery_id=command_id,
             )
-        if budget_resume is not None:
-            self.budget_pending_route = None
-            try:
-                await self.route_report(
-                    budget_resume[0],
-                    budget_resume[1],
-                    budget_resume[2],
-                    skip_budget_gate=True,
-                )
-                with connect_broker_database(self.coord) as database:
-                    if (
-                        database.execute(
-                            "SELECT value FROM meta WHERE key='workflow_state'"
-                        ).fetchone()["value"]
-                        == "routing"
-                    ):
-                        set_meta(database, "workflow_state", "active")
-                    resumed_round = self.current_round(database)
-                await self.broadcast_workflow("active", resumed_round)
-            except Exception:
-                status = "uncertain"
-                with connect_broker_database(self.coord) as database:
-                    database.execute(
-                        "UPDATE control_commands SET status='uncertain',updated_at=? "
-                        "WHERE id=?",
-                        (utc_now(), command_id),
-                    )
-                    set_meta(database, "workflow_state", "uncertain")
-                    record_event(
-                        database,
-                        "budget_override_uncertain",
-                        role=role,
-                        round_number=budget_resume[1],
-                        delivery_id=command_id,
-                        status="uncertain",
-                    )
-                await self.broadcast_workflow("uncertain", budget_resume[1])
         await self.send_raw(
             writer,
             {
@@ -849,6 +722,8 @@ class Broker:
                 await self.handle_lifecycle(client, message)
             elif message["type"] == "report":
                 await self.handle_report(client, message)
+            elif message["type"] == "guardrail":
+                await self.handle_guardrail(client, message)
             elif message["type"] == "ack":
                 await self.handle_delivery_ack(client, message)
             else:
@@ -1046,12 +921,6 @@ class Broker:
     ) -> None:
         if role not in self.clients:
             return
-        with connect_broker_database(self.coord, readonly=True) as database:
-            workflow_state = database.execute(
-                "SELECT value FROM meta WHERE key='workflow_state'"
-            ).fetchone()["value"]
-        if workflow_state == "budget_exhausted":
-            return
         await self._flush_pending_run_state(role, round_number)
         assignment_id = secrets.token_hex(16)
         delivery_id = secrets.token_hex(16)
@@ -1209,6 +1078,57 @@ class Broker:
             await self.broadcast_workflow("uncertain", uncertain_round)
         await self.reply(client, message["id"], True, status="recorded")
 
+    async def handle_guardrail(self, client: Client, message: dict[str, Any]) -> None:
+        assignment_id = message["assignment_id"]
+        level = message["level"]
+        metric = message["metric"]
+        threshold = message["threshold"]
+        with connect_broker_database(self.coord) as database:
+            assignment = database.execute(
+                "SELECT role,round FROM assignments WHERE id=?",
+                (assignment_id,),
+            ).fetchone()
+            if assignment is None or assignment["role"] != client.role:
+                raise OrchestrationError(
+                    "Guardrail assignment is not owned by this role", "forbidden"
+                )
+            policy = retained_budget_policy(database)
+            configured = policy[level]["assignment"].get(metric)
+            if configured != threshold:
+                raise OrchestrationError(
+                    "Guardrail threshold is not active for this run", "forbidden"
+                )
+            cursor = database.execute(
+                "INSERT OR IGNORE INTO assignment_guardrails("
+                "assignment_id,role,level,metric,observed,threshold,created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    assignment_id,
+                    client.role,
+                    level,
+                    metric,
+                    message["observed"],
+                    threshold,
+                    utc_now(),
+                ),
+            )
+            duplicate = cursor.rowcount == 0
+            if not duplicate:
+                record_event(
+                    database,
+                    "assignment_guardrail",
+                    role=client.role,
+                    round_number=assignment["round"],
+                    assignment_id=assignment_id,
+                    status=level,
+                )
+        await self.reply(
+            client,
+            message["id"],
+            True,
+            status="duplicate" if duplicate else "recorded",
+        )
+
     async def handle_lifecycle(self, client: Client, message: dict[str, Any]) -> None:
         state = message["state"]
         if state not in {"idle", "active", "waiting", "uncertain"}:
@@ -1274,13 +1194,7 @@ class Broker:
                 elif (
                     state == "waiting"
                     and active_assignment
-                    and workflow_state
-                    not in {
-                        "ready",
-                        "uncertain",
-                        "needs_attention",
-                        "budget_exhausted",
-                    }
+                    and workflow_state not in {"ready", "uncertain", "needs_attention"}
                 ):
                     workflow_transition = "needs_attention"
                     round_number = self.current_round(database)
@@ -1580,71 +1494,13 @@ class Broker:
                 trigger=False,
             )
 
-    async def _pause_for_budget(
-        self, role: str, round_number: int, report: dict[str, Any]
-    ) -> bool:
-        with connect_broker_database(self.coord) as database:
-            workflow_state = database.execute(
-                "SELECT value FROM meta WHERE key='workflow_state'"
-            ).fetchone()["value"]
-            if workflow_state in {"budget_exhausted", "ready", "uncertain"}:
-                return True
-            finding = first_hard_budget_exhaustion(
-                database,
-                trigger_role=role,
-                round_number=round_number,
-            )
-            if finding is None:
-                return False
-            now = utc_now()
-            database.execute(
-                "INSERT INTO budget_exhaustions(fingerprint,scope,role,assignment_id,"
-                "metric,observed,threshold,status,override_command_id,created_at,updated_at) "
-                "VALUES (?,?,?,?,?,?,?,'active',NULL,?,?) "
-                "ON CONFLICT(fingerprint) DO UPDATE SET observed=excluded.observed,"
-                "updated_at=excluded.updated_at",
-                (
-                    finding["fingerprint"],
-                    finding["scope"],
-                    finding["role"],
-                    finding["assignment_id"],
-                    finding["metric"],
-                    finding["observed"],
-                    finding["threshold"],
-                    now,
-                    now,
-                ),
-            )
-            set_meta(database, "workflow_state", "budget_exhausted")
-            record_event(
-                database,
-                "budget_exhausted",
-                role=finding["role"],
-                round_number=round_number,
-                assignment_id=finding["assignment_id"],
-                status="budget_exhausted",
-            )
-        self.budget_pending_route = (role, round_number, report)
-        await self.broadcast_budget(finding, round_number)
-        await self.broadcast_workflow("budget_exhausted", round_number)
-        return True
-
     async def route_report(
-        self,
-        role: str,
-        round_number: int,
-        report: dict[str, Any],
-        *,
-        skip_budget_gate: bool = False,
+        self, role: str, round_number: int, report: dict[str, Any]
     ) -> None:
         if role == "probe":
             await self._deliver_run_state(("implementer", "reviewer"), round_number)
             return
         if role == "implementer":
-            if not skip_budget_gate and await self._pause_for_budget(
-                role, round_number, report
-            ):
-                return
             specialists = [
                 name for name in ("playwright", "django") if name in self.clients
             ]
@@ -1663,16 +1519,8 @@ class Broker:
                 await self.maybe_assign_reviewer(round_number)
             return
         if role in {"playwright", "django"}:
-            reviewer_ready = self.reviewer_assignment_ready(round_number)
-            if (
-                reviewer_ready
-                and not skip_budget_gate
-                and await self._pause_for_budget(role, round_number, report)
-            ):
-                return
             await self._deliver_run_state(("implementer", "reviewer"), round_number)
-            if reviewer_ready:
-                await self.maybe_assign_reviewer(round_number)
+            await self.maybe_assign_reviewer(round_number)
             return
         if role == "reviewer":
             if report["verdict"] == "approved":
@@ -1687,18 +1535,12 @@ class Broker:
                     )
                 await self.broadcast_workflow("ready", round_number)
                 return
-            if not skip_budget_gate and await self._pause_for_budget(
-                role, round_number, report
-            ):
-                return
             await self._deliver_run_state(("implementer",), round_number)
             next_round = round_number + 1
             with connect_broker_database(self.coord) as database:
                 set_meta(database, "round", str(next_round))
-                if not skip_budget_gate:
-                    set_meta(database, "workflow_state", "active")
-            if not skip_budget_gate:
-                await self.broadcast_workflow("active", next_round)
+                set_meta(database, "workflow_state", "active")
+            await self.broadcast_workflow("active", next_round)
             await self.assign(
                 "implementer",
                 "implementation",
@@ -1706,7 +1548,7 @@ class Broker:
                 self._assignment("implementer", next_round),
             )
 
-    def reviewer_assignment_ready(self, round_number: int) -> bool:
+    async def maybe_assign_reviewer(self, round_number: int) -> None:
         specialists = [
             name for name in ("playwright", "django") if name in self.manifest["roles"]
         ]
@@ -1726,14 +1568,11 @@ class Broker:
                 "SELECT 1 FROM assignments WHERE role='reviewer' AND round=?",
                 (round_number,),
             ).fetchone()
-        return (
+        if (
             implementation is not None
             and set(specialists).issubset(completed)
             and reviewer_assignment is None
-        )
-
-    async def maybe_assign_reviewer(self, round_number: int) -> None:
-        if self.reviewer_assignment_ready(round_number):
+        ):
             await self.assign(
                 "reviewer",
                 "review",

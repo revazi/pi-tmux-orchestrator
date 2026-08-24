@@ -143,6 +143,30 @@ class DashboardRenderingTests(DashboardFixture):
         self.assertIn("pi-tmux-agents stop pi-dashboard-test --yes", rendered)
         self.assertIn("prefix + L return", rendered)
 
+    def test_assignment_guardrail_markers_are_visible_in_every_layout(self) -> None:
+        snapshot = copy.deepcopy(self.snapshot)
+        snapshot["roles"][0]["assignment_guardrails"] = [
+            {
+                "assignment_id": "c" * 32,
+                "level": "hard",
+                "metric": "provider_calls",
+                "observed": 6,
+                "threshold": 6,
+            }
+        ]
+        for width, height in ((180, 30), (80, 18), (45, 14)):
+            with self.subTest(width=width):
+                rendered = render_dashboard(
+                    self.manifest,
+                    snapshot,
+                    self.events,
+                    width=width,
+                    height=height,
+                    color=False,
+                )
+                self.assertIn("G!", rendered)
+                self.assertNotIn("c" * 32, rendered)
+
     def test_state_and_color_semantics_are_bounded_and_consistent(self) -> None:
         expectations = {
             "ready": "success",
@@ -150,7 +174,6 @@ class DashboardRenderingTests(DashboardFixture):
             "recovering": "active",
             "restarting": "active",
             "needs_attention": "warning",
-            "budget_exhausted": "warning",
             "uncertain": "error",
             "starting": "muted",
             "unrecognized": "muted",
@@ -173,31 +196,6 @@ class DashboardRenderingTests(DashboardFixture):
         self.assertIn("\x1b[36mACTIVE\x1b[0m", rendered)
         self.assertIn("\x1b[33mwaiting", rendered)
         self.assertIn("\x1b[32m● up · g2", rendered)
-
-        exhausted = dict(self.snapshot)
-        exhausted["workflow"] = {"state": "budget_exhausted", "round": 2}
-        exhausted["budget"] = {
-            "exhaustion": {
-                "scope": "assignment",
-                "role": "implementer",
-                "metric": "cache_read_tokens",
-                "observed": 1_200,
-                "threshold": 1_000,
-            }
-        }
-        budget_rendered = render_dashboard(
-            self.manifest,
-            exhausted,
-            self.events,
-            width=180,
-            height=30,
-            color=False,
-        )
-        self.assertIn("BUDGET_EXHAUSTED", budget_rendered)
-        self.assertIn(
-            "HARD BUDGET assignment.implementer cache_read_tokens 1200/1000",
-            budget_rendered,
-        )
 
     def test_full_compact_and_narrow_layouts_are_height_bounded(self) -> None:
         cases = [

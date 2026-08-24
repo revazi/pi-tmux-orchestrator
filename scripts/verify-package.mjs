@@ -12,7 +12,6 @@ const pythonFiles = [
   "broker.py",
   "broker_client.py",
   "broker_store.py",
-  "budget_enforcement.py",
   "budgeting.py",
   "cli.py",
   "commands.py",
