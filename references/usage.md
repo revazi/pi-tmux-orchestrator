@@ -86,9 +86,14 @@ inherited threshold. Overrides cannot repeat a threshold and are bounded by the
 60 possible level/scope/metric combinations. The Pi tool uses a native
 `budgetOverrides` object. Dry-run
 and confirmation metadata show the fully effective policy without payloads.
-New broker databases retain that numeric/enum policy. Hard assignment gating is
-intentionally not activated by this policy-only change; current operational
-warnings continue until the separate gate implementation lands.
+New broker databases retain that numeric/enum policy. `warn-only` never blocks.
+With `enforcement: "hard"`, the broker evaluates authoritative accepted-report
+usage immediately before downstream assignments. Evaluation is deterministic:
+completed assignments in the current round first, then cumulative roles, then
+the run. Run context tokens are the known cross-role sum and run context percent
+is the maximum known role pressure; other run categories use known cumulative
+sums. A proven limit creates a metadata-only `budget_exhausted` attention
+state; missing provider values remain unavailable and cannot trigger a gate.
 
 ### `start`
 
@@ -188,6 +193,22 @@ materializes the latest coalesced run-state capsule, including evidence deferred
 while the role was active, before recovering an accepted active assignment. A
 local respawn failure, replacement disconnect, broker interruption, or
 unprovable assignment remains `uncertain`; it is not blindly replayed.
+
+### `budget-override SESSION [--run RUN_ID] [--command-id ID] --yes`
+
+Authenticates to the live broker with the private control token and explicitly
+resumes one workflow stopped at `budget_exhausted`. The command displays the
+scope, role, metric, observed value, and threshold before returning its bounded
+acknowledgement. Matching retries deduplicate by command ID and cannot route the
+pending transition twice. The accepted override applies to that exact run
+threshold, role/threshold pair, or assignment/threshold identity. A later
+assignment-local breach has a distinct identity and requires another explicit
+override.
+
+An override is accepted only while the exact live broker still has the bounded
+pending route and all roles remain connected. If the broker restarted, private
+in-memory routing evidence cannot be reconstructed: workflow state becomes
+`uncertain`, the last exhaustion facts remain visible, and override fails closed.
 
 ### `stop SESSION --yes`
 
@@ -344,9 +365,12 @@ Retained reports created before assignment accounting expose usage as unavailabl
 Status and Supervisor API expose cumulative per-role/total usage, each role's
 latest assignment usage, and current context occupancy without payload bodies.
 The packaged policy preserves the existing soft role/run operational-token
-warnings. New runs also retain their fully effective strict warning/hard policy
-for later gate evaluation. This policy-only stage does not enforce hard gates.
-A budget cannot stop an already-started provider response at an exact token.
+warnings. Hard mode evaluates only authoritative retained usage after the active
+report has committed and before downstream assignments. A proven limit blocks
+new assignment creation, records bounded facts, notifies parent observers, and
+requires authenticated `budget-override --yes`. It never silently skips required
+review or marks the stopped workflow ready. A budget cannot stop an
+already-started provider response at an exact token.
 
 The categories have different meanings and costs:
 

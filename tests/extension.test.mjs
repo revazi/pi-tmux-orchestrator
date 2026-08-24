@@ -855,6 +855,25 @@ test("authenticated broker observer steers progress and returns structured final
           },
         }));
         socket.write(testHooks.brokerFrame({
+          version: 1,
+          type: "budget",
+          session,
+          state: "budget_exhausted",
+          round: 2,
+          scope: "assignment",
+          role: "reviewer",
+          assignment_id: assignmentId,
+          metric: "provider_calls",
+          observed: 1,
+          threshold: 1,
+        }));
+        socket.write(testHooks.brokerFrame({
+          version: 1, type: "workflow", session, state: "budget_exhausted", round: 2,
+        }));
+        socket.write(testHooks.brokerFrame({
+          version: 1, type: "workflow", session, state: "active", round: 2,
+        }));
+        socket.write(testHooks.brokerFrame({
           version: 1, type: "workflow", session, state: "ready", round: 2,
         }));
       });
@@ -891,8 +910,20 @@ test("authenticated broker observer steers progress and returns structured final
     assert.match(delivered.message.content, /The implementation is ready/);
     assert.deepEqual(delivered.options, { triggerTurn: true, deliverAs: "steer" });
     assert.equal(stopped, true);
+    const budgetMessage = deliveredMessages.find(
+      ({ message }) => message.details.state === "budget_exhausted",
+    );
+    assert.match(budgetMessage.message.content, /scope=assignment/);
+    assert.match(budgetMessage.message.content, /provider_calls/);
+    assert.deepEqual(
+      budgetMessage.options,
+      { triggerTurn: true, deliverAs: "steer" },
+    );
     const progress = deliveredMessages.filter(({ message }) => message.details.event);
-    assert.deepEqual(progress.map(({ message }) => message.details.event), ["attached", "lifecycle", "report"]);
+    assert.deepEqual(
+      progress.map(({ message }) => message.details.event),
+      ["attached", "lifecycle", "report", "workflow"],
+    );
     assert.ok(progress.every(({ options }) => (
       options.triggerTurn === false && options.deliverAs === "steer"
     )));
@@ -925,6 +956,69 @@ test("observer snapshots require bounded report replay metadata", () => {
     () => testHooks.validateObserverFrame({ version: 1, type: "toString", session: "pi-test" }, "pi-test", "a".repeat(32)),
     /unsupported_observer_frame/,
   );
+});
+
+test("observer hard-budget facts are bounded metadata and actionable", () => {
+  const facts = {
+    scope: "assignment",
+    role: "implementer",
+    assignment_id: "b".repeat(32),
+    metric: "cache_read_tokens",
+    observed: 1200,
+    threshold: 1000,
+  };
+  const value = {
+    version: 1,
+    type: "budget",
+    session: "pi-test",
+    state: "budget_exhausted",
+    round: 2,
+    ...facts,
+  };
+  assert.equal(testHooks.validateObserverFrame(value, "pi-test", "c".repeat(32)), value);
+  const snapshot = {
+    version: 1,
+    type: "snapshot",
+    session: "pi-test",
+    state: "budget_exhausted",
+    round: 2,
+    roles: [{ role: "implementer", state: "idle" }],
+    report_count: 1,
+    report_replay_complete: true,
+    budget: facts,
+  };
+  assert.equal(
+    testHooks.validateObserverFrame(snapshot, "pi-test", "c".repeat(32)),
+    snapshot,
+  );
+  assert.throws(
+    () => testHooks.validateObserverFrame(
+      { ...value, observed: 999 },
+      "pi-test",
+      "c".repeat(32),
+    ),
+    /invalid_observer_budget/,
+  );
+  assert.throws(
+    () => testHooks.validateObserverFrame(
+      { ...value, private_body: "forbidden" },
+      "pi-test",
+      "c".repeat(32),
+    ),
+    /invalid_observer_budget/,
+  );
+  const update = testHooks.parentUpdateContent(
+    "pi-test",
+    "budget_exhausted",
+    2,
+    [],
+    facts,
+  );
+  assert.match(update.content, /proven hard usage budget stopped/);
+  assert.match(update.content, /scope=assignment/);
+  assert.match(update.content, /cache_read_tokens/);
+  assert.match(update.content, /budget-override pi-test --yes/);
+  assert.doesNotMatch(update.content, /private_body/);
 });
 
 test("observer report usage is bounded numeric metadata", () => {

@@ -150,6 +150,7 @@ class DashboardRenderingTests(DashboardFixture):
             "recovering": "active",
             "restarting": "active",
             "needs_attention": "warning",
+            "budget_exhausted": "warning",
             "uncertain": "error",
             "starting": "muted",
             "unrecognized": "muted",
@@ -172,6 +173,31 @@ class DashboardRenderingTests(DashboardFixture):
         self.assertIn("\x1b[36mACTIVE\x1b[0m", rendered)
         self.assertIn("\x1b[33mwaiting", rendered)
         self.assertIn("\x1b[32m● up · g2", rendered)
+
+        exhausted = dict(self.snapshot)
+        exhausted["workflow"] = {"state": "budget_exhausted", "round": 2}
+        exhausted["budget"] = {
+            "exhaustion": {
+                "scope": "assignment",
+                "role": "implementer",
+                "metric": "cache_read_tokens",
+                "observed": 1_200,
+                "threshold": 1_000,
+            }
+        }
+        budget_rendered = render_dashboard(
+            self.manifest,
+            exhausted,
+            self.events,
+            width=180,
+            height=30,
+            color=False,
+        )
+        self.assertIn("BUDGET_EXHAUSTED", budget_rendered)
+        self.assertIn(
+            "HARD BUDGET assignment.implementer cache_read_tokens 1200/1000",
+            budget_rendered,
+        )
 
     def test_full_compact_and_narrow_layouts_are_height_bounded(self) -> None:
         cases = [

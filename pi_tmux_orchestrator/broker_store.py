@@ -12,12 +12,16 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from .budgeting import packaged_budget_policy, validate_budget_config
+from .budgeting import (
+    BUDGET_INTEGER_METRICS,
+    packaged_budget_policy,
+    validate_budget_config,
+)
 from .constants import BROKER_PROTOCOL_VERSION, MAX_BROKER_EVENTS, MAX_JSON_ITEMS
 from .models import OrchestrationError
 from .storage import ensure_private_directory, validate_coordination_directory
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 def utc_now() -> str:
@@ -162,6 +166,19 @@ def initialize_broker_database(
                 received_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS budget_exhaustions (
+                fingerprint TEXT PRIMARY KEY,
+                scope TEXT NOT NULL,
+                role TEXT NOT NULL REFERENCES roles(role),
+                assignment_id TEXT REFERENCES assignments(id),
+                metric TEXT NOT NULL,
+                observed REAL NOT NULL,
+                threshold REAL NOT NULL,
+                status TEXT NOT NULL,
+                override_command_id TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS events (
                 sequence INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp TEXT NOT NULL,
@@ -238,6 +255,23 @@ def prepare_broker_database(coord: Path) -> None:
             ):
                 database.execute(f"ALTER TABLE reports ADD COLUMN {column} {kind}")
             version = 3
+        if version == 3:
+            database.execute("""
+                CREATE TABLE budget_exhaustions (
+                    fingerprint TEXT PRIMARY KEY,
+                    scope TEXT NOT NULL,
+                    role TEXT NOT NULL REFERENCES roles(role),
+                    assignment_id TEXT REFERENCES assignments(id),
+                    metric TEXT NOT NULL,
+                    observed REAL NOT NULL,
+                    threshold REAL NOT NULL,
+                    status TEXT NOT NULL,
+                    override_command_id TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            """)
+            version = 4
         if version != SCHEMA_VERSION:
             raise OrchestrationError("Broker database schema is unsupported")
         database.execute(
@@ -322,6 +356,24 @@ def _public_assignment_usage(row: sqlite3.Row | None) -> dict[str, Any] | None:
     return value
 
 
+def _public_budget_exhaustion(row: sqlite3.Row | None) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    observed = row["observed"]
+    threshold = row["threshold"]
+    if row["metric"] in BUDGET_INTEGER_METRICS:
+        observed = int(observed)
+        threshold = int(threshold)
+    return {
+        "scope": row["scope"],
+        "role": row["role"],
+        "assignment_id": row["assignment_id"],
+        "metric": row["metric"],
+        "observed": observed,
+        "threshold": threshold,
+    }
+
+
 def public_broker_snapshot(coord: Path) -> dict[str, Any]:
     with connect_broker_database(coord, readonly=True) as database:
         meta = {
@@ -370,6 +422,28 @@ def public_broker_snapshot(coord: Path) -> dict[str, Any]:
         event_bounds = database.execute(
             "SELECT MIN(sequence) AS earliest, MAX(sequence) AS latest FROM events"
         ).fetchone()
+        exhaustion = None
+        if schema_version >= 4:
+            exhaustion = _public_budget_exhaustion(
+                database.execute(
+                    "SELECT b.scope,b.role,b.assignment_id,b.metric,b.observed,b.threshold "
+                    "FROM budget_exhaustions b LEFT JOIN control_commands c "
+                    "ON c.id=b.override_command_id "
+                    "WHERE b.status='active' OR c.status='uncertain' "
+                    "ORDER BY CASE WHEN b.status='active' THEN 0 ELSE 1 END,"
+                    "b.updated_at DESC LIMIT 1"
+                ).fetchone()
+            )
+        policy_value = meta.get("budget_policy")
+        if policy_value is None:
+            enforcement = None
+        else:
+            try:
+                enforcement = validate_budget_config(json.loads(policy_value))[
+                    "enforcement"
+                ]
+            except (TypeError, json.JSONDecodeError) as error:
+                raise OrchestrationError("Retained budget policy is invalid") from error
         total_tokens = sum(
             role["input_tokens"]
             + role["output_tokens"]
@@ -396,6 +470,15 @@ def public_broker_snapshot(coord: Path) -> dict[str, Any]:
                 "updated_at": meta.get("updated_at"),
             },
             "roles": roles,
+            "budget": {
+                "enforcement": enforcement,
+                "exhaustion": exhaustion,
+                "override_required": (
+                    meta.get("workflow_state") == "budget_exhausted"
+                    and exhaustion is not None
+                ),
+                "payload_bodies_included": False,
+            },
             "usage": {
                 "provider_calls": (
                     sum(role["provider_calls"] for role in roles)
