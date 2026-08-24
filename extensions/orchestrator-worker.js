@@ -593,7 +593,7 @@ function pendingGuardrailFinding(thresholds, existing, observations) {
 }
 
 function hardGuardrailThresholds(policy) {
-  return policy.enforcement === "hard" ? policy.hard : {};
+  return policy.hard;
 }
 
 function guardrailWarningText(finding) {
@@ -607,14 +607,8 @@ function appendGuardrailWarning(content, finding) {
   return Array.isArray(content) ? [...content, warning] : [warning];
 }
 
-function hardGuardrailDecision(toolName, finding) {
-  if (!finding || toolName === "orchestrator_report") return undefined;
-  return {
-    block: true,
-    reason: `Assignment hard guardrail reached: ${finding.metric}=${finding.observed} `
-      + `(limit ${finding.threshold}). Only orchestrator_report remains available.`,
-    terminate: true,
-  };
+function observationalGuardrailDecision() {
+  return undefined;
 }
 
 function shouldDeliverGuardrailWarning(activeAssignment, toolName, state) {
@@ -895,10 +889,10 @@ export default function orchestratorWorker(pi) {
   pi.on("context", (event) => ({
     messages: filterWorkerContext(event.messages),
   }));
-  pi.on("tool_call", (event, ctx) => {
+  pi.on("tool_call", (_event, ctx) => {
     if (!activeAssignment) return undefined;
     evaluateAssignmentGuardrails(ctx);
-    return hardGuardrailDecision(event.toolName, guardrailState.hard);
+    return observationalGuardrailDecision();
   });
   pi.on("tool_result", (event) => {
     if (!shouldDeliverGuardrailWarning(activeAssignment, event.toolName, guardrailState)) {
@@ -927,8 +921,8 @@ export const testHooks = {
   filterWorkerContext,
   firstGuardrailFinding,
   guardrailObservations,
-  hardGuardrailDecision,
   hardGuardrailThresholds,
+  observationalGuardrailDecision,
   parseGuardrailPolicy,
   reportParameters,
   reportUsage,

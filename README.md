@@ -249,26 +249,19 @@ file in the target project is rejected. Explicit `--budget-enforcement` and
 repeatable `--budget-override LEVEL.SCOPE.METRIC=VALUE` (or `=off`) values win
 for one run; the model tool exposes the same strict native `budgetOverrides`
 object. Dry-run JSON and Pi's start confirmation show the effective policy.
-The policy is retained as numeric/enum broker metadata. `warn-only` preserves
-non-blocking behavior. Assignment `provider_calls`, `context_tokens`, and
-`context_percent` thresholds are also projected into each worker bridge. The
+The policy is retained as numeric/enum broker metadata, but every threshold is
+observational: neither `warn-only` nor the compatibility `hard` mode blocks a
+tool, interrupts a provider response, suppresses required review, or changes
+downstream assignment routing. Assignment `provider_calls`, `context_tokens`,
+and `context_percent` thresholds are projected into each worker bridge. The
 bridge counts provider turns from the accepted assignment boundary, emits one
-bounded warning in the next tool result, and, only in explicit `hard` mode,
-blocks every non-report tool call at a proven hard threshold with terminating
-results. The current provider response is never interrupted and
-`orchestrator_report` remains available, including in a parallel tool batch. A
-worker that settles without reporting follows the existing `needs_attention`
-path. Restart restores guardrail markers from the Pi session, while SQLite,
-status, the dashboard, and Supervisor output retain only bounded numeric facts.
-
-Hard mode separately evaluates authoritative accepted-report usage before every
-downstream provider-triggering assignment. A proven limit moves the workflow to
-`budget_exhausted`; only an explicit authenticated
-`pi-tmux-agents budget-override SESSION --yes` resumes routing. That command does
-not bypass an already-triggered in-assignment hard guardrail. Direct steering
-can request the final report but cannot silently re-enable discovery or mutation
-tools; allowing more work requires a newly confirmed run with the relevant
-assignment hard threshold raised or disabled.
+bounded warning in the next tool result, and records a higher-severity hard fact
+without enforcing it. Parallel tools and `orchestrator_report` remain available.
+Restart restores the assignment-local markers from the Pi session, while
+SQLite, status, the dashboard, and Supervisor output retain only bounded numeric
+facts. Operators use that visibility to decide whether to steer, request a
+report, restart, or stop the run; there is no live budget-resume command because
+budgets never pause routing.
 
 Natural-language requests are supported by the `tmux_orchestrator` tool. For
 example, users can ask Pi to “use my current model for every worker,” “use
@@ -414,7 +407,6 @@ pi-tmux-agents send SESSION --role reviewer --delivery follow-up \
   --command-id 0123456789abcdef0123456789abcdef \
   --message-file /tmp/review-message.txt
 pi-tmux-agents abort SESSION --role implementer
-pi-tmux-agents budget-override SESSION --yes
 pi-tmux-agents restart SESSION --role implementer --yes
 pi-tmux-agents stop SESSION --yes
 ```
@@ -495,12 +487,11 @@ Structural savings include no waiting turns, no polling, no copied diffs/logs,
 one reviewer wake after all evidence, no approval acknowledgement turn, and
 terminating report calls. Current soft role/run operational-token budgets warn
 before additional work. Assignment provider-call/context-pressure warnings are
-injected once at a tool boundary. When hard enforcement is explicitly
-configured, matching assignment guardrails terminate later non-report tools;
-report-time run, role, or assignment limits separately block the next assignment.
-The active provider response and final report are never interrupted. Required
-review is not skipped and a stopped workflow is not marked ready. No budget can
-stop an already-started provider response at an exact token.
+injected once at a tool boundary, and higher-severity threshold facts are
+retained as metadata. Budget thresholds are visibility only: they do not block
+parallel or sequential tools, pause downstream assignments, skip required
+review, or mark workflows ready. The operator decides whether to steer, request
+a report, restart, or stop.
 
 ### Development token-efficiency baseline
 

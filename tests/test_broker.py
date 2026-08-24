@@ -18,7 +18,6 @@ from pi_tmux_orchestrator.broker import (
     _register_broker_signal_handlers,
     initialize_broker_run,
 )
-from pi_tmux_orchestrator.budget_enforcement import first_hard_budget_exhaustion
 from pi_tmux_orchestrator.budgeting import packaged_budget_policy
 from pi_tmux_orchestrator.constants import (
     BROKER_COORDINATION,
@@ -367,8 +366,51 @@ class BrokerStoreTests(BrokerFixture):
                     "SELECT name FROM sqlite_master WHERE type='table'"
                 )
             }
-        self.assertIn("budget_exhaustions", budget_tables)
         self.assertIn("assignment_guardrails", budget_tables)
+
+    def test_schema_four_exhaustion_state_migrates_to_observational_guardrails(
+        self,
+    ) -> None:
+        initialize_broker_run(self.coord, self.manifest, "task", {})
+        with broker_store.connect_broker_database(self.coord) as database:
+            database.execute("DROP TABLE assignment_guardrails")
+            database.execute("""
+                CREATE TABLE budget_exhaustions (
+                    fingerprint TEXT PRIMARY KEY,
+                    scope TEXT NOT NULL,
+                    role TEXT NOT NULL REFERENCES roles(role),
+                    assignment_id TEXT REFERENCES assignments(id),
+                    metric TEXT NOT NULL,
+                    observed REAL NOT NULL,
+                    threshold REAL NOT NULL,
+                    status TEXT NOT NULL,
+                    override_command_id TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            """)
+            database.execute("UPDATE meta SET value='4' WHERE key='schema_version'")
+        broker_store.prepare_broker_database(self.coord)
+        with broker_store.connect_broker_database(
+            self.coord, readonly=True
+        ) as database:
+            self.assertEqual(
+                database.execute(
+                    "SELECT value FROM meta WHERE key='schema_version'"
+                ).fetchone()["value"],
+                "5",
+            )
+            tables = {
+                row["name"]
+                for row in database.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table'"
+                )
+            }
+        self.assertIn("budget_exhaustions", tables)
+        self.assertIn("assignment_guardrails", tables)
+        snapshot = broker_store.public_broker_snapshot(self.coord)
+        self.assertNotIn("budget", snapshot)
+        self.assertEqual(snapshot["guardrails"]["mode"], "observational")
 
     def test_new_run_has_metadata_only_sqlite_and_no_coordination_payload_files(
         self,
@@ -414,57 +456,6 @@ class BrokerStoreTests(BrokerFixture):
             self.assertEqual(retained_policy["hard"]["assignment"], {})
         mode = os.stat(self.coord / "broker.sqlite3").st_mode & 0o777
         self.assertEqual(mode, 0o600)
-
-    def test_hard_budget_evaluator_keeps_role_cost_and_run_cache_separate(
-        self,
-    ) -> None:
-        policy = packaged_budget_policy()
-        policy["enforcement"] = "hard"
-        policy["hard"]["role"]["cost_total"] = 0.5
-        policy["hard"]["run"]["cache_read_tokens"] = 100
-        initialize_broker_run(
-            self.coord,
-            self.manifest,
-            "task",
-            {},
-            budget_policy=policy,
-        )
-        with broker_store.connect_broker_database(self.coord) as database:
-            database.execute(
-                "UPDATE roles SET cost_total=0.75,cache_read_tokens=120 "
-                "WHERE role='implementer'"
-            )
-            role_finding = first_hard_budget_exhaustion(
-                database, trigger_role="implementer", round_number=1
-            )
-            self.assertEqual(role_finding["scope"], "role")
-            self.assertEqual(role_finding["metric"], "cost_total")
-            self.assertEqual(role_finding["observed"], 0.75)
-            now = broker_store.utc_now()
-            database.execute(
-                "INSERT INTO budget_exhaustions(fingerprint,scope,role,assignment_id,"
-                "metric,observed,threshold,status,override_command_id,created_at,updated_at) "
-                "VALUES (?,?,?,?,?,?,?,'overridden',?, ?, ?)",
-                (
-                    role_finding["fingerprint"],
-                    role_finding["scope"],
-                    role_finding["role"],
-                    role_finding["assignment_id"],
-                    role_finding["metric"],
-                    role_finding["observed"],
-                    role_finding["threshold"],
-                    "e" * 32,
-                    now,
-                    now,
-                ),
-            )
-            run_finding = first_hard_budget_exhaustion(
-                database, trigger_role="reviewer", round_number=1
-            )
-        self.assertEqual(run_finding["scope"], "run")
-        self.assertEqual(run_finding["metric"], "cache_read_tokens")
-        self.assertEqual(run_finding["observed"], 120)
-        self.assertNotEqual(role_finding["metric"], run_finding["metric"])
 
     def test_snapshot_reports_actual_usage_fields_and_workflow_state(self) -> None:
         initialize_broker_run(self.coord, self.manifest, "task", {})
@@ -724,7 +715,12 @@ class BrokerObserverTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
     async def test_report_usage_is_atomic_immutable_and_rejects_malformed_input(
         self,
     ) -> None:
-        initialize_broker_run(self.coord, self.manifest, "task", {})
+        policy = packaged_budget_policy()
+        policy["enforcement"] = "hard"
+        policy["hard"]["assignment"]["provider_calls"] = 1
+        initialize_broker_run(
+            self.coord, self.manifest, "task", {}, budget_policy=policy
+        )
         broker = Broker(self.coord, self.manifest)
         assignment_id = "d" * 32
         now = broker_store.utc_now()
@@ -816,6 +812,8 @@ class BrokerObserverTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
             ["accepted", "duplicate"],
         )
         snapshot = broker_store.public_broker_snapshot(self.coord)
+        self.assertEqual(snapshot["workflow"]["state"], "starting")
+        self.assertNotIn("budget", snapshot)
         reviewer = next(
             role for role in snapshot["roles"] if role["role"] == "reviewer"
         )
@@ -865,7 +863,6 @@ class BrokerObserverTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
         self,
     ) -> None:
         policy = packaged_budget_policy()
-        policy["enforcement"] = "hard"
         policy["warning"]["assignment"]["provider_calls"] = 4
         policy["hard"]["assignment"]["provider_calls"] = 6
         initialize_broker_run(
@@ -958,6 +955,7 @@ class BrokerObserverTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
                 },
             ],
         )
+        self.assertEqual(snapshot["guardrails"]["mode"], "observational")
         self.assertFalse(snapshot["guardrails"]["payload_bodies_included"])
         from pi_tmux_orchestrator.supervisor_api import supervisor_snapshot
 
@@ -969,6 +967,7 @@ class BrokerObserverTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
             supervised_implementer["runtime"]["state"]["assignment_guardrails"],
             implementer["assignment_guardrails"],
         )
+        self.assertEqual(supervised["guardrails"]["mode"], "observational")
         self.assertFalse(supervised["guardrails"]["payload_bodies_included"])
         encoded = json.dumps(snapshot)
         self.assertNotIn("PRIVATE_TASK_CANARY", encoded)
@@ -991,428 +990,6 @@ class BrokerObserverTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
             for row in database.iterdump():
                 self.assertNotIn("PRIVATE_TASK_CANARY", row)
                 self.assertNotIn("PRIVATE_REPORT_CANARY", row)
-
-    async def test_hard_budget_accepts_report_gates_routing_and_resumes_once(
-        self,
-    ) -> None:
-        policy = packaged_budget_policy()
-        policy["enforcement"] = "hard"
-        policy["hard"]["assignment"]["provider_calls"] = 1
-        initialize_broker_run(
-            self.coord,
-            self.manifest,
-            "task",
-            {},
-            budget_policy=policy,
-        )
-        broker = Broker(self.coord, self.manifest)
-        assignment_id = "7" * 32
-        now = broker_store.utc_now()
-        with broker_store.connect_broker_database(self.coord) as database:
-            database.execute(
-                "INSERT INTO assignments(id,role,round,kind,state,delivery_id,created_at,updated_at) "
-                "VALUES (?,?,?,?,?,?,?,?)",
-                (
-                    assignment_id,
-                    "implementer",
-                    1,
-                    "implementation",
-                    "accepted",
-                    "8" * 32,
-                    now,
-                    now,
-                ),
-            )
-            database.execute(
-                "UPDATE roles SET active_assignment_id=?,state='active' "
-                "WHERE role='implementer'",
-                (assignment_id,),
-            )
-            token = database.execute(
-                "SELECT value FROM meta WHERE key='control_token'"
-            ).fetchone()["value"]
-        implementer = Client("implementer", mock.Mock(), mock.Mock())
-        reviewer = Client("reviewer", mock.Mock(), mock.Mock())
-        broker.clients = {"implementer": implementer, "reviewer": reviewer}
-        report = {"kind": "implementation", "summary": "bounded"}
-        command_id = "9" * 32
-        control = {
-            "version": BROKER_PROTOCOL_VERSION,
-            "type": "control",
-            "token": token,
-            "id": command_id,
-            "action": "budget_override",
-            "role": "implementer",
-            "delivery": None,
-            "message": None,
-        }
-        with (
-            mock.patch.object(broker, "broadcast", new=mock.AsyncMock()) as broadcast,
-            mock.patch.object(broker, "reply", new=mock.AsyncMock()) as reply,
-            mock.patch.object(
-                broker, "_deliver_run_state", new=mock.AsyncMock()
-            ) as run_state,
-            mock.patch.object(broker, "assign", new=mock.AsyncMock()) as assign,
-            mock.patch.object(broker, "send_raw", new=mock.AsyncMock()) as send_raw,
-        ):
-            await broker.handle_report(
-                implementer,
-                {
-                    "id": "a" * 32,
-                    "assignment_id": assignment_id,
-                    "report": report,
-                    "usage": assignment_usage_snapshot(),
-                },
-            )
-            assign.assert_not_awaited()
-            run_state.assert_not_awaited()
-            reply.assert_awaited_once_with(
-                implementer, "a" * 32, True, status="accepted"
-            )
-            budget_frames = [
-                call.args[0]
-                for call in broadcast.await_args_list
-                if call.args[0].get("type") == "budget"
-            ]
-            self.assertEqual(len(budget_frames), 1)
-            self.assertEqual(budget_frames[0]["metric"], "provider_calls")
-            self.assertEqual(budget_frames[0]["observed"], 1)
-            self.assertEqual(budget_frames[0]["threshold"], 1)
-
-            snapshot = broker_store.public_broker_snapshot(self.coord)
-            self.assertEqual(snapshot["workflow"]["state"], "budget_exhausted")
-            self.assertTrue(snapshot["budget"]["override_required"])
-            self.assertEqual(
-                snapshot["budget"]["exhaustion"],
-                {
-                    "scope": "assignment",
-                    "role": "implementer",
-                    "assignment_id": assignment_id,
-                    "metric": "provider_calls",
-                    "observed": 1,
-                    "threshold": 1,
-                },
-            )
-            from pi_tmux_orchestrator.supervisor_api import supervisor_snapshot
-
-            supervised = supervisor_snapshot(self.manifest["session"], self.coord.name)
-            self.assertEqual(
-                supervised["budget"]["exhaustion"]["metric"], "provider_calls"
-            )
-            self.assertFalse(supervised["budget"]["payload_bodies_included"])
-            await broker.handle_lifecycle(
-                implementer,
-                {
-                    "id": "e" * 32,
-                    "state": "waiting",
-                    "usage": None,
-                },
-            )
-            self.assertEqual(
-                broker_store.public_broker_snapshot(self.coord)["workflow"]["state"],
-                "budget_exhausted",
-            )
-
-            with broker_store.connect_broker_database(
-                self.coord, readonly=True
-            ) as database:
-                self.assertEqual(
-                    database.execute("SELECT COUNT(*) FROM reports").fetchone()[0], 1
-                )
-                self.assertEqual(
-                    database.execute("SELECT COUNT(*) FROM assignments").fetchone()[0],
-                    1,
-                )
-
-            await broker.handle_control(mock.Mock(), mock.Mock(), control)
-            assign.assert_awaited_once_with(
-                "reviewer",
-                "review",
-                1,
-                broker._assignment("reviewer", 1),
-            )
-            run_state.assert_awaited_once()
-            self.assertEqual(send_raw.await_args.args[1]["status"], "accepted")
-            self.assertFalse(send_raw.await_args.args[1]["duplicate"])
-
-            await broker.handle_control(mock.Mock(), mock.Mock(), control)
-            self.assertEqual(assign.await_count, 1)
-            self.assertTrue(send_raw.await_args.args[1]["duplicate"])
-
-        with broker_store.connect_broker_database(
-            self.coord, readonly=True
-        ) as database:
-            exhaustion = database.execute(
-                "SELECT status,override_command_id FROM budget_exhaustions"
-            ).fetchone()
-            self.assertEqual(exhaustion["status"], "overridden")
-            self.assertEqual(exhaustion["override_command_id"], command_id)
-            command = database.execute(
-                "SELECT action,status FROM control_commands WHERE id=?", (command_id,)
-            ).fetchone()
-            self.assertEqual(
-                dict(command), {"action": "budget_override", "status": "accepted"}
-            )
-            self.assertEqual(
-                database.execute(
-                    "SELECT value FROM meta WHERE key='workflow_state'"
-                ).fetchone()["value"],
-                "active",
-            )
-        self.assertIsNone(
-            broker_store.public_broker_snapshot(self.coord)["budget"]["exhaustion"]
-        )
-
-    async def test_budget_override_routing_failure_is_durably_uncertain(self) -> None:
-        policy = packaged_budget_policy()
-        policy["enforcement"] = "hard"
-        policy["hard"]["run"]["provider_calls"] = 1
-        initialize_broker_run(
-            self.coord,
-            self.manifest,
-            "task",
-            {},
-            budget_policy=policy,
-        )
-        broker = Broker(self.coord, self.manifest)
-        broker.clients = {
-            role: Client(role, mock.Mock(), mock.Mock())
-            for role in self.manifest["roles"]
-        }
-        broker.budget_pending_route = (
-            "implementer",
-            1,
-            {"kind": "implementation", "summary": "bounded"},
-        )
-        command_id = "1" * 32
-        now = broker_store.utc_now()
-        with broker_store.connect_broker_database(self.coord) as database:
-            token = database.execute(
-                "SELECT value FROM meta WHERE key='control_token'"
-            ).fetchone()["value"]
-            database.execute(
-                "INSERT INTO budget_exhaustions(fingerprint,scope,role,assignment_id,"
-                "metric,observed,threshold,status,override_command_id,created_at,updated_at) "
-                "VALUES (?,?,?,?,?,?,?,'active',NULL,?,?)",
-                (
-                    "2" * 32,
-                    "run",
-                    "implementer",
-                    None,
-                    "provider_calls",
-                    1,
-                    1,
-                    now,
-                    now,
-                ),
-            )
-            broker_store.set_meta(database, "workflow_state", "budget_exhausted")
-        control = {
-            "version": BROKER_PROTOCOL_VERSION,
-            "type": "control",
-            "token": token,
-            "id": command_id,
-            "action": "budget_override",
-            "role": "implementer",
-            "delivery": None,
-            "message": None,
-        }
-
-        async def fail_while_routing(*_args: object, **_kwargs: object) -> None:
-            with broker_store.connect_broker_database(
-                self.coord, readonly=True
-            ) as database:
-                self.assertEqual(
-                    database.execute(
-                        "SELECT value FROM meta WHERE key='workflow_state'"
-                    ).fetchone()["value"],
-                    "routing",
-                )
-            raise RuntimeError("synthetic")
-
-        with (
-            mock.patch.object(
-                broker,
-                "route_report",
-                new=mock.AsyncMock(side_effect=fail_while_routing),
-            ),
-            mock.patch.object(
-                broker, "broadcast_workflow", new=mock.AsyncMock()
-            ) as workflow,
-            mock.patch.object(broker, "send_raw", new=mock.AsyncMock()) as send_raw,
-        ):
-            await broker.handle_control(mock.Mock(), mock.Mock(), control)
-        self.assertEqual(send_raw.await_args.args[1]["status"], "uncertain")
-        self.assertFalse(send_raw.await_args.args[1]["success"])
-        self.assertEqual(
-            [call.args[0] for call in workflow.await_args_list],
-            ["uncertain"],
-        )
-        failed_snapshot = broker_store.public_broker_snapshot(self.coord)
-        self.assertEqual(failed_snapshot["workflow"]["state"], "uncertain")
-        self.assertEqual(
-            failed_snapshot["budget"]["exhaustion"]["metric"], "provider_calls"
-        )
-        with broker_store.connect_broker_database(
-            self.coord, readonly=True
-        ) as database:
-            self.assertEqual(
-                database.execute(
-                    "SELECT status FROM control_commands WHERE id=?", (command_id,)
-                ).fetchone()["status"],
-                "uncertain",
-            )
-
-    async def test_broker_restart_makes_a_paused_budget_route_uncertain(self) -> None:
-        policy = packaged_budget_policy()
-        policy["enforcement"] = "hard"
-        policy["hard"]["run"]["provider_calls"] = 1
-        initialize_broker_run(
-            self.coord,
-            self.manifest,
-            "task",
-            {},
-            budget_policy=policy,
-        )
-        now = broker_store.utc_now()
-        assignment_id = "b" * 32
-        with broker_store.connect_broker_database(self.coord) as database:
-            database.execute(
-                "INSERT INTO assignments(id,role,round,kind,state,delivery_id,created_at,updated_at) "
-                "VALUES (?,?,?,?,?,?,?,?)",
-                (
-                    assignment_id,
-                    "implementer",
-                    1,
-                    "implementation",
-                    "completed",
-                    "c" * 32,
-                    now,
-                    now,
-                ),
-            )
-            database.execute(
-                "INSERT INTO reports(id,assignment_id,role,round,kind,verdict,summary_chars,"
-                "changed_path_count,check_count,finding_count,risk_count,limitation_count,"
-                "provider_calls,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,"
-                "reasoning_tokens,cost_total,context_tokens,context_window,context_percent,"
-                "peak_context_tokens,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                (
-                    "d" * 32,
-                    assignment_id,
-                    "implementer",
-                    1,
-                    "implementation",
-                    None,
-                    1,
-                    0,
-                    0,
-                    0,
-                    0,
-                    0,
-                    1,
-                    1,
-                    0,
-                    0,
-                    0,
-                    None,
-                    0,
-                    None,
-                    None,
-                    None,
-                    None,
-                    now,
-                ),
-            )
-            database.execute(
-                "UPDATE roles SET provider_calls=1 WHERE role='implementer'"
-            )
-        original = Broker(self.coord, self.manifest)
-        self.assertTrue(
-            await original._pause_for_budget(
-                "implementer", 1, {"kind": "implementation", "summary": "x"}
-            )
-        )
-
-        restarted = Broker(self.coord, self.manifest)
-        run_task = asyncio.create_task(restarted.run())
-        try:
-            for _ in range(100):
-                if restarted.server is not None:
-                    break
-                await asyncio.sleep(0.01)
-            snapshot = broker_store.public_broker_snapshot(self.coord)
-            self.assertEqual(snapshot["workflow"]["state"], "uncertain")
-            self.assertFalse(snapshot["budget"]["override_required"])
-            self.assertEqual(
-                snapshot["budget"]["exhaustion"]["metric"], "provider_calls"
-            )
-            with broker_store.connect_broker_database(
-                self.coord, readonly=True
-            ) as database:
-                events = {
-                    row["event"] for row in database.execute("SELECT event FROM events")
-                }
-            self.assertIn("budget_resume_uncertain", events)
-        finally:
-            restarted.stopping.set()
-            await run_task
-
-    async def test_broker_restart_marks_interrupted_budget_override_uncertain(
-        self,
-    ) -> None:
-        initialize_broker_run(self.coord, self.manifest, "task", {})
-        now = broker_store.utc_now()
-        command_id = "3" * 32
-        with broker_store.connect_broker_database(self.coord) as database:
-            database.execute(
-                "INSERT INTO control_commands(id,action,role,delivery,status,received_at,updated_at) "
-                "VALUES (?,?,?,NULL,'accepted',?,?)",
-                (command_id, "budget_override", "implementer", now, now),
-            )
-            database.execute(
-                "INSERT INTO budget_exhaustions(fingerprint,scope,role,assignment_id,"
-                "metric,observed,threshold,status,override_command_id,created_at,updated_at) "
-                "VALUES (?,?,?,?,?,?,?,'overridden',?,?,?)",
-                (
-                    "4" * 32,
-                    "run",
-                    "implementer",
-                    None,
-                    "provider_calls",
-                    1,
-                    1,
-                    command_id,
-                    now,
-                    now,
-                ),
-            )
-            broker_store.set_meta(database, "workflow_state", "routing")
-        restarted = Broker(self.coord, self.manifest)
-        run_task = asyncio.create_task(restarted.run())
-        try:
-            for _ in range(100):
-                if restarted.server is not None:
-                    break
-                await asyncio.sleep(0.01)
-            snapshot = broker_store.public_broker_snapshot(self.coord)
-            self.assertEqual(snapshot["workflow"]["state"], "uncertain")
-            self.assertFalse(snapshot["budget"]["override_required"])
-            self.assertEqual(
-                snapshot["budget"]["exhaustion"]["metric"], "provider_calls"
-            )
-            with broker_store.connect_broker_database(
-                self.coord, readonly=True
-            ) as database:
-                self.assertEqual(
-                    database.execute(
-                        "SELECT status FROM control_commands WHERE id=?", (command_id,)
-                    ).fetchone()["status"],
-                    "uncertain",
-                )
-        finally:
-            restarted.stopping.set()
-            await run_task
 
     def test_rolling_state_keeps_latest_role_beyond_observer_replay_window(
         self,

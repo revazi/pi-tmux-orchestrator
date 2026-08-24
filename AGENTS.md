@@ -14,7 +14,6 @@ Provide a small, reusable, intentionally tmux-scoped Pi skill and modular standa
 - `pi_tmux_orchestrator/`: authoritative dependency-free Python orchestration package
 - `pi_tmux_orchestrator/configuration.py`: strict user-global worker model policy
 - `pi_tmux_orchestrator/budgeting.py`: strict user-global and per-run usage budget policy
-- `pi_tmux_orchestrator/budget_enforcement.py`: report-time hard-budget evaluation
 - `pi_tmux_orchestrator/context_capsules.py`: bounded worker baseline and rolling run-state projections
 - `pi_tmux_orchestrator/dashboard.py`: adaptive metadata-only broker pane presentation
 - `pi_tmux_orchestrator/supervisor_api.py`: versioned durable-state read boundary

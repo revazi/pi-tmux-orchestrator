@@ -54,7 +54,7 @@ const COMMAND_OVERVIEW = [
   "The invoking Pi is the parent supervisor; start creates no separate parent Pi, parent window, or controller.",
   "Tmux panes show live worker activity; lifecycle and structured ready/attention reports return to the invoking Pi watching the run.",
   "Attach requires the invoking Pi to run inside tmux. Use normal pane navigation; prefix then L detaches back to the same Pi without stopping workers. Native TUI panes accept direct steering, while plain RPC panes remain headless/display-only.",
-  "Supervisor API reads, RPC events/abort, restart, and explicit hard-budget override remain terminal-only.",
+  "Supervisor API reads, RPC events/abort, and restart remain terminal-only.",
 ].join("\n");
 
 const parameters = {

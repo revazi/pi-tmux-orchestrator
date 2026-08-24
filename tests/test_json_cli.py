@@ -65,7 +65,6 @@ class JsonMainTests(unittest.TestCase):
             "attach": ["attach"],
             "send": ["send", "session", "--role", "reviewer", "--message", "synthetic"],
             "abort": ["abort", "session", "--role", "reviewer"],
-            "budget-override": ["budget-override", "session", "--yes"],
             "restart": ["restart", "session", "--role", "reviewer", "--yes"],
             "stop": ["stop", "session", "--yes"],
         }
@@ -644,79 +643,6 @@ class JsonMainTests(unittest.TestCase):
             ],
         )
 
-    def test_budget_override_requires_confirmation_and_uses_active_facts(self) -> None:
-        code, envelope, _, stderr = self.run_main(
-            ["--json", "budget-override", "pi-test"]
-        )
-        self.assertEqual(code, 2)
-        self.assertEqual(stderr, "")
-        self.assert_envelope(envelope, "budget-override", False)
-
-        exhaustion = {
-            "scope": "run",
-            "role": "implementer",
-            "assignment_id": None,
-            "metric": "cache_read_tokens",
-            "observed": 1_200,
-            "threshold": 1_000,
-        }
-        snapshot = {
-            "workflow": {"state": "budget_exhausted", "round": 2},
-            "budget": {
-                "enforcement": "hard",
-                "exhaustion": exhaustion,
-                "override_required": True,
-                "payload_bodies_included": False,
-            },
-        }
-        manifest = {"version": 3, "roles": {"implementer": {}}}
-        command_id = "f" * 32
-        with tempfile.TemporaryDirectory() as directory:
-            coord = Path(directory) / "run-1"
-            with (
-                mock.patch.object(
-                    ORCHESTRATOR,
-                    "resolve_session",
-                    return_value=("pi-test", coord),
-                ),
-                mock.patch.object(ORCHESTRATOR, "load_manifest", return_value=manifest),
-                mock.patch.object(
-                    ORCHESTRATOR,
-                    "public_broker_snapshot",
-                    return_value=snapshot,
-                ),
-                mock.patch.object(
-                    ORCHESTRATOR,
-                    "broker_control_request",
-                    return_value={
-                        "status": "accepted",
-                        "duplicate": False,
-                    },
-                ) as request,
-            ):
-                code, envelope, raw, stderr = self.run_main(
-                    [
-                        "--json",
-                        "budget-override",
-                        "pi-test",
-                        "--command-id",
-                        command_id,
-                        "--yes",
-                    ]
-                )
-        self.assertEqual(code, 0)
-        self.assertEqual(stderr, "")
-        self.assert_envelope(envelope, "budget-override", True)
-        self.assertEqual(envelope["data"]["override"], exhaustion)
-        request.assert_called_once_with(
-            coord,
-            "implementer",
-            "budget_override",
-            command_id=command_id,
-        )
-        self.assertNotIn("task", raw)
-        self.assertNotIn("report", raw)
-
     def test_broker_status_exposes_parent_observer_endpoint(self) -> None:
         manifest = {
             "version": 3,
@@ -727,20 +653,7 @@ class JsonMainTests(unittest.TestCase):
             "roles": {},
         }
         broker_snapshot = {
-            "workflow": {"state": "budget_exhausted", "round": 2},
-            "budget": {
-                "enforcement": "hard",
-                "exhaustion": {
-                    "scope": "role",
-                    "role": "implementer",
-                    "assignment_id": None,
-                    "metric": "cache_read_tokens",
-                    "observed": 1_200,
-                    "threshold": 1_000,
-                },
-                "override_required": True,
-                "payload_bodies_included": False,
-            },
+            "workflow": {"state": "ready", "round": 2},
             "usage": {
                 "total_tokens": 0,
                 "soft_total_budget_exceeded": False,
@@ -780,10 +693,6 @@ class JsonMainTests(unittest.TestCase):
         self.assertEqual(
             envelope["data"]["paths"]["observer_socket"],
             str(expected_socket),
-        )
-        self.assertEqual(
-            envelope["data"]["broker"]["budget"]["exhaustion"]["metric"],
-            "cache_read_tokens",
         )
         self.assertNotIn("control_token", raw)
         self.assertNotIn("auth_token", raw)

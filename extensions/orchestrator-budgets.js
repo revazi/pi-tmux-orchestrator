@@ -117,5 +117,5 @@ function budgetScopeLines(policy) {
 
 export function budgetConfirmation(policy) {
   if (!policy || typeof policy !== "object") return "unavailable";
-  return [`enforcement=${policy.enforcement}`, ...budgetScopeLines(policy)].join("\n");
+  return [`mode=${policy.enforcement} (observational)`, ...budgetScopeLines(policy)].join("\n");
 }

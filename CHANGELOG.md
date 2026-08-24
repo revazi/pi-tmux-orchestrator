@@ -11,8 +11,11 @@ All notable changes to this project are documented here.
 - Added atomic per-assignment provider-call, token-category, cost, and context-occupancy usage results captured at report time before downstream routing, with immutable duplicate handling and restart-safe numeric boundaries
 - Added bounded Supervisor API/CLI assignment-usage analytics grouped by run, role, round, and assignment kind, plus compact cumulative/latest-delta indicators in status and the broker dashboard
 - Added a strict versioned user-global provider-usage budget policy with warning/hard run, role, and assignment thresholds, explicit CLI/model-tool per-run overrides, dry-run confirmation metadata, and retained numeric policy state
-- Added report-time hard-budget gates that preserve the accepted report, stop downstream assignments in an explicit metadata-only attention state, notify parent observers with bounded facts, and require a deduplicated authenticated operator override to resume
-- Added restart-safe in-assignment provider-call and context-pressure guardrails that warn once, deterministically terminate parallel non-report tools at explicit hard thresholds, preserve final reporting, and retain only bounded assignment-local metadata
+- Added restart-safe in-assignment provider-call and context-pressure visibility that warns once, records higher-severity threshold facts, leaves every tool and workflow route available, and retains only bounded assignment-local metadata
+
+### Changed
+
+- Changed all provider-usage budget thresholds to observational metadata: hard-configured runs no longer block tools or downstream assignments and no budget-resume control is exposed
 
 ## 0.8.1 - 2026-08-20
 
