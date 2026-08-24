@@ -28,6 +28,7 @@ workflow, role, model, usage, context, and recent metadata state.
 - Parent Pi supervision with event-driven final structured reports and attention alerts
 - Assignment-boundary context resets with bounded parent capsules, coalesced latest-per-role run state, and complete Pi history
 - Lean worker system prompts, disabled automatic skill discovery, and explicit digest-bound per-role skill opt-in
+- Orchestration-only UTF-8 read/grep/bash result caps with actionable continuation and metadata-only tuning facts
 - Bounded typed reports through a terminating Pi tool
 - No Markdown handoffs, readiness markers, mailbox payload files, relay polling,
   lifecycle sleeps, or tmux key injection in newly started runs
@@ -288,6 +289,36 @@ options with a synthetic context file and skills. Its normalized reviewer prompt
 changes from 5,000 to 2,479 serialized characters (50.4%). This is a deterministic
 prompt-size proxy, not provider tokens, billing, cache efficiency, or a savings
 claim; provider metadata remains authoritative.
+
+### Worker result-volume policy
+
+Only orchestration workers apply an additional result policy before the next
+provider request. `read` defaults to and is capped at 400 requested lines with
+a 16 KiB/400-line emitted limit. `grep` defaults to and is capped at 40 matches,
+context is capped at two lines, and emitted search text is capped at 16 KiB/240
+lines. `bash` output is capped at 24 KiB/400 lines while preserving a bounded
+beginning, failure-diagnostic excerpt, and ending. When this lower bash cap is
+reached, the complete available output is written to a mode-`0600` temporary
+file unless Pi already supplied a full-output path.
+
+Every truncated result tells the worker how to request the next targeted read
+page, refine grep, or inspect a targeted full-output slice. Session-private
+custom entries record only assignment ID, tool enum, direction, booleans, and
+numeric source/emitted/input-cap facts. A following read page or refined grep is
+recorded as metadata without paths, patterns, commands, or result bodies. This
+policy is loaded by the same worker extension in TUI and RPC modes and does not
+change ordinary Pi sessions.
+
+The checked synthetic benchmark reports 144,491 before versus 89,733 after
+serialized UTF-8 provider-context bytes (37.9% reduction) and two additional
+provider calls for read/grep pagination across three scenarios. Run:
+
+```bash
+node scripts/result-volume-baseline.mjs --check
+```
+
+These are deterministic size/call proxies, not provider tokens, cost, quality,
+or production-wire acceptance.
 
 Natural-language requests are supported by the `tmux_orchestrator` tool. For
 example, users can ask Pi to “use my current model for every worker,” “use

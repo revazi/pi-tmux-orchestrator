@@ -14,6 +14,8 @@ All notable changes to this project are documented here.
 - Added restart-safe in-assignment provider-call and context-pressure visibility that warns once, records higher-severity threshold facts, leaves every tool and workflow route available, and retains only bounded assignment-local metadata
 - Added explicit per-role worker skill opt-in with strict Markdown bounds, private digest-bound manifest metadata, confirmation paths, and restart-time change detection
 - Added a model-free actual-Pi built-prompt fixture covering skill discovery, explicit skills, governing context files, active read-only tools, and normalized serialized prompt size
+- Added orchestration-only read, grep, and bash input/result caps with UTF-8-safe continuation guidance, preserved bash failure diagnostics, mode-`0600` full-output paths, and metadata-only truncation/immediate-follow-up observations
+- Added a checked synthetic result-volume benchmark covering context reduction and additional read/grep pagination calls without making provider token, cost, or quality claims
 
 ### Changed
 

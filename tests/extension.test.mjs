@@ -1,13 +1,20 @@
 import assert from "node:assert/strict";
 import { access, chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import net from "node:net";
 import { test } from "node:test";
 import extension, { testHooks } from "../extensions/tmux-orchestrator.js";
 import { updateTestHooks as updateHooks } from "../extensions/orchestrator-update.js";
 import { testHooks as workerHooks } from "../extensions/orchestrator-worker.js";
+import {
+  applyToolInputPolicy,
+  applyToolResultPolicy,
+  immediateFollowupObservation,
+  RESULT_POLICY,
+} from "../extensions/orchestrator-result-policy.js";
 import { buildTokenEfficiencyBaseline } from "../scripts/token-efficiency-baseline.mjs";
+import { buildResultVolumeBaseline } from "../scripts/result-volume-baseline.mjs";
 import { buildWorkerPromptBaselineIfAvailable } from "../scripts/worker-prompt-baseline.mjs";
 
 const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
@@ -441,6 +448,134 @@ test("bounded parent context capsules are structured without copying a transcrip
   );
 });
 
+test("worker read and grep inputs receive orchestration-only defaults and hard caps", () => {
+  const readDefault = { toolName: "read", input: { path: "large.txt" } };
+  const readOversized = { toolName: "read", input: { path: "large.txt", limit: 20_000 } };
+  const grepDefault = { toolName: "grep", input: { pattern: "needle" } };
+  const grepOversized = {
+    toolName: "grep",
+    input: { pattern: "needle", limit: 5_000, context: 500 },
+  };
+
+  assert.deepEqual(applyToolInputPolicy(readDefault), {
+    input_capped: true,
+    requested_limit: null,
+    effective_limit: 400,
+  });
+  assert.equal(readDefault.input.limit, RESULT_POLICY.read.maxLines);
+  assert.equal(applyToolInputPolicy(readOversized).requested_limit, 20_000);
+  assert.equal(readOversized.input.limit, RESULT_POLICY.read.maxLines);
+  assert.deepEqual(applyToolInputPolicy(grepDefault), {
+    input_capped: true,
+    requested_limit: null,
+    effective_limit: 40,
+    requested_context: 0,
+    effective_context: 0,
+  });
+  assert.equal(grepDefault.input.limit, RESULT_POLICY.grep.maxMatches);
+  const grepPolicy = applyToolInputPolicy(grepOversized);
+  assert.equal(grepPolicy.requested_limit, 5_000);
+  assert.equal(grepPolicy.requested_context, 500);
+  assert.equal(grepOversized.input.limit, RESULT_POLICY.grep.maxMatches);
+  assert.equal(grepOversized.input.context, RESULT_POLICY.grep.maxContext);
+  assert.equal(applyToolInputPolicy({ toolName: "edit", input: {} }), undefined);
+});
+
+test("worker read and grep results are UTF-8 bounded with actionable continuation", async () => {
+  const source = Array.from(
+    { length: 1_200 }, (_, index) => `${index + 1}: λ😀${"x".repeat(80)}`,
+  ).join("\n");
+  const readEvent = {
+    toolName: "read",
+    input: { path: "large.txt", offset: 101, limit: 400 },
+    content: [{ type: "text", text: source }],
+  };
+  const readResult = await applyToolResultPolicy(readEvent, {
+    input_capped: true,
+    requested_limit: 1_000,
+    effective_limit: 400,
+  });
+  const readText = readResult.content[0].text;
+  assert.equal(Buffer.from(readText, "utf8").toString("utf8"), readText);
+  assert.ok(Buffer.byteLength(readText, "utf8") <= RESULT_POLICY.read.maxBytes);
+  assert.ok(readText.split("\n").length <= RESULT_POLICY.read.maxLines);
+  assert.match(readText, /read offset=\d+ and limit<=400/);
+  assert.equal(readResult.observation.truncated, true);
+  assert.equal(readResult.observation.source_lines, 1_200);
+  assert.equal(readResult.observation.input_capped, true);
+  assert.deepEqual(Object.keys(readResult.observation), [
+    "schema_version", "event", "tool", "truncated", "direction",
+    "source_bytes", "source_lines", "emitted_bytes", "emitted_lines",
+    "input_capped", "requested_limit", "effective_limit",
+    "requested_context", "effective_context",
+  ]);
+  assert.equal(JSON.stringify(readResult.observation).includes("large.txt"), false);
+  assert.equal(JSON.stringify(readResult.observation).includes("λ😀"), false);
+  assert.equal(readResult.details.truncation.maxBytes, RESULT_POLICY.read.maxBytes);
+  assert.equal(readResult.details.truncation.maxLines, RESULT_POLICY.read.maxLines);
+  assert.equal(readResult.details.truncation.content.includes("λ😀"), true);
+
+  const grepResult = await applyToolResultPolicy({
+    toolName: "grep",
+    input: { pattern: "needle", path: "src", limit: 40, context: 2 },
+    content: [{ type: "text", text: source }],
+  });
+  const grepText = grepResult.content[0].text;
+  assert.ok(Buffer.byteLength(grepText, "utf8") <= RESULT_POLICY.grep.maxBytes);
+  assert.ok(grepText.split("\n").length <= RESULT_POLICY.grep.maxLines);
+  assert.match(grepText, /Refine grep pattern\/path\/glob/);
+  assert.match(grepText, /matches are capped at 40 with context<=2/);
+});
+
+test("worker bash results retain failures and write mode-0600 full output", async () => {
+  const lines = Array.from({ length: 1_000 }, (_, index) => `progress ${index + 1} ${"z".repeat(80)}`);
+  lines[500] = "FAILED safety-critical assertion: authorization boundary regressed";
+  lines[999] = "test command exited 1";
+  const source = lines.join("\n");
+  const result = await applyToolResultPolicy({
+    toolName: "bash",
+    input: { command: "synthetic test" },
+    content: [{ type: "text", text: source }],
+    details: undefined,
+  });
+  const output = result.content[0].text;
+  const fullOutputPath = result.details.fullOutputPath;
+  try {
+    assert.ok(Buffer.byteLength(output, "utf8") <= RESULT_POLICY.bash.maxBytes);
+    assert.ok(output.split("\n").length <= RESULT_POLICY.bash.maxLines);
+    assert.match(output, /FAILED safety-critical assertion/);
+    assert.match(output, /test command exited 1/);
+    assert.match(output, /bounded beginning, failure diagnostics, and ending/);
+    assert.equal(await readFile(fullOutputPath, "utf8"), source);
+    assert.equal((await stat(fullOutputPath)).mode & 0o777, 0o600);
+  } finally {
+    await rm(dirname(fullOutputPath), { recursive: true, force: true });
+  }
+});
+
+test("worker result metadata records immediate pagination and refined searches without bodies", () => {
+  const pagination = immediateFollowupObservation(
+    { tool: "read", input: { path: "large.txt", offset: 1 } },
+    { toolName: "read", input: { path: "large.txt", offset: 401 } },
+  );
+  assert.deepEqual(pagination, {
+    schema_version: 1,
+    event: "immediate_followup",
+    previous_tool: "read",
+    next_tool: "read",
+    same_read_target: true,
+    read_pagination: true,
+    refined_grep: false,
+  });
+  const refinement = immediateFollowupObservation(
+    { tool: "grep", input: { pattern: "broad", path: "src" } },
+    { toolName: "grep", input: { pattern: "specific", path: "src" } },
+  );
+  assert.equal(refinement.refined_grep, true);
+  assert.equal(JSON.stringify(refinement).includes("broad"), false);
+  assert.equal(JSON.stringify(refinement).includes("specific"), false);
+});
+
 test("completed assignment pruning cuts synthetic two-round provider context by at least half", (t) => {
   const custom = (details, content) => ({
     role: "custom",
@@ -580,6 +715,21 @@ test("token-efficiency fixtures expose first-assignment growth and boundary redu
   );
   assert.equal(baseline.metric_scope, "model-free-provider-context-proxy");
   assert.match(baseline.caveat, /not provider tokens, billing, or production-wire acceptance/);
+});
+
+test("result-volume benchmark reports context reduction and pagination calls", async () => {
+  const baseline = await buildResultVolumeBaseline();
+  const checkedIn = JSON.parse(
+    await readFile(new URL("fixtures/result-volume-baseline.json", import.meta.url), "utf8"),
+  );
+  assert.deepEqual(baseline, checkedIn);
+  assert.deepEqual(Object.keys(baseline.scenarios), ["read", "grep", "bash"]);
+  assert.equal(baseline.aggregate.additional_provider_calls, 2);
+  assert.equal(baseline.aggregate.context_reduction_percent, 37.9);
+  assert.equal(baseline.scenarios.read.additional_provider_calls, 1);
+  assert.equal(baseline.scenarios.grep.additional_provider_calls, 1);
+  assert.equal(baseline.scenarios.bash.additional_provider_calls, 0);
+  assert.match(baseline.caveat, /not provider tokens, billing, quality/);
 });
 
 test("worker restart restores assignment and dedup state without changing durable usage", () => {

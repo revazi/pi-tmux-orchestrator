@@ -32,10 +32,11 @@ panes, file handoffs, relay scripts, or polling loops.
 6. Honor explicit per-run budget requests through `budgetOverrides`; never infer hard thresholds. Omitted values use the strict external user-global policy and packaged warn-only defaults.
 7. Use specialists only where their independent evidence is relevant.
 8. Worker skill discovery is disabled. Pass `workerSkills` or `--worker-skill ROLE=PATH` only for exact Markdown files the user explicitly reviewed; never infer or auto-load a skill.
-9. Before starting from an existing parent conversation, synthesize the tool's bounded `contextCapsule` from only task-relevant state, settled decisions, constraints, acceptance criteria, paths, evidence, open questions, and out-of-scope items. Never copy the full parent transcript.
-10. Never claim a synthetic probe or browser smoke is production wire acceptance.
-11. Do not push, merge, publish, deploy, or perform destructive cleanup without explicit authorization.
-12. Idle workers end their turn. A parent that is watching also ends its turn and relies on broker updates. Neither workers nor watching parents run sleeps or poll files, sockets, status, or tmux while waiting.
+9. Orchestration workers bound read/grep/bash results before the next provider call. Follow emitted offset, refined-search, and targeted full-output guidance instead of requesting another broad dump.
+10. Before starting from an existing parent conversation, synthesize the tool's bounded `contextCapsule` from only task-relevant state, settled decisions, constraints, acceptance criteria, paths, evidence, open questions, and out-of-scope items. Never copy the full parent transcript.
+11. Never claim a synthetic probe or browser smoke is production wire acceptance.
+12. Do not push, merge, publish, deploy, or perform destructive cleanup without explicit authorization.
+13. Idle workers end their turn. A parent that is watching also ends its turn and relies on broker updates. Neither workers nor watching parents run sleeps or poll files, sockets, status, or tmux while waiting.
 
 ## Coordination model
 
@@ -66,7 +67,11 @@ evidence is projected as one rolling latest-per-role run-state capsule; updates
 for an active role are coalesced until its next assignment. One metadata-only
 context-boundary event accompanies each new assignment, and only then do
 completed prior-assignment assistant/tool turns leave provider context. Current
-assignment turns and complete Pi JSONL history remain intact. Confirmed restart
+assignment turns and complete Pi JSONL history remain intact. The shared worker
+bridge also enforces orchestration-only read/grep/bash input and emitted-result
+caps for both TUI and RPC panes, preserving actionable pagination/refinement,
+bash failure diagnostics, and a private full-output path while recording only
+bounded numeric/classification metadata. Confirmed restart
 advances a broker generation and replays the live in-memory baseline and latest
 coalesced run state, including deferred evidence, before accepted
 active-assignment recovery. See
