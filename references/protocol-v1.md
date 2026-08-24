@@ -54,9 +54,13 @@ poll and must end the turn when there is no active assignment.
 
 1. All enabled bridges connect.
 2. Broker delivers baseline context without triggering turns.
-3. Broker triggers the implementer and optional initial probe.
-4. An implementer `implementation` report updates the rolling run-state capsule
-   and triggers each enabled round specialist.
+3. Broker triggers the optional initial probe. The retained
+   `implementation_flow` is either `single`, which triggers implementer
+   `implementation`, or `phased`, which triggers implementer `plan`.
+4. A phased plan report updates and delivers the rolling run-state capsule, then
+   creates a distinct same-round implementer `implementation` assignment. An
+   implementation report triggers each enabled round specialist. Repair rounds
+   always start directly as implementation with latest review evidence.
 5. Every accepted report replaces recipient evidence with one capsule bounded
    to 16 KiB of UTF-8 containing only the latest accepted report per role;
    recipients are not given an accumulating sequence of historical report bodies.
@@ -86,6 +90,11 @@ removes `edit` and `write` from that worker's active tools and blocks any other
 non-plan tool call. Normal implementer tools are restored only after the plan
 assignment terminates. As with every workflow-read-only role, retained `bash`
 access is not an OS sandbox; the prompt and protocol still prohibit modification.
+The report tool returns `terminate: true`. If the same-role implementation
+assignment arrives before the plan response resolves, the bridge recognizes the
+new assignment ID and does not clear it while terminating the completed plan
+turn. The new assignment boundary therefore prunes inspection assistant/tool
+turns without an acknowledgement-only model turn.
 
 ## Parent observer
 
@@ -277,8 +286,9 @@ acceptance.
 Retained `0.4.x` manifests remain readable and operable through compatibility
 code. Live parent observation requires a broker process from `0.6.0` or later;
 older live runs remain metadata-readable but cannot gain observer support
-without starting a new run. Broker SQLite schema v1-v4 migrates to metadata-only
-schema v5 when a current broker starts; runs without version-1 budget metadata
+without starting a new run. Broker SQLite schema v1-v4 migrates through the
+metadata-only guardrail schema, and schema v5 migrates to schema v6 by retaining
+`implementation_flow=single`; runs without version-1 budget metadata
 retain packaged warn-only behavior. Manifest v3 introduced
 `coordination: "broker-v1"`; manifest v4 adds only bounded selected-profile
 metadata while retaining that protocol. Both remain readable, and there is no

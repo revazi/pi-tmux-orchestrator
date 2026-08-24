@@ -281,6 +281,7 @@ def main() -> int:
         context_capsule="### Current state\nSYNTHETIC_CONTEXT_CAPSULE_CANARY",
         context_capsule_file=None,
         session=session,
+        implementation_flow="phased",
         with_probe=True,
         probe_task="Synthetic probe evidence.",
         probe_task_file=None,
@@ -491,8 +492,16 @@ def main() -> int:
                 text=True,
                 capture_output=True,
             ).stdout
-            state_ready = snapshot["workflow"]["state"] == "active" and all(
-                worker["connected"] for worker in snapshot["roles"]
+            implementer = next(
+                worker
+                for worker in snapshot["roles"]
+                if worker["role"] == "implementer"
+            )
+            state_ready = (
+                snapshot["workflow"]["state"] == "active"
+                and snapshot["workflow"]["implementation_flow"] == "phased"
+                and all(worker["connected"] for worker in snapshot["roles"])
+                and (implementer["assignment"] or {}).get("kind") == "plan"
             )
             dashboard_ready = all(
                 value in monitor_output for value in required_dashboard_text

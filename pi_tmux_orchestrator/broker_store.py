@@ -18,11 +18,23 @@ from .budgeting import (
     validate_budget_config,
     worker_assignment_guardrail_policy,
 )
-from .constants import BROKER_PROTOCOL_VERSION, MAX_BROKER_EVENTS, MAX_JSON_ITEMS
+from .constants import (
+    BROKER_PROTOCOL_VERSION,
+    DEFAULT_IMPLEMENTATION_FLOW,
+    IMPLEMENTATION_FLOWS,
+    MAX_BROKER_EVENTS,
+    MAX_JSON_ITEMS,
+)
 from .models import OrchestrationError
 from .storage import ensure_private_directory, validate_coordination_directory
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
+
+
+def validate_implementation_flow(value: object) -> str:
+    if not isinstance(value, str) or value not in IMPLEMENTATION_FLOWS:
+        raise OrchestrationError("Implementation flow is invalid")
+    return value
 
 
 def utc_now() -> str:
@@ -82,6 +94,7 @@ def initialize_broker_database(
     soft_role_tokens: int,
     soft_total_tokens: int,
     budget_policy: dict[str, Any] | None = None,
+    implementation_flow: str = DEFAULT_IMPLEMENTATION_FLOW,
 ) -> None:
     selected_policy = (
         packaged_budget_policy() if budget_policy is None else budget_policy
@@ -96,6 +109,7 @@ def initialize_broker_database(
             else:
                 selected_policy["warning"][scope]["operational_tokens"] = threshold
     policy = validate_budget_config(selected_policy)
+    selected_flow = validate_implementation_flow(implementation_flow)
     with connect_broker_database(coord) as database:
         database.executescript("""
             CREATE TABLE IF NOT EXISTS meta (
@@ -204,6 +218,7 @@ def initialize_broker_database(
             "soft_role_tokens": str(soft_role_tokens),
             "soft_total_tokens": str(soft_total_tokens),
             "budget_policy": json.dumps(policy, separators=(",", ":"), sort_keys=True),
+            "implementation_flow": selected_flow,
             "created_at": now,
             "updated_at": now,
         }
@@ -267,6 +282,12 @@ def prepare_broker_database(coord: Path) -> None:
                 )
             """)
             version = 5
+        if version == 5:
+            database.execute(
+                "INSERT OR IGNORE INTO meta(key,value) VALUES ('implementation_flow',?)",
+                (DEFAULT_IMPLEMENTATION_FLOW,),
+            )
+            version = 6
         if version != SCHEMA_VERSION:
             raise OrchestrationError("Broker database schema is unsupported")
         database.execute(
@@ -300,6 +321,15 @@ def record_event(
 def set_meta(database: sqlite3.Connection, key: str, value: str) -> None:
     database.execute("UPDATE meta SET value=? WHERE key=?", (value, key))
     database.execute("UPDATE meta SET value=? WHERE key='updated_at'", (utc_now(),))
+
+
+def retained_implementation_flow(database: sqlite3.Connection) -> str:
+    row = database.execute(
+        "SELECT value FROM meta WHERE key='implementation_flow'"
+    ).fetchone()
+    if row is None:
+        return DEFAULT_IMPLEMENTATION_FLOW
+    return validate_implementation_flow(row["value"])
 
 
 def retained_budget_policy(database: sqlite3.Connection) -> dict[str, Any]:
@@ -480,6 +510,9 @@ def public_broker_snapshot(coord: Path) -> dict[str, Any]:
             "workflow": {
                 "state": meta.get("workflow_state", "unknown"),
                 "round": int(meta.get("round", "0")),
+                "implementation_flow": validate_implementation_flow(
+                    meta.get("implementation_flow", DEFAULT_IMPLEMENTATION_FLOW)
+                ),
                 "updated_at": meta.get("updated_at"),
             },
             "roles": roles,

@@ -739,6 +739,18 @@ function assignmentToolNames(normalTools, role, assignmentKind) {
   return normalTools.filter((name) => PLAN_READ_ONLY_TOOLS.has(name));
 }
 
+function reportedAssignmentRemainsActive(active, reported) {
+  return active?.id === reported.id;
+}
+
+function acceptedReportResult(report, assignment, role) {
+  return {
+    content: [{ type: "text", text: `Structured ${report.kind} report accepted for round ${assignment.round}. End this turn; do not wait or poll.` }],
+    details: { protocol_version: VERSION, assignment_id: assignment.id, round: assignment.round, role, report },
+    terminate: true,
+  };
+}
+
 function planToolDecision(activeAssignment, role, toolName) {
   const planActive = [
     role === "implementer",
@@ -1012,14 +1024,12 @@ export default function orchestratorWorker(pi) {
       }));
       if (!response.success) throw new Error("orchestration_report_rejected");
       pi.appendEntry(DELIVERY_ENTRY, { kind: "report", assignment_id: assignment.id, report_id: response.id });
-      activeAssignment = undefined;
-      guardrailState = emptyGuardrailState();
-      applyActiveToolPolicy();
-      return {
-        content: [{ type: "text", text: `Structured ${report.kind} report accepted for round ${assignment.round}. End this turn; do not wait or poll.` }],
-        details: { protocol_version: VERSION, assignment_id: assignment.id, round: assignment.round, role: ROLE, report },
-        terminate: true,
-      };
+      if (reportedAssignmentRemainsActive(activeAssignment, assignment)) {
+        activeAssignment = undefined;
+        guardrailState = emptyGuardrailState();
+        applyActiveToolPolicy();
+      }
+      return acceptedReportResult(report, assignment, ROLE);
     },
   });
 
@@ -1130,6 +1140,7 @@ export default function orchestratorWorker(pi) {
 }
 
 export const testHooks = {
+  acceptedReportResult,
   appendGuardrailWarning,
   assignmentToolNames,
   deliveryOptions,
@@ -1143,6 +1154,7 @@ export const testHooks = {
   planToolDecision,
   reportParameters,
   reportUsage,
+  reportedAssignmentRemainsActive,
   restoreGuardrailState,
   restoreWorkerState,
   totalUsage,

@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "benchmark_kind": "synthetic-provider-context-proxy",
+  "fixed_case": "complex-six-read-inspection",
+  "comparison_point": "first implementation provider request",
+  "single": {
+    "visible_messages": 15,
+    "serialized_characters": 49462,
+    "serialized_utf8_bytes": 49462,
+    "direct_steering_retained": true
+  },
+  "phased": {
+    "visible_messages": 4,
+    "serialized_characters": 671,
+    "serialized_utf8_bytes": 671,
+    "direct_steering_retained": true
+  },
+  "reduction": {
+    "serialized_characters": 48791,
+    "percent": 98.6
+  },
+  "authoritative_evidence": {
+    "provider_usage": {
+      "availability": "unavailable",
+      "required_metrics": [
+        "provider_calls",
+        "input_tokens",
+        "cache_read_tokens",
+        "cache_write_tokens",
+        "output_tokens",
+        "reasoning_tokens",
+        "cost_total"
+      ]
+    },
+    "quality": {
+      "availability": "unavailable",
+      "required_metrics": [
+        "required_checks",
+        "failed_checks",
+        "reviewer_findings",
+        "missed_findings",
+        "revision_rounds"
+      ]
+    }
+  },
+  "claims": {
+    "provider_call_savings": false,
+    "provider_token_savings": false,
+    "billing_savings": false,
+    "quality_equivalence": false
+  }
+}

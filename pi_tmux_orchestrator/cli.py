@@ -10,6 +10,8 @@ import textwrap
 
 from . import runtime
 from .constants import (
+    DEFAULT_IMPLEMENTATION_FLOW,
+    IMPLEMENTATION_FLOWS,
     MAX_JSON_ITEMS,
     MAX_RPC_EVENTS,
     RPC_TOKEN_PATTERN,
@@ -215,6 +217,12 @@ def build_parser() -> argparse.ArgumentParser:
     start.add_argument("--context-capsule")
     start.add_argument("--context-capsule-file")
     start.add_argument("--session")
+    start.add_argument(
+        "--implementation-flow",
+        choices=IMPLEMENTATION_FLOWS,
+        default=DEFAULT_IMPLEMENTATION_FLOW,
+        help="use the compatibility single assignment or a phased inspect/plan boundary",
+    )
     start.add_argument(
         "--profile",
         type=execution_profile,

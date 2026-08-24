@@ -29,15 +29,16 @@ panes, file handoffs, relay scripts, or polling loops.
 3. Keep one writer: only the implementer may edit tracked files. Other roles are workflow-read-only but retain `bash` for verification and are not OS-sandboxed.
 4. Keep credentials, private documents, provider bodies, raw errors, diffs, and logs out of tasks and structured reports.
 5. Honor an explicit `economy`, `balanced`, `thorough`, or strict user-global custom profile through `profile`. Profiles change thinking only and never weaken review, tools, or routing. If omitted, use the configured default or packaged compatibility default.
-6. Honor explicit user provider/model/thinking requests through `useParentModel` or `modelOverrides`; these win over profile thinking. Use the bounded `models` action to resolve exact available IDs; never invent IDs or inspect credentials.
-7. Honor explicit per-run budget requests through `budgetOverrides`; never infer hard thresholds. Omitted values use the strict external user-global policy and packaged warn-only defaults.
-8. Use specialists only where their independent evidence is relevant.
-9. Worker skill discovery is disabled. Pass `workerSkills` or `--worker-skill ROLE=PATH` only for exact Markdown files the user explicitly reviewed; never infer or auto-load a skill.
-10. Orchestration workers bound read/grep/bash results before the next provider call. Follow emitted offset, refined-search, and targeted full-output guidance instead of requesting another broad dump.
-11. Before starting from an existing parent conversation, synthesize the tool's bounded `contextCapsule` from only task-relevant state, settled decisions, constraints, acceptance criteria, paths, evidence, open questions, and out-of-scope items. Never copy the full parent transcript.
-12. Never claim a synthetic probe or browser smoke is production wire acceptance.
-13. Do not push, merge, publish, deploy, or perform destructive cleanup without explicit authorization.
-14. Idle workers end their turn. A parent that is watching also ends its turn and relies on broker updates. Neither workers nor watching parents run sleeps or poll files, sockets, status, or tmux while waiting.
+6. Select `implementationFlow: "phased"` for complex work that benefits from read-only discovery before editing; select `single` for simple work or compatibility. Do not make a separate classifier model request.
+7. Honor explicit user provider/model/thinking requests through `useParentModel` or `modelOverrides`; these win over profile thinking. Use the bounded `models` action to resolve exact available IDs; never invent IDs or inspect credentials.
+8. Honor explicit per-run budget requests through `budgetOverrides`; never infer hard thresholds. Omitted values use the strict external user-global policy and packaged warn-only defaults.
+9. Use specialists only where their independent evidence is relevant.
+10. Worker skill discovery is disabled. Pass `workerSkills` or `--worker-skill ROLE=PATH` only for exact Markdown files the user explicitly reviewed; never infer or auto-load a skill.
+11. Orchestration workers bound read/grep/bash results before the next provider call. Follow emitted offset, refined-search, and targeted full-output guidance instead of requesting another broad dump.
+12. Before starting from an existing parent conversation, synthesize the tool's bounded `contextCapsule` from only task-relevant state, settled decisions, constraints, acceptance criteria, paths, evidence, open questions, and out-of-scope items. Never copy the full parent transcript.
+13. Never claim a synthetic probe or browser smoke is production wire acceptance.
+14. Do not push, merge, publish, deploy, or perform destructive cleanup without explicit authorization.
+15. Idle workers end their turn. A parent that is watching also ends its turn and relies on broker updates. Neither workers nor watching parents run sleeps or poll files, sockets, status, or tmux while waiting.
 
 ## Coordination model
 
@@ -76,9 +77,11 @@ bounded numeric/classification metadata. An implementer assignment explicitly
 retained as `plan` temporarily removes edit/write and accepts only a bounded plan
 with relevant paths/symbols, intended changes, required checks, risks, and open
 questions; it cannot claim changes, executed checks, findings, approval, or a
-verdict. Accepted plan evidence replaces the implementer's rolling run-state
-section, while SQLite retains only existing shape/count/usage metadata. Normal
-workflow phase routing is defined separately. Confirmed restart
+verdict. In phased flow, accepted plan evidence replaces the implementer's
+rolling run-state section before a distinct same-round implementation assignment;
+in single flow the initial assignment is implementation. SQLite retains only
+existing shape/count/usage metadata. Repair rounds start directly from latest
+review evidence. Confirmed restart
 advances a broker generation and replays the live in-memory baseline and latest
 coalesced run state, including deferred evidence, before accepted
 active-assignment recovery. See
@@ -93,6 +96,7 @@ pi-tmux-agents start \
   --project "$PWD" \
   --task-file /tmp/pi-agent-task.md \
   --context-capsule-file /tmp/pi-agent-context.md \
+  --implementation-flow phased \
   --profile balanced
 ```
 

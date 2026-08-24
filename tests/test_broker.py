@@ -27,6 +27,7 @@ from pi_tmux_orchestrator.constants import (
     READ_ONLY_TOOLS,
     WINDOW,
 )
+from pi_tmux_orchestrator.models import OrchestrationError
 from pi_tmux_orchestrator.context_capsules import (
     render_run_state_capsule,
     render_worker_baseline,
@@ -422,7 +423,7 @@ class BrokerStoreTests(BrokerFixture):
             report_columns = {
                 row["name"] for row in database.execute("PRAGMA table_info(reports)")
             }
-        self.assertEqual(schema_version, "5")
+        self.assertEqual(schema_version, "6")
         self.assertIn("boundary_effective", assignment_columns)
         self.assertIn("provider_calls", role_columns)
         self.assertIn("peak_context_tokens", report_columns)
@@ -467,7 +468,7 @@ class BrokerStoreTests(BrokerFixture):
                 database.execute(
                     "SELECT value FROM meta WHERE key='schema_version'"
                 ).fetchone()["value"],
-                "5",
+                "6",
             )
             tables = {
                 row["name"]
@@ -480,6 +481,21 @@ class BrokerStoreTests(BrokerFixture):
         snapshot = broker_store.public_broker_snapshot(self.coord)
         self.assertNotIn("budget", snapshot)
         self.assertEqual(snapshot["guardrails"]["mode"], "observational")
+
+    def test_schema_five_migrates_to_single_implementation_flow(self) -> None:
+        initialize_broker_run(
+            self.coord,
+            self.manifest,
+            "task",
+            {},
+            implementation_flow="phased",
+        )
+        with broker_store.connect_broker_database(self.coord) as database:
+            database.execute("DELETE FROM meta WHERE key='implementation_flow'")
+            database.execute("UPDATE meta SET value='5' WHERE key='schema_version'")
+        broker_store.prepare_broker_database(self.coord)
+        snapshot = broker_store.public_broker_snapshot(self.coord)
+        self.assertEqual(snapshot["workflow"]["implementation_flow"], "single")
 
     def test_new_run_has_metadata_only_sqlite_and_no_coordination_payload_files(
         self,
@@ -526,12 +542,37 @@ class BrokerStoreTests(BrokerFixture):
         mode = os.stat(self.coord / "broker.sqlite3").st_mode & 0o777
         self.assertEqual(mode, 0o600)
 
+    def test_implementation_flow_is_strict_and_corruption_fails_closed(self) -> None:
+        with self.assertRaisesRegex(OrchestrationError, "Implementation flow"):
+            initialize_broker_run(
+                self.coord,
+                self.manifest,
+                "task",
+                {},
+                implementation_flow="automatic",
+            )
+
+        initialize_broker_run(
+            self.coord,
+            self.manifest,
+            "task",
+            {},
+            implementation_flow="phased",
+        )
+        with broker_store.connect_broker_database(self.coord) as database:
+            database.execute(
+                "UPDATE meta SET value='tampered' WHERE key='implementation_flow'"
+            )
+        with self.assertRaisesRegex(OrchestrationError, "Implementation flow"):
+            broker_store.public_broker_snapshot(self.coord)
+
     def test_snapshot_reports_actual_usage_fields_and_workflow_state(self) -> None:
         initialize_broker_run(self.coord, self.manifest, "task", {})
         socket_path = broker_store.broker_paths(self.coord)["socket"]
         self.assertLess(len(os.fsencode(socket_path)), 100)
         snapshot = broker_store.public_broker_snapshot(self.coord)
         self.assertEqual(snapshot["workflow"]["state"], "starting")
+        self.assertEqual(snapshot["workflow"]["implementation_flow"], "single")
         self.assertEqual(snapshot["usage"]["provider_calls"], 0)
         self.assertEqual(snapshot["usage"]["total_tokens"], 0)
         self.assertTrue(snapshot["usage"]["actual_provider_usage_only"])
@@ -1236,6 +1277,39 @@ class BrokerObserverTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
         )
         maybe_assign_reviewer.assert_awaited_once_with(1)
 
+    async def test_phased_workflow_starts_with_plan_before_implementation(self) -> None:
+        initialize_broker_run(
+            self.coord,
+            self.manifest,
+            "task",
+            {},
+            implementation_flow="phased",
+        )
+        broker = Broker(self.coord, self.manifest)
+        broker.clients = {
+            role: Client(role, mock.Mock(), mock.Mock())
+            for role in ("implementer", "reviewer")
+        }
+        with broker_store.connect_broker_database(self.coord) as database:
+            broker_store.set_meta(database, "workflow_state", "connecting")
+        with (
+            mock.patch.object(broker, "deliver", new=mock.AsyncMock()) as deliver,
+            mock.patch.object(broker, "assign", new=mock.AsyncMock()) as assign,
+            mock.patch.object(
+                broker, "broadcast_workflow", new=mock.AsyncMock()
+            ) as workflow,
+        ):
+            await broker.maybe_start_workflow()
+        self.assertEqual(deliver.await_count, 2)
+        workflow.assert_awaited_once_with("active", 1)
+        assign.assert_awaited_once()
+        self.assertEqual(assign.await_args.args[:3], ("implementer", "plan", 1))
+        self.assertIn(
+            "Inspect the task and worktree read-only", assign.await_args.args[3]
+        )
+        snapshot = broker_store.public_broker_snapshot(self.coord)
+        self.assertEqual(snapshot["workflow"]["implementation_flow"], "phased")
+
     async def test_plan_report_projects_run_state_without_claiming_phase_routing(
         self,
     ) -> None:
@@ -1277,10 +1351,73 @@ class BrokerObserverTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
         reviewer.assert_not_awaited()
         assign.assert_not_awaited()
 
+    async def test_phased_plan_creates_same_round_implementation_boundary(self) -> None:
+        initialize_broker_run(
+            self.coord,
+            self.manifest,
+            "task",
+            {},
+            implementation_flow="phased",
+        )
+        broker = Broker(self.coord, self.manifest)
+        broker.clients = {
+            "implementer": Client("implementer", mock.Mock(), mock.Mock())
+        }
+        plan = validate_report(
+            {
+                "kind": "plan",
+                "summary": "Inspection found the focused change surface.",
+                "relevant_paths": ["src/feature.py"],
+                "relevant_symbols": ["Feature.apply"],
+                "intended_changes": ["Guard the state transition."],
+                "required_checks": ["Run focused feature tests."],
+                "risks": [],
+                "open_questions": [],
+            },
+            "implementer",
+        )
+        broker._remember_report({"role": "implementer", "round": 1, "report": plan})
+        transitions: list[str] = []
+
+        async def deliver(
+            role: str,
+            kind: str,
+            round_number: int,
+            content: str,
+            *,
+            trigger: bool,
+        ) -> None:
+            self.assertIn("Inspection found the focused change surface.", content)
+            self.assertFalse(trigger)
+            transitions.append(f"deliver:{role}:{kind}:{round_number}")
+
+        async def assign(role: str, kind: str, round_number: int, content: str) -> None:
+            self.assertIn("Implement and verify", content)
+            transitions.append(f"assign:{role}:{kind}:{round_number}")
+
+        with (
+            mock.patch.object(broker, "deliver", new=deliver),
+            mock.patch.object(broker, "assign", new=assign),
+        ):
+            await broker.route_report("implementer", 1, plan)
+        self.assertEqual(
+            transitions,
+            [
+                "deliver:implementer:run_state:1",
+                "assign:implementer:implementation:1",
+            ],
+        )
+
     async def test_changes_requested_delivers_rolling_state_before_round_two(
         self,
     ) -> None:
-        initialize_broker_run(self.coord, self.manifest, "task", {})
+        initialize_broker_run(
+            self.coord,
+            self.manifest,
+            "task",
+            {},
+            implementation_flow="phased",
+        )
         broker = Broker(self.coord, self.manifest)
         broker.clients = {
             role: Client(role, mock.Mock(), mock.Mock())
@@ -1481,7 +1618,13 @@ class BrokerObserverTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
     async def test_confirmed_handover_replays_deferred_state_before_active_assignment(
         self,
     ) -> None:
-        initialize_broker_run(self.coord, self.manifest, "PRIVATE_STARTUP_CANARY", {})
+        initialize_broker_run(
+            self.coord,
+            self.manifest,
+            "PRIVATE_STARTUP_CANARY",
+            {},
+            implementation_flow="phased",
+        )
         broker = Broker(self.coord, self.manifest)
         broker.worker_baselines["implementer"] = "PRIVATE_BASELINE_REPLAY_CANARY"
         broker.role_run_state["implementer"] = "PRIVATE_STALE_RUN_STATE_CANARY"
@@ -1524,6 +1667,27 @@ class BrokerObserverTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
             )
         broker._remember_report(
             {
+                "role": "implementer",
+                "round": 1,
+                "report": {
+                    "kind": "plan",
+                    "summary": "PRIVATE_ACCEPTED_PLAN_CANARY",
+                    "relevant_paths": ["src/feature.py"],
+                    "relevant_symbols": [],
+                    "intended_changes": [],
+                    "required_checks": [],
+                    "risks": [],
+                    "open_questions": [],
+                    "changed_paths": [],
+                    "checks": [],
+                    "findings": [],
+                    "limitations": [],
+                    "verdict": None,
+                },
+            }
+        )
+        broker._remember_report(
+            {
                 "role": "probe",
                 "round": 2,
                 "report": {
@@ -1555,6 +1719,7 @@ class BrokerObserverTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
             ],
         )
         self.assertEqual(frames[0]["content"], "PRIVATE_BASELINE_REPLAY_CANARY")
+        self.assertIn("PRIVATE_ACCEPTED_PLAN_CANARY", frames[1]["content"])
         self.assertIn("PRIVATE_DEFERRED_RUN_STATE_CANARY", frames[1]["content"])
         self.assertNotIn("PRIVATE_STALE_RUN_STATE_CANARY", frames[1]["content"])
         self.assertEqual(broker.pending_run_state, {})

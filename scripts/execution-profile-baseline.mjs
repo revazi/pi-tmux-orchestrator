@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-import { readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+
+import { runBaselineMain, verifyBaselineFixture } from "./baseline-fixture.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const fixturePath = resolve(root, "tests/fixtures/execution-profile-baseline.json");
@@ -55,22 +56,12 @@ export function buildExecutionProfileBaseline() {
 }
 
 async function main() {
-  const baseline = buildExecutionProfileBaseline();
-  if (process.argv.includes("--write")) {
-    await writeFile(fixturePath, `${JSON.stringify(baseline, null, 2)}\n`, "utf8");
-    process.stdout.write(`Wrote ${fixturePath}\n`);
-    return;
-  }
-  const expected = JSON.parse(await readFile(fixturePath, "utf8"));
-  if (JSON.stringify(expected) !== JSON.stringify(baseline)) {
-    throw new Error("Execution-profile baseline changed; inspect and recapture with --write");
-  }
-  process.stdout.write("Verified execution-profile policy and unavailable comparative evidence.\n");
-}
-
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  main().catch((error) => {
-    process.stderr.write(`${error.message}\n`);
-    process.exitCode = 1;
+  await verifyBaselineFixture({
+    baseline: buildExecutionProfileBaseline(),
+    fixturePath,
+    mismatchMessage: "Execution-profile baseline changed; inspect and recapture with --write",
+    verifiedMessage: "Verified execution-profile policy and unavailable comparative evidence.",
   });
 }
+
+runBaselineMain(import.meta.url, main);

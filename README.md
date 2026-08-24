@@ -348,9 +348,23 @@ and one-report-per-assignment rule.
 Accepted plan evidence is rendered into the existing latest-per-role rolling
 run-state capsule. SQLite retains only its report kind, summary length, zero
 change/check/finding counts, numeric provider usage when available, and other
-existing metadata—not plan bodies. This contract does not yet route normal runs
-through multiple implementation phases; that separate workflow change is
-tracked independently.
+existing metadata—not plan bodies.
+
+Start with `--implementation-flow phased` (or model-tool
+`implementationFlow: "phased"`) for complex work. The broker starts a read-only
+`plan` assignment, accepts and delivers its bounded plan capsule, then creates a
+distinct same-round `implementation` assignment. That boundary prunes inspection
+assistant/tool turns before the first implementation provider request while
+keeping baseline, plan run state, direct steering, and new-assignment turns. Use
+`single`, the compatibility default, for simple work. Repair rounds always start
+directly as `implementation` with latest reviewer/specialist evidence rather
+than repeating inspection.
+
+The checked synthetic complex-task fixture records a 98.6% serialized-context
+proxy reduction at the first implementation request. Provider calls, token
+categories, cost, failed checks, and missed findings are unavailable, so this is
+not a provider-token, billing, call-savings, or quality-equivalence claim. Run
+`node scripts/phased-implementation-baseline.mjs --check` to verify the fixture.
 
 ### Worker result-volume policy
 
@@ -450,6 +464,7 @@ CONTEXT
 pi-tmux-agents start \
   --project "$PWD" \
   --task-file /tmp/pi-agent-task.md \
+  --implementation-flow phased \
   --context-capsule-file /tmp/pi-agent-context.md \
   --worker-skill reviewer=/absolute/path/to/review-skill/SKILL.md \
   --attach
@@ -488,10 +503,15 @@ startup trust dialogs.
 
 1. Bridges connect and authenticate independently.
 2. Broker stores the task plus optional bounded parent context capsule in each Pi session without waking idle roles.
-3. Only implementer and optional initial probe are triggered.
-4. Implementer submits a bounded `implementation` report through
-   `orchestrator_report`; the tool terminates the turn.
-5. Enabled specialists inspect the worktree and submit typed evidence.
+3. The optional initial probe is triggered. In `single` flow the implementer
+   receives `implementation`; in `phased` flow it first receives read-only
+   `plan`, then the accepted plan capsule and a distinct same-round
+   `implementation` assignment.
+4. Each implementer report is submitted through `orchestrator_report`; the tool
+   terminates without an acknowledgement-only model turn. The phased boundary
+   prunes completed inspection assistant/tool turns before implementation.
+5. Enabled specialists inspect only after the implementation report and submit
+   typed evidence.
 6. Broker replaces prior evidence deliveries with one bounded run-state capsule containing only the latest accepted report per role, then wakes reviewer exactly once. Updates for a role already working are coalesced until its next assignment.
 7. Each newly accepted assignment emits one metadata-only `context_boundary` event. That boundary changes the projection policy used on every provider request: the worker keeps the baseline, latest run state, assignment, direct messages, and all assistant/tool turns from the new assignment while pruning only prior-assignment assistant/tool turns.
 8. A confirmed role restart advances a broker generation, replays the in-memory baseline, and materializes the latest coalesced run state—including an update deferred during the active assignment—before recovering that assignment. A failed local respawn or interrupted replacement recovery is `uncertain`.
