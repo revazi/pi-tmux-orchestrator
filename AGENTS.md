@@ -26,6 +26,7 @@ Provide a small, reusable, intentionally tmux-scoped Pi skill and modular standa
 - `extensions/orchestrator-update.js`: best-effort npm release notice
 - `extensions/orchestrator-parent.js`: parent-session observer bridge
 - `extensions/orchestrator-worker.js`: shared TUI/RPC worker bridge and assignment guardrails
+- `extensions/orchestrator-result-policy.js`: orchestration-only worker input/result bounds and metadata
 - `bin/pi-tmux-agents`: thin executable launcher
 - `references/usage.md`: detailed operator guidance
 - `install.sh`: global Pi skill installation

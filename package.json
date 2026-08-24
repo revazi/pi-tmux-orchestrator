@@ -53,6 +53,7 @@
     "extensions/orchestrator-update.js",
     "extensions/orchestrator-parent.js",
     "extensions/orchestrator-worker.js",
+    "extensions/orchestrator-result-policy.js",
     "references/usage.md",
     "references/protocol-v1.md",
     "references/dashboard-design.md",

@@ -165,6 +165,43 @@ model-free built-prompt fixture for Pi 0.84.1 records 5,000 before and 2,479
 after normalized reviewer characters (50.4%); these are serialized prompt-size
 proxies, not provider tokens, cost, cache efficiency, or production acceptance.
 
+#### Worker result-volume limits
+
+The worker bridge, and not ordinary Pi, applies these fixed orchestration-only
+limits in both TUI and RPC modes before a result reaches the next provider call:
+
+| Tool | Input default/cap | Emitted result cap | Retention/guidance |
+|---|---|---|---|
+| `read` | `limit=400`; explicit larger limits become 400 | 16 KiB and 400 lines, head | next targeted `offset` and `limit<=400` |
+| `grep` | `limit=40`; `context<=2` | 16 KiB and 240 lines, head | refine pattern/path/glob; use `read` for exact lines |
+| `bash` | unchanged | 24 KiB and 400 lines, bounded head + failure diagnostics + tail | mode-`0600` full-output file or Pi's existing path; inspect a targeted slice |
+
+The byte cap includes the continuation notice. UTF-8 truncation does not split a
+multibyte character. The bash diagnostic excerpt recognizes bounded failure,
+error, assertion, fatal, panic, and `not ok` lines so a large successful-looking
+prefix or tail does not hide safety-critical test evidence; the command ending
+is retained as well.
+
+Private Pi session entries record schema version, assignment ID, tool/direction
+enums, truncation/input-cap booleans, and numeric source/emitted line and byte
+counts. If the immediately following tool is another read page or a refined
+grep, a second metadata entry records only that classification. Paths, search
+patterns, commands, result bodies, logs, and full-output contents are not copied
+into metadata, SQLite, status, the dashboard, or Supervisor output.
+
+The checked synthetic result-volume baseline reports 144,491 before versus
+89,733 after serialized UTF-8 provider-context bytes (37.9% reduction), while
+read and grep pagination add two provider calls across the three scenarios:
+
+```bash
+node scripts/result-volume-baseline.mjs --check
+```
+
+This is a deterministic context-size and call-count proxy, not provider tokens,
+billing, quality evidence, or production-wire acceptance. Tune a future policy
+only with this benchmark plus retained metadata and real provider/quality
+evidence; missing provider data remains unavailable.
+
 All newly started runs use broker protocol v1. `--rpc-workers` does not select a
 different coordination protocol. RPC panes are a plain headless automation
 view; interactive TUI panes are the default and retain Pi's native highlighting,

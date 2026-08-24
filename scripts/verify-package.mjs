@@ -52,6 +52,7 @@ const expectedFiles = [
   "extensions/orchestrator-update.js",
   "extensions/orchestrator-parent.js",
   "extensions/orchestrator-worker.js",
+  "extensions/orchestrator-result-policy.js",
   "references/usage.md",
   "references/protocol-v1.md",
   "references/dashboard-design.md",
@@ -71,6 +72,7 @@ const declaredFiles = [
   "extensions/orchestrator-update.js",
   "extensions/orchestrator-parent.js",
   "extensions/orchestrator-worker.js",
+  "extensions/orchestrator-result-policy.js",
   "references/usage.md",
   "references/protocol-v1.md",
   "references/dashboard-design.md",
@@ -192,6 +194,7 @@ const extensionSources = await Promise.all([
   "extensions/orchestrator-update.js",
   "extensions/orchestrator-parent.js",
   "extensions/orchestrator-worker.js",
+  "extensions/orchestrator-result-policy.js",
 ].map((path) => readFile(resolve(root, path), "utf8")));
 for (const method of ["setStatus", "setWidget", "setTitle"]) {
   if (extensionSources.some((source) => source.includes(`.${method}(`))) {

@@ -1,0 +1,119 @@
+{
+  "schema_version": 1,
+  "metric_scope": "model-free-serialized-provider-context-proxy",
+  "caveat": "Serialized UTF-8 bytes and synthetic additional calls are deterministic proxies, not provider tokens, billing, quality, or production-wire acceptance.",
+  "scenarios": {
+    "read": {
+      "before": {
+        "provider_calls": 1,
+        "by_call_utf8_bytes": [
+          48969
+        ],
+        "total_utf8_bytes": 48969
+      },
+      "after": {
+        "provider_calls": 2,
+        "by_call_utf8_bytes": [
+          15709,
+          21629
+        ],
+        "total_utf8_bytes": 37338
+      },
+      "additional_provider_calls": 1,
+      "context_reduction_percent": 23.8,
+      "result": {
+        "schema_version": 1,
+        "event": "result",
+        "tool": "read",
+        "truncated": true,
+        "direction": "head",
+        "source_bytes": 38691,
+        "source_lines": 400,
+        "emitted_bytes": 15470,
+        "emitted_lines": 161,
+        "input_capped": true,
+        "requested_limit": 5000,
+        "effective_limit": 400,
+        "requested_context": null,
+        "effective_context": null
+      }
+    },
+    "grep": {
+      "before": {
+        "provider_calls": 1,
+        "by_call_utf8_bytes": [
+          44519
+        ],
+        "total_utf8_bytes": 44519
+      },
+      "after": {
+        "provider_calls": 2,
+        "by_call_utf8_bytes": [
+          15703,
+          17285
+        ],
+        "total_utf8_bytes": 32988
+      },
+      "additional_provider_calls": 1,
+      "context_reduction_percent": 25.9,
+      "result": {
+        "schema_version": 1,
+        "event": "result",
+        "tool": "grep",
+        "truncated": true,
+        "direction": "head",
+        "source_bytes": 19491,
+        "source_lines": 200,
+        "emitted_bytes": 15466,
+        "emitted_lines": 159,
+        "input_capped": true,
+        "requested_limit": 5000,
+        "effective_limit": 40,
+        "requested_context": 50,
+        "effective_context": 2
+      }
+    },
+    "bash": {
+      "before": {
+        "provider_calls": 1,
+        "by_call_utf8_bytes": [
+          51003
+        ],
+        "total_utf8_bytes": 51003
+      },
+      "after": {
+        "provider_calls": 1,
+        "by_call_utf8_bytes": [
+          19407
+        ],
+        "total_utf8_bytes": 19407
+      },
+      "additional_provider_calls": 0,
+      "context_reduction_percent": 61.9,
+      "result": {
+        "schema_version": 1,
+        "event": "result",
+        "tool": "bash",
+        "truncated": true,
+        "direction": "head_tail",
+        "source_bytes": 50425,
+        "source_lines": 500,
+        "emitted_bytes": 19138,
+        "emitted_lines": 191,
+        "input_capped": false,
+        "requested_limit": null,
+        "effective_limit": null,
+        "requested_context": null,
+        "effective_context": null
+      }
+    }
+  },
+  "aggregate": {
+    "before_provider_calls": 3,
+    "after_provider_calls": 5,
+    "additional_provider_calls": 2,
+    "before_utf8_bytes": 144491,
+    "after_utf8_bytes": 89733,
+    "context_reduction_percent": 37.9
+  }
+}

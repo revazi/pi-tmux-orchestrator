@@ -24,6 +24,7 @@ EXPECTED_FILES=(
   extensions/orchestrator-update.js
   extensions/orchestrator-parent.js
   extensions/orchestrator-worker.js
+  extensions/orchestrator-result-policy.js
   package.json
   pi_tmux_orchestrator/__init__.py
   pi_tmux_orchestrator/__main__.py

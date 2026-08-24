@@ -1,11 +1,18 @@
 import net from "node:net";
 import { randomBytes } from "node:crypto";
 
+import {
+  applyToolInputPolicy,
+  applyToolResultPolicy,
+  immediateFollowupObservation,
+} from "./orchestrator-result-policy.js";
+
 const VERSION = 1;
 const MAX_FRAME_BYTES = 256 * 1024;
 const DELIVERY_ENTRY = "pi-tmux-orchestrator-delivery-v1";
 const BOUNDARY_ENTRY = "pi-tmux-orchestrator-context-boundary-v1";
 const GUARDRAIL_ENTRY = "pi-tmux-orchestrator-guardrail-v1";
+const RESULT_VOLUME_ENTRY = "pi-tmux-orchestrator-result-volume-v1";
 const MESSAGE_TYPE = "pi-tmux-orchestrator-message-v1";
 const ROLE = process.env.PI_TMUX_ORCHESTRATOR_ROLE;
 const TOKEN = process.env.PI_TMUX_ORCHESTRATOR_TOKEN;
@@ -638,6 +645,8 @@ export default function orchestratorWorker(pi) {
   const assignmentIds = new Set();
   const pending = new Map();
   const delivered = new Set();
+  const toolInputPolicies = new Map();
+  let pendingLimitedResults = [];
 
   function restore(ctx) {
     const restored = restoreWorkerState(ctx.sessionManager.getEntries());
@@ -881,6 +890,89 @@ export default function orchestratorWorker(pi) {
     },
   });
 
+  function assignmentIdOrNull() {
+    return activeAssignment ? activeAssignment.id : null;
+  }
+
+  function recordImmediateFollowup(event) {
+    const followups = pendingLimitedResults.map(
+      (previous) => immediateFollowupObservation(previous, event),
+    );
+    pendingLimitedResults = [];
+    for (const followup of followups) {
+      pi.appendEntry(RESULT_VOLUME_ENTRY, {
+        assignment_id: assignmentIdOrNull(),
+        ...followup,
+      });
+    }
+  }
+
+  function prepareToolInput(event) {
+    const inputPolicy = applyToolInputPolicy(event);
+    if (inputPolicy) toolInputPolicies.set(event.toolCallId, inputPolicy);
+  }
+
+  function onToolCall(event, ctx) {
+    recordImmediateFollowup(event);
+    prepareToolInput(event);
+    if (!activeAssignment) return undefined;
+    evaluateAssignmentGuardrails(ctx);
+    return observationalGuardrailDecision();
+  }
+
+  function recordResultVolume(limited) {
+    if (!limited) return;
+    pi.appendEntry(RESULT_VOLUME_ENTRY, {
+      assignment_id: assignmentIdOrNull(),
+      ...limited.observation,
+    });
+    if (limited.pending) pendingLimitedResults.push(limited.pending);
+  }
+
+  function deliverGuardrailWarning(event, content) {
+    if (!shouldDeliverGuardrailWarning(
+      activeAssignment, event.toolName, guardrailState,
+    )) return { content, delivered: false };
+    pi.appendEntry(GUARDRAIL_ENTRY, {
+      assignment_id: activeAssignment.id,
+      level: "warning",
+      status: "delivered",
+    });
+    guardrailState.warningDelivered = true;
+    return {
+      content: appendGuardrailWarning(content, guardrailState.warning),
+      delivered: true,
+    };
+  }
+
+  function optionalResultDetails(limited) {
+    return limited && limited.details !== undefined
+      ? { details: limited.details }
+      : {};
+  }
+
+  function limitedContent(event, limited) {
+    return limited && limited.content ? limited.content : event.content;
+  }
+
+  function resultWasModified(limited, warning) {
+    return [Boolean(limited && limited.content), warning.delivered].some(Boolean);
+  }
+
+  function toolResultPatch(event, limited) {
+    const warning = deliverGuardrailWarning(event, limitedContent(event, limited));
+    if (!resultWasModified(limited, warning)) return undefined;
+    return { content: warning.content, ...optionalResultDetails(limited) };
+  }
+
+  async function onToolResult(event) {
+    const inputPolicy = toolInputPolicies.get(event.toolCallId);
+    toolInputPolicies.delete(event.toolCallId);
+    const limited = await applyToolResultPolicy(event, inputPolicy);
+    recordResultVolume(limited);
+    return toolResultPatch(event, limited);
+  }
+
   pi.on("session_start", (_event, ctx) => {
     context = ctx;
     restore(ctx);
@@ -889,23 +981,8 @@ export default function orchestratorWorker(pi) {
   pi.on("context", (event) => ({
     messages: filterWorkerContext(event.messages),
   }));
-  pi.on("tool_call", (_event, ctx) => {
-    if (!activeAssignment) return undefined;
-    evaluateAssignmentGuardrails(ctx);
-    return observationalGuardrailDecision();
-  });
-  pi.on("tool_result", (event) => {
-    if (!shouldDeliverGuardrailWarning(activeAssignment, event.toolName, guardrailState)) {
-      return undefined;
-    }
-    pi.appendEntry(GUARDRAIL_ENTRY, {
-      assignment_id: activeAssignment.id,
-      level: "warning",
-      status: "delivered",
-    });
-    guardrailState.warningDelivered = true;
-    return { content: appendGuardrailWarning(event.content, guardrailState.warning) };
-  });
+  pi.on("tool_call", onToolCall);
+  pi.on("tool_result", onToolResult);
   pi.on("agent_start", (_event, ctx) => lifecycle("active", ctx));
   pi.on("agent_settled", (_event, ctx) => lifecycle(activeAssignment ? "waiting" : "idle", ctx, true));
   pi.on("session_shutdown", () => {
