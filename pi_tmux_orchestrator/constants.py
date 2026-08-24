@@ -90,6 +90,7 @@ MANIFEST_V1_FIELDS = frozenset(
 )
 MANIFEST_FIELDS = MANIFEST_V1_FIELDS | {"transport"}
 MANIFEST_V3_FIELDS = MANIFEST_FIELDS | {"coordination", "protocol_version"}
+MANIFEST_V4_FIELDS = MANIFEST_V3_FIELDS | {"execution_profile"}
 ROLE_FIELDS = frozenset(
     {"provider", "model", "thinking", "tools", "pane_id", "prompt_path", "session_dir"}
 )

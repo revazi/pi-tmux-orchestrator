@@ -11,29 +11,54 @@ from typing import Any
 from .constants import DEFAULT_MODELS, KNOWN_ROLES, THINKING_LEVELS
 from . import runtime
 from .models import OrchestrationError
+from .profiles import (
+    PACKAGED_EXECUTION_PROFILES,
+    profile_name,
+    validate_custom_profiles,
+)
 
-MODEL_CONFIG_VERSION = 1
+MODEL_CONFIG_VERSION = 2
+LEGACY_MODEL_CONFIG_VERSION = 1
 MAX_MODEL_CONFIG_BYTES = 64 * 1024
 MODEL_FIELDS = frozenset({"provider", "model", "thinking"})
-MODEL_CONFIG_FIELDS = frozenset({"version", "defaults", "roles"})
+LEGACY_MODEL_CONFIG_FIELDS = frozenset({"version", "defaults", "roles"})
+MODEL_CONFIG_FIELDS = LEGACY_MODEL_CONFIG_FIELDS | {"defaultProfile", "profiles"}
 MODEL_CONFIG_ENV = "PI_TMUX_ORCHESTRATOR_CONFIG"
 
 
-def model_config_path() -> Path:
+def model_config_path(project: Path | None = None) -> Path:
     configured = os.environ.get(MODEL_CONFIG_ENV)
     if configured:
         path = Path(configured).expanduser()
         if not path.is_absolute():
             raise OrchestrationError(f"{MODEL_CONFIG_ENV} must be an absolute path")
-        return path
+        return _validate_model_config_path(path, project)
     pi_home = runtime.PI_HOME
     if not pi_home.is_absolute():
         raise OrchestrationError("Pi configuration directory must be an absolute path")
-    return pi_home / "tmux-orchestrator.json"
+    return _validate_model_config_path(pi_home / "tmux-orchestrator.json", project)
 
 
-def load_model_config(path: Path | None = None) -> dict[str, Any]:
-    config_path = path or model_config_path()
+def _validate_model_config_path(path: Path, project: Path | None) -> Path:
+    path = Path(os.path.abspath(os.fspath(path)))
+    if project is not None:
+        project = project.resolve(strict=True)
+        resolved = path.resolve(strict=False)
+        if resolved == project or project in resolved.parents:
+            raise OrchestrationError(
+                "Model and profile configuration must remain outside the target project"
+            )
+    return path
+
+
+def load_model_config(
+    path: Path | None = None, *, project: Path | None = None
+) -> dict[str, Any]:
+    config_path = (
+        _validate_model_config_path(path, project)
+        if path is not None
+        else model_config_path(project)
+    )
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
     descriptor: int | None = None
     try:
@@ -78,16 +103,29 @@ def unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 
 
 def empty_model_config() -> dict[str, Any]:
-    return {"version": MODEL_CONFIG_VERSION, "defaults": {}, "roles": {}}
+    return {
+        "version": MODEL_CONFIG_VERSION,
+        "default_profile": None,
+        "profiles": {},
+        "defaults": {},
+        "roles": {},
+    }
 
 
 def validate_model_config(value: object) -> dict[str, Any]:
-    if not isinstance(value, dict) or set(value) - MODEL_CONFIG_FIELDS:
-        raise OrchestrationError("Model configuration has unsupported top-level fields")
-    if value.get("version") != MODEL_CONFIG_VERSION:
+    if not isinstance(value, dict):
+        raise OrchestrationError("Model configuration must be an object")
+    version = value.get("version")
+    if version == LEGACY_MODEL_CONFIG_VERSION:
+        allowed_fields = LEGACY_MODEL_CONFIG_FIELDS
+    elif version == MODEL_CONFIG_VERSION:
+        allowed_fields = MODEL_CONFIG_FIELDS
+    else:
         raise OrchestrationError(
-            f"Model configuration version must be {MODEL_CONFIG_VERSION}"
+            f"Model configuration version must be {LEGACY_MODEL_CONFIG_VERSION} or {MODEL_CONFIG_VERSION}"
         )
+    if set(value) - allowed_fields:
+        raise OrchestrationError("Model configuration has unsupported top-level fields")
     defaults = validate_model_fields(value.get("defaults", {}), "defaults")
     raw_roles = value.get("roles", {})
     if not isinstance(raw_roles, dict) or set(raw_roles) - KNOWN_ROLES:
@@ -96,7 +134,28 @@ def validate_model_config(value: object) -> dict[str, Any]:
         role: validate_model_fields(config, f"roles.{role}")
         for role, config in raw_roles.items()
     }
-    return {"version": MODEL_CONFIG_VERSION, "defaults": defaults, "roles": roles}
+    default_profile: str | None = None
+    profiles: dict[str, dict[str, str]] = {}
+    if version == MODEL_CONFIG_VERSION:
+        raw_default = value.get("defaultProfile")
+        if raw_default is not None:
+            default_profile = profile_name(raw_default)
+        profiles = validate_custom_profiles(value.get("profiles", {}))
+        if (
+            default_profile is not None
+            and default_profile not in PACKAGED_EXECUTION_PROFILES
+            and default_profile not in profiles
+        ):
+            raise OrchestrationError(
+                "Model configuration defaultProfile must name a packaged or configured profile"
+            )
+    return {
+        "version": MODEL_CONFIG_VERSION,
+        "default_profile": default_profile,
+        "profiles": profiles,
+        "defaults": defaults,
+        "roles": roles,
+    }
 
 
 def validate_model_fields(value: object, label: str) -> dict[str, str]:
@@ -136,8 +195,11 @@ def validate_model_fields(value: object, label: str) -> dict[str, str]:
 def effective_model_config(
     role: str,
     config: dict[str, Any],
+    execution_profile: dict[str, Any] | None = None,
 ) -> dict[str, str]:
     effective = dict(DEFAULT_MODELS[role])
+    if execution_profile is not None:
+        effective["thinking"] = execution_profile["thinking"][role]
     effective.update(config["defaults"])
     effective.update(config["roles"].get(role, {}))
     return effective

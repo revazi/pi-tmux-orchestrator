@@ -209,6 +209,8 @@ class JsonMainTests(unittest.TestCase):
                     str(ROOT),
                     "--task",
                     canary,
+                    "--profile",
+                    "economy",
                     "--context-capsule",
                     context_canary,
                     "--skip-model-check",
@@ -233,6 +235,20 @@ class JsonMainTests(unittest.TestCase):
             {"present": True, "chars": len(context_canary)},
         )
         self.assertEqual(data["transport"], "rpc")
+        self.assertEqual(
+            data["execution_profile"],
+            {"name": "economy", "kind": "packaged", "source": "per-run"},
+        )
+        self.assertEqual(
+            {role["name"]: role["thinking"] for role in data["roles"]},
+            {
+                "implementer": "medium",
+                "reviewer": "medium",
+                "probe": "low",
+                "playwright": "medium",
+                "django": "medium",
+            },
+        )
         self.assertFalse(data["worker_resources"]["skill_discovery"])
         self.assertEqual(
             data["worker_resources"]["skills"]["reviewer"],
@@ -387,7 +403,7 @@ class JsonMainTests(unittest.TestCase):
                     ORCHESTRATOR, "command_path", return_value="/usr/bin/true"
                 ),
                 mock.patch.object(ORCHESTRATOR, "session_exists", return_value=False),
-                mock.patch.object(ORCHESTRATOR, "create_tmux_grid"),
+                mock.patch.object(ORCHESTRATOR, "create_tmux_grid") as create_grid,
             ):
                 code, envelope, raw, stderr = self.run_main(
                     [
@@ -415,6 +431,16 @@ class JsonMainTests(unittest.TestCase):
             self.assertTrue(coordination.is_relative_to(state_root.resolve()))
             self.assertEqual(
                 envelope["data"]["paths"]["observer_socket"], expected_socket
+            )
+            manifest = create_grid.call_args.args[4]
+            self.assertEqual(manifest["version"], 4)
+            self.assertEqual(
+                manifest["execution_profile"],
+                {
+                    "name": "thorough",
+                    "kind": "packaged",
+                    "source": "packaged-default",
+                },
             )
             self.assertNotIn(canary, raw)
 

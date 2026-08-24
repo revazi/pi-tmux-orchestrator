@@ -15,6 +15,7 @@ import {
 } from "../extensions/orchestrator-result-policy.js";
 import { buildTokenEfficiencyBaseline } from "../scripts/token-efficiency-baseline.mjs";
 import { buildResultVolumeBaseline } from "../scripts/result-volume-baseline.mjs";
+import { buildExecutionProfileBaseline } from "../scripts/execution-profile-baseline.mjs";
 import { buildWorkerPromptBaselineIfAvailable } from "../scripts/worker-prompt-baseline.mjs";
 
 const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
@@ -112,6 +113,7 @@ test("registers one bounded model tool and the exact canonical/alias command sur
   assert.deepEqual(tool.parameters.properties.action.enum, ["doctor", "models", "list", "status", "watch", "attach", "start", "send"]);
   assert.equal(tool.parameters.properties.action.enum.includes("restart"), false);
   assert.equal(tool.parameters.properties.action.enum.includes("stop"), false);
+  assert.equal(tool.parameters.properties.profile.pattern, "^[a-z][a-z0-9-]{0,31}$");
   assert.equal(tool.parameters.properties.budgetOverrides.additionalProperties, false);
   assert.equal(tool.parameters.properties.workerSkills.additionalProperties, false);
   assert.equal(tool.parameters.properties.workerSkills.properties.reviewer.maxItems, 8);
@@ -732,6 +734,25 @@ test("result-volume benchmark reports context reduction and pagination calls", a
   assert.match(baseline.caveat, /not provider tokens, billing, quality/);
 });
 
+test("execution-profile baseline keeps policy distinct from unavailable evidence", async () => {
+  const baseline = buildExecutionProfileBaseline();
+  const checkedIn = JSON.parse(
+    await readFile(new URL("fixtures/execution-profile-baseline.json", import.meta.url), "utf8"),
+  );
+  assert.deepEqual(baseline, checkedIn);
+  assert.deepEqual(baseline.fixed_cases, ["simple", "medium", "multi-round"]);
+  assert.equal(baseline.packaged_default, "thorough");
+  assert.equal(baseline.compatibility.preserves_pre_profile_packaged_thinking, true);
+  assert.equal(baseline.comparative_evidence.provider_usage.availability, "unavailable");
+  assert.equal(baseline.comparative_evidence.quality.availability, "unavailable");
+  assert.deepEqual(baseline.claims, {
+    provider_token_savings: false,
+    billing_savings: false,
+    quality_equivalence: false,
+    recommended_default: false,
+  });
+});
+
 test("worker restart restores assignment and dedup state without changing durable usage", () => {
   const assignmentId = "b".repeat(32);
   const entries = [
@@ -1027,6 +1048,16 @@ test("natural-language starts can use the parent model with exact per-role overr
   assert.equal(value("--probe-model"), "claude-parent-model");
 });
 
+test("natural-language starts pass deterministic execution profiles", () => {
+  const args = testHooks.buildStartArgs(
+    { profile: "review-heavy-economy" },
+    "/project",
+    { task: "/private/task" },
+  );
+  assert.equal(args[args.indexOf("--profile") + 1], "review-heavy-economy");
+  assert.equal(args.includes("--implementer-thinking"), false);
+});
+
 test("natural-language starts pass strict native per-run budget overrides", () => {
   const args = testHooks.buildStartArgs(
     {
@@ -1299,6 +1330,7 @@ test("doctor, list alias, and status commands delegate exact bounded JSON CLI ac
       : action === "status"
         ? {
             session: args[3],
+            execution_profile: { name: "balanced", kind: "packaged", source: "per-run" },
             roles: [], panes: [], files: [],
             broker: {
               workflow: { state: "ready", round: 4 },
@@ -1327,6 +1359,7 @@ test("doctor, list alias, and status commands delegate exact bounded JSON CLI ac
   assert.equal(ctx.calls.widgets.length, 0);
   assert.equal(ctx.calls.statuses.length, 0);
   assert.ok(ctx.calls.notifications.every(({ message }) => message.length <= 800));
+  assert.ok(ctx.calls.notifications.some(({ message }) => message.includes("profile=balanced (packaged, source=per-run)")));
   assert.ok(ctx.calls.notifications.some(({ message }) => message.includes("workflow=ready round=4")));
 });
 
@@ -1669,6 +1702,11 @@ test("start previews CLI policy, keeps private text out of argv, and cleans mode
         { name: "reviewer", provider: "provider", model: "reviewer", thinking: "high" },
       ],
       transport: args.includes("--rpc-workers") ? "rpc" : "tui",
+      execution_profile: {
+        name: args[args.indexOf("--profile") + 1],
+        kind: "packaged",
+        source: "per-run",
+      },
       trust: {
         child_bypass: false,
         policy: args.includes("--rpc-workers")
@@ -1697,6 +1735,7 @@ test("start previews CLI policy, keeps private text out of argv, and cleans mode
     {
       action: "start",
       task: canary,
+      profile: "economy",
       contextCapsule: { currentState: contextCanary },
       rpcWorkers: true,
       workerSkills: { reviewer: ["/reviewed/reviewer/SKILL.md"] },
@@ -1708,6 +1747,7 @@ test("start previews CLI policy, keeps private text out of argv, and cleans mode
   assert.equal(calls, 2);
   assert.match(ctx.calls.confirmations[0].message, /ignores project executable resources/);
   assert.match(ctx.calls.confirmations[0].message, /Worker transport: rpc/);
+  assert.match(ctx.calls.confirmations[0].message, /Execution profile: economy \(packaged, source=per-run\)/);
   assert.match(ctx.calls.confirmations[0].message, /provider\/writer/);
   assert.match(ctx.calls.confirmations[0].message, /warning\.run: operational_tokens=600000/);
   assert.match(ctx.calls.confirmations[0].message, /reviewer: \/reviewed\/reviewer\/SKILL\.md/);

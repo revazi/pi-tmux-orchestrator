@@ -24,6 +24,7 @@ from .constants import (
 )
 from .models import OrchestrationError
 from .output import bounded_message, public_role
+from .profiles import retained_execution_profile
 from .rpc_store import (
     load_rpc_events,
     load_rpc_registry,
@@ -95,6 +96,11 @@ def supervisor_capabilities() -> dict[str, Any]:
             "argument": "--cursor ROLE=SEQUENCE",
             "retention_gap_reported": True,
         },
+        "execution_profiles": {
+            "manifest_metadata_since": 4,
+            "legacy": "unavailable",
+            "provider_usage_and_quality_evidence": "unavailable",
+        },
         "usage_accounting": {
             "cumulative_role_usage": True,
             "latest_assignment_usage": True,
@@ -151,7 +157,9 @@ def public_supervisor_run(coord: Path, manifest: dict[str, Any]) -> dict[str, An
         "created_at": manifest["created_at"],
         "project": manifest["project"],
         "transport": transport,
-        "durable_workers": manifest.get("version") == 3 or transport == RPC_TRANSPORT,
+        "execution_profile": retained_execution_profile(manifest),
+        "durable_workers": manifest.get("version", 0) >= 3
+        or transport == RPC_TRANSPORT,
         "roles": [
             public_role(role, config, transport)
             for role, config in manifest["roles"].items()
@@ -339,7 +347,7 @@ def public_runtime_record(state: dict[str, Any] | None) -> dict[str, Any]:
 def supervisor_snapshot(session: str, run_id: str | None) -> dict[str, Any]:
     coord, manifest = resolve_supervisor_target(session, run_id, require_rpc=False)
     transport = manifest_transport(manifest)
-    if manifest.get("version") == 3:
+    if manifest.get("version", 0) >= 3:
         snapshot = public_broker_snapshot(coord)
         role_state = {value["role"]: value for value in snapshot["roles"]}
         roles = []
@@ -360,6 +368,7 @@ def supervisor_snapshot(session: str, run_id: str | None) -> dict[str, Any]:
             "created_at": manifest["created_at"],
             "project": manifest["project"],
             "transport": transport,
+            "execution_profile": retained_execution_profile(manifest),
             "coordination": manifest["coordination"],
             "durable_workers": True,
             "host_adapter": {"name": "tmux", "runtime_status": "not_observed"},
@@ -400,6 +409,7 @@ def supervisor_snapshot(session: str, run_id: str | None) -> dict[str, Any]:
         "created_at": manifest["created_at"],
         "project": manifest["project"],
         "transport": transport,
+        "execution_profile": retained_execution_profile(manifest),
         "durable_workers": transport == RPC_TRANSPORT,
         "host_adapter": {
             "name": "tmux",
@@ -462,7 +472,7 @@ def supervisor_usage(session: str, run_id: str | None, *, limit: int) -> dict[st
         "api_version": SUPERVISOR_API_VERSION,
         "session": manifest["session"],
         "run_id": coord.name,
-        "available": manifest.get("version") == 3,
+        "available": manifest.get("version", 0) >= 3,
         "semantics": {
             "cumulative": "complete retained role usage",
             "assignment": "immutable delta from the accepted assignment boundary",
@@ -472,7 +482,7 @@ def supervisor_usage(session: str, run_id: str | None, *, limit: int) -> dict[st
         },
         "paths": {"coordination": str(coord)},
     }
-    if manifest.get("version") != 3:
+    if manifest.get("version", 0) < 3:
         return {
             **base,
             "availability": "unavailable_legacy_coordination",
@@ -577,7 +587,7 @@ def supervisor_event_batch(
             f"Cursors require a selected enabled role: {', '.join(invalid_cursors)}",
             "invalid_arguments",
         )
-    if manifest.get("version") == 3:
+    if manifest.get("version", 0) >= 3:
         values = []
         for role in roles:
             page = public_broker_events(
@@ -669,7 +679,7 @@ def supervisor_command_status(
             f"Role {role!r} is not enabled for this orchestration",
             "invalid_arguments",
         )
-    if manifest.get("version") == 3:
+    if manifest.get("version", 0) >= 3:
         from .broker_store import connect_broker_database
 
         with connect_broker_database(coord, readonly=True) as database:

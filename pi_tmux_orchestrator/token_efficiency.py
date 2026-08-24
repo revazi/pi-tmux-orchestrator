@@ -96,7 +96,7 @@ def analyze_retained_usage(state_root: Path, *, max_runs: int = 100) -> dict[str
             issue_count += len(issues)
             truncated = truncated or runs_truncated
             for coord, manifest in runs:
-                if manifest.get("version") != 3:
+                if manifest.get("version", 0) < 3:
                     legacy_runs_skipped += 1
                     continue
                 try:

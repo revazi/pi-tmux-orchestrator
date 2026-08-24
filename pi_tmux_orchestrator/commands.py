@@ -48,6 +48,11 @@ from .constants import (
 from .context_capsules import render_worker_baseline
 from .models import CommandResult, OrchestrationError
 from .output import bounded_message, human_print, public_role
+from .profiles import (
+    public_execution_profile,
+    resolve_execution_profile,
+    retained_execution_profile,
+)
 from .prompts import role_system_prompt
 from .rpc import (
     load_rpc_events,
@@ -99,8 +104,13 @@ def role_config(
     args: argparse.Namespace,
     role: str,
     model_config: dict[str, Any] | None = None,
+    execution_profile: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    defaults = effective_model_config(role, model_config or empty_model_config())
+    defaults = effective_model_config(
+        role,
+        model_config or empty_model_config(),
+        execution_profile,
+    )
     config: dict[str, Any] = {
         "provider": getattr(args, f"{role}_provider") or defaults["provider"],
         "model": getattr(args, f"{role}_model") or defaults["model"],
@@ -341,8 +351,15 @@ def start_command(args: argparse.Namespace) -> CommandResult:
         roles.append("playwright")
     if args.with_django_expert:
         roles.append("django")
-    configured_models = load_model_config()
-    configs = {role: role_config(args, role, configured_models) for role in roles}
+    configured_models = load_model_config(project=project)
+    execution_profile = resolve_execution_profile(
+        configured_models,
+        getattr(args, "profile", None),
+    )
+    configs = {
+        role: role_config(args, role, configured_models, execution_profile)
+        for role in roles
+    }
     worker_skills = resolve_worker_skills(
         getattr(args, "worker_skill", None),
         roles,
@@ -387,6 +404,7 @@ def start_command(args: argparse.Namespace) -> CommandResult:
             "polling": False,
         },
         "budget_policy": budget_policy,
+        "execution_profile": public_execution_profile(execution_profile),
         "worker_resources": {
             "skill_discovery": False,
             "skills": {
@@ -428,6 +446,10 @@ def start_command(args: argparse.Namespace) -> CommandResult:
         )
     human_print("  monitor: broker/status")
     human_print(f"Worker transport: {transport}")
+    human_print(
+        f"Execution profile: {execution_profile['name']} "
+        f"({execution_profile['kind']}, source={execution_profile['source']})"
+    )
     human_print("Worker skill discovery: disabled")
     for role in roles:
         paths = [skill["path"] for skill in worker_skills[role]]
@@ -462,7 +484,7 @@ def start_command(args: argparse.Namespace) -> CommandResult:
     try:
         secure_write(coord / "startup-state", "STARTING\n")
         manifest: dict[str, Any] = {
-            "version": 3,
+            "version": 4,
             "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
             "session": session,
             "window": WINDOW,
@@ -472,6 +494,7 @@ def start_command(args: argparse.Namespace) -> CommandResult:
             "transport": transport,
             "coordination": BROKER_COORDINATION,
             "protocol_version": BROKER_PROTOCOL_VERSION,
+            "execution_profile": public_execution_profile(execution_profile),
             "monitor_pane_id": None,
             "roles": {},
         }
@@ -543,6 +566,7 @@ def list_command(_: argparse.Namespace) -> CommandResult:
                     "session": session,
                     "valid": True,
                     "project": manifest["project"],
+                    "execution_profile": retained_execution_profile(manifest),
                     "roles": role_values,
                     "paths": {"coordination": str(coord)},
                 }
@@ -597,7 +621,7 @@ def status_roles(coord: Path, manifest: dict[str, Any]) -> list[dict[str, Any]]:
     values: list[dict[str, Any]] = []
     transport = manifest_transport(manifest)
     broker_roles: dict[str, dict[str, Any]] = {}
-    if manifest.get("version") == 3:
+    if manifest.get("version", 0) >= 3:
         broker_roles = {
             value["role"]: value for value in public_broker_snapshot(coord)["roles"]
         }
@@ -641,6 +665,15 @@ def status_command(args: argparse.Namespace) -> CommandResult:
     manifest = load_manifest(coord, expected_session=session)
     human_print(f"Session: {session}")
     human_print(f"Project: {manifest['project']}")
+    profile = retained_execution_profile(manifest)
+    human_print(
+        "Execution profile: "
+        + (
+            f"{profile['name']} ({profile['kind']}, source={profile['source']})"
+            if profile["name"] is not None
+            else "unavailable (legacy run)"
+        )
+    )
     human_print(f"Coordination: {coord}")
     result = tmux(
         [
@@ -679,7 +712,7 @@ def status_command(args: argparse.Namespace) -> CommandResult:
     broker_snapshot: dict[str, Any] | None = None
     files: list[tuple[Path, os.stat_result]] = []
     file_values: list[dict[str, Any]] = []
-    if manifest.get("version") == 3:
+    if manifest.get("version", 0) >= 3:
         broker_snapshot = public_broker_snapshot(coord)
         workflow = broker_snapshot["workflow"]
         usage = broker_snapshot["usage"]
@@ -735,12 +768,13 @@ def status_command(args: argparse.Namespace) -> CommandResult:
                     f"{registry_suffix}"
                 )
     paths = {"coordination": str(coord)}
-    if manifest.get("version") == 3:
+    if manifest.get("version", 0) >= 3:
         paths["observer_socket"] = str(broker_paths(coord)["socket"])
     return CommandResult(
         data={
             "session": session,
             "project": manifest["project"],
+            "execution_profile": profile,
             "paths": paths,
             "roles": role_values,
             "panes": panes,
@@ -858,7 +892,7 @@ def send_command(args: argparse.Namespace) -> CommandResult:
     message = read_text_argument(args.message, args.message_file, "message").strip()
     transport = manifest_transport(manifest)
     acknowledgement: dict[str, Any] | None = None
-    if manifest.get("version") == 3:
+    if manifest.get("version", 0) >= 3:
         if getattr(args, "run", None) is not None:
             _session, live_coord = resolve_session(args.session)
             if live_coord != coord:
@@ -926,7 +960,7 @@ def abort_command(args: argparse.Namespace) -> CommandResult:
         raise OrchestrationError(
             f"Role {args.role!r} is not in {session}; available: {available}"
         )
-    if manifest.get("version") == 3:
+    if manifest.get("version", 0) >= 3:
         if getattr(args, "run", None) is not None:
             _session, live_coord = resolve_session(args.session)
             if live_coord != coord:
@@ -995,7 +1029,7 @@ def restart_command(args: argparse.Namespace) -> CommandResult:
     if not args.skip_model_check:
         validate_model(args.role, role)
     save_manifest(coord, manifest)
-    broker_handover_prepared = manifest.get("version") == 3
+    broker_handover_prepared = manifest.get("version", 0) >= 3
     if broker_handover_prepared:
         broker_control_request(coord, args.role, "restart")
     try:
@@ -1045,7 +1079,7 @@ def stop_command(args: argparse.Namespace) -> CommandResult:
     session, coord = resolve_session(args.session)
     manifest = load_manifest(coord, expected_session=session)
     tmux(["kill-session", "-t", exact_session_target(session)])
-    if manifest.get("version") == 3:
+    if manifest.get("version") in {3, 4}:
         socket_path = broker_paths(coord)["socket"]
         try:
             metadata = socket_path.lstat()
@@ -1085,8 +1119,12 @@ def doctor_command(_: argparse.Namespace) -> CommandResult:
     configured_models = load_model_config()
     config_path = model_config_path()
     config_in_use = bool(
-        configured_models["defaults"] or any(configured_models["roles"].values())
+        configured_models["default_profile"]
+        or configured_models["profiles"]
+        or configured_models["defaults"]
+        or any(configured_models["roles"].values())
     )
+    execution_profile = resolve_execution_profile(configured_models)
     configured_budget = load_budget_config()
     budget_path = budget_config_path()
     budget_in_use = configured_budget != packaged_budget_policy()
@@ -1116,6 +1154,7 @@ def doctor_command(_: argparse.Namespace) -> CommandResult:
                 "model_policy": {
                     "config_path": str(config_path),
                     "configured": config_in_use,
+                    "execution_profile": public_execution_profile(execution_profile),
                 },
                 "budget_policy": budget_data,
                 "paths": {
@@ -1171,7 +1210,7 @@ def doctor_command(_: argparse.Namespace) -> CommandResult:
 
     model_checks: list[dict[str, Any]] = []
     for role in DEFAULT_MODELS:
-        config = effective_model_config(role, configured_models)
+        config = effective_model_config(role, configured_models, execution_profile)
         available, detail = model_available(config["provider"], config["model"])
         label = "OK" if available else "WARN"
         human_print(
@@ -1190,6 +1229,10 @@ def doctor_command(_: argparse.Namespace) -> CommandResult:
         f"OK   model config: {config_path} ({'configured' if config_in_use else 'packaged defaults'})"
     )
     human_print(
+        f"OK   execution profile: {execution_profile['name']} "
+        f"({execution_profile['kind']}, source={execution_profile['source']})"
+    )
+    human_print(
         f"OK   budget config: {budget_path} "
         f"({'configured' if budget_in_use else 'packaged defaults'}; "
         f"mode={configured_budget['enforcement']}, observational=true)"
@@ -1203,6 +1246,7 @@ def doctor_command(_: argparse.Namespace) -> CommandResult:
             "model_policy": {
                 "config_path": str(config_path),
                 "configured": config_in_use,
+                "execution_profile": public_execution_profile(execution_profile),
             },
             "budget_policy": budget_data,
             "paths": {
@@ -1221,7 +1265,7 @@ def run_agent_command(args: argparse.Namespace) -> int:
     role = manifest["roles"].get(args.role)
     if role is None:
         raise OrchestrationError(f"Unknown role in manifest: {args.role}")
-    if manifest.get("version") == 3:
+    if manifest.get("version", 0) >= 3:
         os.environ["PI_TMUX_ORCHESTRATOR_GENERATION"] = str(
             broker_role_generation(coord, args.role)
         )
@@ -1229,7 +1273,7 @@ def run_agent_command(args: argparse.Namespace) -> int:
         return run_rpc_agent(coord, manifest, args.role, role)
     project = manifest["project"]
     ensure_private_directory(Path(role["session_dir"]), parents=True)
-    if manifest.get("version") != 3:
+    if manifest.get("version", 0) < 3:
         prompt_path = Path(role["prompt_path"])
         require_regular_file(prompt_path, "role prompt", nonempty=True)
     command = [
@@ -1239,7 +1283,7 @@ def run_agent_command(args: argparse.Namespace) -> int:
         "--name",
         f"{Path(project).name} {args.role}",
     ]
-    if manifest.get("version") == 3:
+    if manifest.get("version", 0) >= 3:
         command.extend(["--session-id", role["session_id"]])
     command.extend(
         [
@@ -1255,14 +1299,14 @@ def run_agent_command(args: argparse.Namespace) -> int:
         command.append("--approve")
     if role.get("tools"):
         tools = (
-            BROKER_READ_ONLY_TOOLS if manifest.get("version") == 3 else role["tools"]
+            BROKER_READ_ONLY_TOOLS if manifest.get("version", 0) >= 3 else role["tools"]
         )
         command.extend(["--tools", tools])
-    elif manifest.get("version") == 3:
+    elif manifest.get("version", 0) >= 3:
         command.extend(
             ["--tools", "read,bash,edit,write,grep,find,ls,orchestrator_report"]
         )
-    if manifest.get("version") == 3:
+    if manifest.get("version", 0) >= 3:
         token_path = coord / f"{args.role}.token"
         require_regular_file(token_path, "worker broker token", nonempty=True)
         token = token_path.read_text(encoding="utf-8").strip()
@@ -1287,7 +1331,7 @@ def run_agent_command(args: argparse.Namespace) -> int:
     environment.pop("PI_TMUX_CONTROLLER_HOME", None)
     environment["PI_SKIP_VERSION_CHECK"] = "1"
     environment["PI_TELEMETRY"] = "0"
-    if manifest.get("version") == 3:
+    if manifest.get("version", 0) >= 3:
         guardrails = worker_guardrail_policy(coord)
         environment["PI_TMUX_ORCHESTRATOR_ROLE"] = args.role
         environment["PI_TMUX_ORCHESTRATOR_TOKEN"] = token

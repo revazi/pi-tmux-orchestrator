@@ -28,15 +28,16 @@ panes, file handoffs, relay scripts, or polling loops.
 2. Never approve an unfamiliar project. Parent trust does not transfer to child Pi sessions.
 3. Keep one writer: only the implementer may edit tracked files. Other roles are workflow-read-only but retain `bash` for verification and are not OS-sandboxed.
 4. Keep credentials, private documents, provider bodies, raw errors, diffs, and logs out of tasks and structured reports.
-5. Honor explicit user provider/model/thinking requests through `useParentModel` or `modelOverrides`. Use the bounded `models` action to resolve exact available IDs; never invent IDs or inspect credentials. Omitted overrides use the user's global configuration.
-6. Honor explicit per-run budget requests through `budgetOverrides`; never infer hard thresholds. Omitted values use the strict external user-global policy and packaged warn-only defaults.
-7. Use specialists only where their independent evidence is relevant.
-8. Worker skill discovery is disabled. Pass `workerSkills` or `--worker-skill ROLE=PATH` only for exact Markdown files the user explicitly reviewed; never infer or auto-load a skill.
-9. Orchestration workers bound read/grep/bash results before the next provider call. Follow emitted offset, refined-search, and targeted full-output guidance instead of requesting another broad dump.
-10. Before starting from an existing parent conversation, synthesize the tool's bounded `contextCapsule` from only task-relevant state, settled decisions, constraints, acceptance criteria, paths, evidence, open questions, and out-of-scope items. Never copy the full parent transcript.
-11. Never claim a synthetic probe or browser smoke is production wire acceptance.
-12. Do not push, merge, publish, deploy, or perform destructive cleanup without explicit authorization.
-13. Idle workers end their turn. A parent that is watching also ends its turn and relies on broker updates. Neither workers nor watching parents run sleeps or poll files, sockets, status, or tmux while waiting.
+5. Honor an explicit `economy`, `balanced`, `thorough`, or strict user-global custom profile through `profile`. Profiles change thinking only and never weaken review, tools, or routing. If omitted, use the configured default or packaged compatibility default.
+6. Honor explicit user provider/model/thinking requests through `useParentModel` or `modelOverrides`; these win over profile thinking. Use the bounded `models` action to resolve exact available IDs; never invent IDs or inspect credentials.
+7. Honor explicit per-run budget requests through `budgetOverrides`; never infer hard thresholds. Omitted values use the strict external user-global policy and packaged warn-only defaults.
+8. Use specialists only where their independent evidence is relevant.
+9. Worker skill discovery is disabled. Pass `workerSkills` or `--worker-skill ROLE=PATH` only for exact Markdown files the user explicitly reviewed; never infer or auto-load a skill.
+10. Orchestration workers bound read/grep/bash results before the next provider call. Follow emitted offset, refined-search, and targeted full-output guidance instead of requesting another broad dump.
+11. Before starting from an existing parent conversation, synthesize the tool's bounded `contextCapsule` from only task-relevant state, settled decisions, constraints, acceptance criteria, paths, evidence, open questions, and out-of-scope items. Never copy the full parent transcript.
+12. Never claim a synthetic probe or browser smoke is production wire acceptance.
+13. Do not push, merge, publish, deploy, or perform destructive cleanup without explicit authorization.
+14. Idle workers end their turn. A parent that is watching also ends its turn and relies on broker updates. Neither workers nor watching parents run sleeps or poll files, sockets, status, or tmux while waiting.
 
 ## Coordination model
 
@@ -85,14 +86,24 @@ Use the extension or a mode-`0600` temporary task file:
 pi-tmux-agents start \
   --project "$PWD" \
   --task-file /tmp/pi-agent-task.md \
-  --context-capsule-file /tmp/pi-agent-context.md
+  --context-capsule-file /tmp/pi-agent-context.md \
+  --profile balanced
 ```
 
 Default roles:
 
-- implementer: user-configured provider/model/thinking, then packaged fallback
-- reviewer: user-configured provider/model/thinking, then packaged fallback
+- implementer: selected-profile thinking, then user/explicit overrides
+- reviewer: selected-profile thinking, then user/explicit overrides
 - broker/status monitor
+
+Packaged profiles are deterministic thinking maps: `economy` uses
+medium/medium for implementer/reviewer, `balanced` uses high/high, and `thorough`
+preserves the previous xhigh/high values. Specialists use low-or-medium,
+medium, and high respectively. The packaged compatibility default is `thorough`
+until comparative provider usage and quality are measured; this is not a
+quality or savings recommendation. Strict version-2 user-global configuration
+may select a default and define complete custom mappings. Profiles do not select
+models, create roles, change tools, or skip review.
 
 Global model policy is read from `~/.pi/agent/tmux-orchestrator.json` (or
 `PI_TMUX_ORCHESTRATOR_CONFIG`). Explicit CLI or model-tool role overrides win.

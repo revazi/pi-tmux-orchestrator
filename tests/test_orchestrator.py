@@ -27,6 +27,7 @@ class SkillMetadataTests(unittest.TestCase):
             "configuration.py",
             "controller.py",
             "prompts.py",
+            "profiles.py",
             "protocol.py",
             "relay.py",
             "rpc_protocol.py",
@@ -442,7 +443,13 @@ class UtilityTests(unittest.TestCase):
                 )
                 self.assertEqual(
                     ORCHESTRATOR.load_model_config(),
-                    {"version": 1, "defaults": {}, "roles": {}},
+                    {
+                        "version": 2,
+                        "default_profile": None,
+                        "profiles": {},
+                        "defaults": {},
+                        "roles": {},
+                    },
                 )
 
             invalid = root / "invalid.json"
@@ -472,6 +479,114 @@ class UtilityTests(unittest.TestCase):
             with self.assertRaises(ORCHESTRATOR.OrchestrationError):
                 ORCHESTRATOR.load_model_config(linked)
 
+            project = root / "project"
+            project.mkdir()
+            project_config = project / "profile.json"
+            project_config.write_text(
+                '{"version":2,"defaults":{},"roles":{},"profiles":{}}',
+                encoding="utf-8",
+            )
+            with self.assertRaises(ORCHESTRATOR.OrchestrationError):
+                ORCHESTRATOR.load_model_config(project_config, project=project)
+
+    def test_execution_profiles_are_deterministic_customizable_and_strict(self) -> None:
+        legacy = ORCHESTRATOR.validate_model_config(
+            {"version": 1, "defaults": {}, "roles": {}}
+        )
+        self.assertEqual(legacy["version"], 2)
+        self.assertEqual(
+            ORCHESTRATOR.resolve_execution_profile(legacy),
+            {
+                "name": "thorough",
+                "kind": "packaged",
+                "source": "packaged-default",
+                "thinking": ORCHESTRATOR.PACKAGED_EXECUTION_PROFILES["thorough"],
+            },
+        )
+
+        custom_mapping = {
+            "implementer": "low",
+            "reviewer": "high",
+            "probe": "minimal",
+            "playwright": "medium",
+            "django": "medium",
+        }
+        configured = ORCHESTRATOR.validate_model_config(
+            {
+                "version": 2,
+                "defaultProfile": "review-heavy",
+                "profiles": {"review-heavy": custom_mapping},
+                "defaults": {"thinking": "medium"},
+                "roles": {"reviewer": {"thinking": "xhigh"}},
+            }
+        )
+        selected = ORCHESTRATOR.resolve_execution_profile(configured)
+        self.assertEqual(selected["name"], "review-heavy")
+        self.assertEqual(selected["kind"], "custom")
+        self.assertEqual(selected["source"], "user-global")
+        self.assertEqual(selected["thinking"], custom_mapping)
+        requested = ORCHESTRATOR.resolve_execution_profile(configured, "economy")
+        self.assertEqual(requested["source"], "per-run")
+        self.assertEqual(requested["thinking"]["implementer"], "medium")
+
+        arguments = argparse.Namespace(
+            implementer_provider=None,
+            implementer_model=None,
+            implementer_thinking="max",
+        )
+        effective = ORCHESTRATOR.role_config(
+            arguments, "implementer", configured, requested
+        )
+        self.assertEqual(effective["thinking"], "max")
+        arguments.implementer_thinking = None
+        effective = ORCHESTRATOR.role_config(
+            arguments, "implementer", configured, requested
+        )
+        self.assertEqual(effective["thinking"], "medium")
+
+        baseline = json.loads(
+            (ROOT / "tests/fixtures/execution-profile-baseline.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(
+            baseline["packaged_profiles"],
+            ORCHESTRATOR.PACKAGED_EXECUTION_PROFILES,
+        )
+        self.assertEqual(
+            baseline["packaged_default"], ORCHESTRATOR.DEFAULT_EXECUTION_PROFILE
+        )
+        self.assertEqual(
+            baseline["comparative_evidence"]["provider_usage"]["availability"],
+            "unavailable",
+        )
+        self.assertFalse(baseline["claims"]["recommended_default"])
+
+        for invalid in (
+            {
+                "version": 2,
+                "defaultProfile": "missing",
+                "profiles": {},
+                "defaults": {},
+                "roles": {},
+            },
+            {
+                "version": 2,
+                "profiles": {"economy": custom_mapping},
+                "defaults": {},
+                "roles": {},
+            },
+            {
+                "version": 2,
+                "profiles": {"partial": {"implementer": "low"}},
+                "defaults": {},
+                "roles": {},
+            },
+        ):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(ORCHESTRATOR.OrchestrationError):
+                    ORCHESTRATOR.validate_model_config(invalid)
+
     def test_parser_exposes_specialist_tasks_models_and_role_commands(self) -> None:
         parser = ORCHESTRATOR.build_parser()
         start = parser.parse_args(
@@ -479,6 +594,8 @@ class UtilityTests(unittest.TestCase):
                 "start",
                 "--task",
                 "Synthetic task",
+                "--profile",
+                "balanced",
                 "--with-playwright",
                 "--playwright-task",
                 "Browser check",
@@ -499,6 +616,7 @@ class UtilityTests(unittest.TestCase):
                 "max",
             ]
         )
+        self.assertEqual(start.profile, "balanced")
         self.assertTrue(start.with_playwright)
         self.assertEqual(start.playwright_task, "Browser check")
         self.assertEqual(start.playwright_provider, "synthetic-browser-provider")

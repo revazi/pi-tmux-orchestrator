@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "benchmark_kind": "execution-profile-policy-and-evidence-availability",
+  "fixed_cases": [
+    "simple",
+    "medium",
+    "multi-round"
+  ],
+  "packaged_default": "thorough",
+  "packaged_profiles": {
+    "economy": {
+      "implementer": "medium",
+      "reviewer": "medium",
+      "probe": "low",
+      "playwright": "medium",
+      "django": "medium"
+    },
+    "balanced": {
+      "implementer": "high",
+      "reviewer": "high",
+      "probe": "medium",
+      "playwright": "medium",
+      "django": "medium"
+    },
+    "thorough": {
+      "implementer": "xhigh",
+      "reviewer": "high",
+      "probe": "high",
+      "playwright": "high",
+      "django": "high"
+    }
+  },
+  "compatibility": {
+    "preserves_pre_profile_packaged_thinking": true,
+    "default_change_supported_by_comparative_evidence": false
+  },
+  "comparative_evidence": {
+    "provider_usage": {
+      "availability": "unavailable",
+      "required_metrics": [
+        "provider_calls",
+        "input_tokens",
+        "cache_read_tokens",
+        "cache_write_tokens",
+        "output_tokens",
+        "reasoning_tokens",
+        "cost_total"
+      ]
+    },
+    "quality": {
+      "availability": "unavailable",
+      "required_metrics": [
+        "acceptance_tests",
+        "reviewer_verdict",
+        "finding_count",
+        "revision_rounds"
+      ]
+    }
+  },
+  "claims": {
+    "provider_token_savings": false,
+    "billing_savings": false,
+    "quality_equivalence": false,
+    "recommended_default": false
+  }
+}
