@@ -23,11 +23,13 @@ from .broker_store import (
     prepare_broker_database,
     record_event,
     retained_budget_policy,
+    retained_implementation_flow,
     set_meta,
     utc_now,
 )
 from .constants import (
     BROKER_PROTOCOL_VERSION,
+    DEFAULT_IMPLEMENTATION_FLOW,
     MAX_BROKER_FRAME_BYTES,
     MAX_CONTEXT_CAPSULE_BYTES,
     MAX_RPC_COMMANDS,
@@ -885,8 +887,14 @@ class Broker:
             set_meta(database, "workflow_state", "active")
             record_event(database, "workflow_active", status="active")
         await self.broadcast_workflow("active", 1)
+        with connect_broker_database(self.coord, readonly=True) as database:
+            implementation_flow = retained_implementation_flow(database)
+        initial_kind = "plan" if implementation_flow == "phased" else "implementation"
         await self.assign(
-            "implementer", "implementation", 1, self._assignment("implementer", 1)
+            "implementer",
+            initial_kind,
+            1,
+            self._assignment("implementer", 1, initial_kind),
         )
         if "probe" in self.clients:
             await self.assign("probe", "probe", 1, self._assignment("probe", 1))
@@ -1514,6 +1522,15 @@ class Broker:
             return
         if role == "implementer" and report["kind"] == "plan":
             await self._deliver_run_state(("implementer",), round_number)
+            with connect_broker_database(self.coord, readonly=True) as database:
+                implementation_flow = retained_implementation_flow(database)
+            if implementation_flow == "phased":
+                await self.assign(
+                    "implementer",
+                    "implementation",
+                    round_number,
+                    self._assignment("implementer", round_number, "implementation"),
+                )
             return
         if role == "implementer":
             specialists = [
@@ -1604,6 +1621,7 @@ def initialize_broker_run(
     *,
     context_capsule: str = "",
     budget_policy: dict[str, Any] | None = None,
+    implementation_flow: str = DEFAULT_IMPLEMENTATION_FLOW,
     soft_role_tokens: int | None = None,
     soft_total_tokens: int | None = None,
 ) -> None:
@@ -1633,6 +1651,7 @@ def initialize_broker_run(
         soft_role_tokens=int(policy["warning"]["role"].get("operational_tokens", 0)),
         soft_total_tokens=int(policy["warning"]["run"].get("operational_tokens", 0)),
         budget_policy=policy,
+        implementation_flow=implementation_flow,
     )
     secure_write(
         coord / "startup.json",

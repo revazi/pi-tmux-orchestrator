@@ -159,6 +159,7 @@ Common options:
 
 - `--project PATH`
 - `--session NAME`
+- `--implementation-flow single|phased`: compatibility/simple assignment or bounded inspect/plan boundary
 - `--profile NAME`: packaged or strict user-global execution profile
 - `--context-capsule TEXT` or `--context-capsule-file PATH`: optional bounded parent recap
 - `--approve-project`: separately confirmed Pi trust bypass for inspected projects
@@ -222,8 +223,25 @@ kind matches the active assignment before atomically accepting one report.
 
 The latest plan is projected into the rolling run-state capsule. Only existing
 kind/count/usage metadata enters SQLite or Supervisor/status output; the plan
-body remains ephemeral/Pi-session state. Defining the contract does not itself
-change the normal workflow to create plan assignments.
+body remains ephemeral/Pi-session state.
+
+`--implementation-flow phased` and model-tool `implementationFlow: "phased"`
+select this path for complex tasks. Plan acceptance first delivers the latest
+bounded run state, then creates a distinct same-round `implementation`
+assignment. The worker bridge retains a newer assignment that arrives while the
+terminating plan tool awaits its broker response, so no acknowledgement-only
+provider turn is needed. At the next provider request, inspection assistant/tool
+turns are pruned; baseline, accepted plan, direct steering, and current
+implementation turns remain. `single` is the compatibility default and starts
+directly with implementation. Reviewer-requested repair rounds also start
+directly with implementation and receive the latest reviewer/specialist state.
+
+The fixed six-read synthetic fixture reports 49,462 to 671 serialized
+characters at the first implementation request, a 98.6% context-size proxy
+reduction. It explicitly records provider calls, provider tokens/cost, failed
+checks, and missed findings as unavailable and makes no savings or quality
+claim. Validate it with
+`node scripts/phased-implementation-baseline.mjs --check`.
 
 #### Worker result-volume limits
 
@@ -398,9 +416,13 @@ with live report observation.
 
 1. Every worker bridge connects to the owner-only run socket.
 2. The broker adds task/role baseline plus the optional parent context capsule to each Pi session without waking idle roles.
-3. It triggers only the implementer and optional initial probe.
-4. The implementer submits a bounded `implementation` report with `orchestrator_report`.
-5. Enabled specialists inspect the shared worktree and submit typed evidence.
+3. It triggers the optional initial probe and either a direct `implementation`
+   assignment (`single`) or a read-only `plan` assignment (`phased`).
+4. In phased flow the accepted plan becomes rolling run state and a distinct
+   same-round `implementation` assignment; in both flows the implementer ends
+   implementation with `orchestrator_report`.
+5. Enabled specialists inspect the shared worktree only after implementation and
+   submit typed evidence.
 6. Accepted evidence updates one latest-per-role run-state capsule bounded to 16 KiB of UTF-8; recipients no longer accumulate one context body for every historical report. Updates targeting an active role are coalesced until its next assignment.
 7. The broker supplies the latest run state to the reviewer and wakes it once.
 8. `changes_requested` supplies the coalesced latest run state and starts the next implementation round.

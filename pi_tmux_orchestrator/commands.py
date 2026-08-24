@@ -37,6 +37,7 @@ from .constants import (
     BROKER_COORDINATION,
     BROKER_PROTOCOL_VERSION,
     BROKER_READ_ONLY_TOOLS,
+    DEFAULT_IMPLEMENTATION_FLOW,
     DEFAULT_MODELS,
     MAX_CONTEXT_CAPSULE_BYTES,
     MAX_JSON_ITEMS,
@@ -384,9 +385,13 @@ def start_command(args: argparse.Namespace) -> CommandResult:
         for role, config in configs.items():
             validate_model(role, config)
 
+    implementation_flow = getattr(
+        args, "implementation_flow", DEFAULT_IMPLEMENTATION_FLOW
+    )
     data: dict[str, Any] = {
         "project": str(project),
         "session": session,
+        "implementation_flow": implementation_flow,
         "roles": [
             public_role(
                 role,
@@ -446,6 +451,7 @@ def start_command(args: argparse.Namespace) -> CommandResult:
         )
     human_print("  monitor: broker/status")
     human_print(f"Worker transport: {transport}")
+    human_print(f"Implementation flow: {implementation_flow}")
     human_print(
         f"Execution profile: {execution_profile['name']} "
         f"({execution_profile['kind']}, source={execution_profile['source']})"
@@ -517,6 +523,7 @@ def start_command(args: argparse.Namespace) -> CommandResult:
             role_tasks,
             context_capsule=context_capsule,
             budget_policy=budget_policy,
+            implementation_flow=implementation_flow,
         )
         create_tmux_grid(session, project, coord, roles, manifest)
         secure_write(coord / "startup-state", "RUNNING\n")
@@ -719,6 +726,7 @@ def status_command(args: argparse.Namespace) -> CommandResult:
         total_warning = " budget=warning" if usage["soft_total_budget_exceeded"] else ""
         human_print(
             f"Workflow: {workflow['state']} round={workflow['round']} "
+            f"flow={workflow.get('implementation_flow', DEFAULT_IMPLEMENTATION_FLOW)} "
             f"tokens={usage['total_tokens']}{total_warning}"
         )
         for worker in broker_snapshot["roles"]:

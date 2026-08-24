@@ -211,6 +211,8 @@ class JsonMainTests(unittest.TestCase):
                     canary,
                     "--profile",
                     "economy",
+                    "--implementation-flow",
+                    "phased",
                     "--context-capsule",
                     context_canary,
                     "--skip-model-check",
@@ -235,6 +237,7 @@ class JsonMainTests(unittest.TestCase):
             {"present": True, "chars": len(context_canary)},
         )
         self.assertEqual(data["transport"], "rpc")
+        self.assertEqual(data["implementation_flow"], "phased")
         self.assertEqual(
             data["execution_profile"],
             {"name": "economy", "kind": "packaged", "source": "per-run"},

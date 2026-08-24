@@ -245,6 +245,17 @@ class UtilityTests(unittest.TestCase):
         )
         self.assertEqual(parsed.context_capsule_file, "/private/context.md")
         self.assertIsNone(parsed.context_capsule)
+        self.assertEqual(parsed.implementation_flow, "single")
+        phased = ORCHESTRATOR.build_parser().parse_args(
+            [
+                "start",
+                "--task",
+                "Complex task",
+                "--implementation-flow",
+                "phased",
+            ]
+        )
+        self.assertEqual(phased.implementation_flow, "phased")
 
     def test_worker_skills_are_explicit_per_role_digest_bound_and_bounded(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

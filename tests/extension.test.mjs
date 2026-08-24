@@ -16,6 +16,7 @@ import {
 import { buildTokenEfficiencyBaseline } from "../scripts/token-efficiency-baseline.mjs";
 import { buildResultVolumeBaseline } from "../scripts/result-volume-baseline.mjs";
 import { buildExecutionProfileBaseline } from "../scripts/execution-profile-baseline.mjs";
+import { buildPhasedImplementationBaseline } from "../scripts/phased-implementation-baseline.mjs";
 import { buildWorkerPromptBaselineIfAvailable } from "../scripts/worker-prompt-baseline.mjs";
 
 const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
@@ -114,6 +115,7 @@ test("registers one bounded model tool and the exact canonical/alias command sur
   assert.equal(tool.parameters.properties.action.enum.includes("restart"), false);
   assert.equal(tool.parameters.properties.action.enum.includes("stop"), false);
   assert.equal(tool.parameters.properties.profile.pattern, "^[a-z][a-z0-9-]{0,31}$");
+  assert.deepEqual(tool.parameters.properties.implementationFlow.enum, ["single", "phased"]);
   assert.equal(tool.parameters.properties.budgetOverrides.additionalProperties, false);
   assert.equal(tool.parameters.properties.workerSkills.additionalProperties, false);
   assert.equal(tool.parameters.properties.workerSkills.properties.reviewer.maxItems, 8);
@@ -751,6 +753,30 @@ test("assistant and tool turns accumulate throughout the current assignment", ()
   }
 });
 
+test("phased same-round assignment keeps the new assignment active and prunes inspection turns", () => {
+  const plan = { id: FIRST_ASSIGNMENT, kind: "plan", round: 1 };
+  const implementation = { id: "b".repeat(32), kind: "implementation", round: 1 };
+  assert.equal(workerHooks.reportedAssignmentRemainsActive(plan, plan), true);
+  assert.equal(workerHooks.reportedAssignmentRemainsActive(implementation, plan), false);
+  const result = workerHooks.acceptedReportResult({ kind: "plan" }, plan, "implementer");
+  assert.equal(result.terminate, true);
+  assert.match(result.content[0].text, /End this turn; do not wait or poll/);
+
+  const messages = completedAssignmentHistory();
+  messages.push(
+    { role: "user", content: [{ type: "text", text: "direct steering remains" }] },
+    workerMessage({ kind: "context", delivery_kind: "run_state", round: 1 }, "accepted bounded plan"),
+    workerMessage({ kind: "assignment", assignment_id: implementation.id, round: 1 }, "implement from plan"),
+  );
+  const visible = workerHooks.filterWorkerContext(messages);
+  for (const canary of PRIOR_ASSIGNMENT_TURNS) {
+    assert.equal(visible.some((item) => item.content?.[0]?.text === canary), false);
+  }
+  assert.equal(visible.some((item) => item.content?.[0]?.text === "direct steering remains"), true);
+  assert.equal(visible.some((item) => item.content === "accepted bounded plan"), true);
+  assert.equal(visible.some((item) => item.content === "implement from plan"), true);
+});
+
 test("completed turns are pruned only at the next distinct assignment boundary", () => {
   const messages = completedAssignmentHistory();
   messages.push(
@@ -815,6 +841,25 @@ test("result-volume benchmark reports context reduction and pagination calls", a
   assert.equal(baseline.scenarios.grep.additional_provider_calls, 1);
   assert.equal(baseline.scenarios.bash.additional_provider_calls, 0);
   assert.match(baseline.caveat, /not provider tokens, billing, quality/);
+});
+
+test("phased implementation baseline records context proxy reduction without provider claims", async () => {
+  const baseline = buildPhasedImplementationBaseline();
+  const checkedIn = JSON.parse(
+    await readFile(new URL("fixtures/phased-implementation-baseline.json", import.meta.url), "utf8"),
+  );
+  assert.deepEqual(baseline, checkedIn);
+  assert.ok(baseline.reduction.percent >= 90);
+  assert.equal(baseline.single.direct_steering_retained, true);
+  assert.equal(baseline.phased.direct_steering_retained, true);
+  assert.equal(baseline.authoritative_evidence.provider_usage.availability, "unavailable");
+  assert.equal(baseline.authoritative_evidence.quality.availability, "unavailable");
+  assert.deepEqual(baseline.claims, {
+    provider_call_savings: false,
+    provider_token_savings: false,
+    billing_savings: false,
+    quality_equivalence: false,
+  });
 });
 
 test("execution-profile baseline keeps policy distinct from unavailable evidence", async () => {
@@ -1785,6 +1830,7 @@ test("start previews CLI policy, keeps private text out of argv, and cleans mode
         { name: "reviewer", provider: "provider", model: "reviewer", thinking: "high" },
       ],
       transport: args.includes("--rpc-workers") ? "rpc" : "tui",
+      implementation_flow: "phased",
       execution_profile: {
         name: args[args.indexOf("--profile") + 1],
         kind: "packaged",
@@ -1819,6 +1865,7 @@ test("start previews CLI policy, keeps private text out of argv, and cleans mode
       action: "start",
       task: canary,
       profile: "economy",
+      implementationFlow: "phased",
       contextCapsule: { currentState: contextCanary },
       rpcWorkers: true,
       workerSkills: { reviewer: ["/reviewed/reviewer/SKILL.md"] },
@@ -1830,6 +1877,7 @@ test("start previews CLI policy, keeps private text out of argv, and cleans mode
   assert.equal(calls, 2);
   assert.match(ctx.calls.confirmations[0].message, /ignores project executable resources/);
   assert.match(ctx.calls.confirmations[0].message, /Worker transport: rpc/);
+  assert.match(ctx.calls.confirmations[0].message, /Implementation flow: phased/);
   assert.match(ctx.calls.confirmations[0].message, /Execution profile: economy \(packaged, source=per-run\)/);
   assert.match(ctx.calls.confirmations[0].message, /provider\/writer/);
   assert.match(ctx.calls.confirmations[0].message, /warning\.run: operational_tokens=600000/);
@@ -1871,7 +1919,7 @@ test("controller mode requires and collects an explicit target project", async (
 
     const ctx = context({
       input: process.cwd(),
-      confirmations: [false, false, false, true],
+      confirmations: [false, false, false, false, true],
     });
     await commands.get("orchestrator-start").handler("synthetic", ctx);
     assert.equal(calls, 2);
@@ -1982,6 +2030,7 @@ test("canonical start command reuses private preview and explicit confirmation f
     execCalls += 1;
     assert.equal(args.includes(task), false);
     assert.equal(args.includes("--rpc-workers"), false);
+    assert.equal(args[args.indexOf("--implementation-flow") + 1], "phased");
     const taskPath = args[args.indexOf("--task-file") + 1];
     paths.push(taskPath);
     assert.equal((await stat(taskPath)).mode & 0o777, 0o600);
@@ -1999,7 +2048,7 @@ test("canonical start command reuses private preview and explicit confirmation f
       })),
     };
   });
-  const ctx = context({ confirmations: [false, false, false, true] });
+  const ctx = context({ confirmations: [true, false, false, false, true] });
   await commands.get("orchestrator-start").handler(task, ctx);
   assert.equal(execCalls, 2);
   assert.equal(ctx.calls.confirmations.at(-1).title, "Start tmux orchestration?");

@@ -66,15 +66,18 @@ node --check "$ROOT/extensions/orchestrator-models.js"
 node --check "$ROOT/extensions/orchestrator-parent.js"
 node --check "$ROOT/extensions/orchestrator-worker.js"
 node --check "$ROOT/extensions/orchestrator-result-policy.js"
+node --check "$ROOT/scripts/baseline-fixture.mjs"
 node --check "$ROOT/scripts/token-efficiency-baseline.mjs"
 node --check "$ROOT/scripts/result-volume-baseline.mjs"
 node --check "$ROOT/scripts/execution-profile-baseline.mjs"
+node --check "$ROOT/scripts/phased-implementation-baseline.mjs"
 node --check "$ROOT/scripts/worker-prompt-baseline.mjs"
 node --check "$ROOT/tests/fixtures/token-efficiency-fixtures.mjs"
 node --test "$ROOT/tests/extension.test.mjs"
 node "$ROOT/scripts/token-efficiency-baseline.mjs" --check
 node "$ROOT/scripts/result-volume-baseline.mjs" --check
 node "$ROOT/scripts/execution-profile-baseline.mjs" --check
+node "$ROOT/scripts/phased-implementation-baseline.mjs" --check
 node "$ROOT/scripts/worker-prompt-baseline.mjs" --check
 
 printf '%s\n' '==> Package verification, npm/Pi local-package install + RPC discovery, and offline publication dry run'
@@ -94,6 +97,7 @@ PATH="$TEMP_BIN:$PATH" "$ROOT/bin/pi-tmux-agents" start \
   --with-playwright \
   --with-django-expert \
   --profile economy \
+  --implementation-flow phased \
   --skip-model-check \
   --dry-run
 if tmux has-session -t =pi-repository-dry-run 2>/dev/null; then
