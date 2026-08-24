@@ -49,6 +49,14 @@ from .supervisor_commands import (
     supervisor_snapshot_command,
     supervisor_usage_command,
 )
+from .worker_resources import worker_skill_argument
+
+
+def worker_skill(value: str) -> tuple[str, str]:
+    try:
+        return worker_skill_argument(value)
+    except OrchestrationError as error:
+        raise argparse.ArgumentTypeError(str(error)) from error
 
 
 def rpc_event_cursor(value: str) -> int:
@@ -209,6 +217,14 @@ def build_parser() -> argparse.ArgumentParser:
     start.add_argument("--django-task")
     start.add_argument("--django-task-file")
     start.add_argument("--approve-project", action="store_true")
+    start.add_argument(
+        "--worker-skill",
+        action="append",
+        type=worker_skill,
+        default=[],
+        metavar="ROLE=PATH",
+        help="load one explicitly reviewed Markdown skill for one worker role; repeatable",
+    )
     start.add_argument(
         "--rpc-workers",
         action="store_true",

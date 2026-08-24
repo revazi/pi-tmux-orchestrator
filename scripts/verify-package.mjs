@@ -35,6 +35,7 @@ const pythonFiles = [
   "supervisor_commands.py",
   "tmux.py",
   "token_efficiency.py",
+  "worker_resources.py",
 ].map((name) => `pi_tmux_orchestrator/${name}`);
 const expectedFiles = [
   "CHANGELOG.md",

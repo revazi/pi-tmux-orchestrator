@@ -15,6 +15,7 @@ Provide a small, reusable, intentionally tmux-scoped Pi skill and modular standa
 - `pi_tmux_orchestrator/configuration.py`: strict user-global worker model policy
 - `pi_tmux_orchestrator/budgeting.py`: strict user-global and per-run usage budget policy
 - `pi_tmux_orchestrator/context_capsules.py`: bounded worker baseline and rolling run-state projections
+- `pi_tmux_orchestrator/worker_resources.py`: strict digest-bound per-role skill opt-ins and shared launch policy
 - `pi_tmux_orchestrator/dashboard.py`: adaptive metadata-only broker pane presentation
 - `pi_tmux_orchestrator/supervisor_api.py`: versioned durable-state read boundary
 - `pi_tmux_orchestrator/supervisor_commands.py`: thin CLI adapters for the supervisor API

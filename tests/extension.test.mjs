@@ -8,6 +8,7 @@ import extension, { testHooks } from "../extensions/tmux-orchestrator.js";
 import { updateTestHooks as updateHooks } from "../extensions/orchestrator-update.js";
 import { testHooks as workerHooks } from "../extensions/orchestrator-worker.js";
 import { buildTokenEfficiencyBaseline } from "../scripts/token-efficiency-baseline.mjs";
+import { buildWorkerPromptBaselineIfAvailable } from "../scripts/worker-prompt-baseline.mjs";
 
 const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 
@@ -105,6 +106,8 @@ test("registers one bounded model tool and the exact canonical/alias command sur
   assert.equal(tool.parameters.properties.action.enum.includes("restart"), false);
   assert.equal(tool.parameters.properties.action.enum.includes("stop"), false);
   assert.equal(tool.parameters.properties.budgetOverrides.additionalProperties, false);
+  assert.equal(tool.parameters.properties.workerSkills.additionalProperties, false);
+  assert.equal(tool.parameters.properties.workerSkills.properties.reviewer.maxItems, 8);
   assert.deepEqual(
     Object.keys(tool.parameters.properties.budgetOverrides.properties),
     ["enforcement", "warning", "hard"],
@@ -126,6 +129,10 @@ test("registers one bounded model tool and the exact canonical/alias command sur
   assert.match(
     tool.promptGuidelines.join(" "),
     /Once watching, end the turn.*never run sleep commands.*poll status\/tmux/,
+  );
+  assert.match(
+    tool.promptGuidelines.join(" "),
+    /Worker skill discovery is disabled.*exact Markdown paths.*explicitly reviewed/,
   );
   assert.deepEqual(
     [...commands.keys()],
@@ -370,6 +377,19 @@ test("assignment guardrail warning is bounded and restart state prevents duplica
     hard: { metric: "provider_calls", observed: 6, threshold: 6 },
     warningDelivered: true,
   });
+});
+
+test("actual Pi prompt options keep context, explicit skills, and read-only tools while reducing serialized overhead", async () => {
+  const checkedIn = JSON.parse(
+    await readFile(new URL("fixtures/worker-prompt-baseline.json", import.meta.url), "utf8"),
+  );
+  const measured = await buildWorkerPromptBaselineIfAvailable();
+  if (measured) assert.deepEqual(measured, checkedIn);
+  assert.equal(checkedIn.metric_scope, "model-free-built-worker-system-prompt");
+  assert.equal(checkedIn.after.skill_discovery, false);
+  assert.deepEqual(checkedIn.after.loaded_skills, ["opted"]);
+  assert.ok(checkedIn.after.characters < checkedIn.before.characters);
+  assert.match(checkedIn.caveat, /not provider tokens, billing, cache efficiency/);
 });
 
 test("worker queues baseline context before a triggered assignment turn", () => {
@@ -1481,6 +1501,7 @@ test("start previews CLI policy, keeps private text out of argv, and cleans mode
     calls += 1;
     assert.equal(args.includes(canary), false);
     assert.equal(args.includes(contextCanary), false);
+    assert.ok(args.includes("reviewer=/reviewed/reviewer/SKILL.md"));
     assert.ok(options.signal);
     const taskPath = args[args.indexOf("--task-file") + 1];
     const contextPath = args[args.indexOf("--context-capsule-file") + 1];
@@ -1511,6 +1532,10 @@ test("start previews CLI policy, keeps private text out of argv, and cleans mode
         warning: { run: { operational_tokens: 600000 }, role: {}, assignment: {} },
         hard: { run: {}, role: {}, assignment: {} },
       },
+      worker_resources: {
+        skill_discovery: false,
+        skills: { implementer: [], reviewer: ["/reviewed/reviewer/SKILL.md"] },
+      },
       paths: { state_root: "/tmp/external-state", coordination: dryRun ? null : "/tmp/external-state/run" },
     };
     return { code: 0, stdout: JSON.stringify(success("start", data)) };
@@ -1524,6 +1549,7 @@ test("start previews CLI policy, keeps private text out of argv, and cleans mode
       task: canary,
       contextCapsule: { currentState: contextCanary },
       rpcWorkers: true,
+      workerSkills: { reviewer: ["/reviewed/reviewer/SKILL.md"] },
     },
     signal,
     undefined,
@@ -1534,6 +1560,7 @@ test("start previews CLI policy, keeps private text out of argv, and cleans mode
   assert.match(ctx.calls.confirmations[0].message, /Worker transport: rpc/);
   assert.match(ctx.calls.confirmations[0].message, /provider\/writer/);
   assert.match(ctx.calls.confirmations[0].message, /warning\.run: operational_tokens=600000/);
+  assert.match(ctx.calls.confirmations[0].message, /reviewer: \/reviewed\/reviewer\/SKILL\.md/);
   assert.match(ctx.calls.confirmations[0].message, /Parent context capsule: [0-9]+ characters/);
   assert.equal(JSON.stringify(result).includes(canary), false);
   assert.equal(JSON.stringify(result).includes(contextCanary), false);
@@ -1747,13 +1774,26 @@ test("probe and specialist bodies also use unique private files and file-only ar
       assert.equal(await readFile(path, "utf8"), bodies[name]);
     }
     const argv = testHooks.buildStartArgs(
-      { withProbe: true, withPlaywright: true, withDjangoExpert: true, rpcWorkers: true },
+      {
+        withProbe: true,
+        withPlaywright: true,
+        withDjangoExpert: true,
+        rpcWorkers: true,
+        workerSkills: {
+          reviewer: ["/reviewed/reviewer-skill.md"],
+          probe: ["/reviewed/probe-skill.md"],
+        },
+      },
       process.cwd(),
       paths,
     );
     for (const body of Object.values(bodies)) assert.equal(argv.includes(body), false);
     for (const path of created) assert.ok(argv.includes(path));
     assert.ok(argv.includes("--rpc-workers"));
+    assert.deepEqual(
+      argv.filter((_value, index) => argv[index - 1] === "--worker-skill"),
+      ["reviewer=/reviewed/reviewer-skill.md", "probe=/reviewed/probe-skill.md"],
+    );
   });
   for (const path of created) await assert.rejects(access(path));
 });

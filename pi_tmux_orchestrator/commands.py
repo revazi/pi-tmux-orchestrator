@@ -92,6 +92,7 @@ from .tmux import (
     validate_model,
     validate_session_name,
 )
+from .worker_resources import append_worker_resource_args, resolve_worker_skills
 
 
 def role_config(
@@ -342,6 +343,12 @@ def start_command(args: argparse.Namespace) -> CommandResult:
         roles.append("django")
     configured_models = load_model_config()
     configs = {role: role_config(args, role, configured_models) for role in roles}
+    worker_skills = resolve_worker_skills(
+        getattr(args, "worker_skill", None),
+        roles,
+    )
+    for role in roles:
+        configs[role]["skills"] = worker_skills[role]
     configured_budget = load_budget_config(project=project)
     budget_policy = effective_budget_policy(
         configured_budget,
@@ -380,6 +387,12 @@ def start_command(args: argparse.Namespace) -> CommandResult:
             "polling": False,
         },
         "budget_policy": budget_policy,
+        "worker_resources": {
+            "skill_discovery": False,
+            "skills": {
+                role: [skill["path"] for skill in worker_skills[role]] for role in roles
+            },
+        },
         "trust": {
             "child_bypass": bool(args.approve_project),
             "policy": (
@@ -415,6 +428,10 @@ def start_command(args: argparse.Namespace) -> CommandResult:
         )
     human_print("  monitor: broker/status")
     human_print(f"Worker transport: {transport}")
+    human_print("Worker skill discovery: disabled")
+    for role in roles:
+        paths = [skill["path"] for skill in worker_skills[role]]
+        human_print(f"  {role} skills: {', '.join(paths) if paths else 'none'}")
     human_print(f"Budget policy mode: {budget_policy['enforcement']} (observational)")
     for level in ("warning", "hard"):
         for scope in ("run", "role", "assignment"):
@@ -1251,13 +1268,12 @@ def run_agent_command(args: argparse.Namespace) -> int:
         token = token_path.read_text(encoding="utf-8").strip()
         system_prompt_path = coord / f"{args.role}.system.md"
         secure_write(system_prompt_path, role_system_prompt(Path(project), args.role))
-        command.extend(
-            [
-                "--extension",
-                str(runtime.WORKER_EXTENSION_PATH),
-                "--append-system-prompt",
-                str(system_prompt_path),
-            ]
+        append_worker_resource_args(
+            command,
+            role,
+            args.role,
+            runtime.WORKER_EXTENSION_PATH,
+            system_prompt_path,
         )
     else:
         command.extend(

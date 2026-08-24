@@ -1908,9 +1908,9 @@ class PromptAndExtensionContractTests(unittest.TestCase):
 
         for role in ("implementer", "reviewer", "probe", "playwright", "django"):
             prompt = role_system_prompt(Path("/tmp/project"), role)
-            self.assertIn("End your turn", prompt)
-            self.assertIn("Never run sleep commands", prompt)
+            self.assertIn("end the turn", prompt)
+            self.assertIn("never sleep or poll", prompt)
             self.assertIn("orchestrator_report", prompt)
-            self.assertIn("Keep provider context efficient", prompt)
-            self.assertIn("Avoid rereading unchanged files", prompt)
+            self.assertIn("Prefer targeted reads", prompt)
+            self.assertIn("avoid rereading unchanged files", prompt)
             self.assertNotIn("handoff-N", prompt)

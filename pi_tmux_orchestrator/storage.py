@@ -30,6 +30,7 @@ from .constants import (
     READ_ONLY_TOOLS,
     ROLE_FIELDS,
     ROLE_V3_FIELDS,
+    ROLE_V3_RESOURCE_FIELDS,
     RPC_TRANSPORT,
     THINKING_LEVELS,
     TUI_TRANSPORT,
@@ -364,8 +365,14 @@ def validate_manifest(
 
     pane_ids = {monitor_pane_id}
     for role_name, role in roles.items():
-        expected_role_fields = ROLE_V3_FIELDS if version == 3 else ROLE_FIELDS
-        if not isinstance(role, dict) or set(role) != expected_role_fields:
+        if not isinstance(role, dict):
+            raise OrchestrationError(f"Manifest role {role_name} has invalid fields")
+        expected_role_fields = ROLE_FIELDS
+        if version == 3:
+            expected_role_fields = (
+                ROLE_V3_RESOURCE_FIELDS if "skills" in role else ROLE_V3_FIELDS
+            )
+        if set(role) != expected_role_fields:
             raise OrchestrationError(f"Manifest role {role_name} has invalid fields")
         for field in ("provider", "model"):
             field_value = role[field]
@@ -409,6 +416,10 @@ def validate_manifest(
                 raise OrchestrationError(
                     f"Manifest role {role_name} session ID is invalid"
                 )
+            if "skills" in role:
+                from .worker_resources import validate_retained_worker_skills
+
+                validate_retained_worker_skills(role["skills"], role_name)
         else:
             prompt_value = role["prompt_path"]
             expected_prompt = coord / f"{role_name}.prompt.md"
