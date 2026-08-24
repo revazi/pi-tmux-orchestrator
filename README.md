@@ -327,6 +327,31 @@ changes from 5,000 to 2,479 serialized characters (50.4%). This is a determinist
 prompt-size proxy, not provider tokens, billing, cache efficiency, or a savings
 claim; provider metadata remains authoritative.
 
+### Implementer inspect/plan contract
+
+The shared TUI/RPC worker bridge accepts a second implementer report kind,
+`plan`, only for an active assignment retained as `plan`. During such an
+assignment it switches the implementer to active tools
+`read,bash,grep,find,ls,orchestrator_report`; `edit`, `write`, and other tools are
+removed and blocked. As with specialist read-only policy, retained `bash` is not
+an OS sandbox, so the assignment and prompt also prohibit modification. Restart
+restores the assignment kind and reapplies the same tool set.
+
+A plan requires a summary plus relevant paths, relevant symbols, intended
+changes, required checks, risks, and open questions. Each array has at most 12
+strings of at most 300 characters; summary is at most 1,000 characters and
+relevant paths must be relative. Plans cannot contain changed paths, executed
+checks, findings, limitations, approval, or a verdict. The bridge and broker
+both validate the shape, role, assignment-kind match, 32 KiB total report limit,
+and one-report-per-assignment rule.
+
+Accepted plan evidence is rendered into the existing latest-per-role rolling
+run-state capsule. SQLite retains only its report kind, summary length, zero
+change/check/finding counts, numeric provider usage when available, and other
+existing metadata—not plan bodies. This contract does not yet route normal runs
+through multiple implementation phases; that separate workflow change is
+tracked independently.
+
 ### Worker result-volume policy
 
 Only orchestration workers apply an additional result policy before the next

@@ -25,6 +25,14 @@ const REPLACEABLE_CONTEXT_KINDS = new Set(["baseline", "run_state"]);
 const GUARDRAIL_LEVELS = ["warning", "hard"];
 const GUARDRAIL_METRICS = ["context_percent", "context_tokens", "provider_calls"];
 const INTEGER_GUARDRAIL_METRICS = new Set(["context_tokens", "provider_calls"]);
+const PLAN_REPORT_FIELDS = [
+  "kind", "summary", "relevant_paths", "relevant_symbols", "intended_changes",
+  "required_checks", "risks", "open_questions",
+];
+const PLAN_REPORT_MAX_ITEMS = 12;
+const PLAN_REPORT_MAX_ITEM_CHARS = 300;
+const PLAN_REPORT_MAX_SUMMARY_CHARS = 1000;
+const PLAN_READ_ONLY_TOOLS = new Set(["read", "bash", "grep", "find", "ls", "orchestrator_report"]);
 
 function id() {
   return randomBytes(16).toString("hex");
@@ -323,19 +331,35 @@ function text(value, limit) {
   return value;
 }
 
-function textArray(value, label) {
+function textArray(value, label, maximumItems = 50, maximumChars = 500) {
   if (value === undefined) return [];
-  if (!Array.isArray(value) || value.length > 50) throw new Error(`invalid_${label}`);
-  return value.map((item) => text(item, 500));
+  if (!Array.isArray(value) || value.length > maximumItems) throw new Error(`invalid_${label}`);
+  return value.map((item) => text(item, maximumChars));
+}
+
+function relativePaths(value, label, maximumItems = 50, maximumChars = 500) {
+  const paths = textArray(value, label, maximumItems, maximumChars);
+  if (paths.some((path) => path.startsWith("/") || [".", ".."].includes(path) || path.split("/").includes("..") || /[\u0000-\u001f\u007f]/.test(path))) {
+    throw new Error(`invalid_${label}`);
+  }
+  return paths;
+}
+
+function planArrayProperty() {
+  return {
+    type: "array",
+    maxItems: PLAN_REPORT_MAX_ITEMS,
+    items: { type: "string", maxLength: PLAN_REPORT_MAX_ITEM_CHARS },
+  };
 }
 
 function reportParameters(role) {
-  const kind = {
-    implementer: "implementation",
-    reviewer: "review",
-    probe: "probe",
-    playwright: "playwright",
-    django: "django",
+  const kinds = {
+    implementer: ["plan", "implementation"],
+    reviewer: ["review"],
+    probe: ["probe"],
+    playwright: ["playwright"],
+    django: ["django"],
   }[role];
   const verdicts = {
     reviewer: ["approved", "changes_requested"],
@@ -343,7 +367,7 @@ function reportParameters(role) {
     django: ["advisory_approved", "issues_found"],
   }[role];
   const properties = {
-    kind: { type: "string", enum: [kind] },
+    kind: { type: "string", enum: kinds },
     summary: { type: "string", maxLength: 2000 },
     checks: {
       type: "array", maxItems: 50,
@@ -369,6 +393,11 @@ function reportParameters(role) {
   const required = ["kind", "summary"];
   if (role === "implementer") {
     properties.changed_paths = { type: "array", maxItems: 50, items: { type: "string", maxLength: 500 } };
+    properties.relevant_paths = planArrayProperty();
+    properties.relevant_symbols = planArrayProperty();
+    properties.intended_changes = planArrayProperty();
+    properties.required_checks = planArrayProperty();
+    properties.open_questions = planArrayProperty();
   }
   if (verdicts) {
     properties.verdict = { type: "string", enum: verdicts };
@@ -377,59 +406,137 @@ function reportParameters(role) {
   return { type: "object", additionalProperties: false, required, properties };
 }
 
-function normalizeReport(input) {
-  if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("invalid_report");
-  const expectedKind = {
+function normalizedPlanReport(input) {
+  if (!exactObjectKeys(input, PLAN_REPORT_FIELDS)) throw new Error("invalid_plan_report_fields");
+  return {
+    kind: "plan",
+    summary: text(input.summary, PLAN_REPORT_MAX_SUMMARY_CHARS),
+    changed_paths: [],
+    checks: [],
+    findings: [],
+    relevant_paths: relativePaths(
+      input.relevant_paths, "relevant_paths", PLAN_REPORT_MAX_ITEMS, PLAN_REPORT_MAX_ITEM_CHARS,
+    ),
+    relevant_symbols: textArray(
+      input.relevant_symbols, "relevant_symbols", PLAN_REPORT_MAX_ITEMS, PLAN_REPORT_MAX_ITEM_CHARS,
+    ),
+    intended_changes: textArray(
+      input.intended_changes, "intended_changes", PLAN_REPORT_MAX_ITEMS, PLAN_REPORT_MAX_ITEM_CHARS,
+    ),
+    required_checks: textArray(
+      input.required_checks, "required_checks", PLAN_REPORT_MAX_ITEMS, PLAN_REPORT_MAX_ITEM_CHARS,
+    ),
+    risks: textArray(
+      input.risks, "risks", PLAN_REPORT_MAX_ITEMS, PLAN_REPORT_MAX_ITEM_CHARS,
+    ),
+    limitations: [],
+    open_questions: textArray(
+      input.open_questions, "open_questions", PLAN_REPORT_MAX_ITEMS, PLAN_REPORT_MAX_ITEM_CHARS,
+    ),
+    verdict: null,
+  };
+}
+
+function expectedReportKind(role, assignmentKind) {
+  if (role === "implementer" && assignmentKind === "plan") return "plan";
+  return {
     implementer: "implementation",
     reviewer: "review",
     probe: "probe",
     playwright: "playwright",
     django: "django",
-  }[ROLE];
-  if (input.kind !== expectedKind) throw new Error("invalid_report_kind");
-  const changedPaths = textArray(input.changed_paths, "changed_paths");
-  if (ROLE !== "implementer" && changedPaths.length) throw new Error("read_only_role_changed_paths");
-  const checks = input.checks ?? [];
-  if (!Array.isArray(checks) || checks.length > 50) throw new Error("invalid_checks");
-  const normalizedChecks = checks.map((check) => {
-    if (!check || typeof check !== "object" || !["passed", "failed", "skipped", "unknown"].includes(check.status)) {
-      throw new Error("invalid_check");
-    }
-    return { name: text(check.name, 500), status: check.status };
-  });
-  const findings = input.findings ?? [];
-  if (!Array.isArray(findings) || findings.length > 50) throw new Error("invalid_findings");
-  const normalizedFindings = findings.map((finding) => {
-    if (!finding || typeof finding !== "object" || !["critical", "high", "medium", "low", "info"].includes(finding.severity)) {
-      throw new Error("invalid_finding");
-    }
-    const line = finding.line ?? null;
-    if (line !== null && (!Number.isInteger(line) || line <= 0)) throw new Error("invalid_finding_line");
-    return {
-      severity: finding.severity,
-      path: finding.path == null ? null : text(finding.path, 500),
-      line,
-      summary: text(finding.summary, 500),
-      acceptance: finding.acceptance == null ? null : text(finding.acceptance, 500),
-    };
-  });
+  }[role];
+}
+
+function normalizeCheck(check) {
+  const valid = [
+    Boolean(check),
+    typeof check === "object",
+    ["passed", "failed", "skipped", "unknown"].includes(check?.status),
+  ].every(Boolean);
+  if (!valid) throw new Error("invalid_check");
+  return { name: text(check.name, 500), status: check.status };
+}
+
+function normalizeChecks(value) {
+  const checks = value ?? [];
+  if (![Array.isArray(checks), checks.length <= 50].every(Boolean)) throw new Error("invalid_checks");
+  return checks.map(normalizeCheck);
+}
+
+function optionalReportText(value) {
+  if (value == null) return null;
+  return text(value, 500);
+}
+
+function validFindingLine(value) {
+  if (value === null) return true;
+  return [Number.isInteger(value), value > 0].every(Boolean);
+}
+
+function normalizeFinding(finding) {
+  const value = Object(finding);
+  const valid = [
+    Boolean(finding),
+    typeof finding === "object",
+    ["critical", "high", "medium", "low", "info"].includes(value.severity),
+  ].every(Boolean);
+  if (!valid) throw new Error("invalid_finding");
+  const line = value.line ?? null;
+  if (!validFindingLine(line)) throw new Error("invalid_finding_line");
+  return {
+    severity: value.severity,
+    path: optionalReportText(value.path),
+    line,
+    summary: text(value.summary, 500),
+    acceptance: optionalReportText(value.acceptance),
+  };
+}
+
+function normalizeFindings(value) {
+  const findings = value ?? [];
+  if (![Array.isArray(findings), findings.length <= 50].every(Boolean)) throw new Error("invalid_findings");
+  return findings.map(normalizeFinding);
+}
+
+function normalizedVerdict(value, role) {
   const verdicts = {
     reviewer: ["approved", "changes_requested"],
     playwright: ["pass", "fail"],
     django: ["advisory_approved", "issues_found"],
-  }[ROLE];
-  const verdict = input.verdict ?? null;
-  if (verdicts ? !verdicts.includes(verdict) : verdict !== null) throw new Error("invalid_report_verdict");
+  }[role];
+  const verdict = value ?? null;
+  const valid = verdicts ? verdicts.includes(verdict) : verdict === null;
+  if (!valid) throw new Error("invalid_report_verdict");
+  return verdict;
+}
+
+function normalizedStandardReport(input, role) {
+  const allowedFields = new Set([
+    "kind", "summary", "changed_paths", "checks", "findings", "risks", "limitations", "verdict",
+  ]);
+  if (Object.keys(input).some((field) => !allowedFields.has(field))) throw new Error("invalid_report_fields");
+  const changedPaths = relativePaths(input.changed_paths, "changed_paths");
+  if (role !== "implementer" && changedPaths.length) throw new Error("read_only_role_changed_paths");
   return {
     kind: input.kind,
     summary: text(input.summary, 2000),
     changed_paths: changedPaths,
-    checks: normalizedChecks,
-    findings: normalizedFindings,
+    checks: normalizeChecks(input.checks),
+    findings: normalizeFindings(input.findings),
     risks: textArray(input.risks, "risks"),
     limitations: textArray(input.limitations, "limitations"),
-    verdict,
+    verdict: normalizedVerdict(input.verdict, role),
   };
+}
+
+function normalizeReport(input, assignmentKind, role = ROLE) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("invalid_report");
+  const expectedKind = expectedReportKind(role, assignmentKind);
+  if (input.kind !== expectedKind) throw new Error("invalid_report_kind");
+  return input.kind === "plan"
+    ? normalizedPlanReport(input)
+    : normalizedStandardReport(input, role);
 }
 
 const TOKEN_USAGE_KEYS = ["input", "output", "cacheRead", "cacheWrite"];
@@ -627,6 +734,24 @@ function shouldDeliverGuardrailWarning(activeAssignment, toolName, state) {
   ].every(Boolean);
 }
 
+function assignmentToolNames(normalTools, role, assignmentKind) {
+  if (role !== "implementer" || assignmentKind !== "plan") return [...normalTools];
+  return normalTools.filter((name) => PLAN_READ_ONLY_TOOLS.has(name));
+}
+
+function planToolDecision(activeAssignment, role, toolName) {
+  const planActive = [
+    role === "implementer",
+    Object(activeAssignment).kind === "plan",
+  ].every(Boolean);
+  if (!planActive) return undefined;
+  if (PLAN_READ_ONLY_TOOLS.has(toolName)) return undefined;
+  return {
+    block: true,
+    reason: "Inspect/plan assignments are read-only; inspect and submit a plan report without modifying the worktree.",
+  };
+}
+
 // fallow-ignore-next-line unused-export -- loaded explicitly by Python worker launch commands
 export default function orchestratorWorker(pi) {
   const guardrailPolicy = parseGuardrailPolicy(
@@ -647,6 +772,11 @@ export default function orchestratorWorker(pi) {
   const delivered = new Set();
   const toolInputPolicies = new Map();
   let pendingLimitedResults = [];
+  let normalTools = [];
+
+  function applyActiveToolPolicy() {
+    pi.setActiveTools(assignmentToolNames(normalTools, ROLE, activeAssignment?.kind));
+  }
 
   function restore(ctx) {
     const restored = restoreWorkerState(ctx.sessionManager.getEntries());
@@ -784,6 +914,7 @@ export default function orchestratorWorker(pi) {
         kind: value.kind,
         usageBaseline,
       };
+      applyActiveToolPolicy();
     }
     acknowledge(value.id, "accepted");
   }
@@ -864,13 +995,14 @@ export default function orchestratorWorker(pi) {
     promptSnippet: "Submit a final structured orchestration result and end the assignment",
     promptGuidelines: [
       "Use orchestrator_report exactly once as the final action for every active orchestration assignment.",
+      ...(ROLE === "implementer" ? ["For a plan assignment, report only relevant paths/symbols, intended changes, required checks, risks, and open questions; never claim changes, executed checks, findings, approval, or a verdict."] : []),
       "Report concise summaries, paths, checks, findings, risks, and limitations; never copy diffs, logs, prompts, credentials, provider bodies, or private payloads.",
       "After reporting, end the turn. Never wait, sleep, or poll for coordination work.",
     ],
     parameters: reportParameters(ROLE),
     async execute(_toolCallId, input, _signal, _onUpdate, ctx) {
       if (!activeAssignment) throw new Error("no_active_orchestration_assignment");
-      const report = normalizeReport(input);
+      const report = normalizeReport(input, activeAssignment.kind);
       const assignment = activeAssignment;
       const usage = reportUsage(ctx, assignment.usageBaseline);
       const response = await brokerRequest(message("report", {
@@ -882,6 +1014,7 @@ export default function orchestratorWorker(pi) {
       pi.appendEntry(DELIVERY_ENTRY, { kind: "report", assignment_id: assignment.id, report_id: response.id });
       activeAssignment = undefined;
       guardrailState = emptyGuardrailState();
+      applyActiveToolPolicy();
       return {
         content: [{ type: "text", text: `Structured ${report.kind} report accepted for round ${assignment.round}. End this turn; do not wait or poll.` }],
         details: { protocol_version: VERSION, assignment_id: assignment.id, round: assignment.round, role: ROLE, report },
@@ -914,6 +1047,8 @@ export default function orchestratorWorker(pi) {
 
   function onToolCall(event, ctx) {
     recordImmediateFollowup(event);
+    const planDecision = planToolDecision(activeAssignment, ROLE, event.toolName);
+    if (planDecision) return planDecision;
     prepareToolInput(event);
     if (!activeAssignment) return undefined;
     evaluateAssignmentGuardrails(ctx);
@@ -975,7 +1110,9 @@ export default function orchestratorWorker(pi) {
 
   pi.on("session_start", (_event, ctx) => {
     context = ctx;
+    normalTools = pi.getActiveTools();
     restore(ctx);
+    applyActiveToolPolicy();
     connect();
   });
   pi.on("context", (event) => ({
@@ -994,13 +1131,16 @@ export default function orchestratorWorker(pi) {
 
 export const testHooks = {
   appendGuardrailWarning,
+  assignmentToolNames,
   deliveryOptions,
   filterWorkerContext,
   firstGuardrailFinding,
   guardrailObservations,
   hardGuardrailThresholds,
   observationalGuardrailDecision,
+  normalizeReport,
   parseGuardrailPolicy,
+  planToolDecision,
   reportParameters,
   reportUsage,
   restoreGuardrailState,

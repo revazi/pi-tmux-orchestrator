@@ -859,7 +859,9 @@ class Broker:
                 "assignment_id": assignment["id"],
                 "round": assignment["round"],
                 "kind": assignment["kind"],
-                "content": self._assignment(client.role, assignment["round"]),
+                "content": self._assignment(
+                    client.role, assignment["round"], assignment["kind"]
+                ),
                 "trigger": True,
             },
         )
@@ -903,7 +905,7 @@ class Broker:
             self.task_bodies.get(role, ""),
         )
 
-    def _assignment(self, role: str, round_number: int) -> str:
+    def _assignment(self, role: str, round_number: int, kind: str | None = None) -> str:
         instructions = {
             "implementer": "Implement and verify the task. Submit a concise implementation report as your final action.",
             "probe": "Investigate the highest-risk assumptions read-only. Submit a concise probe report as your final action.",
@@ -911,6 +913,12 @@ class Broker:
             "django": "Inspect the current worktree for Django-specific correctness and operational risks. Submit a concise Django verdict as your final action.",
             "reviewer": "Inspect the current worktree and all supplied evidence independently. Submit an approval or changes-requested report as your final action.",
         }
+        if role == "implementer" and kind == "plan":
+            instructions[role] = (
+                "Inspect the task and worktree read-only. Do not modify files. Submit a "
+                "concise plan report with relevant paths/symbols, intended changes, "
+                "required checks, risks, and open questions as your final action."
+            )
         return (
             f"# Active assignment\n\nRound: {round_number}\n\n{instructions[role]}\n\n"
             "Do not wait, sleep, or poll after reporting; the tool ends this assignment."
@@ -1326,6 +1334,10 @@ class Broker:
                 raise OrchestrationError(
                     "Assignment is not active for this role", "conflict"
                 )
+            if assignment["kind"] != report["kind"]:
+                raise OrchestrationError(
+                    "Report kind does not match the active assignment", "forbidden"
+                )
             existing = database.execute(
                 "SELECT id FROM reports WHERE assignment_id=?", (assignment_id,)
             ).fetchone()
@@ -1499,6 +1511,9 @@ class Broker:
     ) -> None:
         if role == "probe":
             await self._deliver_run_state(("implementer", "reviewer"), round_number)
+            return
+        if role == "implementer" and report["kind"] == "plan":
+            await self._deliver_run_state(("implementer",), round_number)
             return
         if role == "implementer":
             specialists = [

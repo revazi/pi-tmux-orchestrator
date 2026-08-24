@@ -80,7 +80,12 @@ poll and must end the turn when there is no active assignment.
    to acknowledge approval. Budget metadata cannot skip required review or make
    a workflow ready.
 
-Only the implementer has normal write tools. Other roles are read-only.
+Only the implementer has normal write tools. Other roles are read-only. When the
+broker creates an implementer `plan` assignment, the shared bridge temporarily
+removes `edit` and `write` from that worker's active tools and blocks any other
+non-plan tool call. Normal implementer tools are restored only after the plan
+assignment terminates. As with every workflow-read-only role, retained `bash`
+access is not an OS sandbox; the prompt and protocol still prohibit modification.
 
 ## Parent observer
 
@@ -116,25 +121,43 @@ state.
 
 The worker bridge exposes one terminating tool: `orchestrator_report`.
 
-Common bounded fields:
+Implementation, review, and specialist reports use these common bounded fields:
 
 - `kind`
 - `summary` (2,000 characters)
-- `changed_paths` (implementer only)
+- `changed_paths` (implementer implementation only)
 - `checks`
 - `findings`
 - `risks`
 - `limitations`
 - role-specific `verdict`
 
-Arrays contain at most 50 entries; individual entries contain at most 500
-characters. The total canonical report is at most 32 KiB. Agents inspect the
-shared worktree instead of copying diffs or logs into reports.
+Those arrays contain at most 50 entries; individual entries contain at most 500
+characters. An implementer `plan` report instead requires exactly:
+
+- `kind: "plan"`
+- `summary` (1,000 characters)
+- `relevant_paths`
+- `relevant_symbols`
+- `intended_changes`
+- `required_checks`
+- `risks`
+- `open_questions`
+
+Each plan array contains at most 12 strings of at most 300 characters.
+`relevant_paths` must be bounded relative paths. A plan cannot include or claim
+`changed_paths`, executed `checks`, `findings`, `limitations`, approval, or any
+`verdict`. It is accepted only from the implementer for an active assignment
+whose retained kind is also `plan`.
+
+Every total canonical report remains at most 32 KiB. Agents inspect the shared
+worktree instead of copying diffs or logs into reports.
 
 Valid report/verdict combinations:
 
 | Role | Kind | Verdict |
 |---|---|---|
+| implementer | `plan` | none; plan fields only |
 | implementer | `implementation` | none |
 | reviewer | `review` | `approved`, `changes_requested` |
 | probe | `probe` | none |
@@ -171,8 +194,9 @@ lowercase hexadecimal values.
   observed value, and configured threshold. The broker verifies role ownership
   and the retained effective policy, then immutably stores at most one warning
   and one hard fact per assignment. Matching retries are duplicates.
-- One report is accepted per assignment. Current bridges attach cumulative and
-  boundary-delta provider usage to the report request. The broker validates and
+- One report is accepted per assignment, and its kind must match the retained
+  assignment kind. Current bridges attach cumulative and boundary-delta provider
+  usage to the report request. The broker validates and
   stores that numeric snapshot in the same transaction as report acceptance,
   before any downstream routing. A duplicate report receives a duplicate
   acknowledgement and cannot replace the first usage result; legacy reports
@@ -186,7 +210,9 @@ lowercase hexadecimal values.
   replays the bounded per-role baseline and materializes the latest coalesced
   run-state capsule, including any replacement deferred while that assignment
   was active. It then rotates the assignment delivery ID to trigger confirmed
-  recovery without creating another assignment boundary.
+  recovery without creating another assignment boundary. A recovered plan
+  assignment reapplies the plan active-tool restriction before another provider
+  turn.
 - If local worker respawn fails after restart preparation is acknowledged, the
   CLI submits a body-free authenticated `restart_failed` control command. The
   broker authoritatively marks the role and workflow `uncertain` and records a

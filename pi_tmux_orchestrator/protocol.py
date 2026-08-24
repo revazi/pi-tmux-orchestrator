@@ -11,6 +11,9 @@ from .constants import (
     BROKER_PROTOCOL_VERSION,
     KNOWN_ROLES,
     MAX_BROKER_FRAME_BYTES,
+    MAX_PLAN_REPORT_ITEM_CHARS,
+    MAX_PLAN_REPORT_ITEMS,
+    MAX_PLAN_REPORT_SUMMARY_CHARS,
     MAX_REPORT_BYTES,
     MAX_REPORT_ITEM_CHARS,
     MAX_REPORT_ITEMS,
@@ -19,7 +22,9 @@ from .constants import (
 )
 from .models import OrchestrationError
 
-REPORT_KINDS = frozenset({"implementation", "review", "probe", "playwright", "django"})
+REPORT_KINDS = frozenset(
+    {"plan", "implementation", "review", "probe", "playwright", "django"}
+)
 VERDICTS = frozenset(
     {
         "approved",
@@ -54,17 +59,145 @@ def _bounded_string(
     return value
 
 
-def _bounded_strings(value: object, label: str) -> list[str]:
-    if not isinstance(value, list) or len(value) > MAX_REPORT_ITEMS:
+def _bounded_strings(
+    value: object,
+    label: str,
+    *,
+    maximum_items: int = MAX_REPORT_ITEMS,
+    maximum_chars: int = MAX_REPORT_ITEM_CHARS,
+) -> list[str]:
+    if not isinstance(value, list) or len(value) > maximum_items:
         raise OrchestrationError(f"{label} must be a bounded array", "invalid_protocol")
-    return [
-        _bounded_string(item, f"{label} item", MAX_REPORT_ITEM_CHARS) for item in value
-    ]
+    return [_bounded_string(item, f"{label} item", maximum_chars) for item in value]
+
+
+def _relative_paths(
+    value: object,
+    label: str,
+    *,
+    maximum_items: int,
+    maximum_chars: int = MAX_REPORT_ITEM_CHARS,
+) -> list[str]:
+    paths = _bounded_strings(
+        value,
+        label,
+        maximum_items=maximum_items,
+        maximum_chars=maximum_chars,
+    )
+    for path in paths:
+        if (
+            path.startswith("/")
+            or path in {".", ".."}
+            or ".." in path.split("/")
+            or not PATH_PATTERN.fullmatch(path)
+        ):
+            raise OrchestrationError(
+                f"{label} must contain bounded relative paths", "invalid_protocol"
+            )
+    return paths
+
+
+def _empty_common_report(kind: str, summary: str) -> dict[str, Any]:
+    return {
+        "kind": kind,
+        "summary": summary,
+        "changed_paths": [],
+        "checks": [],
+        "findings": [],
+        "risks": [],
+        "limitations": [],
+        "verdict": None,
+    }
+
+
+def _validate_plan_report(value: dict[str, Any], role: str) -> dict[str, Any]:
+    fields = {
+        "kind",
+        "summary",
+        "relevant_paths",
+        "relevant_symbols",
+        "intended_changes",
+        "required_checks",
+        "risks",
+        "open_questions",
+    }
+    if role != "implementer":
+        raise OrchestrationError(
+            "Plan reports are permitted only for the implementer", "forbidden"
+        )
+    if set(value) != fields:
+        raise OrchestrationError(
+            "Plan report has missing or unknown fields", "invalid_protocol"
+        )
+    report = _empty_common_report(
+        "plan",
+        _bounded_string(
+            value["summary"],
+            "Plan summary",
+            MAX_PLAN_REPORT_SUMMARY_CHARS,
+        ),
+    )
+    report.update(
+        {
+            "relevant_paths": _relative_paths(
+                value["relevant_paths"],
+                "relevant_paths",
+                maximum_items=MAX_PLAN_REPORT_ITEMS,
+                maximum_chars=MAX_PLAN_REPORT_ITEM_CHARS,
+            ),
+            "relevant_symbols": _bounded_strings(
+                value["relevant_symbols"],
+                "relevant_symbols",
+                maximum_items=MAX_PLAN_REPORT_ITEMS,
+                maximum_chars=MAX_PLAN_REPORT_ITEM_CHARS,
+            ),
+            "intended_changes": _bounded_strings(
+                value["intended_changes"],
+                "intended_changes",
+                maximum_items=MAX_PLAN_REPORT_ITEMS,
+                maximum_chars=MAX_PLAN_REPORT_ITEM_CHARS,
+            ),
+            "required_checks": _bounded_strings(
+                value["required_checks"],
+                "required_checks",
+                maximum_items=MAX_PLAN_REPORT_ITEMS,
+                maximum_chars=MAX_PLAN_REPORT_ITEM_CHARS,
+            ),
+            "risks": _bounded_strings(
+                value["risks"],
+                "risks",
+                maximum_items=MAX_PLAN_REPORT_ITEMS,
+                maximum_chars=MAX_PLAN_REPORT_ITEM_CHARS,
+            ),
+            "open_questions": _bounded_strings(
+                value["open_questions"],
+                "open_questions",
+                maximum_items=MAX_PLAN_REPORT_ITEMS,
+                maximum_chars=MAX_PLAN_REPORT_ITEM_CHARS,
+            ),
+        }
+    )
+    return report
 
 
 def validate_report(value: object, role: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise OrchestrationError("Report must be an object", "invalid_protocol")
+    if not {"kind", "summary"}.issubset(value):
+        raise OrchestrationError(
+            "Report has missing or unknown fields", "invalid_protocol"
+        )
+    kind = value["kind"]
+    if not isinstance(kind, str):
+        raise OrchestrationError("Report kind is invalid", "invalid_protocol")
+    if kind == "plan":
+        report = _validate_plan_report(value, role)
+        encoded = json.dumps(report, separators=(",", ":"), ensure_ascii=False).encode()
+        if len(encoded) > MAX_REPORT_BYTES:
+            raise OrchestrationError(
+                "Report exceeds the protocol limit", "invalid_protocol"
+            )
+        return report
     allowed = {
         "kind",
         "summary",
@@ -75,11 +208,10 @@ def validate_report(value: object, role: str) -> dict[str, Any]:
         "limitations",
         "verdict",
     }
-    if not set(value).issubset(allowed) or not {"kind", "summary"}.issubset(value):
+    if not set(value).issubset(allowed):
         raise OrchestrationError(
             "Report has missing or unknown fields", "invalid_protocol"
         )
-    kind = value["kind"]
     expected_kind = {
         "implementer": "implementation",
         "reviewer": "review",
@@ -91,30 +223,16 @@ def validate_report(value: object, role: str) -> dict[str, Any]:
         raise OrchestrationError(
             "Report kind is not permitted for this role", "forbidden"
         )
-    report: dict[str, Any] = {
-        "kind": kind,
-        "summary": _bounded_string(
-            value["summary"], "Report summary", MAX_REPORT_SUMMARY_CHARS
-        ),
-        "changed_paths": [],
-        "checks": [],
-        "findings": [],
-        "risks": [],
-        "limitations": [],
-        "verdict": None,
-    }
+    report = _empty_common_report(
+        kind,
+        _bounded_string(value["summary"], "Report summary", MAX_REPORT_SUMMARY_CHARS),
+    )
     changed_paths = value.get("changed_paths", [])
-    report["changed_paths"] = _bounded_strings(changed_paths, "changed_paths")
-    for path in report["changed_paths"]:
-        if (
-            path.startswith("/")
-            or path in {".", ".."}
-            or ".." in path.split("/")
-            or not PATH_PATTERN.fullmatch(path)
-        ):
-            raise OrchestrationError(
-                "changed_paths must be bounded relative paths", "invalid_protocol"
-            )
+    report["changed_paths"] = _relative_paths(
+        changed_paths,
+        "changed_paths",
+        maximum_items=MAX_REPORT_ITEMS,
+    )
     if role != "implementer" and report["changed_paths"]:
         raise OrchestrationError(
             "Read-only roles cannot report changed paths", "forbidden"

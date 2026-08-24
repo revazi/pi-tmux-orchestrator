@@ -121,6 +121,38 @@ def render_worker_baseline(
     return baseline
 
 
+def _plan_report_lines(report: dict[str, Any]) -> list[str]:
+    fields = (
+        ("Relevant paths", "relevant_paths", 350),
+        ("Relevant symbols", "relevant_symbols", 350),
+        ("Intended changes", "intended_changes", 550),
+        ("Required checks", "required_checks", 350),
+        ("Risks", "risks", 300),
+        ("Open questions", "open_questions", 300),
+    )
+    return [
+        f"{label} ({len(report.get(key, []))}): "
+        f"{_compact_collection(report.get(key, []), limit)}"
+        for label, key, limit in fields
+    ]
+
+
+def _standard_report_lines(report: dict[str, Any]) -> list[str]:
+    return [
+        f"Verdict: {_clip_text(report.get('verdict') or 'none', 100)}",
+        f"Findings ({len(report.get('findings', []))}): "
+        f"{_compact_collection(_prioritized_report_items('findings', report.get('findings', [])), 700)}",
+        f"Risks ({len(report.get('risks', []))}): "
+        f"{_compact_collection(report.get('risks', []), 350)}",
+        f"Changed paths ({len(report.get('changed_paths', []))}): "
+        f"{_compact_collection(report.get('changed_paths', []), 300)}",
+        f"Checks ({len(report.get('checks', []))}): "
+        f"{_compact_collection(_prioritized_report_items('checks', report.get('checks', [])), 300)}",
+        f"Limitations ({len(report.get('limitations', []))}): "
+        f"{_compact_collection(report.get('limitations', []), 250)}",
+    ]
+
+
 def render_run_state_capsule(
     report_events: list[dict[str, Any]], round_number: int
 ) -> str:
@@ -151,21 +183,16 @@ def render_run_state_capsule(
         if event is None:
             continue
         report = event["report"]
+        details = (
+            _plan_report_lines(report)
+            if report.get("kind") == "plan"
+            else _standard_report_lines(report)
+        )
         section = "\n".join(
             [
-                f"## {role} · round {event['round']}",
+                f"## {role} · round {event['round']} · {report.get('kind', 'unknown')}",
                 f"Summary: {_clip_utf8(report.get('summary', ''), 1_000)}",
-                f"Verdict: {_clip_text(report.get('verdict') or 'none', 100)}",
-                f"Findings ({len(report.get('findings', []))}): "
-                f"{_compact_collection(_prioritized_report_items('findings', report.get('findings', [])), 700)}",
-                f"Risks ({len(report.get('risks', []))}): "
-                f"{_compact_collection(report.get('risks', []), 350)}",
-                f"Changed paths ({len(report.get('changed_paths', []))}): "
-                f"{_compact_collection(report.get('changed_paths', []), 300)}",
-                f"Checks ({len(report.get('checks', []))}): "
-                f"{_compact_collection(_prioritized_report_items('checks', report.get('checks', [])), 300)}",
-                f"Limitations ({len(report.get('limitations', []))}): "
-                f"{_compact_collection(report.get('limitations', []), 250)}",
+                *details,
             ]
         )
         sections.append(_clip_utf8(section, RUN_STATE_REPORT_BYTES))

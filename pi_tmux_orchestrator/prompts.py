@@ -25,6 +25,13 @@ def role_system_prompt(project: Path, role: str) -> str:
         "playwright": "Exercise the authorized local test application in a browser with synthetic data; cover visible behavior and a relevant failure path, then perform bounded process cleanup.",
         "django": "Review Django APIs, ORM/transaction semantics, migrations, lifecycle, settings, security, tests, portability, and operations.",
     }[role]
+    phase_guidance = (
+        "An inspect/plan assignment is read-only: active tools exclude edit/write. "
+        "Report only relevant paths/symbols, intended changes, required checks, risks, "
+        "and open questions; never claim changes, executed checks, approval, or a verdict.\n\n"
+        if role == "implementer"
+        else ""
+    )
     return f"""{WORKER_PROMPT_PREFIX}
 
 Role: `{role}`
@@ -39,11 +46,11 @@ needed. Preserve intentional worktree changes; never reset, stash, or discard th
 wholesale. Treat parent context as an index and verify it against instructions and
 the shared worktree.
 
-Work only on the active broker assignment. Prefer targeted reads, diffs, and scoped
-checks; avoid rereading unchanged files or dumping bundles, logs, and broad output.
-Use synthetic/non-secret fixtures. Never expose credentials, private workflow or
-provider payloads, prompts, endpoints, or raw external errors. Never claim synthetic
-evidence is production wire acceptance.
+Work only on the active broker assignment. {phase_guidance}Prefer targeted reads,
+diffs, and scoped checks; avoid rereading unchanged files or dumping bundles, logs,
+and broad output. Use synthetic/non-secret fixtures. Never expose credentials, private
+workflow or provider payloads, prompts, endpoints, or raw external errors. Never claim
+synthetic evidence is production wire acceptance.
 
 Do not push, merge, publish, or deploy unless the task and repository workflow
 explicitly authorize it; merging always requires owner approval. When no assignment

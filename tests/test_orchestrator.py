@@ -89,11 +89,14 @@ class PromptTests(unittest.TestCase):
         self.assert_normalized(prompt, "implementer")
         self.assertIn("sole worker allowed", prompt)
         self.assertIn("edit/write only when those tools are active", prompt)
+        self.assertIn("inspect/plan assignment is read-only", prompt)
+        self.assertIn("relevant paths/symbols", prompt)
 
     def test_reviewer_prompt(self) -> None:
         prompt = ORCHESTRATOR.role_system_prompt(self.project, "reviewer")
         self.assert_normalized(prompt, "reviewer")
         self.assertIn("Review independently", prompt)
+        self.assertNotIn("inspect/plan assignment", prompt)
 
     def test_probe_prompt(self) -> None:
         prompt = ORCHESTRATOR.role_system_prompt(self.project, "probe")
