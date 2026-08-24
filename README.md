@@ -380,6 +380,7 @@ pi-tmux-agents --json supervisor capabilities
 pi-tmux-agents --json supervisor sessions
 pi-tmux-agents --json supervisor runs SESSION
 pi-tmux-agents --json supervisor snapshot SESSION --run RUN_ID
+pi-tmux-agents --json supervisor usage SESSION --run RUN_ID --limit 100
 pi-tmux-agents --json supervisor events SESSION --run RUN_ID \
   --cursor implementer=0 --cursor reviewer=0 --limit 50
 pi-tmux-agents --json supervisor command SESSION --run RUN_ID \
@@ -392,7 +393,12 @@ lifecycle, workflow round/state, actual provider usage totals when available,
 latest immutable assignment usage, and context pressure without workflow payload
 bodies. In Supervisor snapshots, the latest result is
 `roles[].runtime.state.latest_assignment_usage`; retained pre-upgrade reports
-keep its `usage` value unavailable.
+keep its `usage` value unavailable. `supervisor usage` returns a bounded,
+tmux-independent summary grouped by run, role, round, and assignment kind. It
+keeps provider calls, input, cache read/write, output, optional reasoning, cost,
+and context pressure separate; `operational_tokens` is explicitly not billing.
+The live dashboard renders role tokens as cumulative/latest-assignment delta,
+and human `status` adds one bounded latest-assignment category line per role.
 
 ## Durable state and compatibility
 

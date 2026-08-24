@@ -98,6 +98,84 @@ class JsonMainTests(unittest.TestCase):
         self.assertTrue(envelope["data"]["metadata_only"])
         self.assertNotIn("tmux list", raw)
 
+    def test_supervisor_usage_json_keeps_assignment_categories_separate(self) -> None:
+        canary = "PRIVATE_USAGE_BODY_CANARY"
+        data = {
+            "api_version": "2",
+            "session": "pi-test",
+            "run_id": "run-1",
+            "available": True,
+            "availability": "available",
+            "cumulative": {
+                "provider_calls": 2,
+                "input_tokens": 40,
+                "output_tokens": 10,
+                "cache_read_tokens": 120,
+                "cache_write_tokens": 5,
+                "reasoning_tokens": None,
+                "cost_total": 0.25,
+                "operational_tokens": 175,
+            },
+            "roles": [
+                {
+                    "role": "reviewer",
+                    "cumulative": {
+                        "provider_calls": 2,
+                        "input_tokens": 40,
+                        "output_tokens": 10,
+                        "cache_read_tokens": 120,
+                        "cache_write_tokens": 5,
+                        "reasoning_tokens": None,
+                        "cost_total": 0.25,
+                        "operational_tokens": 175,
+                    },
+                    "assignments": [
+                        {
+                            "assignment_id": "a" * 32,
+                            "round": 1,
+                            "kind": "review",
+                            "usage": {
+                                "provider_calls": 1,
+                                "input_tokens": 20,
+                                "output_tokens": 5,
+                                "cache_read_tokens": 60,
+                                "cache_write_tokens": 0,
+                                "reasoning_tokens": None,
+                                "cost_total": 0.1,
+                                "operational_tokens": 85,
+                            },
+                        }
+                    ],
+                }
+            ],
+            "assignment_count": 1,
+            "assignment_usage_unavailable": 0,
+            "truncated": False,
+            "limit": 10,
+            "semantics": {"payload_bodies_included": False},
+            "paths": {"coordination": "/private/run"},
+        }
+        with mock.patch.object(ORCHESTRATOR, "supervisor_usage", return_value=data):
+            code, envelope, raw, stderr = self.run_main(
+                [
+                    "--json",
+                    "supervisor",
+                    "usage",
+                    "pi-test",
+                    "--run",
+                    "run-1",
+                    "--limit",
+                    "10",
+                ]
+            )
+        self.assertEqual(code, 0)
+        self.assertEqual(stderr, "")
+        self.assert_envelope(envelope, "supervisor", True)
+        assignment = envelope["data"]["roles"][0]["assignments"][0]
+        self.assertEqual(assignment["usage"]["input_tokens"], 20)
+        self.assertEqual(assignment["usage"]["cache_read_tokens"], 60)
+        self.assertNotIn(canary, raw)
+
     def test_supervisor_parser_failures_are_attributed_and_bounded(self) -> None:
         code, envelope, _, stderr = self.run_main(
             [

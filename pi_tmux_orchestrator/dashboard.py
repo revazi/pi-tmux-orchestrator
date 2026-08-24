@@ -222,6 +222,18 @@ def _format_tokens(value: object) -> str:
     return f"{number}m"
 
 
+def _format_role_tokens(role: dict[str, Any]) -> str:
+    cumulative = _format_tokens(role.get("total_tokens"))
+    latest = role.get("latest_assignment_usage")
+    if not isinstance(latest, dict):
+        return cumulative
+    usage = latest.get("usage")
+    if not isinstance(usage, dict):
+        return f"{cumulative}/+—"
+    assignment = _format_tokens(usage.get("operational_tokens"))
+    return f"{cumulative}/+{assignment}"
+
+
 def _format_context(role: dict[str, Any]) -> str:
     value = role.get("context_percent")
     if not isinstance(value, (int, float)) or isinstance(value, bool) or value < 0:
@@ -372,7 +384,7 @@ def _full_role_lines(
         ("ASSIGNMENT", "work"),
         ("MODEL", "model"),
         ("THINK", "think"),
-        ("TOKENS", "tokens"),
+        ("TOTAL/Δ", "tokens"),
         ("CTX", "context"),
     ]
     header = Span(
@@ -387,7 +399,7 @@ def _full_role_lines(
         connection_semantic = "success" if role.get("connected") is True else "error"
         lifecycle_semantic = state_semantic(role.get("state"))
         budget = role.get("soft_budget_exceeded") is True
-        token_text = _format_tokens(role.get("total_tokens"))
+        token_text = _format_role_tokens(role)
         if budget:
             token_text = f"! {token_text}"
         model = (
@@ -464,7 +476,7 @@ def _compact_role_lines(
             f"{sanitize_terminal_text(config.get('provider'))}/"
             f"{sanitize_terminal_text(config.get('model'))}"
         )
-        token_text = _format_tokens(role.get("total_tokens"))
+        token_text = _format_role_tokens(role)
         if budget:
             token_text = f"!{token_text}"
         lines.append(
@@ -598,7 +610,7 @@ def _compact_layout(
     lines.extend(
         [
             _line(),
-            _line("ROLES  LINK/GEN · STATE · TOKENS · CTX · THINK · MODEL", "muted"),
+            _line("ROLES  LINK/GEN · STATE · TOTAL/Δ · CTX · THINK · MODEL", "muted"),
         ]
     )
     lines.extend(_compact_role_lines(manifest, snapshot, width, unicode=unicode))
@@ -645,7 +657,7 @@ def _narrow_layout(
             if connected
             else "-"
         )
-        token_text = _format_tokens(role.get("total_tokens"))
+        token_text = _format_role_tokens(role)
         if role.get("soft_budget_exceeded") is True:
             token_text = f"!{token_text}"
         lines.append(

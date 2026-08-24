@@ -7,7 +7,11 @@ from pathlib import Path
 from typing import Any
 
 from . import runtime
-from .broker_store import public_broker_events, public_broker_snapshot
+from .broker_store import (
+    public_assignment_usage,
+    public_broker_events,
+    public_broker_snapshot,
+)
 from .constants import (
     MAX_JSON_ITEMS,
     MAX_RPC_COMMANDS,
@@ -64,6 +68,7 @@ def supervisor_capabilities() -> dict[str, Any]:
             "sessions",
             "runs",
             "snapshot",
+            "usage",
             "events",
             "command",
         ],
@@ -93,6 +98,7 @@ def supervisor_capabilities() -> dict[str, Any]:
         "usage_accounting": {
             "cumulative_role_usage": True,
             "latest_assignment_usage": True,
+            "bounded_assignment_usage_page": True,
             "assignment_result_immutable": True,
             "legacy_assignment_usage": "unavailable",
             "provider_reported_only": True,
@@ -396,6 +402,112 @@ def supervisor_snapshot(session: str, run_id: str | None) -> dict[str, Any]:
         },
         "roles": roles,
         "paths": {"coordination": str(coord)},
+    }
+
+
+def _role_cumulative_usage(role: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "provider_calls": role.get("provider_calls"),
+        "input_tokens": role["input_tokens"],
+        "output_tokens": role["output_tokens"],
+        "cache_read_tokens": role["cache_read_tokens"],
+        "cache_write_tokens": role["cache_write_tokens"],
+        "reasoning_tokens": role["reasoning_tokens"],
+        "cost_total": role["cost_total"],
+        "operational_tokens": role["total_tokens"],
+        "context_tokens": role["context_tokens"],
+        "context_window": role["context_window"],
+        "context_percent": role["context_percent"],
+        "actual_provider_usage_only": True,
+    }
+
+
+def _run_cumulative_usage(roles: list[dict[str, Any]]) -> dict[str, Any]:
+    provider_calls = [role.get("provider_calls") for role in roles]
+    reasoning = [role["reasoning_tokens"] for role in roles]
+    return {
+        "provider_calls": (
+            sum(provider_calls)
+            if all(value is not None for value in provider_calls)
+            else None
+        ),
+        "input_tokens": sum(role["input_tokens"] for role in roles),
+        "output_tokens": sum(role["output_tokens"] for role in roles),
+        "cache_read_tokens": sum(role["cache_read_tokens"] for role in roles),
+        "cache_write_tokens": sum(role["cache_write_tokens"] for role in roles),
+        "reasoning_tokens": (
+            sum(reasoning) if all(value is not None for value in reasoning) else None
+        ),
+        "cost_total": sum(role["cost_total"] for role in roles),
+        "operational_tokens": sum(role["total_tokens"] for role in roles),
+        "actual_provider_usage_only": True,
+    }
+
+
+def supervisor_usage(session: str, run_id: str | None, *, limit: int) -> dict[str, Any]:
+    """Return bounded assignment-local and cumulative provider usage metadata."""
+
+    if type(limit) is not int or not 1 <= limit <= MAX_JSON_ITEMS:
+        raise OrchestrationError(
+            f"Supervisor usage limit must be between 1 and {MAX_JSON_ITEMS}",
+            "invalid_arguments",
+        )
+    coord, manifest = resolve_supervisor_target(session, run_id, require_rpc=False)
+    base = {
+        "api_version": SUPERVISOR_API_VERSION,
+        "session": manifest["session"],
+        "run_id": coord.name,
+        "available": manifest.get("version") == 3,
+        "semantics": {
+            "cumulative": "complete retained role usage",
+            "assignment": "immutable delta from the accepted assignment boundary",
+            "operational_tokens": "input + output + cache read + cache write; not a billing unit",
+            "cost": "provider-reported cumulative cost or its assignment delta only",
+            "payload_bodies_included": False,
+        },
+        "paths": {"coordination": str(coord)},
+    }
+    if manifest.get("version") != 3:
+        return {
+            **base,
+            "availability": "unavailable_legacy_coordination",
+            "cumulative": None,
+            "roles": [],
+            "assignment_count": 0,
+            "assignment_usage_unavailable": 0,
+            "truncated": False,
+            "limit": limit,
+        }
+    snapshot = public_broker_snapshot(coord)
+    page = public_assignment_usage(coord, limit=limit)
+    by_role: dict[str, list[dict[str, Any]]] = {role: [] for role in manifest["roles"]}
+    unavailable = 0
+    for assignment in page["assignments"]:
+        role = assignment.get("role")
+        if role not in by_role:
+            continue
+        value = {key: item for key, item in assignment.items() if key != "role"}
+        by_role[role].append(value)
+        if value["usage"] is None:
+            unavailable += 1
+    role_state = {role["role"]: role for role in snapshot["roles"]}
+    roles = [
+        {
+            "role": role,
+            "cumulative": _role_cumulative_usage(role_state[role]),
+            "assignments": by_role[role],
+        }
+        for role in manifest["roles"]
+    ]
+    return {
+        **base,
+        "availability": "available",
+        "cumulative": _run_cumulative_usage(snapshot["roles"]),
+        "roles": roles,
+        "assignment_count": sum(len(value) for value in by_role.values()),
+        "assignment_usage_unavailable": unavailable,
+        "truncated": page["truncated"],
+        "limit": page["limit"],
     }
 
 

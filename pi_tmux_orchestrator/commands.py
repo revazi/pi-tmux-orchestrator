@@ -571,6 +571,30 @@ def status_roles(coord: Path, manifest: dict[str, Any]) -> list[dict[str, Any]]:
     return values
 
 
+def _usage_display(value: object, *, suffix: str = "") -> str:
+    return f"{value}{suffix}" if value is not None else "unavailable"
+
+
+def _status_assignment_usage(role: dict[str, Any]) -> str | None:
+    latest = role.get("latest_assignment_usage")
+    if not isinstance(latest, dict):
+        return None
+    prefix = f"latest round={latest['round']} kind={latest['kind']}"
+    usage = latest.get("usage")
+    if not isinstance(usage, dict):
+        return f"{prefix} usage=unavailable"
+    return (
+        f"{prefix} calls={usage['provider_calls']} input={usage['input_tokens']} "
+        f"cache-read={usage['cache_read_tokens']} cache-write={usage['cache_write_tokens']} "
+        f"output={usage['output_tokens']} "
+        f"reasoning={_usage_display(usage['reasoning_tokens'])} "
+        f"cost={_usage_display(usage['cost_total'])} "
+        f"operational={usage['operational_tokens']} "
+        f"context={_usage_display(usage['context_percent'], suffix='%')} "
+        f"peak={_usage_display(usage['peak_context_tokens'])}"
+    )
+
+
 def status_command(args: argparse.Namespace) -> CommandResult:
     session, coord = resolve_session(args.session)
     manifest = load_manifest(coord, expected_session=session)
@@ -629,6 +653,9 @@ def status_command(args: argparse.Namespace) -> CommandResult:
                 f"tokens={worker['total_tokens']}"
                 f"{' budget=warning' if worker['soft_budget_exceeded'] else ''}"
             )
+            latest_usage = _status_assignment_usage(worker)
+            if latest_usage is not None:
+                human_print(f"    {latest_usage}")
     else:
         human_print("Legacy coordination files:")
         files = coordination_files(coord)

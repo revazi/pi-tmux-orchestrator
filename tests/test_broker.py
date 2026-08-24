@@ -438,6 +438,60 @@ class BrokerStoreTests(BrokerFixture):
         self.assertEqual(reviewer["latest_assignment_usage"]["assignment_id"], "4" * 32)
         self.assertIsNone(reviewer["latest_assignment_usage"]["usage"])
 
+    def test_assignment_usage_page_is_latest_bounded_and_body_free(self) -> None:
+        initialize_broker_run(self.coord, self.manifest, "task", {})
+        with broker_store.connect_broker_database(self.coord) as database:
+            for index, role in enumerate(("implementer", "reviewer"), start=1):
+                assignment_id = f"{index:032x}"
+                database.execute(
+                    "INSERT INTO assignments(id,role,round,kind,state,delivery_id,created_at,updated_at) "
+                    "VALUES (?,?,?,?,?,?,?,?)",
+                    (
+                        assignment_id,
+                        role,
+                        index,
+                        "implementation" if role == "implementer" else "review",
+                        "completed",
+                        f"{index + 10:032x}",
+                        f"2026-08-01T00:00:0{index}+00:00",
+                        f"2026-08-01T00:00:0{index}+00:00",
+                    ),
+                )
+                database.execute(
+                    "INSERT INTO reports(id,assignment_id,role,round,kind,verdict,summary_chars,"
+                    "changed_path_count,check_count,finding_count,risk_count,limitation_count,"
+                    "provider_calls,input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,"
+                    "cost_total,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        f"{index + 20:032x}",
+                        assignment_id,
+                        role,
+                        index,
+                        "implementation" if role == "implementer" else "review",
+                        None if role == "implementer" else "approved",
+                        20,
+                        0,
+                        0,
+                        0,
+                        0,
+                        0,
+                        index,
+                        10 * index,
+                        2 * index,
+                        30 * index,
+                        index,
+                        0.1 * index,
+                        f"2026-08-01T00:00:0{index}+00:00",
+                    ),
+                )
+        page = broker_store.public_assignment_usage(self.coord, limit=1)
+        self.assertTrue(page["truncated"])
+        self.assertEqual(page["assignments"][0]["role"], "reviewer")
+        self.assertEqual(page["assignments"][0]["usage"]["operational_tokens"], 86)
+        self.assertNotIn("summary", json.dumps(page))
+        with self.assertRaisesRegex(Exception, "between 1 and"):
+            broker_store.public_assignment_usage(self.coord, limit=0)
+
     def test_supervisor_command_status_reads_broker_metadata(self) -> None:
         from pi_tmux_orchestrator.supervisor_api import supervisor_command_status
 
@@ -682,6 +736,31 @@ class BrokerObserverTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
             ],
             assignment_id,
         )
+        from pi_tmux_orchestrator.supervisor_api import supervisor_usage
+
+        analytics = supervisor_usage(
+            self.manifest["session"], self.coord.name, limit=10
+        )
+        reviewer_analytics = next(
+            role for role in analytics["roles"] if role["role"] == "reviewer"
+        )
+        self.assertEqual(analytics["cumulative"]["provider_calls"], 3)
+        self.assertEqual(analytics["assignment_count"], 1)
+        self.assertEqual(
+            reviewer_analytics["assignments"][0]["usage"]["cache_read_tokens"],
+            120,
+        )
+        self.assertEqual(
+            reviewer_analytics["assignments"][0]["usage"]["operational_tokens"],
+            180,
+        )
+        self.assertFalse(analytics["semantics"]["payload_bodies_included"])
+        from pi_tmux_orchestrator.commands import _status_assignment_usage
+
+        status_delta = _status_assignment_usage(reviewer)
+        self.assertIn("latest round=1 kind=review", status_delta)
+        self.assertIn("input=40 cache-read=120 cache-write=5 output=15", status_delta)
+        self.assertNotIn("Atomic metadata only", status_delta)
 
     def test_rolling_state_keeps_latest_role_beyond_observer_replay_window(
         self,
