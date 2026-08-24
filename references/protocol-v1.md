@@ -65,11 +65,17 @@ poll and must end the turn when there is no active assignment.
 6. After all required evidence exists, broker triggers the reviewer once.
 7. `changes_requested` updates the rolling capsule and triggers the next
    implementer round.
-8. Accepting each new assignment makes one context boundary effective and emits
+8. Before every downstream assignment, hard mode compares authoritative retained
+   run, role, and triggering-assignment usage with non-overridden thresholds.
+   A proven limit records bounded facts and moves the workflow to
+   `budget_exhausted`; no assignment is created until an authenticated operator
+   override is accepted. Missing values cannot trigger a gate.
+9. Accepting each new assignment makes one context boundary effective and emits
    one body-free `context_boundary` metadata event. Provider calls within that
    assignment do not emit reset events.
-9. `approved` marks the workflow `ready`; it does not wake the implementer just
-   to acknowledge approval.
+10. `approved` marks the workflow `ready`; it does not wake the implementer just
+   to acknowledge approval. A budget-stopped path cannot skip required review
+   and become ready.
 
 Only the implementer has normal write tools. Other roles are read-only.
 
@@ -82,7 +88,7 @@ watch a compatible existing run through the package extension. An observer:
 - authenticates with the separate control token and same-user socket boundary;
 - sends a strict `observe` hello and sends no frames after authentication;
 - receives lifecycle and workflow-state frames plus accepted structured report
-  bodies and bounded numeric assignment usage;
+  bodies, bounded numeric assignment usage, and metadata-only hard-budget facts;
 - produces bounded lifecycle/report-received progress in the watching Pi while
   keeping raw assistant/tool output in tmux;
 - receives a bounded in-memory replay of up to 100 reports from the current
@@ -163,6 +169,10 @@ lowercase hexadecimal values.
 - Operator control command retries deduplicate matching action/role/delivery
   metadata; conflicting reuse is rejected. Supervisor API v2 exposes retained
   command metadata without message bodies.
+- `budget_override` is a body-free authenticated control command accepted only
+  for a live `budget_exhausted` workflow with its pending route still in broker
+  memory and all roles connected. It durably marks the exact gate identity
+  overridden before resuming. A matching command retry cannot route twice.
 - Explicit restart is an authenticated broker control command that advances the
   role generation. The replacement bridge must authenticate with that exact
   generation. Before recovering an accepted active assignment, the broker
@@ -214,9 +224,13 @@ assignment scope for provider calls, distinct token categories, provider-reporte
 cost, and context occupancy. The packaged policy preserves the existing soft
 role/run operational-token warnings and defines no hard defaults. Per-run
 CLI/model-tool overrides take precedence over the user-global external file.
-This policy-only stage does not yet enforce hard gates; that remains a separate
-broker change. No budget can stop an already-started provider response at an
-exact token boundary.
+Warn-only mode remains non-blocking. Hard mode gates only a downstream
+assignment after the active report and its actual usage commit atomically. The
+active report remains accepted. An assignment-local override identity includes
+its assignment ID, while role/run overrides cover that threshold for the
+remainder of the live run. Broker interruption while gated or resuming becomes
+`uncertain` because the private pending route cannot be reconstructed. No budget can stop
+an already-started provider response at an exact token boundary.
 
 A deterministic synthetic two-round regression separately measures serialized
 provider-visible message characters across the assignment projection. CI
@@ -230,6 +244,8 @@ acceptance.
 Retained `0.4.x` manifests remain readable and operable through compatibility
 code. Live parent observation requires a broker process from `0.6.0` or later;
 older live runs remain metadata-readable but cannot gain observer support
-without starting a new run. Every manifest created by `0.5.0` or later is version `3` with
+without starting a new run. Broker SQLite schema v1-v3 migrates to metadata-only
+schema v4 when a current broker starts; runs without version-1 budget metadata
+retain packaged warn-only behavior. Every manifest created by `0.5.0` or later is version `3` with
 `coordination: "broker-v1"`; there is no option or fallback that starts the
 legacy file coordination protocol.

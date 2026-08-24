@@ -45,7 +45,7 @@ _ACTIVE_STATES = {
     "started",
     "streaming",
 }
-_WARNING_STATES = {"needs_attention", "waiting", "warning"}
+_WARNING_STATES = {"budget_exhausted", "needs_attention", "waiting", "warning"}
 _ERROR_STATES = {
     "aborted",
     "conflict",
@@ -334,6 +334,21 @@ def _header_lines(
     if usage.get("soft_total_budget_exceeded") is True:
         state_line.extend([Span("   ", "normal"), Span("SOFT RUN BUDGET", "warning")])
     lines.append(state_line)
+    exhaustion = snapshot.get("budget", {}).get("exhaustion")
+    if isinstance(exhaustion, dict):
+        lines.append(
+            [
+                Span("HARD BUDGET ", "warning"),
+                Span(
+                    f"{sanitize_terminal_text(exhaustion.get('scope'))}."
+                    f"{sanitize_terminal_text(exhaustion.get('role'))} "
+                    f"{sanitize_terminal_text(exhaustion.get('metric'))} "
+                    f"{sanitize_terminal_text(exhaustion.get('observed'))}/"
+                    f"{sanitize_terminal_text(exhaustion.get('threshold'))}",
+                    "warning",
+                ),
+            ]
+        )
     return lines
 
 

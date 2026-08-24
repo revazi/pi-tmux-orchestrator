@@ -128,8 +128,16 @@ class SupervisorApiTests(SupervisorApiFixture):
             capabilities["control_semantics"]["acknowledgement"],
             "acceptance-or-queueing",
         )
+        self.assertEqual(
+            capabilities["control_commands"]["budget_override"]["confirmation"],
+            "--yes",
+        )
         self.assertFalse(capabilities["control_semantics"]["exactly_once"])
         self.assertTrue(capabilities["usage_accounting"]["latest_assignment_usage"])
+        self.assertTrue(capabilities["usage_accounting"]["hard_assignment_gate"])
+        self.assertTrue(
+            capabilities["usage_accounting"]["authenticated_budget_override"]
+        )
         self.assertEqual(
             capabilities["usage_accounting"]["legacy_assignment_usage"],
             "unavailable",

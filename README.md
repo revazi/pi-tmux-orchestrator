@@ -249,9 +249,12 @@ file in the target project is rejected. Explicit `--budget-enforcement` and
 repeatable `--budget-override LEVEL.SCOPE.METRIC=VALUE` (or `=off`) values win
 for one run; the model tool exposes the same strict native `budgetOverrides`
 object. Dry-run JSON and Pi's start confirmation show the effective policy.
-The policy is retained as numeric/enum broker metadata. This policy PR does not
-yet activate hard assignment gates; existing workflows continue with warnings
-until the separate enforcement change lands.
+The policy is retained as numeric/enum broker metadata. `warn-only` preserves
+non-blocking behavior. In `hard` mode, the broker evaluates authoritative usage
+after accepting a report and before every downstream provider-triggering
+assignment. A proven limit moves the workflow to `budget_exhausted`; only an
+explicit authenticated `pi-tmux-agents budget-override SESSION --yes` resumes
+routing.
 
 Natural-language requests are supported by the `tmux_orchestrator` tool. For
 example, users can ask Pi to “use my current model for every worker,” “use
@@ -397,6 +400,7 @@ pi-tmux-agents send SESSION --role reviewer --delivery follow-up \
   --command-id 0123456789abcdef0123456789abcdef \
   --message-file /tmp/review-message.txt
 pi-tmux-agents abort SESSION --role implementer
+pi-tmux-agents budget-override SESSION --yes
 pi-tmux-agents restart SESSION --role implementer --yes
 pi-tmux-agents stop SESSION --yes
 ```
@@ -476,9 +480,10 @@ the orchestrator does not invent estimates.
 Structural savings include no waiting turns, no polling, no copied diffs/logs,
 one reviewer wake after all evidence, no approval acknowledgement turn, and
 terminating report calls. Current soft role/run operational-token budgets warn
-before additional work. Versioned warning/hard policy is validated and retained
-for each new run, but hard assignment gates remain a separate change. No budget
-can stop an already-started provider response at an exact token.
+before additional work. When hard enforcement is explicitly configured, proven
+run, role, or assignment limits block only the next assignment, never the active
+report. Required review is not skipped and a stopped workflow is not marked
+ready. No budget can stop an already-started provider response at an exact token.
 
 ### Development token-efficiency baseline
 

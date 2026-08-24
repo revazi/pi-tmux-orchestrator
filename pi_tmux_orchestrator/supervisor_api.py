@@ -88,6 +88,12 @@ def supervisor_capabilities() -> dict[str, Any]:
                 "command": "abort",
                 "exact_run_option": "--run",
             },
+            "budget_override": {
+                "command": "budget-override",
+                "exact_run_option": "--run",
+                "confirmation": "--yes",
+                "idempotency_option": "--command-id",
+            },
         },
         "event_cursor": {
             "scope": "role",
@@ -102,6 +108,8 @@ def supervisor_capabilities() -> dict[str, Any]:
             "assignment_result_immutable": True,
             "legacy_assignment_usage": "unavailable",
             "provider_reported_only": True,
+            "hard_assignment_gate": True,
+            "authenticated_budget_override": True,
         },
         "limits": {
             "page_items": MAX_JSON_ITEMS,
@@ -360,6 +368,7 @@ def supervisor_snapshot(session: str, run_id: str | None) -> dict[str, Any]:
             "durable_workers": True,
             "host_adapter": {"name": "tmux", "runtime_status": "not_observed"},
             "workflow": snapshot["workflow"],
+            "budget": snapshot["budget"],
             "usage": snapshot["usage"],
             "roles": roles,
             "paths": {"coordination": str(coord)},

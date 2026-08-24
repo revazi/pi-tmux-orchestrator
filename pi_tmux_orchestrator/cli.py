@@ -27,6 +27,7 @@ from .controller import (
 from .commands import (
     abort_command,
     attach_command,
+    budget_override_command,
     doctor_command,
     events_command,
     list_command,
@@ -378,6 +379,26 @@ def build_parser() -> argparse.ArgumentParser:
     abort.add_argument("--run", help="exact retained RPC coordination run ID")
     abort.set_defaults(handler=abort_command)
 
+    budget_override_parser = subparsers.add_parser(
+        "budget-override",
+        help="explicitly override one active hard-budget gate and resume routing",
+    )
+    budget_override_parser.add_argument("session")
+    budget_override_parser.add_argument(
+        "--command-id",
+        type=rpc_command_id,
+        help="optional 32-character lowercase hexadecimal idempotency key",
+    )
+    budget_override_parser.add_argument(
+        "--run", help="exact retained broker coordination run ID"
+    )
+    budget_override_parser.add_argument(
+        "--yes",
+        action="store_true",
+        help="confirm resuming provider-triggering assignments beyond the hard limit",
+    )
+    budget_override_parser.set_defaults(handler=budget_override_command)
+
     restart = subparsers.add_parser(
         "restart",
         help="restart one role while preserving its brokered Pi session",
@@ -440,6 +461,7 @@ def requested_command(argv: list[str]) -> str:
         "controller",
         "supervisor",
         "abort",
+        "budget-override",
         "list",
         "status",
         "events",
