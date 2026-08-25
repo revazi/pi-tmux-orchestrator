@@ -217,6 +217,18 @@ def build_parser() -> argparse.ArgumentParser:
     start.add_argument("--task-file")
     start.add_argument("--context-capsule")
     start.add_argument("--context-capsule-file")
+    start.add_argument(
+        "--workspace-capsule",
+        action="store_true",
+        help="enable the ephemeral experimental cold-assignment workspace capsule",
+    )
+    start.add_argument(
+        "--workspace-relevant-path",
+        action="append",
+        default=[],
+        metavar="PROJECT_RELATIVE_PATH",
+        help="add one existing project-relative capsule hint; repeatable",
+    )
     start.add_argument("--session")
     start.add_argument(
         "--implementation-flow",

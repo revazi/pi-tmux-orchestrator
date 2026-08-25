@@ -215,6 +215,9 @@ class JsonMainTests(unittest.TestCase):
                     "phased",
                     "--context-capsule",
                     context_canary,
+                    "--workspace-capsule",
+                    "--workspace-relevant-path",
+                    "pi_tmux_orchestrator/broker.py",
                     "--skip-model-check",
                     "--dry-run",
                     "--rpc-workers",
@@ -238,6 +241,26 @@ class JsonMainTests(unittest.TestCase):
             data["context_capsule"],
             {"present": True, "chars": len(context_canary)},
         )
+        self.assertEqual(
+            {
+                key: data["workspace_capsule"][key]
+                for key in (
+                    "enabled",
+                    "schema_version",
+                    "validation",
+                    "relevant_path_count",
+                )
+            },
+            {
+                "enabled": True,
+                "schema_version": 1,
+                "validation": "validated",
+                "relevant_path_count": 1,
+            },
+        )
+        self.assertRegex(data["workspace_capsule"]["digest"], r"^[0-9a-f]{64}$")
+        self.assertNotIn("relevant_paths", data["workspace_capsule"])
+        self.assertNotIn("pi_tmux_orchestrator/broker.py", raw)
         self.assertEqual(data["transport"], "rpc")
         self.assertEqual(data["implementation_flow"], "phased")
         self.assertEqual(data["forced_specialists"], ["playwright"])
@@ -271,6 +294,30 @@ class JsonMainTests(unittest.TestCase):
         )
         self.assertIsNone(data["paths"]["coordination"])
         self.assertIsNone(data["paths"]["observer_socket"])
+
+    def test_workspace_relevant_paths_require_explicit_capsule_opt_in(self) -> None:
+        with mock.patch.object(
+            ORCHESTRATOR, "command_path", return_value="/usr/bin/true"
+        ):
+            code, envelope, raw, stderr = self.run_main(
+                [
+                    "--json",
+                    "start",
+                    "--project",
+                    str(ROOT),
+                    "--task",
+                    "Synthetic",
+                    "--workspace-relevant-path",
+                    "README.md",
+                    "--skip-model-check",
+                    "--dry-run",
+                ]
+            )
+        self.assertEqual(code, 2)
+        self.assertEqual(stderr, "")
+        self.assert_envelope(envelope, "start", False)
+        self.assertEqual(envelope["error"]["code"], "invalid_arguments")
+        self.assertNotIn("README.md", raw)
 
     def test_start_model_policy_uses_config_with_explicit_override_precedence(
         self,

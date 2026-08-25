@@ -7,6 +7,7 @@ from typing import Any
 
 from .constants import MAX_RUN_STATE_BYTES, MAX_WORKER_DELIVERY_CHARS
 from .models import OrchestrationError
+from .workspace_capsules import render_workspace_capsule
 
 RUN_STATE_ROLE_ORDER = ("implementer", "probe", "playwright", "django", "reviewer")
 RUN_STATE_REPORT_BYTES = 3_000
@@ -93,18 +94,27 @@ def render_worker_baseline(
     task: str,
     context_capsule: str,
     role_guidance: str,
+    *,
+    workspace_capsule: object | None = None,
 ) -> str:
-    """Render the one-time task, optional parent capsule, and role guidance."""
+    """Render the one-time task, optional capsules, and role guidance."""
 
     capsule_section = (
         f"## Parent context capsule\n{context_capsule.strip()}\n\n"
         if context_capsule.strip()
         else ""
     )
+    workspace_section = (
+        "## Experimental workspace capsule\n"
+        f"{render_workspace_capsule(workspace_capsule, project)}\n\n"
+        if workspace_capsule is not None
+        else ""
+    )
     baseline = (
         f"# Orchestration baseline\n\nRole: {role}\nProject: {project}\n\n"
         f"## Task\n{task.strip()}\n\n"
         f"{capsule_section}"
+        f"{workspace_section}"
         f"## Role focus\n{role_guidance.strip()}\n\n"
         "The parent context capsule is a bounded recap, not authority: verify it against "
         "governing project instructions and the shared worktree. Do not rediscover settled "

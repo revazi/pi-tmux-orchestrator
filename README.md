@@ -27,6 +27,7 @@ workflow, role, model, usage, context, and recent metadata state.
 - Native worker output in TUI panes and assistant/tool input/tool output visibility in RPC panes
 - Parent Pi supervision with event-driven final structured reports and attention alerts
 - Assignment-boundary context resets with bounded parent capsules, coalesced latest-per-role run state, and complete Pi history
+- An opt-in, ephemeral, evidence-gated workspace-capsule experiment for cold assignments
 - Lean worker system prompts, disabled automatic skill discovery, and explicit digest-bound per-role skill opt-in
 - Orchestration-only UTF-8 read/grep/bash result caps with actionable continuation and metadata-only tuning facts
 - Bounded typed reports through a terminating Pi tool
@@ -326,6 +327,57 @@ options with a synthetic context file and skills. Its normalized reviewer prompt
 changes from 5,000 to 2,479 serialized characters (50.4%). This is a deterministic
 prompt-size proxy, not provider tokens, billing, cache efficiency, or a savings
 claim; provider metadata remains authoritative.
+
+### Experimental cold-assignment workspace capsule
+
+`--workspace-capsule` opts one run into a disabled-by-default discovery
+experiment. Repeat `--workspace-relevant-path PROJECT_RELATIVE_PATH` for at most
+16 existing parent-supplied paths; the Pi model tool uses `workspaceCapsule: true`
+and `workspaceRelevantPaths`. Native TUI and headless RPC workers receive
+the same broker-rendered baseline.
+
+The deterministic schema is capped at 8 KiB and contains only a SHA-256 identity
+for the canonical Git worktree root, initial Git HEAD plus a clean/dirty observation,
+project-relative governing instruction paths with SHA-256 hashes,
+existing names from a fixed 16-file top-level build/test-marker allowlist, and
+the bounded relevant paths. It never enumerates or serializes a complete repository
+tree and never includes instruction or source contents; Git may still inspect the
+worktree internally to produce the initial clean/dirty observation. The project must be the canonical
+Git worktree root with an existing HEAD. Absolute, escaping, missing, duplicate,
+non-normalized, oversized, unknown, and symlinked paths or fields fail closed.
+Instruction candidates follow Pi's per-directory precedence, but the capsule is
+only a hint: Pi context-file discovery remains enabled, and every worker must
+still discover and read governing `AGENTS.md`/`CLAUDE.md` plus referenced/scoped
+instructions through Pi/project mechanisms.
+
+Construction happens independently for dry-run and confirmed start. The broker
+strictly revalidates canonical root, Git HEAD, marker set, relevant paths, and
+instruction identities before initial delivery and before a live in-memory
+restart replay. Normal task edits may change the clean/dirty observation without
+invalidating the initial metadata, so late delivery and restart remain available.
+A changed HEAD, instruction, marker set, missing path, or new symlink rejects the
+capsule; a stale restart handover becomes `uncertain` rather than trusting old
+hints. The capsule exists only in the transient startup
+payload, broker memory, and worker baseline. It is deleted with the startup
+payload after initial routing and is absent from manifests, SQLite, status,
+dashboards, Supervisor API, registries, and project files. There is no cross-run
+cache; adding one would first require an explicit privacy/retention policy.
+Dry-run/confirmation may expose only bounded schema/count/byte/digest validation
+metadata, never path lists or bodies. Retained manifests remain v4-compatible.
+
+The capsule changes serialized startup context and could improve or invalidate a
+provider's cache prefix depending on provider serialization and cache policy.
+No provider cache behavior is inferred from local bytes. The checked two-fixture
+benchmark reports exactly 733 and 886 UTF-8 workspace-hint bytes added to the
+synthetic worker baselines; disabled runs add zero. It also reports conceptual
+worker discovery-operation proxies of 4→2 while separately reporting 39 and 53
+construction-operation proxies. Serialized worker discovery results, provider
+calls, tokens, cost, reviewer findings, checks, revisions, and correctness are
+all unavailable; the benchmark does not fabricate a full-tree baseline. These
+are model-free shape/operation proxies—not savings, billing, cache, provider-call,
+or correctness-equivalence evidence—so the experiment remains opt-in and
+supports no default change. Validate it with
+`python3 scripts/workspace-capsule-baseline.py --check`.
 
 ### Implementer inspect/plan contract
 

@@ -39,6 +39,7 @@ class SkillMetadataTests(unittest.TestCase):
             "supervisor_commands.py",
             "tmux.py",
             "worker_resources.py",
+            "workspace_capsules.py",
         }
         self.assertTrue(launcher.is_file())
         self.assertLessEqual(len(launcher.read_text(encoding="utf-8").splitlines()), 20)
@@ -246,7 +247,21 @@ class UtilityTests(unittest.TestCase):
         )
         self.assertEqual(parsed.context_capsule_file, "/private/context.md")
         self.assertIsNone(parsed.context_capsule)
+        self.assertFalse(parsed.workspace_capsule)
+        self.assertEqual(parsed.workspace_relevant_path, [])
         self.assertEqual(parsed.implementation_flow, "single")
+        workspace = ORCHESTRATOR.build_parser().parse_args(
+            [
+                "start",
+                "--task",
+                "Cold task",
+                "--workspace-capsule",
+                "--workspace-relevant-path",
+                "src/service.py",
+            ]
+        )
+        self.assertTrue(workspace.workspace_capsule)
+        self.assertEqual(workspace.workspace_relevant_path, ["src/service.py"])
         phased = ORCHESTRATOR.build_parser().parse_args(
             [
                 "start",

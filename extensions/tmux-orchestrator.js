@@ -83,6 +83,17 @@ const parameters = {
     },
     task: { type: "string", maxLength: 65536, description: "Self-contained start objective; transferred through a private file" },
     contextCapsule: contextCapsuleParameters,
+    workspaceCapsule: {
+      type: "boolean",
+      description: "Opt in to the ephemeral experimental cold-assignment workspace capsule; disabled by default",
+    },
+    workspaceRelevantPaths: {
+      type: "array",
+      maxItems: 16,
+      uniqueItems: true,
+      items: { type: "string", minLength: 1, maxLength: 256 },
+      description: "Existing project-relative paths supplied by the parent for the experimental workspace capsule; never a repository tree",
+    },
     message: { type: "string", maxLength: 65536, description: "Send message; transferred through a private file" },
     forceSpecialists: {
       type: "array",
@@ -191,11 +202,23 @@ async function withPrivateFiles(values, callback) {
   }
 }
 
-async function canonicalProject(project, cwd) {
-  const candidate = resolve(cwd, project || cwd);
+function requestedProjectPath(project, cwd) {
+  return resolve(cwd, project || cwd);
+}
+
+function requireCanonicalWorkspaceProject(candidate, canonical, required) {
+  if (required && canonical !== candidate) {
+    throw new Error("workspace_capsule_project_not_canonical");
+  }
+}
+
+async function canonicalProject(project, cwd, { requireCanonical = false } = {}) {
+  const candidate = requestedProjectPath(project, cwd);
   const metadata = await stat(candidate);
   if (!metadata.isDirectory()) throw new Error("project_not_directory");
-  return realpath(candidate);
+  const canonical = await realpath(candidate);
+  requireCanonicalWorkspaceProject(candidate, canonical, requireCanonical);
+  return canonical;
 }
 
 function startFileValues(input) {
@@ -217,6 +240,14 @@ function appendForcedSpecialistArgs(args, values = []) {
   for (const role of values) args.push("--force-specialist", role);
 }
 
+function appendWorkspaceCapsuleArgs(args, input) {
+  if (!input.workspaceCapsule) return;
+  args.push("--workspace-capsule");
+  for (const path of input.workspaceRelevantPaths || []) {
+    args.push("--workspace-relevant-path", path);
+  }
+}
+
 function buildStartArgs(input, project, paths, { dryRun = false } = {}) {
   const args = ["--project", project, "--task-file", paths.task];
   if (paths.contextCapsule) args.push("--context-capsule-file", paths.contextCapsule);
@@ -228,6 +259,7 @@ function buildStartArgs(input, project, paths, { dryRun = false } = {}) {
   if (paths.django) args.push("--django-task-file", paths.django);
   if (input.approveProject) args.push("--approve-project");
   if (input.rpcWorkers) args.push("--rpc-workers");
+  appendWorkspaceCapsuleArgs(args, input);
   args.push("--implementation-flow", implementationFlow(input));
   appendForcedSpecialistArgs(args, input.forceSpecialists);
   if (input.profile) args.push("--profile", input.profile);
@@ -254,6 +286,12 @@ function forcedSpecialistsConfirmation(data) {
   return data.forced_specialists.join(", ");
 }
 
+function workspaceCapsuleConfirmation(data) {
+  const capsule = data?.workspace_capsule;
+  if (!capsule?.enabled) return "disabled";
+  return `validated schema=${capsule.schema_version}; instructions=${capsule.instruction_count}; markers=${capsule.marker_count}; relevant=${capsule.relevant_path_count}`;
+}
+
 function startConfirmation(preview) {
   const roles = (preview.data?.roles || [])
     .map((role) => `${role.name}: ${role.provider}/${role.model} (${role.thinking})`)
@@ -276,6 +314,7 @@ function startConfirmation(preview) {
     `Worker skills (automatic discovery disabled):\n${Object.entries(preview.data?.worker_resources?.skills || {}).map(([role, paths]) => `${role}: ${paths.length ? paths.join(", ") : "none"}`).join("\n")}`,
     `External state: ${preview.data?.paths?.state_root}`,
     `Parent context capsule: ${preview.data?.context_capsule?.present ? `${preview.data.context_capsule.chars} characters` : "not supplied"}`,
+    `Experimental workspace capsule: ${workspaceCapsuleConfirmation(preview.data)}`,
     "Metadata-only broker state and Pi sessions are retained when tmux stops; workflow payloads are not stored in coordination files.",
     `Trust: ${trust}`,
   ].join("\n\n");
@@ -293,6 +332,26 @@ async function selectForcedSpecialists(ctx, enabled) {
   return selected;
 }
 
+async function selectWorkspaceCapsule(ctx) {
+  const enabled = await ctx.ui.confirm(
+    "Experimental workspace capsule",
+    "Opt in to the ephemeral cold-assignment workspace discovery experiment? It remains disabled by default and does not replace reading project instructions.",
+  );
+  if (!enabled) return { workspaceCapsule: false, workspaceRelevantPaths: [] };
+  const suppliedPaths = await ctx.ui.editor("Workspace capsule relevant paths", "");
+  const workspaceRelevantPaths = String(suppliedPaths || "")
+    .split(/\r?\n/)
+    .map((value) => value.trim())
+    .filter(Boolean);
+  return { workspaceCapsule: true, workspaceRelevantPaths };
+}
+
+function validateWorkspaceCapsuleSelection(input) {
+  if (input.workspaceRelevantPaths?.length && !input.workspaceCapsule) {
+    throw new Error("workspace_relevant_paths_require_capsule");
+  }
+}
+
 async function runStart(pi, input, signal, ctx) {
   if (ctx.mode !== "tui" || !ctx.hasUI) {
     throw new Error("start_requires_interactive_tui_confirmation");
@@ -301,12 +360,15 @@ async function runStart(pi, input, signal, ctx) {
   if (input.probeTask && !input.withProbe) throw new Error("probe_task_requires_role");
   if (input.playwrightTask && !input.withPlaywright) throw new Error("playwright_task_requires_role");
   if (input.djangoTask && !input.withDjangoExpert) throw new Error("django_task_requires_role");
+  validateWorkspaceCapsuleSelection(input);
   if (isControllerMode() && !String(input.project || "").trim()) {
     throw new Error("controller_start_requires_explicit_project");
   }
 
   const startInput = startInputWithParentModel(input, ctx);
-  const project = await canonicalProject(startInput.project, ctx.cwd);
+  const project = await canonicalProject(startInput.project, ctx.cwd, {
+    requireCanonical: Boolean(startInput.workspaceCapsule),
+  });
   if (startInput.approveProject) {
     if (!ctx.isProjectTrusted()) throw new Error("approve_requires_trusted_parent_project");
     const bypassConfirmed = await ctx.ui.confirm(
@@ -591,6 +653,7 @@ function createCommandHandlers(pi, superviseStart = () => {}) {
       ...(withDjangoExpert ? ["django"] : []),
     ];
     const forceSpecialists = await selectForcedSpecialists(ctx, enabledSpecialists);
+    const { workspaceCapsule, workspaceRelevantPaths } = await selectWorkspaceCapsule(ctx);
     const rpcWorkers = false;
     let approveProject = false;
     if (ctx.isProjectTrusted()) {
@@ -610,6 +673,8 @@ function createCommandHandlers(pi, superviseStart = () => {}) {
           withProbe,
           withPlaywright,
           withDjangoExpert,
+          workspaceCapsule,
+          workspaceRelevantPaths,
           rpcWorkers,
           approveProject,
         },
@@ -785,10 +850,10 @@ export default function tmuxOrchestratorExtension(pi) {
   pi.registerTool({
     name: "tmux_orchestrator",
     label: "Tmux Orchestrator",
-    description: "Supervise bounded doctor, available-model discovery, list, status, watch, attach, start, or send actions through the Pi runtime and bundled Python tmux orchestrator. Start may select a single or phased implementation flow, deterministic or forced specialist activation, a packaged or strict user-global execution profile, user-configured defaults, this parent Pi's current model, exact user-requested per-role provider/model/thinking overrides, and strict per-run budget overrides. The invoking Pi remains the parent; normal starts create no separate parent Pi or controller. Watch subscribes this Pi to lifecycle and final-report updates. Attach ensures watching, then switches its existing tmux client into native Pi worker panes; prefix then L returns without stopping workers. New runs are watched automatically. Start always requires interactive confirmation.",
+    description: "Supervise bounded doctor, available-model discovery, list, status, watch, attach, start, or send actions through the Pi runtime and bundled Python tmux orchestrator. Start may select a single or phased implementation flow, deterministic or forced specialist activation, an opt-in ephemeral workspace-capsule experiment, a packaged or strict user-global execution profile, user-configured defaults, this parent Pi's current model, exact user-requested per-role provider/model/thinking overrides, and strict per-run budget overrides. The invoking Pi remains the parent; normal starts create no separate parent Pi or controller. Watch subscribes this Pi to lifecycle and final-report updates. Attach ensures watching, then switches its existing tmux client into native Pi worker panes; prefix then L returns without stopping workers. New runs are watched automatically. Start always requires interactive confirmation.",
     promptSnippet: "Inspect or operate local Pi tmux orchestrations through the authoritative Python CLI",
     promptGuidelines: [
-      "Use tmux_orchestrator instead of rebuilding tmux orchestration state; before a start, synthesize a bounded contextCapsule from the current conversation when prior decisions or work matter; include only task-relevant state, constraints, acceptance criteria, paths, evidence, and open questions, never the full transcript. Use implementationFlow=phased for complex work that benefits from read-only discovery before editing; use single for simple work or compatibility, without an extra classifier model call. Configured specialists use conservative deterministic activation gates; pass forceSpecialists only when the user explicitly requires those enabled roles to run regardless of a skip predicate. After starting or resuming an existing run, ensure the invoking Pi is watching it for lifecycle and final reports. Once watching, end the turn and rely on broker updates: never run sleep commands or repeatedly poll status/tmux while waiting for a watched orchestration. Honor an explicit economy, balanced, thorough, or user-configured profile request through profile. Honor explicit user model/provider/thinking requests through useParentModel or modelOverrides; those overrides win over profile values. Use the models action to resolve available exact identifiers when needed; never invent a provider/model identifier or read provider credentials. Omitted overrides use the user's global orchestrator model configuration, selected/default profile, then packaged defaults. Honor explicit per-run budget requests through budgetOverrides; omitted values use the strict user-global budget policy and packaged warn-only defaults, and never infer hard thresholds. Worker skill discovery is disabled; pass workerSkills only for exact Markdown paths the user explicitly reviewed, never infer skills. When the user asks to enter, navigate, or directly steer the live workers, use attach rather than watch; attach requires the invoking Pi to be inside tmux. Prefer native Pi TUI workers and use rpcWorkers only after an explicit request for headless panes. The invoking Pi remains responsible for interpreting reports and deciding follow-up. Never create file handoffs, poll coordination state, claim parent project trust applies to child Pi sessions, or equate command acknowledgement with task completion.",
+      "Use tmux_orchestrator instead of rebuilding tmux orchestration state; before a start, synthesize a bounded contextCapsule from the current conversation when prior decisions or work matter; include only task-relevant state, constraints, acceptance criteria, paths, evidence, and open questions, never the full transcript. Enable workspaceCapsule only for an explicit cold-assignment experiment and supply only bounded existing project-relative workspaceRelevantPaths, never a repository tree; it supplements discovery and never replaces reading governing instructions. Do not claim workspace-capsule savings or correctness without authoritative provider and review evidence. Use implementationFlow=phased for complex work that benefits from read-only discovery before editing; use single for simple work or compatibility, without an extra classifier model call. Configured specialists use conservative deterministic activation gates; pass forceSpecialists only when the user explicitly requires those enabled roles to run regardless of a skip predicate. After starting or resuming an existing run, ensure the invoking Pi is watching it for lifecycle and final reports. Once watching, end the turn and rely on broker updates: never run sleep commands or repeatedly poll status/tmux while waiting for a watched orchestration. Honor an explicit economy, balanced, thorough, or user-configured profile request through profile. Honor explicit user model/provider/thinking requests through useParentModel or modelOverrides; those overrides win over profile values. Use the models action to resolve available exact identifiers when needed; never invent a provider/model identifier or read provider credentials. Omitted overrides use the user's global orchestrator model configuration, selected/default profile, then packaged defaults. Honor explicit per-run budget requests through budgetOverrides; omitted values use the strict user-global budget policy and packaged warn-only defaults, and never infer hard thresholds. Worker skill discovery is disabled; pass workerSkills only for exact Markdown paths the user explicitly reviewed, never infer skills. When the user asks to enter, navigate, or directly steer the live workers, use attach rather than watch; attach requires the invoking Pi to be inside tmux. Prefer native Pi TUI workers and use rpcWorkers only after an explicit request for headless panes. The invoking Pi remains responsible for interpreting reports and deciding follow-up. Never create file handoffs, poll coordination state, claim parent project trust applies to child Pi sessions, or equate command acknowledgement with task completion.",
     ],
     parameters,
     execute(_toolCallId, input, signal, _onUpdate, ctx) {

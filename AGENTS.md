@@ -19,6 +19,7 @@ Provide a small, reusable, intentionally tmux-scoped Pi skill and modular standa
 - `pi_tmux_orchestrator/broker_store.py`: private metadata-only SQLite control plane and retained implementation-flow/activation selections
 - `pi_tmux_orchestrator/specialist_activation.py`: fixed conservative specialist predicates and strict force policy
 - `pi_tmux_orchestrator/context_capsules.py`: bounded worker baseline and rolling run-state projections
+- `pi_tmux_orchestrator/workspace_capsules.py`: strict ephemeral cold-assignment workspace discovery experiment
 - `pi_tmux_orchestrator/worker_resources.py`: strict digest-bound per-role skill opt-ins and shared launch policy
 - `pi_tmux_orchestrator/dashboard.py`: adaptive metadata-only broker pane presentation
 - `pi_tmux_orchestrator/supervisor_api.py`: versioned durable-state read boundary

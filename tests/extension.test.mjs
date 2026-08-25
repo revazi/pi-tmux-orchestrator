@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { access, chmod, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import net from "node:net";
@@ -116,6 +116,10 @@ test("registers one bounded model tool and the exact canonical/alias command sur
   assert.equal(tool.parameters.properties.action.enum.includes("stop"), false);
   assert.equal(tool.parameters.properties.profile.pattern, "^[a-z][a-z0-9-]{0,31}$");
   assert.deepEqual(tool.parameters.properties.implementationFlow.enum, ["single", "phased"]);
+  assert.equal(tool.parameters.properties.workspaceCapsule.type, "boolean");
+  assert.equal(tool.parameters.properties.workspaceRelevantPaths.maxItems, 16);
+  assert.equal(tool.parameters.properties.workspaceRelevantPaths.uniqueItems, true);
+  assert.equal(tool.parameters.properties.workspaceRelevantPaths.items.maxLength, 256);
   assert.equal(tool.parameters.properties.forceSpecialists.uniqueItems, true);
   assert.deepEqual(tool.parameters.properties.forceSpecialists.items.enum, ["probe", "playwright", "django"]);
   assert.equal(tool.parameters.properties.budgetOverrides.additionalProperties, false);
@@ -138,6 +142,14 @@ test("registers one bounded model tool and the exact canonical/alias command sur
   assert.match(
     tool.promptGuidelines.join(" "),
     /synthesize a bounded contextCapsule.*never the full transcript/,
+  );
+  assert.match(
+    tool.promptGuidelines.join(" "),
+    /workspaceCapsule only for an explicit cold-assignment experiment.*never a repository tree/,
+  );
+  assert.match(
+    tool.promptGuidelines.join(" "),
+    /Do not claim workspace-capsule savings or correctness without authoritative provider and review evidence/,
   );
   assert.match(
     tool.promptGuidelines.join(" "),
@@ -1178,6 +1190,81 @@ test("natural-language starts can use the parent model with exact per-role overr
   assert.equal(value("--probe-model"), "claude-parent-model");
 });
 
+test("natural-language starts pass the bounded workspace experiment to both worker transports", () => {
+  for (const rpcWorkers of [false, true]) {
+    const args = testHooks.buildStartArgs(
+      {
+        workspaceCapsule: true,
+        workspaceRelevantPaths: ["src/service.py", "tests/test_service.py"],
+        rpcWorkers,
+      },
+      "/project",
+      { task: "/private/task" },
+    );
+    assert.equal(args.includes("--workspace-capsule"), true);
+    assert.deepEqual(
+      args.filter((_value, index) => args[index - 1] === "--workspace-relevant-path"),
+      ["src/service.py", "tests/test_service.py"],
+    );
+    assert.equal(args.includes("--rpc-workers"), rpcWorkers);
+  }
+});
+
+test("workspace relevant paths require explicit model-tool opt in", async () => {
+  let calls = 0;
+  const { tool } = harness(async () => {
+    calls += 1;
+    return { code: 0, stdout: "" };
+  });
+  await assert.rejects(
+    tool.execute(
+      "call",
+      {
+        action: "start",
+        task: "Synthetic",
+        workspaceRelevantPaths: ["src/service.py"],
+      },
+      undefined,
+      undefined,
+      context(),
+    ),
+    /workspace_relevant_paths_require_capsule/,
+  );
+  assert.equal(calls, 0);
+});
+
+test("workspace capsule model-tool starts reject symlinked project inputs", async () => {
+  const project = await mkdtemp(join(tmpdir(), "orchestrator-workspace-project-"));
+  const linkedProject = `${project}-link`;
+  await symlink(project, linkedProject, "dir");
+  let calls = 0;
+  try {
+    const { tool } = harness(async () => {
+      calls += 1;
+      return { code: 0, stdout: "" };
+    });
+    await assert.rejects(
+      tool.execute(
+        "call",
+        {
+          action: "start",
+          project: linkedProject,
+          task: "Synthetic cold assignment",
+          workspaceCapsule: true,
+        },
+        undefined,
+        undefined,
+        context(),
+      ),
+      /workspace_capsule_project_not_canonical/,
+    );
+    assert.equal(calls, 0);
+  } finally {
+    await rm(linkedProject, { force: true });
+    await rm(project, { recursive: true, force: true });
+  }
+});
+
 test("natural-language starts pass deterministic execution profiles", () => {
   const args = testHooks.buildStartArgs(
     { profile: "review-heavy-economy" },
@@ -1848,6 +1935,10 @@ test("start previews CLI policy, keeps private text out of argv, and cleans mode
       },
       dry_run: dryRun,
       context_capsule: { present: true, chars: contextCanary.length + 18 },
+      workspace_capsule: {
+        enabled: args.includes("--workspace-capsule"), schema_version: 1,
+        instruction_count: 1, marker_count: 1, relevant_path_count: 1,
+      },
       budget_policy: {
         enforcement: "warn-only",
         warning: { run: { operational_tokens: 600000 }, role: {}, assignment: {} },
@@ -1873,6 +1964,8 @@ test("start previews CLI policy, keeps private text out of argv, and cleans mode
       forceSpecialists: ["playwright"],
       withPlaywright: true,
       contextCapsule: { currentState: contextCanary },
+      workspaceCapsule: true,
+      workspaceRelevantPaths: ["src/service.py"],
       rpcWorkers: true,
       workerSkills: { reviewer: ["/reviewed/reviewer/SKILL.md"] },
     },
@@ -1890,6 +1983,7 @@ test("start previews CLI policy, keeps private text out of argv, and cleans mode
   assert.match(ctx.calls.confirmations[0].message, /warning\.run: operational_tokens=600000/);
   assert.match(ctx.calls.confirmations[0].message, /reviewer: \/reviewed\/reviewer\/SKILL\.md/);
   assert.match(ctx.calls.confirmations[0].message, /Parent context capsule: [0-9]+ characters/);
+  assert.match(ctx.calls.confirmations[0].message, /Experimental workspace capsule: validated schema=1; instructions=1; markers=1; relevant=1/);
   assert.equal(JSON.stringify(result).includes(canary), false);
   assert.equal(JSON.stringify(result).includes(contextCanary), false);
   for (const path of paths) await assert.rejects(access(path));
@@ -1926,7 +2020,7 @@ test("controller mode requires and collects an explicit target project", async (
 
     const ctx = context({
       input: process.cwd(),
-      confirmations: [false, false, false, false, true],
+      confirmations: [false, false, false, false, false, true],
     });
     await commands.get("orchestrator-start").handler("synthetic", ctx);
     assert.equal(calls, 2);
@@ -2037,6 +2131,11 @@ test("canonical start command reuses private preview and explicit confirmation f
     execCalls += 1;
     assert.equal(args.includes(task), false);
     assert.equal(args.includes("--rpc-workers"), false);
+    assert.equal(args.includes("--workspace-capsule"), true);
+    assert.deepEqual(
+      args.filter((_value, index) => args[index - 1] === "--workspace-relevant-path"),
+      ["src/service.py", "tests/test_service.py"],
+    );
     assert.equal(args[args.indexOf("--implementation-flow") + 1], "phased");
     const taskPath = args[args.indexOf("--task-file") + 1];
     paths.push(taskPath);
@@ -2050,15 +2149,24 @@ test("canonical start command reuses private preview and explicit confirmation f
         session: "pi-project-agents",
         roles: [],
         trust: { child_bypass: false },
+        workspace_capsule: {
+          enabled: true, schema_version: 1, instruction_count: 1,
+          marker_count: 1, relevant_path_count: 2,
+        },
         dry_run: dryRun,
         paths: { state_root: "/tmp/state", coordination: dryRun ? null : "/tmp/state/run" },
       })),
     };
   });
-  const ctx = context({ confirmations: [true, false, false, false, true] });
+  const ctx = context({
+    confirmations: [true, false, false, false, true, true],
+    editors: ["src/service.py\ntests/test_service.py"],
+  });
   await commands.get("orchestrator-start").handler(task, ctx);
   assert.equal(execCalls, 2);
   assert.equal(ctx.calls.confirmations.at(-1).title, "Start tmux orchestration?");
+  assert.equal(ctx.calls.editors[0].title, "Workspace capsule relevant paths");
+  assert.match(ctx.calls.confirmations.at(-1).message, /Experimental workspace capsule: validated schema=1/);
   assert.equal(JSON.stringify(ctx.calls).includes(task), false);
   for (const path of paths) await assert.rejects(access(path));
 });

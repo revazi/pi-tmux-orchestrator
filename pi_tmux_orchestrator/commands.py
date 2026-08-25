@@ -100,6 +100,11 @@ from .tmux import (
     validate_session_name,
 )
 from .worker_resources import append_worker_resource_args, resolve_worker_skills
+from .workspace_capsules import (
+    canonical_project_root,
+    construct_workspace_capsule,
+    workspace_capsule_metadata,
+)
 
 
 def role_config(
@@ -257,7 +262,13 @@ def start_command(args: argparse.Namespace) -> CommandResult:
         )
     command_path("pi")
     command_path("tmux")
-    project = Path(args.project).expanduser().resolve()
+    project_input = Path(args.project).expanduser()
+    workspace_capsule_enabled = getattr(args, "workspace_capsule", False)
+    project = (
+        canonical_project_root(project_input)
+        if workspace_capsule_enabled
+        else project_input.resolve()
+    )
     if not project.is_dir():
         raise OrchestrationError(f"Project directory does not exist: {project}")
     transport = RPC_TRANSPORT if getattr(args, "rpc_workers", False) else TUI_TRANSPORT
@@ -274,6 +285,17 @@ def start_command(args: argparse.Namespace) -> CommandResult:
         )
         if context_capsule_text is not None or context_capsule_file is not None
         else ""
+    )
+    workspace_relevant_paths = getattr(args, "workspace_relevant_path", [])
+    if workspace_relevant_paths and not getattr(args, "workspace_capsule", False):
+        raise OrchestrationError(
+            "--workspace-relevant-path requires --workspace-capsule",
+            "invalid_arguments",
+        )
+    workspace_capsule = (
+        construct_workspace_capsule(project, workspace_relevant_paths)
+        if workspace_capsule_enabled
+        else None
     )
     if args.with_probe:
         if args.probe_task is None and args.probe_task_file is None:
@@ -384,6 +406,7 @@ def start_command(args: argparse.Namespace) -> CommandResult:
             task,
             context_capsule,
             role_tasks.get(role, ""),
+            workspace_capsule=workspace_capsule,
         )
     if not args.skip_model_check:
         for role, config in configs.items():
@@ -444,6 +467,7 @@ def start_command(args: argparse.Namespace) -> CommandResult:
             "present": bool(context_capsule),
             "chars": len(context_capsule.rstrip("\n")),
         },
+        "workspace_capsule": workspace_capsule_metadata(workspace_capsule),
     }
     human_print(f"Project: {project}")
     human_print(f"Session: {session}")
@@ -477,6 +501,18 @@ def start_command(args: argparse.Namespace) -> CommandResult:
                 f"{metric}={value}" for metric, value in sorted(thresholds.items())
             )
             human_print(f"  {level}.{scope}: {rendered or 'off'}")
+    workspace_metadata = workspace_capsule_metadata(workspace_capsule)
+    human_print(
+        "Experimental workspace capsule: "
+        + (
+            f"validated schema={workspace_metadata['schema_version']} "
+            f"instructions={workspace_metadata['instruction_count']} "
+            f"markers={workspace_metadata['marker_count']} "
+            f"relevant={workspace_metadata['relevant_path_count']}"
+            if workspace_metadata["enabled"]
+            else "disabled"
+        )
+    )
     human_print(
         f"Child project trust bypass: {'enabled' if args.approve_project else 'disabled'}"
     )
@@ -531,6 +567,7 @@ def start_command(args: argparse.Namespace) -> CommandResult:
             task,
             role_tasks,
             context_capsule=context_capsule,
+            workspace_capsule=workspace_capsule,
             budget_policy=budget_policy,
             implementation_flow=implementation_flow,
             forced_specialists=forced_specialists,
