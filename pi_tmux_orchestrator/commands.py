@@ -47,6 +47,11 @@ from .constants import (
     WINDOW,
 )
 from .context_capsules import render_worker_baseline
+from .custom_roles import (
+    custom_role_registry_path,
+    load_custom_role_registry,
+    public_custom_role_registry,
+)
 from .models import CommandResult, OrchestrationError
 from .output import bounded_message, human_print, public_role
 from .profiles import (
@@ -260,8 +265,6 @@ def start_command(args: argparse.Namespace) -> CommandResult:
             "start --attach is interactive-only and cannot be used with --json",
             "interactive_only",
         )
-    command_path("pi")
-    command_path("tmux")
     project_input = Path(args.project).expanduser()
     workspace_capsule_enabled = getattr(args, "workspace_capsule", False)
     project = (
@@ -271,6 +274,10 @@ def start_command(args: argparse.Namespace) -> CommandResult:
     )
     if not project.is_dir():
         raise OrchestrationError(f"Project directory does not exist: {project}")
+    configured_custom_roles = load_custom_role_registry(project=project)
+    custom_role_metadata = public_custom_role_registry(configured_custom_roles)
+    command_path("pi")
+    command_path("tmux")
     transport = RPC_TRANSPORT if getattr(args, "rpc_workers", False) else TUI_TRANSPORT
 
     task = read_text_argument(args.task, args.task_file, "task")
@@ -438,6 +445,7 @@ def start_command(args: argparse.Namespace) -> CommandResult:
         },
         "budget_policy": budget_policy,
         "execution_profile": public_execution_profile(execution_profile),
+        "custom_role_registry": custom_role_metadata,
         "worker_resources": {
             "skill_discovery": False,
             "skills": {
@@ -489,6 +497,20 @@ def start_command(args: argparse.Namespace) -> CommandResult:
         f"Execution profile: {execution_profile['name']} "
         f"({execution_profile['kind']}, source={execution_profile['source']})"
     )
+    human_print(
+        "Custom specialist registry: "
+        + (
+            f"{custom_role_metadata['count']} configured "
+            f"({', '.join(custom_role_metadata['names'])}); registry-only, not launchable"
+            if custom_role_metadata["configured"]
+            else "not configured; built-in roles unchanged"
+        )
+    )
+    for role in custom_role_metadata["roles"]:
+        human_print(
+            f"  {role['id']}: prompt_sha256={role['prompt_sha256']} "
+            f"skill_sha256={','.join(role['skill_sha256']) or 'none'}"
+        )
     human_print("Worker skill discovery: disabled")
     for role in roles:
         paths = [skill["path"] for skill in worker_skills[role]]
@@ -1177,6 +1199,9 @@ def stop_command(args: argparse.Namespace) -> CommandResult:
 
 
 def doctor_command(_: argparse.Namespace) -> CommandResult:
+    configured_custom_roles = load_custom_role_registry()
+    custom_roles_path = custom_role_registry_path()
+    custom_roles_data = public_custom_role_registry(configured_custom_roles)
     configured_models = load_model_config()
     config_path = model_config_path()
     config_in_use = bool(
@@ -1218,10 +1243,12 @@ def doctor_command(_: argparse.Namespace) -> CommandResult:
                     "execution_profile": public_execution_profile(execution_profile),
                 },
                 "budget_policy": budget_data,
+                "custom_role_registry": custom_roles_data,
                 "paths": {
                     "state_root": str(absolute_path(runtime.STATE_ROOT)),
                     "model_config": str(config_path),
                     "budget_config": str(budget_path),
+                    "custom_role_registry": str(custom_roles_path),
                 },
             },
             code=1,
@@ -1298,6 +1325,15 @@ def doctor_command(_: argparse.Namespace) -> CommandResult:
         f"({'configured' if budget_in_use else 'packaged defaults'}; "
         f"mode={configured_budget['enforcement']}, observational=true)"
     )
+    human_print(
+        f"OK   custom role registry: {custom_roles_path} "
+        f"({custom_roles_data['count']} configured; registry-only, not launchable)"
+    )
+    for role in custom_roles_data["roles"]:
+        human_print(
+            f"  {role['id']}: prompt_sha256={role['prompt_sha256']} "
+            f"skill_sha256={','.join(role['skill_sha256']) or 'none'}"
+        )
     human_print(f"OK   state root: {runtime.STATE_ROOT}")
     return CommandResult(
         data={
@@ -1310,10 +1346,12 @@ def doctor_command(_: argparse.Namespace) -> CommandResult:
                 "execution_profile": public_execution_profile(execution_profile),
             },
             "budget_policy": budget_data,
+            "custom_role_registry": custom_roles_data,
             "paths": {
                 "state_root": str(absolute_path(runtime.STATE_ROOT)),
                 "model_config": str(config_path),
                 "budget_config": str(budget_path),
+                "custom_role_registry": str(custom_roles_path),
             },
         }
     )

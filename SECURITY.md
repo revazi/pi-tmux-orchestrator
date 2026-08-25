@@ -34,6 +34,23 @@ credential, endpoint, header, and arbitrary extra fields are rejected. Pi's own
 model registry and authentication remain authoritative. Bounded model discovery
 returns no authentication material.
 
+The separate version-1 custom specialist registry is user-global only and has no
+project/CLI/profile/model override. It accepts exact description/rule and
+path/SHA-256 resource metadata only—never provider, model, thinking, credential,
+endpoint, command, tool, writer, reviewer, or authority fields. IDs cannot
+collide with built-in roles/aliases, authority/control identities, commands, or
+reserved prefixes. Every custom contract is immutable read-only supplemental
+evidence metadata. This version exposes no launch, broker, tmux, worker,
+reviewer-satisfaction, profile, or activation path for a custom ID.
+
+Custom registry resources must be canonical current-user-owned regular Markdown
+files with no symlink component, no unsafe write/execute mode, bounded sizes,
+safe UTF-8, and exact digests; private prompts require no group/world access.
+Registry and resources inside the target repository reject before tmux/provider
+activity. Bodies are read ephemerally for validation, are never returned in
+public/resolved output, and do not enter manifests, SQLite, status, dashboards,
+Supervisor API, RPC registries/journals, project files, errors, or logs.
+
 ## Broker boundary
 
 Every run created by `0.5.0` or later uses one local Unix-domain socket:
@@ -170,4 +187,9 @@ The npm package declares no dependencies or lifecycle scripts and does not
 bundle Pi. Deterministic package checks exclude tests, CI files, generated
 sessions/state, credentials, caches, `node_modules`, and authentication data.
 Model-free acceptance uses isolated Pi/npm homes, offline package operations,
-and no provider prompt.
+and no provider prompt. `scripts/unreleased-extension-smoke.sh` verifies and
+packs the checked-out source, installs the exact tarball into disposable npm/Pi
+homes, proves installed-artifact extension/tool/command/skill registration and
+RPC provenance, and prints only an explicit offline/update-disabled isolated TUI
+command with blackhole proxy settings (not an OS network sandbox); it never
+modifies the real Pi home or global package.

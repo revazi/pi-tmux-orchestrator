@@ -38,6 +38,7 @@ EXPECTED_FILES=(
   pi_tmux_orchestrator/constants.py
   pi_tmux_orchestrator/context_capsules.py
   pi_tmux_orchestrator/controller.py
+  pi_tmux_orchestrator/custom_roles.py
   pi_tmux_orchestrator/dashboard.py
   pi_tmux_orchestrator/models.py
   pi_tmux_orchestrator/output.py

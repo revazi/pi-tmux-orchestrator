@@ -10,8 +10,43 @@ test -f "$PACKAGE_ROOT/package.json"
 test -f "$PACKAGE_ROOT/extensions/tmux-orchestrator.js"
 test -f "$PACKAGE_ROOT/SKILL.md"
 
+node --input-type=module - "$PACKAGE_ROOT" <<'JS'
+import { readFile } from "node:fs/promises";
+import { pathToFileURL } from "node:url";
+import { resolve } from "node:path";
+
+const root = resolve(process.argv[2]);
+const manifest = JSON.parse(await readFile(resolve(root, "package.json"), "utf8"));
+const loaded = await import(`${pathToFileURL(resolve(root, "extensions/tmux-orchestrator.js")).href}?artifact-smoke=1`);
+const tools = [];
+const commands = [];
+const events = [];
+loaded.default({
+  registerTool(tool) { tools.push(tool); },
+  registerCommand(name) { commands.push(name); },
+  on(name) { events.push(name); },
+});
+if (
+  JSON.stringify(manifest.pi) !== JSON.stringify({
+    extensions: ["./extensions/tmux-orchestrator.js"],
+    skills: ["./SKILL.md"],
+  })
+) {
+  throw new Error("installed artifact Pi resource manifest drifted");
+}
+if (tools.length !== 1 || tools[0].name !== "tmux_orchestrator") {
+  throw new Error("installed artifact did not register the exact model tool");
+}
+if (commands.length !== 24 || new Set(commands).size !== 24) {
+  throw new Error("installed artifact did not register the exact command surface");
+}
+if (!events.includes("session_start") || !events.includes("session_shutdown")) {
+  throw new Error("installed artifact extension lifecycle registration drifted");
+}
+JS
+
 if ! command -v pi >/dev/null 2>&1; then
-  printf '%s\n' 'SKIP isolated Pi local-package install/RPC discovery smoke (pi not available).'
+  printf '%s\n' 'SKIP isolated Pi local-package install/RPC discovery smoke (pi not available; installed-artifact extension/tool registration passed).'
   exit 0
 fi
 TEMP=$(mktemp -d "${TMPDIR:-/tmp}/pi-tmux-extension-smoke.XXXXXX")
@@ -204,4 +239,4 @@ for record in records:
         raise SystemExit("Pi RPC emitted an unexpected non-response record")
 PY
 
-printf '%s\n' 'Isolated Pi local-package install + RPC discovery passed (exact twenty-four commands/root skill from the npm-installed tarball path; no prompt, provider request, or real home/auth access).'
+printf '%s\n' 'Isolated Pi local-package install + RPC discovery passed (exact extension/model tool registration plus twenty-four commands/root skill from the npm-installed tarball path; no prompt, provider request, or real home/auth access).'

@@ -84,6 +84,111 @@ models and never exposing authentication. Natural-language requests can use
 `useParentModel` for the current Pi provider/model/thinking or exact `all` and
 per-role `modelOverrides` after resolving ambiguous IDs with `models`.
 
+### Custom specialist registry
+
+The custom-role registry is a separate strict user-global policy file:
+
+```text
+~/.pi/agent/tmux-orchestrator-roles.json
+```
+
+`PI_TMUX_ORCHESTRATOR_ROLE_REGISTRY` is the only override and must be a bounded
+canonical absolute `.json` path outside the target repository. Its precedence is exact: a
+non-empty environment override replaces the default location; otherwise the
+file under `PI_CODING_AGENT_DIR` is used. There is no project-local, CLI,
+profile, activation, model-tool, or manifest override. A missing selected file
+normalizes to version 1 with zero roles and preserves all built-in behavior.
+Unsupported versions, booleans/string versions, and legacy map shapes reject.
+
+Version 1 has this exact shape (replace every digest with the reviewed file's
+actual SHA-256):
+
+```json
+{
+  "version": 1,
+  "roles": [
+    {
+      "id": "security-auditor",
+      "description": "Independent security evidence specialist.",
+      "assignmentRule": "Use only for bounded security-relevant review evidence.",
+      "prompt": {
+        "path": "/absolute/private/orchestrator-roles/security-auditor.md",
+        "sha256": "<64-lowercase-hex-sha256>"
+      },
+      "skills": [
+        {
+          "path": "/absolute/reviewed-skills/security/SKILL.md",
+          "sha256": "<64-lowercase-hex-sha256>"
+        }
+      ]
+    }
+  ]
+}
+```
+
+Bounds and exactness:
+
+| Value | Limit/policy |
+|---|---|
+| serialized registry | 64 KiB strict UTF-8 JSON; duplicate and unknown fields reject |
+| roles | 8; array only; IDs unique |
+| ID | 3–48 ASCII lowercase hyphenated characters; no trailing/doubled hyphen |
+| description | 240 characters and at most 2 KiB UTF-8; one safe trimmed line |
+| `assignmentRule` | 500 characters and at most 2 KiB UTF-8; one safe trimmed line |
+| prompt | exactly one `.md`; non-empty; 64 KiB; mode `0600`-compatible privacy |
+| skills | 0–4 `.md` files per role; each non-empty and at most 256 KiB |
+| path | canonical absolute non-symlink path; 1,024 characters and 4 KiB UTF-8 |
+| digest | exactly 64 lowercase hexadecimal SHA-256 characters |
+
+Top-level fields are exactly `version` and `roles`. Role fields are exactly
+`id`, `description`, `assignmentRule`, `prompt`, and `skills`. Resource fields
+are exactly `path` and `sha256`. Therefore credentials, API keys, endpoints,
+headers, provider/model IDs, thinking, profiles, tools, commands, authority,
+writer/reviewer flags, and arbitrary prompt-count forms have no accepted field.
+Unsafe controls, bidi/format/noncharacter Unicode, malformed UTF-8, empty bodies,
+and ambiguous legacy values reject.
+
+IDs cannot equal a built-in role, role alias, writer/reviewer authority name,
+broker/monitor/controller/control target, public/internal command, or reserved
+name. Authority/control prefixes such as `implementer-`, `reviewer-`, `broker-`,
+`controller-`, `orchestrator-`, `or-`, `pi-`, `tmux-`, `system-`, `builtin-`,
+`legacy-`, `worker-`, and `x-` are reserved. Authority-bearing hyphen tokens are
+also rejected, so an ID cannot present itself as an implementer or reviewer.
+
+The registry, prompt, and skill must be regular, current-user-owned files with
+canonical paths and no symlink component. Registry/skills cannot be group- or
+world-writable; the registry and every resource must be owner-readable and free
+of special/executable mode bits; prompt resources additionally allow no group/world permissions. Every resource must
+remain outside the canonical target repository. A prompt path cannot be reused
+as a skill, and no resource path can be duplicated/shared across definitions.
+Validation reads each body with no-follow descriptor/identity checks, validates
+safe UTF-8 and size, and verifies the configured digest. A changed file fails
+closed on the next doctor/start validation.
+
+For example:
+
+```bash
+chmod 600 /absolute/private/orchestrator-roles/security-auditor.md
+sha256sum /absolute/private/orchestrator-roles/security-auditor.md
+# macOS alternative: shasum -a 256 FILE
+```
+
+Bodies are ephemeral validation inputs only. Resolved definitions contain
+bounded description/rule/resource metadata, paths, sizes, and digests—not
+bodies. Public doctor, dry-run, and Pi confirmation metadata contains only
+version, count, sorted names, digests, immutable `read-only-specialist`
+contract, and `registry-only`/`launchable: false`. No custom-role body enters
+manifests, SQLite, status, dashboards, Supervisor API, RPC state/journals,
+project files, dry-run output, errors, or logs.
+
+This version is a registry boundary, not a worker lifecycle. Custom IDs are not
+accepted by start flags, `send`, `restart`, Supervisor role selectors,
+`workerSkills`, profiles, deterministic activation, broker routing, manifests,
+or the extension tool's role enum. They cannot become the implementer, replace
+or satisfy the mandatory built-in reviewer, or gain tools/authority from
+prompt/skill/project instructions. Launch lifecycle is deferred to #60;
+profile/activation integration is deferred to #61.
+
 ### Budget policy
 
 The strict version-1 user-global file
@@ -458,9 +563,10 @@ remain under `~/.pi/agent/orchestrations/`.
 
 ### `doctor`
 
-Checks Pi, Python, tmux, tmux extended-key settings, model and budget
-configuration paths, the effective budget policy, and configured model
-availability without a provider request.
+Checks Pi, Python, tmux, tmux extended-key settings, model, budget, and custom
+role registry configuration paths; validates custom-role resources; reports
+registry-only names/digests and the effective budget policy; and checks
+configured model availability without a provider request.
 
 ### `supervisor ...`
 
@@ -679,6 +785,72 @@ Recommended for tmux 3.5+:
 set -g extended-keys on
 set -g extended-keys-format csi-u
 ```
+
+## Provider-free unreleased checkout testing
+
+Run the checked source-tree smoke instead of replacing the globally installed
+package:
+
+```bash
+scripts/unreleased-extension-smoke.sh
+```
+
+It runs exact package verification, creates the actual local npm tarball with
+scripts disabled and offline isolated npm configuration, installs that tarball
+under a temporary package host, and then uses the installed package root for two
+checks:
+
+1. import the exact installed extension and require one
+   `tmux_orchestrator` tool, the exact 24-command registration surface, the Pi
+   extension/skill manifest, and lifecycle registration;
+2. use `pi install` under a disposable `PI_CODING_AGENT_DIR`, then provider-free
+   RPC `get_commands` to require exact package provenance for all commands and
+   the root skill.
+
+The script clears inherited environment, isolates HOME/XDG/npm/Pi directories,
+uses offline npm plus disabled update checks and blackhole proxy settings, sends
+no prompt, reads no real auth, creates no tmux grid, and deletes temporary data
+on exit. The proxy settings are defense in depth, not an OS network sandbox. It never publishes,
+updates, removes, or silently replaces the global package. On success it prints
+an explicit command of this form:
+
+```bash
+/absolute/checkout/scripts/unreleased-extension-smoke.sh \
+  --interactive /absolute/project \
+  --registry /absolute/path/to/roles.json  # optional
+```
+
+Interactive mode rebuilds/reverifies the same artifact, installs it into a new
+temporary Pi home, applies offline/update-disabled and blackhole proxy settings,
+and launches the TUI in the explicit project. An explicit `--registry` is passed
+only into that disposable Pi process so `/or-doctor` can validate the real reviewed
+file through the installed extension; it remains registry-only/not launchable.
+Use `/or-help`, `/or-doctor`, command completion, and then exit. Do not send a
+model prompt in this provider-free mode. Provider-backed
+acceptance is a separate explicit decision requiring credentials intentionally
+configured only in another disposable home; neither this script nor CI accesses
+or copies the real Pi authentication store.
+
+Run focused registry validation without Pi or a provider:
+
+```bash
+python3 -m unittest tests.test_custom_roles -v
+```
+
+To inspect one real reviewed registry without launching workers:
+
+```bash
+PI_TMUX_ORCHESTRATOR_ROLE_REGISTRY=/absolute/path/to/roles.json \
+  bin/pi-tmux-agents start --project /absolute/target-project \
+  --task 'Registry validation only.' --dry-run --skip-model-check
+```
+
+The preview may invoke local prerequisite/tmux identity checks but creates no
+files/session/worker and makes no provider request. It emits count, names, and
+digests only and must say registry-only/not launchable. Invalid registry or
+resource data fails before tmux/provider activity. Lifecycle testing remains
+unavailable until #60; activation/profile routing remains unavailable until
+#61.
 
 ## Troubleshooting
 

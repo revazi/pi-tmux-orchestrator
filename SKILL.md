@@ -34,12 +34,13 @@ panes, file handoffs, relay scripts, or polling loops.
 8. Honor explicit per-run budget requests through `budgetOverrides`; never infer hard thresholds. Omitted values use the strict external user-global policy and packaged warn-only defaults.
 9. Configured specialists use conservative deterministic gates. Pass `forceSpecialists` or `--force-specialist ROLE` only when the user explicitly requires that enabled role to run regardless of a skip predicate; never add a classifier model call.
 10. Worker skill discovery is disabled. Pass `workerSkills` or `--worker-skill ROLE=PATH` only for exact Markdown files the user explicitly reviewed; never infer or auto-load a skill.
-11. Orchestration workers bound read/grep/bash results before the next provider call. Follow emitted offset, refined-search, and targeted full-output guidance instead of requesting another broad dump.
-12. Before starting from an existing parent conversation, synthesize the tool's bounded `contextCapsule` from only task-relevant state, settled decisions, constraints, acceptance criteria, paths, evidence, open questions, and out-of-scope items. Never copy the full parent transcript.
-13. Enable the experimental `workspaceCapsule` only for an explicit cold-assignment experiment. Supply at most 16 existing project-relative `workspaceRelevantPaths`, never a tree. It supplements discovery and never replaces reading governing instructions. Do not claim provider savings or correctness equivalence from its model-free proxy.
-14. Never claim a synthetic probe or browser smoke is production wire acceptance.
-15. Do not push, merge, publish, deploy, or perform destructive cleanup without explicit authorization.
-16. Idle workers end their turn. A parent that is watching also ends its turn and relies on broker updates. Neither workers nor watching parents run sleeps or poll files, sockets, status, or tmux while waiting.
+11. User-global custom specialist registry entries are inspection metadata only. Report them as registry-only/not launchable; never pass their IDs to start, control, routing, profiles, activation, worker skills, or reviewer satisfaction until lifecycle support exists.
+12. Orchestration workers bound read/grep/bash results before the next provider call. Follow emitted offset, refined-search, and targeted full-output guidance instead of requesting another broad dump.
+13. Before starting from an existing parent conversation, synthesize the tool's bounded `contextCapsule` from only task-relevant state, settled decisions, constraints, acceptance criteria, paths, evidence, open questions, and out-of-scope items. Never copy the full parent transcript.
+14. Enable the experimental `workspaceCapsule` only for an explicit cold-assignment experiment. Supply at most 16 existing project-relative `workspaceRelevantPaths`, never a tree. It supplements discovery and never replaces reading governing instructions. Do not claim provider savings or correctness equivalence from its model-free proxy.
+15. Never claim a synthetic probe or browser smoke is production wire acceptance.
+16. Do not push, merge, publish, deploy, or perform destructive cleanup without explicit authorization.
+17. Idle workers end their turn. A parent that is watching also ends its turn and relies on broker updates. Neither workers nor watching parents run sleeps or poll files, sockets, status, or tmux while waiting.
 
 ## Coordination model
 
@@ -132,7 +133,18 @@ Global model policy is read from `~/.pi/agent/tmux-orchestrator.json` (or
 Pi's own model registry and authentication remain authoritative; never place
 credentials or endpoint secrets in orchestrator configuration.
 
-Optional roles:
+The separate strict v1 custom specialist registry is
+`~/.pi/agent/tmux-orchestrator-roles.json`, or the sole absolute
+`PI_TMUX_ORCHESTRATOR_ROLE_REGISTRY` override. It binds at most eight unique
+non-reserved IDs to one private digest-bound Markdown prompt and at most four
+reviewed digest-bound Markdown skills, all canonical, current-user-owned,
+external to the target, and strictly bounded. Missing configuration means zero
+custom roles. Dry-run, confirmation, and doctor expose names/digests only and
+mark every definition `registry-only`/not launchable. Do not treat registry
+presence as worker, routing, activation, profile, or reviewer support; existing
+start/control role enums remain built-in-only until #60 and #61.
+
+Optional built-in roles:
 
 ```bash
 pi-tmux-agents start \
@@ -212,5 +224,11 @@ pi-tmux-agents doctor
 pi-tmux-agents start --project "$PWD" --task-file /tmp/pi-agent-task.md --dry-run
 ```
 
-See [references/usage.md](references/usage.md) for the full CLI and security
-reference.
+For a provider-free unreleased-checkout proof, run
+`scripts/unreleased-extension-smoke.sh` from the source checkout. It verifies
+and packs the actual package, uses isolated temporary Pi/npm homes, proves exact
+artifact command/skill/tool registration and RPC discovery, and prints an
+offline/update-disabled isolated manual TUI command with blackhole proxy settings
+that are not an OS network sandbox. It never publishes or reads the
+real Pi home/auth. See [references/usage.md](references/usage.md) for the full
+registry, local-testing, CLI, and security reference.

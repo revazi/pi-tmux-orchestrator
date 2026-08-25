@@ -6,6 +6,7 @@ export PYTHONDONTWRITEBYTECODE=1
 TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/pi-tmux-orchestrator-tests.XXXXXX")
 export PI_TMUX_ORCHESTRATOR_CONFIG="$TEST_ROOT/missing-model-config.json"
 export PI_TMUX_ORCHESTRATOR_BUDGET_CONFIG="$TEST_ROOT/missing-budget-config.json"
+export PI_TMUX_ORCHESTRATOR_ROLE_REGISTRY="$TEST_ROOT/missing-custom-roles.json"
 
 cleanup() {
   if [[ -n "${TEMP_BIN:-}" ]]; then
@@ -21,7 +22,8 @@ bash -n \
   "$ROOT/scripts/test.sh" \
   "$ROOT/scripts/ensure-tmux.sh" \
   "$ROOT/scripts/package-smoke.sh" \
-  "$ROOT/scripts/pi-extension-smoke.sh"
+  "$ROOT/scripts/pi-extension-smoke.sh" \
+  "$ROOT/scripts/unreleased-extension-smoke.sh"
 
 printf '%s\n' '==> Ruff lint and format'
 ruff check \
@@ -45,6 +47,7 @@ for path in (
     Path("$ROOT/tests/support.py"),
     Path("$ROOT/tests/test_orchestrator.py"),
     Path("$ROOT/tests/test_hardening.py"),
+    Path("$ROOT/tests/test_custom_roles.py"),
     Path("$ROOT/tests/functional_smoke.py"),
     Path("$ROOT/tests/test_json_cli.py"),
     Path("$ROOT/tests/test_supervisor_api.py"),
@@ -89,6 +92,7 @@ python3 "$ROOT/scripts/workspace-capsule-baseline.py" --check
 printf '%s\n' '==> Package verification, npm/Pi local-package install + RPC discovery, and offline publication dry run'
 node "$ROOT/scripts/verify-package.mjs"
 "$ROOT/scripts/package-smoke.sh"
+"$ROOT/scripts/unreleased-extension-smoke.sh"
 
 printf '%s\n' '==> CLI help and provider-free dry run'
 "$ROOT/bin/pi-tmux-agents" --help >/dev/null

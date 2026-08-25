@@ -26,6 +26,7 @@ class SkillMetadataTests(unittest.TestCase):
             "commands.py",
             "configuration.py",
             "controller.py",
+            "custom_roles.py",
             "prompts.py",
             "profiles.py",
             "protocol.py",

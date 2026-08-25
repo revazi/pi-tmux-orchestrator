@@ -159,6 +159,10 @@ test("registers one bounded model tool and the exact canonical/alias command sur
     tool.promptGuidelines.join(" "),
     /Worker skill discovery is disabled.*exact Markdown paths.*explicitly reviewed/,
   );
+  assert.match(
+    tool.promptGuidelines.join(" "),
+    /Custom specialist registry entries are inspectable metadata only.*do not pass them to start/,
+  );
   assert.deepEqual(
     [...commands.keys()],
     [
@@ -1944,6 +1948,22 @@ test("start previews CLI policy, keeps private text out of argv, and cleans mode
         warning: { run: { operational_tokens: 600000 }, role: {}, assignment: {} },
         hard: { run: {}, role: {}, assignment: {} },
       },
+      custom_role_registry: {
+        version: 1,
+        configured: true,
+        count: 1,
+        names: ["security-auditor"],
+        roles: [{
+          id: "security-auditor",
+          contract: "read-only-specialist",
+          lifecycle: "registry-only",
+          launchable: false,
+          prompt_sha256: "a".repeat(64),
+          skill_sha256: ["b".repeat(64)],
+        }],
+        lifecycle: "registry-only",
+        launchable: false,
+      },
       worker_resources: {
         skill_discovery: false,
         skills: { implementer: [], reviewer: ["/reviewed/reviewer/SKILL.md"] },
@@ -1979,6 +1999,9 @@ test("start previews CLI policy, keeps private text out of argv, and cleans mode
   assert.match(ctx.calls.confirmations[0].message, /Implementation flow: phased/);
   assert.match(ctx.calls.confirmations[0].message, /Forced specialists: playwright/);
   assert.match(ctx.calls.confirmations[0].message, /Execution profile: economy \(packaged, source=per-run\)/);
+  assert.match(ctx.calls.confirmations[0].message, /Custom specialist registry:/);
+  assert.match(ctx.calls.confirmations[0].message, /security-auditor: prompt_sha256=a{64}; skill_sha256=b{64}/);
+  assert.match(ctx.calls.confirmations[0].message, /registry-only, not launchable/);
   assert.match(ctx.calls.confirmations[0].message, /provider\/writer/);
   assert.match(ctx.calls.confirmations[0].message, /warning\.run: operational_tokens=600000/);
   assert.match(ctx.calls.confirmations[0].message, /reviewer: \/reviewed\/reviewer\/SKILL\.md/);

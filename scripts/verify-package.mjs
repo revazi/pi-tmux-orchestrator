@@ -19,6 +19,7 @@ const pythonFiles = [
   "constants.py",
   "context_capsules.py",
   "controller.py",
+  "custom_roles.py",
   "dashboard.py",
   "models.py",
   "output.py",

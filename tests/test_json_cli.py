@@ -268,6 +268,9 @@ class JsonMainTests(unittest.TestCase):
             data["execution_profile"],
             {"name": "economy", "kind": "packaged", "source": "per-run"},
         )
+        self.assertEqual(data["custom_role_registry"]["count"], 0)
+        self.assertEqual(data["custom_role_registry"]["names"], [])
+        self.assertFalse(data["custom_role_registry"]["launchable"])
         self.assertEqual(
             {role["name"]: role["thinking"] for role in data["roles"]},
             {
@@ -1038,6 +1041,19 @@ class JsonMainTests(unittest.TestCase):
             "warn-only",
         )
         self.assertIn("budget_config", envelope["data"]["paths"])
+        self.assertIn("custom_role_registry", envelope["data"]["paths"])
+        self.assertEqual(
+            envelope["data"]["custom_role_registry"],
+            {
+                "version": 1,
+                "configured": False,
+                "count": 0,
+                "names": [],
+                "roles": [],
+                "lifecycle": "registry-only",
+                "launchable": False,
+            },
+        )
         self.assertIsInstance(envelope["data"]["paths"], dict)
 
     def test_unexpected_exception_fails_closed_as_one_generic_json_object(self) -> None:

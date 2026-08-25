@@ -6,6 +6,8 @@ All notable changes to this project are documented here.
 
 ### Added
 
+- Added a strict versioned user-global registry for bounded digest-bound custom read-only specialist definitions, with reserved-name/authority exclusion, canonical private external resources, body-free registry-only dry-run/doctor/confirmation metadata, and no launch/routing/profile/activation support until #60/#61
+- Added a provider-free unreleased-checkout smoke that verifies and packs the actual package, installs the tarball through isolated npm/Pi homes, proves exact installed-artifact extension/tool/command/skill discovery, and prints an explicit offline/update-disabled disposable TUI command with blackhole proxy settings without claiming an OS network sandbox, replacing the global package, or reading real auth
 - Added an opt-in ephemeral cold-assignment workspace-capsule experiment with strict canonical Git/instruction identity validation, bounded allowlisted discovery hints, shared TUI/RPC delivery, fail-closed replay, no cross-run persistence, and a checked model-free proxy benchmark that makes no provider savings or correctness claim
 - Added checked-in simple, medium, and multi-round model-free token-efficiency fixtures that measure provider-visible context growth, assignment-boundary reduction, provider-call count, and tool-result volume
 - Added a bounded metadata-only retained usage analyzer that aggregates public broker token categories and provider-reported cost without reading Pi histories or workflow/provider bodies

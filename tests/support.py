@@ -16,6 +16,7 @@ from pi_tmux_orchestrator import (
     configuration,
     constants,
     controller,
+    custom_roles,
     models,
     output,
     prompts,
@@ -43,6 +44,12 @@ _TEST_BUDGET_CONFIG = (
     Path(tempfile.gettempdir()) / f"pi-tmux-test-budget-config-{os.getpid()}.json"
 )
 os.environ.setdefault("PI_TMUX_ORCHESTRATOR_BUDGET_CONFIG", str(_TEST_BUDGET_CONFIG))
+_TEST_CUSTOM_ROLE_REGISTRY = (
+    Path(tempfile.gettempdir()) / f"pi-tmux-test-custom-roles-{os.getpid()}.json"
+)
+os.environ.setdefault(
+    "PI_TMUX_ORCHESTRATOR_ROLE_REGISTRY", str(_TEST_CUSTOM_ROLE_REGISTRY)
+)
 
 
 class ModuleFacade:
@@ -62,6 +69,7 @@ class ModuleFacade:
                 commands,
                 configuration,
                 controller,
+                custom_roles,
                 relay,
                 rpc,
                 rpc_protocol,
