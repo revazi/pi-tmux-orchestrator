@@ -170,4 +170,9 @@ The npm package declares no dependencies or lifecycle scripts and does not
 bundle Pi. Deterministic package checks exclude tests, CI files, generated
 sessions/state, credentials, caches, `node_modules`, and authentication data.
 Model-free acceptance uses isolated Pi/npm homes, offline package operations,
-and no provider prompt.
+and no provider prompt. Pre-release staging writes only to a new canonical
+operator-selected directory outside the checkout, records bounded Git/tarball
+provenance, and proves Pi resource discovery from the staged package path. The
+default manual runner uses a disposable Pi home with no real auth. Any later
+real-home `-e` test is explicit, temporary, and documented separately; package
+settings remain unchanged unless the operator deliberately runs `pi install`.

@@ -59,6 +59,7 @@ EXPECTED_FILES=(
   pi_tmux_orchestrator/worker_resources.py
   pi_tmux_orchestrator/workspace_capsules.py
   references/usage.md
+  references/prerelease-testing.md
   references/protocol-v1.md
   references/dashboard-design.md
 )

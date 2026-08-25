@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 export PYTHONDONTWRITEBYTECODE=1
 TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/pi-tmux-orchestrator-tests.XXXXXX")
+TEST_ROOT=$(cd "$TEST_ROOT" && pwd -P)
 export PI_TMUX_ORCHESTRATOR_CONFIG="$TEST_ROOT/missing-model-config.json"
 export PI_TMUX_ORCHESTRATOR_BUDGET_CONFIG="$TEST_ROOT/missing-budget-config.json"
 
@@ -21,7 +22,9 @@ bash -n \
   "$ROOT/scripts/test.sh" \
   "$ROOT/scripts/ensure-tmux.sh" \
   "$ROOT/scripts/package-smoke.sh" \
-  "$ROOT/scripts/pi-extension-smoke.sh"
+  "$ROOT/scripts/pi-extension-smoke.sh" \
+  "$ROOT/scripts/stage-prerelease.sh" \
+  "$ROOT/scripts/run-prerelease-isolated.sh"
 
 printf '%s\n' '==> Ruff lint and format'
 ruff check \
@@ -89,6 +92,32 @@ python3 "$ROOT/scripts/workspace-capsule-baseline.py" --check
 printf '%s\n' '==> Package verification, npm/Pi local-package install + RPC discovery, and offline publication dry run'
 node "$ROOT/scripts/verify-package.mjs"
 "$ROOT/scripts/package-smoke.sh"
+PRERELEASE_STAGE="$TEST_ROOT/prerelease-stage"
+"$ROOT/scripts/stage-prerelease.sh" --output "$PRERELEASE_STAGE" --allow-dirty
+"$ROOT/scripts/run-prerelease-isolated.sh" --stage "$PRERELEASE_STAGE" --check
+python3 - "$PRERELEASE_STAGE/provenance.json" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+value = json.loads(path.read_text(encoding="utf-8"))
+if value.get("kind") != "pi-tmux-orchestrator-local-prerelease":
+    raise SystemExit("pre-release stage omitted exact provenance")
+if value.get("published") is not False:
+    raise SystemExit("pre-release stage claimed publication")
+package_root = path.parent / value["package_root"]
+if not (package_root / "extensions" / "tmux-orchestrator.js").is_file():
+    raise SystemExit("pre-release stage omitted the installed extension")
+PY
+printf '\nlocal tamper probe\n' >> \
+  "$PRERELEASE_STAGE/package-host/node_modules/pi-tmux-orchestrator/README.md"
+if "$ROOT/scripts/run-prerelease-isolated.sh" \
+  --stage "$PRERELEASE_STAGE" --check >/dev/null 2>&1; then
+  printf '%s\n' 'tampered pre-release package unexpectedly passed validation' >&2
+  exit 1
+fi
+rm -rf "$PRERELEASE_STAGE"
 
 printf '%s\n' '==> CLI help and provider-free dry run'
 "$ROOT/bin/pi-tmux-agents" --help >/dev/null
