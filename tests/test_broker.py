@@ -8,6 +8,7 @@ import signal
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
 from pi_tmux_orchestrator import broker_store, runtime
@@ -81,6 +82,21 @@ class BrokerFixture(unittest.TestCase):
             "roles": roles,
         }
         save_manifest(self.coord, self.manifest)
+
+    def enable_specialists(self, *roles: str) -> None:
+        for index, role in enumerate(roles, start=4):
+            session_dir = ensure_private_directory(
+                self.coord / "sessions" / role, parents=True
+            )
+            self.manifest["roles"][role] = {
+                "provider": "test",
+                "model": "model",
+                "thinking": "off",
+                "tools": READ_ONLY_TOOLS,
+                "pane_id": f"%{index}",
+                "session_dir": str(session_dir),
+                "session_id": f"run-1-{role}",
+            }
 
 
 def assignment_usage_snapshot(*, assignment_input: int = 40) -> dict[str, object]:
@@ -345,6 +361,53 @@ class ContextCapsuleTests(unittest.TestCase):
         self.assertIn("Open questions (1)", plan_capsule)
         self.assertNotIn("Changed paths", plan_capsule)
 
+    def test_run_state_activation_evidence_is_bounded_and_explicit(self) -> None:
+        capsule = render_run_state_capsule(
+            [
+                {
+                    "role": "playwright",
+                    "round": 2,
+                    "report": {
+                        "kind": "playwright",
+                        "summary": "Browser check completed.",
+                        "changed_paths": [],
+                        "checks": [],
+                        "findings": [],
+                        "risks": [],
+                        "limitations": ["Synthetic data only."],
+                        "verdict": "approved",
+                    },
+                }
+            ],
+            2,
+            specialist_activations=[
+                {
+                    "role": "probe",
+                    "round": 2,
+                    "decision": "skipped",
+                    "rule_id": "probe-docs-only-paths-v1",
+                    "forced": False,
+                },
+                {
+                    "role": "playwright",
+                    "round": 2,
+                    "decision": "run",
+                    "rule_id": "playwright-forced-v1",
+                    "forced": True,
+                },
+            ],
+        )
+        self.assertIn(
+            "probe: skipped; evidence=not-required; rule=probe-docs-only-paths-v1",
+            capsule,
+        )
+        self.assertIn(
+            "playwright: run; evidence=reported; rule=playwright-forced-v1; source=forced",
+            capsule,
+        )
+        self.assertIn("Synthetic data only.", capsule)
+        self.assertLessEqual(len(capsule.encode("utf-8")), MAX_RUN_STATE_BYTES)
+
     def test_run_state_byte_limit_preserves_every_latest_role_section(self) -> None:
         events = []
         for role in ("implementer", "probe", "playwright", "django", "reviewer"):
@@ -423,7 +486,7 @@ class BrokerStoreTests(BrokerFixture):
             report_columns = {
                 row["name"] for row in database.execute("PRAGMA table_info(reports)")
             }
-        self.assertEqual(schema_version, "6")
+        self.assertEqual(schema_version, "7")
         self.assertIn("boundary_effective", assignment_columns)
         self.assertIn("provider_calls", role_columns)
         self.assertIn("peak_context_tokens", report_columns)
@@ -468,7 +531,7 @@ class BrokerStoreTests(BrokerFixture):
                 database.execute(
                     "SELECT value FROM meta WHERE key='schema_version'"
                 ).fetchone()["value"],
-                "6",
+                "7",
             )
             tables = {
                 row["name"]
@@ -496,6 +559,8 @@ class BrokerStoreTests(BrokerFixture):
         broker_store.prepare_broker_database(self.coord)
         snapshot = broker_store.public_broker_snapshot(self.coord)
         self.assertEqual(snapshot["workflow"]["implementation_flow"], "single")
+        self.assertEqual(snapshot["workflow"]["forced_specialists"], [])
+        self.assertEqual(snapshot["specialist_activations"], [])
 
     def test_new_run_has_metadata_only_sqlite_and_no_coordination_payload_files(
         self,
@@ -566,6 +631,38 @@ class BrokerStoreTests(BrokerFixture):
         with self.assertRaisesRegex(OrchestrationError, "Implementation flow"):
             broker_store.public_broker_snapshot(self.coord)
 
+    def test_forced_specialist_and_activation_metadata_fail_closed(self) -> None:
+        self.enable_specialists("django")
+        with self.assertRaisesRegex(OrchestrationError, "Forced specialists"):
+            initialize_broker_run(
+                self.coord,
+                self.manifest,
+                "task",
+                {},
+                forced_specialists=("playwright",),
+            )
+        initialize_broker_run(
+            self.coord,
+            self.manifest,
+            "task",
+            {},
+            forced_specialists=("django",),
+        )
+        with broker_store.connect_broker_database(self.coord) as database:
+            broker_store.record_specialist_activation(
+                database,
+                role="django",
+                round_number=1,
+                decision="run",
+                rule_id="django-forced-v1",
+                forced=True,
+            )
+            database.execute(
+                "UPDATE specialist_activations SET rule_id='PRIVATE_BODY INVALID'"
+            )
+        with self.assertRaisesRegex(OrchestrationError, "activation"):
+            broker_store.public_broker_snapshot(self.coord)
+
     def test_snapshot_reports_actual_usage_fields_and_workflow_state(self) -> None:
         initialize_broker_run(self.coord, self.manifest, "task", {})
         socket_path = broker_store.broker_paths(self.coord)["socket"]
@@ -573,6 +670,8 @@ class BrokerStoreTests(BrokerFixture):
         snapshot = broker_store.public_broker_snapshot(self.coord)
         self.assertEqual(snapshot["workflow"]["state"], "starting")
         self.assertEqual(snapshot["workflow"]["implementation_flow"], "single")
+        self.assertEqual(snapshot["workflow"]["forced_specialists"], [])
+        self.assertEqual(snapshot["specialist_activations"], [])
         self.assertEqual(snapshot["usage"]["provider_calls"], 0)
         self.assertEqual(snapshot["usage"]["total_tokens"], 0)
         self.assertTrue(snapshot["usage"]["actual_provider_usage_only"])
@@ -1276,6 +1375,240 @@ class BrokerObserverTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
             )
         )
         maybe_assign_reviewer.assert_awaited_once_with(1)
+
+    async def test_specialist_activation_skips_only_with_bounded_rule_evidence(
+        self,
+    ) -> None:
+        self.enable_specialists("probe", "playwright", "django")
+        initialize_broker_run(self.coord, self.manifest, "task", {})
+        broker = Broker(self.coord, self.manifest)
+        broker.clients = {
+            role: Client(role, mock.Mock(), mock.Mock())
+            for role in self.manifest["roles"]
+        }
+        report = {
+            "kind": "implementation",
+            "summary": "Documentation-only implementation.",
+            "changed_paths": ["README.md"],
+            "checks": [],
+            "findings": [],
+            "risks": [],
+            "limitations": [],
+            "verdict": None,
+        }
+        broker._remember_report({"role": "implementer", "round": 1, "report": report})
+        with (
+            mock.patch.object(broker, "deliver", new=mock.AsyncMock()) as deliver,
+            mock.patch.object(broker, "assign", new=mock.AsyncMock()) as assign,
+            mock.patch.object(
+                broker, "maybe_assign_reviewer", new=mock.AsyncMock()
+            ) as reviewer,
+        ):
+            await broker.route_report("implementer", 1, report)
+        assign.assert_not_awaited()
+        reviewer.assert_awaited_once_with(1)
+        deliver.assert_awaited_once()
+        capsule = deliver.await_args.args[3]
+        self.assertIn("Specialist activation · round 1", capsule)
+        self.assertIn("probe: skipped", capsule)
+        self.assertIn("playwright: skipped", capsule)
+        self.assertIn("django: skipped", capsule)
+        with broker_store.connect_broker_database(
+            self.coord, readonly=True
+        ) as database:
+            decisions = broker_store.public_specialist_activations(
+                database, round_number=1
+            )
+            dump = "\n".join(database.iterdump())
+        self.assertEqual({value["decision"] for value in decisions}, {"skipped"})
+        self.assertTrue(all(value["rule_id"].endswith("-v1") for value in decisions))
+        self.assertNotIn("Documentation-only implementation", dump)
+        self.assertNotIn("README.md", dump)
+
+    async def test_forced_specialist_cannot_be_satisfied_by_skip_predicate(
+        self,
+    ) -> None:
+        self.enable_specialists("playwright")
+        initialize_broker_run(
+            self.coord,
+            self.manifest,
+            "task",
+            {},
+            forced_specialists=("playwright",),
+        )
+        broker = Broker(self.coord, self.manifest)
+        broker.clients = {
+            role: Client(role, mock.Mock(), mock.Mock())
+            for role in self.manifest["roles"]
+        }
+        report = {
+            "kind": "implementation",
+            "summary": "Documentation-only implementation.",
+            "changed_paths": ["README.md"],
+            "checks": [],
+            "findings": [],
+            "risks": [],
+            "limitations": [],
+            "verdict": None,
+        }
+        broker._remember_report({"role": "implementer", "round": 1, "report": report})
+        with (
+            mock.patch.object(broker, "deliver", new=mock.AsyncMock()),
+            mock.patch.object(broker, "assign", new=mock.AsyncMock()) as assign,
+            mock.patch.object(broker, "maybe_assign_reviewer", new=mock.AsyncMock()),
+        ):
+            await broker.route_report("implementer", 1, report)
+        assign.assert_awaited_once()
+        self.assertEqual(assign.await_args.args[:3], ("playwright", "playwright", 1))
+        snapshot = broker_store.public_broker_snapshot(self.coord)
+        self.assertEqual(snapshot["workflow"]["forced_specialists"], ["playwright"])
+        self.assertEqual(
+            snapshot["specialist_activations"],
+            [
+                {
+                    "role": "playwright",
+                    "round": 1,
+                    "decision": "run",
+                    "rule_id": "playwright-forced-v1",
+                    "forced": True,
+                }
+            ],
+        )
+
+    async def test_reviewer_waits_for_run_decisions_but_accepts_exact_skips(
+        self,
+    ) -> None:
+        self.enable_specialists("probe", "playwright", "django")
+        initialize_broker_run(self.coord, self.manifest, "task", {})
+        broker = Broker(self.coord, self.manifest)
+        broker.clients = {
+            role: Client(role, mock.Mock(), mock.Mock())
+            for role in self.manifest["roles"]
+        }
+        now = broker_store.utc_now()
+
+        def insert_report(
+            database: Any, role: str, round_number: int, kind: str
+        ) -> None:
+            assignment_id = (
+                f"{round_number:x}{role[0]}".encode().hex().ljust(32, "0")[:32]
+            )
+            report_id = f"r{round_number}{role[0]}".encode().hex().ljust(32, "0")[:32]
+            delivery_id = f"d{round_number}{role[0]}".encode().hex().ljust(32, "0")[:32]
+            database.execute(
+                "INSERT INTO assignments"
+                "(id,role,round,kind,state,delivery_id,created_at,updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (
+                    assignment_id,
+                    role,
+                    round_number,
+                    kind,
+                    "completed",
+                    delivery_id,
+                    now,
+                    now,
+                ),
+            )
+            database.execute(
+                "INSERT INTO reports"
+                "(id,assignment_id,role,round,kind,verdict,summary_chars,"
+                "changed_path_count,check_count,finding_count,risk_count,"
+                "limitation_count,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    report_id,
+                    assignment_id,
+                    role,
+                    round_number,
+                    kind,
+                    None,
+                    1,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    now,
+                ),
+            )
+
+        with broker_store.connect_broker_database(self.coord) as database:
+            insert_report(database, "implementer", 1, "implementation")
+            for role in ("probe", "playwright", "django"):
+                broker_store.record_specialist_activation(
+                    database,
+                    role=role,
+                    round_number=1,
+                    decision="skipped",
+                    rule_id=f"{role}-docs-only-test-v1",
+                    forced=False,
+                )
+        with mock.patch.object(broker, "assign", new=mock.AsyncMock()) as assign:
+            await broker.maybe_assign_reviewer(1)
+        assign.assert_awaited_once()
+        self.assertEqual(assign.await_args.args[:3], ("reviewer", "review", 1))
+
+        with broker_store.connect_broker_database(self.coord) as database:
+            insert_report(database, "implementer", 2, "implementation")
+            for role in ("probe", "django"):
+                broker_store.record_specialist_activation(
+                    database,
+                    role=role,
+                    round_number=2,
+                    decision="skipped",
+                    rule_id=f"{role}-docs-only-test-v1",
+                    forced=False,
+                )
+            broker_store.record_specialist_activation(
+                database,
+                role="playwright",
+                round_number=2,
+                decision="run",
+                rule_id="playwright-forced-v1",
+                forced=True,
+            )
+        with mock.patch.object(broker, "assign", new=mock.AsyncMock()) as assign:
+            await broker.maybe_assign_reviewer(2)
+        assign.assert_not_awaited()
+
+        with broker_store.connect_broker_database(self.coord) as database:
+            insert_report(database, "playwright", 2, "playwright")
+        with mock.patch.object(broker, "assign", new=mock.AsyncMock()) as assign:
+            await broker.maybe_assign_reviewer(2)
+        assign.assert_awaited_once()
+        self.assertEqual(assign.await_args.args[:3], ("reviewer", "review", 2))
+
+    async def test_initial_probe_gate_skips_docs_without_waking_worker(self) -> None:
+        self.enable_specialists("probe")
+        initialize_broker_run(
+            self.coord,
+            self.manifest,
+            "Update README documentation for a typo.",
+            {},
+        )
+        broker = Broker(self.coord, self.manifest)
+        broker.clients = {
+            role: Client(role, mock.Mock(), mock.Mock())
+            for role in self.manifest["roles"]
+        }
+        with broker_store.connect_broker_database(self.coord) as database:
+            broker_store.set_meta(database, "workflow_state", "connecting")
+        with (
+            mock.patch.object(broker, "deliver", new=mock.AsyncMock()),
+            mock.patch.object(broker, "assign", new=mock.AsyncMock()) as assign,
+            mock.patch.object(broker, "broadcast_workflow", new=mock.AsyncMock()),
+        ):
+            await broker.maybe_start_workflow()
+        assign.assert_awaited_once()
+        self.assertEqual(
+            assign.await_args.args[:3], ("implementer", "implementation", 1)
+        )
+        snapshot = broker_store.public_broker_snapshot(self.coord)
+        self.assertEqual(
+            snapshot["specialist_activations"][0]["rule_id"],
+            "probe-docs-only-task-v1",
+        )
+        self.assertEqual(snapshot["specialist_activations"][0]["decision"], "skipped")
 
     async def test_phased_workflow_starts_with_plan_before_implementation(self) -> None:
         initialize_broker_run(

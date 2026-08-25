@@ -69,6 +69,7 @@ from .rpc import (
     unlink_private_regular,
 )
 from .supervisor_api import rpc_event_page, resolve_supervisor_target
+from .specialist_activation import validate_forced_specialists
 from .storage import (
     absolute_path,
     canonical_state_root,
@@ -352,6 +353,9 @@ def start_command(args: argparse.Namespace) -> CommandResult:
         roles.append("playwright")
     if args.with_django_expert:
         roles.append("django")
+    forced_specialists = validate_forced_specialists(
+        getattr(args, "force_specialist", []), roles
+    )
     configured_models = load_model_config(project=project)
     execution_profile = resolve_execution_profile(
         configured_models,
@@ -392,6 +396,7 @@ def start_command(args: argparse.Namespace) -> CommandResult:
         "project": str(project),
         "session": session,
         "implementation_flow": implementation_flow,
+        "forced_specialists": list(forced_specialists),
         "roles": [
             public_role(
                 role,
@@ -452,6 +457,10 @@ def start_command(args: argparse.Namespace) -> CommandResult:
     human_print("  monitor: broker/status")
     human_print(f"Worker transport: {transport}")
     human_print(f"Implementation flow: {implementation_flow}")
+    human_print(
+        "Forced specialists: "
+        + (", ".join(forced_specialists) if forced_specialists else "none")
+    )
     human_print(
         f"Execution profile: {execution_profile['name']} "
         f"({execution_profile['kind']}, source={execution_profile['source']})"
@@ -524,6 +533,7 @@ def start_command(args: argparse.Namespace) -> CommandResult:
             context_capsule=context_capsule,
             budget_policy=budget_policy,
             implementation_flow=implementation_flow,
+            forced_specialists=forced_specialists,
         )
         create_tmux_grid(session, project, coord, roles, manifest)
         secure_write(coord / "startup-state", "RUNNING\n")
@@ -727,8 +737,14 @@ def status_command(args: argparse.Namespace) -> CommandResult:
         human_print(
             f"Workflow: {workflow['state']} round={workflow['round']} "
             f"flow={workflow.get('implementation_flow', DEFAULT_IMPLEMENTATION_FLOW)} "
+            f"forced={','.join(workflow.get('forced_specialists', [])) or 'none'} "
             f"tokens={usage['total_tokens']}{total_warning}"
         )
+        for activation in broker_snapshot.get("specialist_activations", []):
+            human_print(
+                f"  activation {activation['role']}: {activation['decision']} "
+                f"rule={activation['rule_id']} forced={activation['forced']}"
+            )
         for worker in broker_snapshot["roles"]:
             human_print(
                 f"  {worker['role']}: {worker['state']} connected={worker['connected']} "

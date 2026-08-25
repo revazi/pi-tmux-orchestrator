@@ -116,6 +116,8 @@ test("registers one bounded model tool and the exact canonical/alias command sur
   assert.equal(tool.parameters.properties.action.enum.includes("stop"), false);
   assert.equal(tool.parameters.properties.profile.pattern, "^[a-z][a-z0-9-]{0,31}$");
   assert.deepEqual(tool.parameters.properties.implementationFlow.enum, ["single", "phased"]);
+  assert.equal(tool.parameters.properties.forceSpecialists.uniqueItems, true);
+  assert.deepEqual(tool.parameters.properties.forceSpecialists.items.enum, ["probe", "playwright", "django"]);
   assert.equal(tool.parameters.properties.budgetOverrides.additionalProperties, false);
   assert.equal(tool.parameters.properties.workerSkills.additionalProperties, false);
   assert.equal(tool.parameters.properties.workerSkills.properties.reviewer.maxItems, 8);
@@ -1813,6 +1815,7 @@ test("start previews CLI policy, keeps private text out of argv, and cleans mode
     assert.equal(args.includes(canary), false);
     assert.equal(args.includes(contextCanary), false);
     assert.ok(args.includes("reviewer=/reviewed/reviewer/SKILL.md"));
+    assert.equal(args[args.indexOf("--force-specialist") + 1], "playwright");
     assert.ok(options.signal);
     const taskPath = args[args.indexOf("--task-file") + 1];
     const contextPath = args[args.indexOf("--context-capsule-file") + 1];
@@ -1831,6 +1834,7 @@ test("start previews CLI policy, keeps private text out of argv, and cleans mode
       ],
       transport: args.includes("--rpc-workers") ? "rpc" : "tui",
       implementation_flow: "phased",
+      forced_specialists: ["playwright"],
       execution_profile: {
         name: args[args.indexOf("--profile") + 1],
         kind: "packaged",
@@ -1866,6 +1870,8 @@ test("start previews CLI policy, keeps private text out of argv, and cleans mode
       task: canary,
       profile: "economy",
       implementationFlow: "phased",
+      forceSpecialists: ["playwright"],
+      withPlaywright: true,
       contextCapsule: { currentState: contextCanary },
       rpcWorkers: true,
       workerSkills: { reviewer: ["/reviewed/reviewer/SKILL.md"] },
@@ -1878,6 +1884,7 @@ test("start previews CLI policy, keeps private text out of argv, and cleans mode
   assert.match(ctx.calls.confirmations[0].message, /ignores project executable resources/);
   assert.match(ctx.calls.confirmations[0].message, /Worker transport: rpc/);
   assert.match(ctx.calls.confirmations[0].message, /Implementation flow: phased/);
+  assert.match(ctx.calls.confirmations[0].message, /Forced specialists: playwright/);
   assert.match(ctx.calls.confirmations[0].message, /Execution profile: economy \(packaged, source=per-run\)/);
   assert.match(ctx.calls.confirmations[0].message, /provider\/writer/);
   assert.match(ctx.calls.confirmations[0].message, /warning\.run: operational_tokens=600000/);

@@ -1,0 +1,128 @@
+{
+  "schema_version": 1,
+  "benchmark_kind": "deterministic-specialist-assignment-count-proxy",
+  "cases": [
+    {
+      "name": "docs-only",
+      "decisions": [
+        {
+          "role": "probe",
+          "decision": "skipped",
+          "rule_id": "probe-docs-only-task-v1"
+        },
+        {
+          "role": "playwright",
+          "decision": "skipped",
+          "rule_id": "playwright-docs-only-paths-v1"
+        },
+        {
+          "role": "django",
+          "decision": "skipped",
+          "rule_id": "django-docs-only-paths-v1"
+        }
+      ],
+      "configured_assignments_before": 3,
+      "selected_assignments_after": 0
+    },
+    {
+      "name": "frontend",
+      "decisions": [
+        {
+          "role": "probe",
+          "decision": "run",
+          "rule_id": "probe-ambiguous-task-v1"
+        },
+        {
+          "role": "playwright",
+          "decision": "run",
+          "rule_id": "playwright-browser-path-v1"
+        },
+        {
+          "role": "django",
+          "decision": "skipped",
+          "rule_id": "django-frontend-only-paths-v1"
+        }
+      ],
+      "configured_assignments_before": 3,
+      "selected_assignments_after": 2
+    },
+    {
+      "name": "django-risk",
+      "decisions": [
+        {
+          "role": "probe",
+          "decision": "run",
+          "rule_id": "probe-high-risk-task-v1"
+        },
+        {
+          "role": "playwright",
+          "decision": "run",
+          "rule_id": "playwright-ambiguous-paths-v1"
+        },
+        {
+          "role": "django",
+          "decision": "run",
+          "rule_id": "django-framework-path-v1"
+        }
+      ],
+      "configured_assignments_before": 3,
+      "selected_assignments_after": 3
+    },
+    {
+      "name": "empty-paths",
+      "decisions": [
+        {
+          "role": "probe",
+          "decision": "run",
+          "rule_id": "probe-ambiguous-task-v1"
+        },
+        {
+          "role": "playwright",
+          "decision": "run",
+          "rule_id": "playwright-ambiguous-paths-v1"
+        },
+        {
+          "role": "django",
+          "decision": "run",
+          "rule_id": "django-ambiguous-paths-v1"
+        }
+      ],
+      "configured_assignments_before": 3,
+      "selected_assignments_after": 3
+    }
+  ],
+  "totals": {
+    "configured_assignments_before": 12,
+    "selected_assignments_after": 8,
+    "assignments_avoided": 4
+  },
+  "authoritative_evidence": {
+    "provider_usage": {
+      "availability": "unavailable",
+      "required_metrics": [
+        "provider_calls",
+        "input_tokens",
+        "cache_read_tokens",
+        "cache_write_tokens",
+        "output_tokens",
+        "reasoning_tokens",
+        "cost_total"
+      ]
+    },
+    "quality": {
+      "availability": "unavailable",
+      "required_metrics": [
+        "required_checks",
+        "reviewer_findings",
+        "missed_findings",
+        "revision_rounds"
+      ]
+    }
+  },
+  "claims": {
+    "provider_call_savings": false,
+    "provider_token_savings": false,
+    "billing_savings": false,
+    "quality_equivalence": false
+  }
+}

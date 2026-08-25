@@ -84,6 +84,13 @@ const parameters = {
     task: { type: "string", maxLength: 65536, description: "Self-contained start objective; transferred through a private file" },
     contextCapsule: contextCapsuleParameters,
     message: { type: "string", maxLength: 65536, description: "Send message; transferred through a private file" },
+    forceSpecialists: {
+      type: "array",
+      maxItems: 3,
+      uniqueItems: true,
+      items: { type: "string", enum: ["probe", "playwright", "django"] },
+      description: "Enabled specialists that must run whenever applicable instead of using deterministic gates",
+    },
     withProbe: { type: "boolean" },
     probeTask: { type: "string", maxLength: 65536 },
     withPlaywright: { type: "boolean" },
@@ -206,6 +213,10 @@ function implementationFlow(input) {
   return "single";
 }
 
+function appendForcedSpecialistArgs(args, values = []) {
+  for (const role of values) args.push("--force-specialist", role);
+}
+
 function buildStartArgs(input, project, paths, { dryRun = false } = {}) {
   const args = ["--project", project, "--task-file", paths.task];
   if (paths.contextCapsule) args.push("--context-capsule-file", paths.contextCapsule);
@@ -218,6 +229,7 @@ function buildStartArgs(input, project, paths, { dryRun = false } = {}) {
   if (input.approveProject) args.push("--approve-project");
   if (input.rpcWorkers) args.push("--rpc-workers");
   args.push("--implementation-flow", implementationFlow(input));
+  appendForcedSpecialistArgs(args, input.forceSpecialists);
   if (input.profile) args.push("--profile", input.profile);
   appendModelArgs(args, input);
   appendBudgetArgs(args, input);
@@ -236,6 +248,12 @@ function executionProfileConfirmation(data) {
   return `${profile.name} (${profile.kind}, source=${profile.source})`;
 }
 
+function forcedSpecialistsConfirmation(data) {
+  if (!Array.isArray(data?.forced_specialists)) return "none";
+  if (!data.forced_specialists.length) return "none";
+  return data.forced_specialists.join(", ");
+}
+
 function startConfirmation(preview) {
   const roles = (preview.data?.roles || [])
     .map((role) => `${role.name}: ${role.provider}/${role.model} (${role.thinking})`)
@@ -251,6 +269,7 @@ function startConfirmation(preview) {
     `Session: ${preview.data?.session}`,
     `Worker transport: ${preview.data?.transport || "tui"}`,
     `Implementation flow: ${preview.data?.implementation_flow || "single"}`,
+    `Forced specialists: ${forcedSpecialistsConfirmation(preview.data)}`,
     `Execution profile: ${executionProfileConfirmation(preview.data)}`,
     `Roles/models (CLI policy):\n${roles}`,
     `Effective provider-usage budget policy:\n${budgetConfirmation(preview.data?.budget_policy)}`,
@@ -260,6 +279,18 @@ function startConfirmation(preview) {
     "Metadata-only broker state and Pi sessions are retained when tmux stops; workflow payloads are not stored in coordination files.",
     `Trust: ${trust}`,
   ].join("\n\n");
+}
+
+async function selectForcedSpecialists(ctx, enabled) {
+  const selected = [];
+  for (const role of enabled) {
+    const force = await ctx.ui.confirm(
+      "Specialist activation",
+      `Force ${role} to run whenever applicable instead of using deterministic activation gates?`,
+    );
+    if (force) selected.push(role);
+  }
+  return selected;
 }
 
 async function runStart(pi, input, signal, ctx) {
@@ -554,6 +585,12 @@ function createCommandHandlers(pi, superviseStart = () => {}) {
     const withProbe = await ctx.ui.confirm("Optional role", "Add the independent technical probe?");
     const withPlaywright = await ctx.ui.confirm("Optional role", "Add the read-only Playwright tester?");
     const withDjangoExpert = await ctx.ui.confirm("Optional role", "Add the read-only Django expert?");
+    const enabledSpecialists = [
+      ...(withProbe ? ["probe"] : []),
+      ...(withPlaywright ? ["playwright"] : []),
+      ...(withDjangoExpert ? ["django"] : []),
+    ];
+    const forceSpecialists = await selectForcedSpecialists(ctx, enabledSpecialists);
     const rpcWorkers = false;
     let approveProject = false;
     if (ctx.isProjectTrusted()) {
@@ -569,6 +606,7 @@ function createCommandHandlers(pi, superviseStart = () => {}) {
           task,
           project,
           implementationFlow: phased ? "phased" : "single",
+          forceSpecialists,
           withProbe,
           withPlaywright,
           withDjangoExpert,
@@ -747,10 +785,10 @@ export default function tmuxOrchestratorExtension(pi) {
   pi.registerTool({
     name: "tmux_orchestrator",
     label: "Tmux Orchestrator",
-    description: "Supervise bounded doctor, available-model discovery, list, status, watch, attach, start, or send actions through the Pi runtime and bundled Python tmux orchestrator. Start may select a single or phased implementation flow, a packaged or strict user-global execution profile, user-configured defaults, this parent Pi's current model, exact user-requested per-role provider/model/thinking overrides, and strict per-run budget overrides. The invoking Pi remains the parent; normal starts create no separate parent Pi or controller. Watch subscribes this Pi to lifecycle and final-report updates. Attach ensures watching, then switches its existing tmux client into native Pi worker panes; prefix then L returns without stopping workers. New runs are watched automatically. Start always requires interactive confirmation.",
+    description: "Supervise bounded doctor, available-model discovery, list, status, watch, attach, start, or send actions through the Pi runtime and bundled Python tmux orchestrator. Start may select a single or phased implementation flow, deterministic or forced specialist activation, a packaged or strict user-global execution profile, user-configured defaults, this parent Pi's current model, exact user-requested per-role provider/model/thinking overrides, and strict per-run budget overrides. The invoking Pi remains the parent; normal starts create no separate parent Pi or controller. Watch subscribes this Pi to lifecycle and final-report updates. Attach ensures watching, then switches its existing tmux client into native Pi worker panes; prefix then L returns without stopping workers. New runs are watched automatically. Start always requires interactive confirmation.",
     promptSnippet: "Inspect or operate local Pi tmux orchestrations through the authoritative Python CLI",
     promptGuidelines: [
-      "Use tmux_orchestrator instead of rebuilding tmux orchestration state; before a start, synthesize a bounded contextCapsule from the current conversation when prior decisions or work matter; include only task-relevant state, constraints, acceptance criteria, paths, evidence, and open questions, never the full transcript. Use implementationFlow=phased for complex work that benefits from read-only discovery before editing; use single for simple work or compatibility, without an extra classifier model call. After starting or resuming an existing run, ensure the invoking Pi is watching it for lifecycle and final reports. Once watching, end the turn and rely on broker updates: never run sleep commands or repeatedly poll status/tmux while waiting for a watched orchestration. Honor an explicit economy, balanced, thorough, or user-configured profile request through profile. Honor explicit user model/provider/thinking requests through useParentModel or modelOverrides; those overrides win over profile values. Use the models action to resolve available exact identifiers when needed; never invent a provider/model identifier or read provider credentials. Omitted overrides use the user's global orchestrator model configuration, selected/default profile, then packaged defaults. Honor explicit per-run budget requests through budgetOverrides; omitted values use the strict user-global budget policy and packaged warn-only defaults, and never infer hard thresholds. Worker skill discovery is disabled; pass workerSkills only for exact Markdown paths the user explicitly reviewed, never infer skills. When the user asks to enter, navigate, or directly steer the live workers, use attach rather than watch; attach requires the invoking Pi to be inside tmux. Prefer native Pi TUI workers and use rpcWorkers only after an explicit request for headless panes. The invoking Pi remains responsible for interpreting reports and deciding follow-up. Never create file handoffs, poll coordination state, claim parent project trust applies to child Pi sessions, or equate command acknowledgement with task completion.",
+      "Use tmux_orchestrator instead of rebuilding tmux orchestration state; before a start, synthesize a bounded contextCapsule from the current conversation when prior decisions or work matter; include only task-relevant state, constraints, acceptance criteria, paths, evidence, and open questions, never the full transcript. Use implementationFlow=phased for complex work that benefits from read-only discovery before editing; use single for simple work or compatibility, without an extra classifier model call. Configured specialists use conservative deterministic activation gates; pass forceSpecialists only when the user explicitly requires those enabled roles to run regardless of a skip predicate. After starting or resuming an existing run, ensure the invoking Pi is watching it for lifecycle and final reports. Once watching, end the turn and rely on broker updates: never run sleep commands or repeatedly poll status/tmux while waiting for a watched orchestration. Honor an explicit economy, balanced, thorough, or user-configured profile request through profile. Honor explicit user model/provider/thinking requests through useParentModel or modelOverrides; those overrides win over profile values. Use the models action to resolve available exact identifiers when needed; never invent a provider/model identifier or read provider credentials. Omitted overrides use the user's global orchestrator model configuration, selected/default profile, then packaged defaults. Honor explicit per-run budget requests through budgetOverrides; omitted values use the strict user-global budget policy and packaged warn-only defaults, and never infer hard thresholds. Worker skill discovery is disabled; pass workerSkills only for exact Markdown paths the user explicitly reviewed, never infer skills. When the user asks to enter, navigate, or directly steer the live workers, use attach rather than watch; attach requires the invoking Pi to be inside tmux. Prefer native Pi TUI workers and use rpcWorkers only after an explicit request for headless panes. The invoking Pi remains responsible for interpreting reports and deciding follow-up. Never create file handoffs, poll coordination state, claim parent project trust applies to child Pi sessions, or equate command acknowledgement with task completion.",
     ],
     parameters,
     execute(_toolCallId, input, signal, _onUpdate, ctx) {

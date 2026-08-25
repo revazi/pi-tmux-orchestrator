@@ -366,6 +366,35 @@ categories, cost, failed checks, and missed findings are unavailable, so this is
 not a provider-token, billing, call-savings, or quality-equivalence claim. Run
 `node scripts/phased-implementation-baseline.mjs --check` to verify the fixture.
 
+### Deterministic specialist activation
+
+Configured probe, Playwright, and Django roles use fixed versioned predicates;
+no classifier model request is made. Empty, malformed, unknown, or potentially
+high-risk evidence fails toward running the configured role:
+
+- probe runs for initial tasks containing integration, runtime, security,
+  database, migration, protocol, concurrency, transaction, API, auth, or
+  credential terms; it skips only clear documentation/typo tasks. On repair
+  rounds it skips only documentation-only changed paths.
+- Playwright runs for browser/frontend paths and every ambiguous non-documentation
+  path; it skips only documentation-only changed paths.
+- Django runs for framework markers such as settings, URLs, models, views,
+  middleware, migrations, templates, ASGI/WSGI, admin, apps, or `manage.py`; it
+  also runs for ambiguous paths and skips only documentation-only or clearly
+  frontend-only path sets.
+
+Use repeatable `--force-specialist probe|playwright|django`, or model-tool
+`forceSpecialists`, only when an enabled role must run regardless of a skip
+predicate. Forced activation always requires that role's real report before
+review; a skip cannot satisfy it. SQLite schema v7 stores only role, round,
+`run|skipped`, versioned rule ID, and forced boolean. Reviewer run state shows
+those decisions and whether activated evidence was reported. Synthetic browser
+or probe evidence remains non-production acceptance. The checked four-case
+assignment-count proxy selects 8 of 12 formerly unconditional assignments (4
+avoided), but provider usage and quality evidence remain unavailable, so it
+makes no call, token, cost, or equivalence claim. Validate it with
+`python3 scripts/specialist-activation-baseline.py --check`.
+
 ### Worker result-volume policy
 
 Only orchestration workers apply an additional result policy before the next
@@ -485,6 +514,7 @@ pi-tmux-agents start \
   --task-file /tmp/pi-agent-task.md \
   --with-probe --probe-task-file /tmp/pi-agent-probe.md \
   --with-playwright --playwright-task-file /tmp/pi-agent-playwright.md \
+  --force-specialist playwright \
   --with-django-expert --django-task-file /tmp/pi-agent-django.md
 ```
 
@@ -510,8 +540,10 @@ startup trust dialogs.
 4. Each implementer report is submitted through `orchestrator_report`; the tool
    terminates without an acknowledgement-only model turn. The phased boundary
    prunes completed inspection assistant/tool turns before implementation.
-5. Enabled specialists inspect only after the implementation report and submit
-   typed evidence.
+5. The initial probe and each round's configured specialists are either run or
+   skipped by their fixed predicate. Forced roles always run. The broker records
+   only bounded decision metadata and requires every activated report before
+   review.
 6. Broker replaces prior evidence deliveries with one bounded run-state capsule containing only the latest accepted report per role, then wakes reviewer exactly once. Updates for a role already working are coalesced until its next assignment.
 7. Each newly accepted assignment emits one metadata-only `context_boundary` event. That boundary changes the projection policy used on every provider request: the worker keeps the baseline, latest run state, assignment, direct messages, and all assistant/tool turns from the new assignment while pruning only prior-assignment assistant/tool turns.
 8. A confirmed role restart advances a broker generation, replays the in-memory baseline, and materializes the latest coalesced run state—including an update deferred during the active assignment—before recovering that assignment. A failed local respawn or interrupted replacement recovery is `uncertain`.

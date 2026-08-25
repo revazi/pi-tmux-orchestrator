@@ -59,14 +59,17 @@ poll and must end the turn when there is no active assignment.
    `implementation`, or `phased`, which triggers implementer `plan`.
 4. A phased plan report updates and delivers the rolling run-state capsule, then
    creates a distinct same-round implementer `implementation` assignment. An
-   implementation report triggers each enabled round specialist. Repair rounds
-   always start directly as implementation with latest review evidence.
-5. Every accepted report replaces recipient evidence with one capsule bounded
+   implementation report applies fixed per-role activation rules before waking
+   configured round specialists. Repair rounds always start directly as
+   implementation with latest review evidence.
+5. Every accepted report and activation decision replaces recipient evidence with one capsule bounded
    to 16 KiB of UTF-8 containing only the latest accepted report per role;
    recipients are not given an accumulating sequence of historical report bodies.
    If a recipient has an active assignment, replacement is deferred and
    coalesced to the latest capsule until its next assignment boundary.
-6. After all required evidence exists, broker triggers the reviewer once.
+6. After all activated specialist reports exist and exact deterministic skips
+   are recorded, broker triggers the reviewer once. Forced activation can be
+   satisfied only by that role's report.
 7. `changes_requested` updates the rolling capsule and triggers the next
    implementer round.
 8. Budget policy never participates in routing: warning or hard thresholds do
@@ -95,6 +98,22 @@ assignment arrives before the plan response resolves, the bridge recognizes the
 new assignment ID and does not clear it while terminating the completed plan
 turn. The new assignment boundary therefore prunes inspection assistant/tool
 turns without an acknowledgement-only model turn.
+
+## Specialist activation
+
+Configured `probe`, `playwright`, and `django` roles are evaluated by fixed
+versioned predicates with no provider request. Initial probe uses the ephemeral
+task; round decisions use the validated implementation `changed_paths`. Empty,
+malformed, unknown, and potentially high-risk evidence selects `run`. Only clear
+documentation-only evidence, plus clearly frontend-only paths for Django, may
+select `skipped`. An explicit forced specialist always selects `run`.
+
+Schema-v7 durable rows contain only role, round, `run|skipped`, rule ID, forced
+boolean, and timestamp. Events omit task/path bodies. Reviewer run state renders
+that metadata with `required`, `reported`, or `not-required`; a configured role
+has to have an exact decision, and each `run` decision has to have a same-round
+report before review. Probe and browser reports remain local/synthetic evidence,
+not production acceptance.
 
 ## Parent observer
 
@@ -287,8 +306,9 @@ Retained `0.4.x` manifests remain readable and operable through compatibility
 code. Live parent observation requires a broker process from `0.6.0` or later;
 older live runs remain metadata-readable but cannot gain observer support
 without starting a new run. Broker SQLite schema v1-v4 migrates through the
-metadata-only guardrail schema, and schema v5 migrates to schema v6 by retaining
-`implementation_flow=single`; runs without version-1 budget metadata
+metadata-only guardrail schema, schema v5 adds retained
+`implementation_flow=single`, and schema v6 migrates to schema v7 with an empty
+forced-specialist set and activation table; runs without version-1 budget metadata
 retain packaged warn-only behavior. Manifest v3 introduced
 `coordination: "broker-v1"`; manifest v4 adds only bounded selected-profile
 metadata while retaining that protocol. Both remain readable, and there is no

@@ -19,6 +19,7 @@ All notable changes to this project are documented here.
 - Added deterministic immutable `economy`, `balanced`, and `thorough` thinking profiles, strict user-global custom profile mappings, explicit per-run selection and override precedence, and bounded manifest/status/Supervisor metadata
 - Added a bounded implementer `plan` report contract with assignment-kind matching, temporary read-only active tools, restart-safe policy restoration, rolling run-state projection, and metadata-only durable acceptance
 - Added explicit `single` and `phased` implementation flows; phased complex work crosses from read-only inspect/plan into a distinct same-round implementation assignment while repair rounds retain the direct implementation path
+- Added conservative versioned probe, Playwright, and Django activation gates with explicit force overrides, reviewer-visible bounded decision evidence, and metadata-only schema-v7 retention
 
 ### Changed
 
