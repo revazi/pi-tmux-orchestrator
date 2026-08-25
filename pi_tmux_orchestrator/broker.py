@@ -45,6 +45,7 @@ from .output import bounded_message
 from .protocol import encode_frame, validate_client_message, validate_report
 from .specialist_activation import decide_initial_probe, decide_specialist
 from .storage import load_manifest, secure_write
+from .workspace_capsules import validate_workspace_capsule
 
 
 @dataclass
@@ -80,10 +81,11 @@ class Broker:
         self.server: asyncio.AbstractServer | None = None
         self.stopping = asyncio.Event()
         self.task_bodies = self._load_startup_payload()
+        self.workspace_capsule = self.task_bodies.get("workspace_capsule")
         self.dashboard = BrokerDashboard(manifest)
         self.dashboard_active = False
 
-    def _load_startup_payload(self) -> dict[str, str]:
+    def _load_startup_payload(self) -> dict[str, Any]:
         path = self.coord / "startup.json"
         try:
             metadata = path.lstat()
@@ -94,7 +96,7 @@ class Broker:
                 ).fetchone()["value"]
             if state in {"starting", "connecting", "initializing"}:
                 raise OrchestrationError("Broker startup payload is unavailable")
-            return {"task": "", "context_capsule": ""}
+            return {"task": "", "context_capsule": "", "workspace_capsule": None}
         if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
             raise OrchestrationError("Startup payload must be a private regular file")
         if metadata.st_size > MAX_BROKER_FRAME_BYTES:
@@ -107,6 +109,7 @@ class Broker:
         valid_fields = (
             {"task", "role_tasks"},
             {"task", "context_capsule", "role_tasks"},
+            {"task", "context_capsule", "workspace_capsule", "role_tasks"},
         )
         if not isinstance(value, dict) or set(value) not in valid_fields:
             raise OrchestrationError("Broker startup payload is invalid")
@@ -118,7 +121,16 @@ class Broker:
             or not isinstance(value["role_tasks"], dict)
         ):
             raise OrchestrationError("Broker startup payload is invalid")
-        result = {"task": value["task"], "context_capsule": context_capsule}
+        workspace_capsule = value.get("workspace_capsule")
+        if workspace_capsule is not None:
+            validate_workspace_capsule(
+                workspace_capsule, Path(self.manifest["project"])
+            )
+        result = {
+            "task": value["task"],
+            "context_capsule": context_capsule,
+            "workspace_capsule": workspace_capsule,
+        }
         for role, body in value["role_tasks"].items():
             if role not in self.manifest["roles"] or not isinstance(body, str):
                 raise OrchestrationError("Broker startup role payload is invalid")
@@ -816,6 +828,14 @@ class Broker:
             await self.broadcast_workflow("uncertain", assignment["round"])
             return
         if handover:
+            if self.workspace_capsule is not None:
+                try:
+                    validate_workspace_capsule(
+                        self.workspace_capsule, Path(self.manifest["project"])
+                    )
+                except OrchestrationError:
+                    await self.mark_handover_uncertain(client)
+                    return
             baseline = self.worker_baselines.get(client.role)
             if baseline is None:
                 await self.mark_handover_uncertain(client)
@@ -926,6 +946,7 @@ class Broker:
             self.task_bodies["task"],
             self.task_bodies.get("context_capsule", ""),
             self.task_bodies.get(role, ""),
+            workspace_capsule=self.workspace_capsule,
         )
 
     def _assignment(self, role: str, round_number: int, kind: str | None = None) -> str:
@@ -1684,6 +1705,7 @@ def initialize_broker_run(
     role_tasks: dict[str, str],
     *,
     context_capsule: str = "",
+    workspace_capsule: dict[str, Any] | None = None,
     budget_policy: dict[str, Any] | None = None,
     implementation_flow: str = DEFAULT_IMPLEMENTATION_FLOW,
     forced_specialists: tuple[str, ...] | list[str] = (),
@@ -1719,17 +1741,17 @@ def initialize_broker_run(
         implementation_flow=implementation_flow,
         forced_specialists=forced_specialists,
     )
+    startup_payload: dict[str, Any] = {
+        "task": task,
+        "context_capsule": context_capsule,
+        "role_tasks": role_tasks,
+    }
+    if workspace_capsule is not None:
+        validate_workspace_capsule(workspace_capsule, Path(manifest["project"]))
+        startup_payload["workspace_capsule"] = workspace_capsule
     secure_write(
         coord / "startup.json",
-        json.dumps(
-            {
-                "task": task,
-                "context_capsule": context_capsule,
-                "role_tasks": role_tasks,
-            },
-            separators=(",", ":"),
-        )
-        + "\n",
+        json.dumps(startup_payload, separators=(",", ":")) + "\n",
     )
     for role, token in tokens.items():
         secure_write(coord / f"{role}.token", token + "\n")

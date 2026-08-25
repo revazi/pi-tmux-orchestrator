@@ -5,6 +5,7 @@ import json
 import os
 import secrets
 import signal
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -40,6 +41,7 @@ from pi_tmux_orchestrator.protocol import (
     validate_report,
 )
 from pi_tmux_orchestrator.storage import ensure_private_directory, save_manifest
+from pi_tmux_orchestrator.workspace_capsules import construct_workspace_capsule
 
 
 class BrokerFixture(unittest.TestCase):
@@ -82,6 +84,54 @@ class BrokerFixture(unittest.TestCase):
             "roles": roles,
         }
         save_manifest(self.coord, self.manifest)
+
+    def initialize_workspace_git(self) -> tuple[Path, dict[str, Any]]:
+        project = Path(self.manifest["project"])
+        subprocess.run(
+            ["git", "-C", str(project), "init", "-q"],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(project),
+                "config",
+                "user.email",
+                "fixture@example.invalid",
+            ],
+            check=True,
+        )
+        subprocess.run(
+            ["git", "-C", str(project), "config", "user.name", "Fixture"],
+            check=True,
+        )
+        (project / "AGENTS.md").write_text(
+            "# Synthetic instructions\n", encoding="utf-8"
+        )
+        source = project / "src" / "service.py"
+        source.parent.mkdir()
+        source.write_text("VALUE = 1\n", encoding="utf-8")
+        subprocess.run(
+            ["git", "-C", str(project), "add", "."],
+            check=True,
+            stdout=subprocess.DEVNULL,
+        )
+        environment = os.environ.copy()
+        environment.update(
+            {
+                "GIT_AUTHOR_DATE": "2026-01-01T00:00:00+00:00",
+                "GIT_COMMITTER_DATE": "2026-01-01T00:00:00+00:00",
+            }
+        )
+        subprocess.run(
+            ["git", "-C", str(project), "commit", "-q", "-m", "fixture"],
+            check=True,
+            env=environment,
+        )
+        return source, construct_workspace_capsule(project, ["src/service.py"])
 
     def enable_specialists(self, *roles: str) -> None:
         for index, role in enumerate(roles, start=4):
@@ -822,6 +872,89 @@ class BrokerStoreTests(BrokerFixture):
 
 
 class BrokerObserverTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
+    async def test_workspace_capsule_is_transient_and_revalidated_before_delivery(
+        self,
+    ) -> None:
+        source, capsule = self.initialize_workspace_git()
+        initialize_broker_run(
+            self.coord,
+            self.manifest,
+            "PRIVATE_TASK_CANARY",
+            {},
+            workspace_capsule=capsule,
+        )
+        startup = (self.coord / "startup.json").read_text(encoding="utf-8")
+        self.assertIn('"workspace_capsule"', startup)
+        self.assertIn("src/service.py", startup)
+        self.assertNotIn("Synthetic instructions", startup)
+        self.assertNotIn("VALUE = 1", startup)
+        manifest_body = (self.coord / "manifest.json").read_text(encoding="utf-8")
+        database_body = (self.coord / "broker.sqlite3").read_bytes()
+        self.assertNotIn("src/service.py", manifest_body)
+        self.assertNotIn(b"src/service.py", database_body)
+
+        broker = Broker(self.coord, self.manifest)
+        with broker_store.connect_broker_database(self.coord) as database:
+            broker_store.set_meta(database, "workflow_state", "connecting")
+        broker.clients = {role: mock.Mock() for role in self.manifest["roles"]}
+        with (
+            mock.patch.object(broker, "deliver", new=mock.AsyncMock()),
+            mock.patch.object(broker, "assign", new=mock.AsyncMock()),
+            mock.patch.object(broker, "broadcast_workflow", new=mock.AsyncMock()),
+        ):
+            await broker.maybe_start_workflow()
+        self.assertFalse((self.coord / "startup.json").exists())
+        self.assertIn("src/service.py", broker.worker_baselines["implementer"])
+        self.assertIn(
+            "reading governing AGENTS.md/CLAUDE.md", broker.worker_baselines["reviewer"]
+        )
+        recovered_broker = Broker(self.coord, self.manifest)
+        self.assertIsNone(recovered_broker.workspace_capsule)
+        self.assertEqual(recovered_broker.worker_baselines, {})
+
+        source.write_text("VALUE = 2\n", encoding="utf-8")
+        replayed = broker._baseline("implementer")
+        self.assertIn("Initial Git state: clean", replayed)
+        self.assertIn("src/service.py", replayed)
+
+    async def test_workspace_capsule_staleness_fails_restart_replay_closed(
+        self,
+    ) -> None:
+        source, capsule = self.initialize_workspace_git()
+        initialize_broker_run(
+            self.coord,
+            self.manifest,
+            "task",
+            {},
+            workspace_capsule=capsule,
+        )
+        broker = Broker(self.coord, self.manifest)
+        broker.worker_baselines["implementer"] = "validated baseline"
+        source.write_text("VALUE = 2\n", encoding="utf-8")
+        client = Client("implementer", mock.Mock(), mock.Mock())
+        with (
+            mock.patch.object(
+                broker, "mark_handover_uncertain", new=mock.AsyncMock()
+            ) as uncertain,
+            mock.patch.object(broker, "deliver", new=mock.AsyncMock()) as deliver,
+        ):
+            await broker.recover_role(client, handover=True)
+        uncertain.assert_not_awaited()
+        deliver.assert_awaited_once()
+
+        (source.parents[1] / "AGENTS.md").write_text(
+            "changed instructions\n", encoding="utf-8"
+        )
+        with (
+            mock.patch.object(
+                broker, "mark_handover_uncertain", new=mock.AsyncMock()
+            ) as uncertain,
+            mock.patch.object(broker, "deliver", new=mock.AsyncMock()) as deliver,
+        ):
+            await broker.recover_role(client, handover=True)
+        uncertain.assert_awaited_once_with(client)
+        deliver.assert_not_awaited()
+
     async def _read_frame(self, reader: asyncio.StreamReader) -> dict[str, object]:
         size = int.from_bytes(await reader.readexactly(4), "big")
         return json.loads(await reader.readexactly(size))

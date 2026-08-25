@@ -162,6 +162,8 @@ Common options:
 - `--implementation-flow single|phased`: compatibility/simple assignment or bounded inspect/plan boundary
 - `--profile NAME`: packaged or strict user-global execution profile
 - `--context-capsule TEXT` or `--context-capsule-file PATH`: optional bounded parent recap
+- `--workspace-capsule`: opt in to the ephemeral cold-assignment workspace experiment
+- repeatable `--workspace-relevant-path PROJECT_RELATIVE_PATH`: bounded existing parent-supplied hint; requires the experiment
 - `--approve-project`: separately confirmed Pi trust bypass for inspected projects
 - repeatable `--worker-skill ROLE=/absolute/path/SKILL.md`: explicit reviewed per-role skill opt-in
 - `--with-probe` and optional `--probe-task[-file]`
@@ -187,6 +189,83 @@ or additional model request is used. The rendered capsule is at most 12 KiB.
 Do not copy a transcript, prompts, provider bodies, credentials, logs, or diffs.
 CLI callers may provide equivalent reviewed Markdown with the capsule options.
 The start confirmation shows only presence and character count.
+
+#### Experimental workspace capsule
+
+The disabled-by-default CLI flag above and model-tool `workspaceCapsule: true`
+select the same behavior for native TUI and headless RPC workers. The tool's
+`workspaceRelevantPaths` and repeatable CLI option accept at most 16 unique,
+normalized, existing project-relative paths of at most 256 UTF-8 bytes each.
+Paths without the opt-in flag are rejected. The slash-command TUI asks the same
+explicit experiment question and optionally accepts one path per line.
+
+Construction requires the supplied project to resolve to a canonical,
+non-symlink Git worktree root with an existing HEAD. The 8 KiB schema contains
+exactly:
+
+- schema version 1 and a SHA-256 identity of the canonical root;
+- initial Git HEAD and a `clean|dirty` observation; no diff, untracked-file
+  content, or complete tree is copied into the capsule;
+- at most 16 project-relative governing instruction paths and SHA-256 hashes,
+  never instruction contents;
+- regular-file names selected from a fixed 16-name top-level build/test marker
+  allowlist; and
+- the sorted parent-supplied relevant paths.
+
+The constructor directly probes only the allowlist and instruction candidates
+at the root and ancestors of supplied relevant paths. It never enumerates or
+serializes a complete repository tree; Git may inspect the worktree internally
+to produce the clean/dirty observation. Every path component is checked with
+non-following metadata; absolute, `..`, missing, duplicate, non-normalized,
+unknown, symlinked, count-overflow, byte-overflow, invalid UTF-8, and oversized
+instruction files fail closed. Marker and instruction candidates that are
+symlinks also reject construction. Canonical-root identity is a trust binding,
+not authorization.
+
+Pi context discovery stays enabled: no `--no-context-files` flag is passed.
+Capsule paths/hashes supplement the baseline but do not authorize a path or
+substitute for workers discovering and reading `AGENTS.override.md`,
+`AGENTS.md`, or `CLAUDE.md` and their referenced/scoped instructions through
+Pi/project mechanisms. Instruction precedence mirrors Pi's candidate order for
+the directories touched by relevant paths.
+
+The CLI rebuilds the capsule on each dry-run and confirmed start. The broker
+validates its exact shape and current root/HEAD/instruction/marker/relevant-path
+identity when reading the transient startup payload, immediately before initial
+baseline delivery, and before any live in-memory baseline replay. Mismatch is
+rejected as stale. Clean/dirty is explicitly an initial observation rather than
+an invalidation key: normal implementation edits do not break late delivery or
+restart replay while HEAD and discovery hints still match. A changed HEAD,
+instruction identity, marker set, missing path, or new symlink makes a restart
+handover/workflow `uncertain` instead of replaying stale hints. Broker-process
+recovery after startup deletion has no capsule cache to reconstruct or trust.
+
+The capsule exists only in the mode-`0600` transient startup payload, live broker
+memory, and worker baseline/Pi session context. Initial routing deletes the
+startup copy. It never enters the retained manifest, SQLite, status, dashboard,
+Supervisor API, RPC registry/journal, project files, or any cross-run cache.
+Adding cross-run persistence would require a separately reviewed explicit
+privacy, retention, and invalidation policy. Public dry-run/confirmation output
+is limited to enabled/disabled, schema, validation, counts, bytes, and digest;
+no capsule path list or body is exposed. Existing manifest v1-v4 readers remain
+compatible.
+
+A new baseline body may alter a provider's cache prefix, and provider-specific
+serialization/cache boundaries can outweigh local byte proxies. The checked
+synthetic Python and Node fixtures report exactly 733 and 886 UTF-8 workspace-hint
+bytes added by the capsule; disabled runs add zero. Conceptual worker discovery
+operation proxies change 4→2, while capsule construction is reported separately
+as 39/53 operations. Serialized worker discovery-result bytes remain unavailable
+because the fixture does not fabricate tool/model transcripts or use a complete
+repository-tree baseline. Provider calls, provider tokens/cost, reviewer findings,
+checks, revisions, and correctness are also explicitly unavailable. The fixture
+therefore proves neither savings, provider-call reduction, nor correctness
+equivalence and cannot justify a default change or progression beyond the opt-in
+experiment:
+
+```bash
+python3 scripts/workspace-capsule-baseline.py --check
+```
 
 Worker skill discovery is disabled by default for both TUI and RPC starts. The
 CLI option above and the model tool's `workerSkills` object are the only new-run

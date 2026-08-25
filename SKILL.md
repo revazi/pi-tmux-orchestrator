@@ -36,9 +36,10 @@ panes, file handoffs, relay scripts, or polling loops.
 10. Worker skill discovery is disabled. Pass `workerSkills` or `--worker-skill ROLE=PATH` only for exact Markdown files the user explicitly reviewed; never infer or auto-load a skill.
 11. Orchestration workers bound read/grep/bash results before the next provider call. Follow emitted offset, refined-search, and targeted full-output guidance instead of requesting another broad dump.
 12. Before starting from an existing parent conversation, synthesize the tool's bounded `contextCapsule` from only task-relevant state, settled decisions, constraints, acceptance criteria, paths, evidence, open questions, and out-of-scope items. Never copy the full parent transcript.
-13. Never claim a synthetic probe or browser smoke is production wire acceptance.
-14. Do not push, merge, publish, deploy, or perform destructive cleanup without explicit authorization.
-15. Idle workers end their turn. A parent that is watching also ends its turn and relies on broker updates. Neither workers nor watching parents run sleeps or poll files, sockets, status, or tmux while waiting.
+13. Enable the experimental `workspaceCapsule` only for an explicit cold-assignment experiment. Supply at most 16 existing project-relative `workspaceRelevantPaths`, never a tree. It supplements discovery and never replaces reading governing instructions. Do not claim provider savings or correctness equivalence from its model-free proxy.
+14. Never claim a synthetic probe or browser smoke is production wire acceptance.
+15. Do not push, merge, publish, deploy, or perform destructive cleanup without explicit authorization.
+16. Idle workers end their turn. A parent that is watching also ends its turn and relies on broker updates. Neither workers nor watching parents run sleeps or poll files, sockets, status, or tmux while waiting.
 
 ## Coordination model
 
@@ -57,8 +58,11 @@ compatible existing run without taking over the terminal;
 `/orchestrator-attach SESSION` enters its native worker grid, and prefix then
 `L` returns while leaving the grid live for later reattachment.
 The broker stores metadata-only SQLite state and actual provider token totals
-when Pi reports them; it does not persist task, context-capsule, report, prompt,
-message, diff, or log bodies. Provider-usage thresholds are observational:
+when Pi reports them; it does not persist task, context-capsule, workspace-capsule,
+report, prompt, message, diff, or log bodies. The optional workspace capsule is
+limited to transient startup state, live broker memory, and the worker baseline;
+it is revalidated before delivery/replay and is never a trust or instruction-reading
+substitute. Provider-usage thresholds are observational:
 they expose bounded assignment-local provider-call/context-pressure warning and
 higher-severity facts but never block a tool, interrupt a response, or change
 workflow routing. Direct steering can ask for a report or other follow-up; the
@@ -100,6 +104,8 @@ pi-tmux-agents start \
   --project "$PWD" \
   --task-file /tmp/pi-agent-task.md \
   --context-capsule-file /tmp/pi-agent-context.md \
+  --workspace-capsule \
+  --workspace-relevant-path pi_tmux_orchestrator/broker.py \
   --implementation-flow phased \
   --with-playwright \
   --force-specialist playwright \
@@ -143,7 +149,9 @@ for headless presentation. Otherwise workers are native interactive Pi TUIs
 with Pi's normal highlighting, tool rendering, and input editor. Both use broker delivery; neither uses report files, mailbox payload
 files, polling, or tmux key injection for workflow transitions.
 Worker Pi processes use a lean role prompt while retaining governing
-`AGENTS.md`/`CLAUDE.md` discovery. Automatic skills are disabled. Opt in only an
+`AGENTS.md`/`CLAUDE.md` discovery. The experimental workspace capsule contains
+only bounded path/hash/Git/marker hints and does not disable or replace that
+discovery. Automatic skills are disabled. Opt in only an
 explicitly reviewed per-role Markdown file, for example
 `--worker-skill reviewer=/absolute/path/SKILL.md`; the model tool equivalent is
 `workerSkills: { reviewer: ["/absolute/path/SKILL.md"] }`. Skill files are

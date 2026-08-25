@@ -1,0 +1,75 @@
+{
+  "fixtures": [
+    {
+      "authoritative_evidence": {
+        "checks": "unavailable",
+        "correctness": "unavailable",
+        "provider_calls": "unavailable",
+        "provider_cost": "unavailable",
+        "provider_tokens": "unavailable",
+        "reviewer_findings": "unavailable",
+        "revisions": "unavailable"
+      },
+      "capsule_shape": {
+        "complete_tree_included": false,
+        "instruction_count": 1,
+        "instruction_or_source_contents_included": false,
+        "marker_count": 1,
+        "relevant_path_count": 2
+      },
+      "id": "python-service-cold-fix",
+      "with_capsule": {
+        "construction_operations_proxy": 39,
+        "serialized_worker_discovery_result_bytes": "unavailable",
+        "worker_discovery_operations_proxy": 2,
+        "workspace_hint_bytes": 733
+      },
+      "without_capsule": {
+        "construction_operations_proxy": 0,
+        "serialized_worker_discovery_result_bytes": "unavailable",
+        "worker_discovery_operations_proxy": 4,
+        "workspace_hint_bytes": 0
+      }
+    },
+    {
+      "authoritative_evidence": {
+        "checks": "unavailable",
+        "correctness": "unavailable",
+        "provider_calls": "unavailable",
+        "provider_cost": "unavailable",
+        "provider_tokens": "unavailable",
+        "reviewer_findings": "unavailable",
+        "revisions": "unavailable"
+      },
+      "capsule_shape": {
+        "complete_tree_included": false,
+        "instruction_count": 2,
+        "instruction_or_source_contents_included": false,
+        "marker_count": 2,
+        "relevant_path_count": 2
+      },
+      "id": "node-workspace-cold-feature",
+      "with_capsule": {
+        "construction_operations_proxy": 53,
+        "serialized_worker_discovery_result_bytes": "unavailable",
+        "worker_discovery_operations_proxy": 2,
+        "workspace_hint_bytes": 886
+      },
+      "without_capsule": {
+        "construction_operations_proxy": 0,
+        "serialized_worker_discovery_result_bytes": "unavailable",
+        "worker_discovery_operations_proxy": 4,
+        "workspace_hint_bytes": 0
+      }
+    }
+  ],
+  "kind": "model-free-workspace-capsule-proxy",
+  "methodology": {
+    "decision": "experiment remains opt-in; this proxy cannot support a default change, savings claim, provider-call claim, or correctness-equivalence claim",
+    "discovery_operations": "fixed conceptual operation-category proxy; construction and worker operations are reported separately and are not provider calls",
+    "provider_or_quality_authority": "none; all provider usage, review, check, revision, and correctness fields remain unavailable",
+    "serialized_discovery_results": "unavailable because no model/tool transcript is fabricated and the default path never injects a repository tree",
+    "workspace_hint_bytes": "exact UTF-8 bytes added to the synthetic worker baseline by the capsule; disabled runs add zero workspace-hint bytes"
+  },
+  "schema_version": 1
+}
