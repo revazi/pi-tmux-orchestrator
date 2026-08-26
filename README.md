@@ -805,3 +805,10 @@ scripts/test.sh
 ```
 
 Checks are model-free and isolate package/Pi/npm state from real authentication.
+
+To stage and manually test the exact unreleased checkout without publishing or
+replacing the installed package, follow
+[`references/prerelease-testing.md`](references/prerelease-testing.md). The
+recommended flow builds a persistent package root with commit/tarball provenance,
+uses a disposable provider-free Pi home first, and keeps any real-auth/provider
+acceptance explicit and temporary through `--no-extensions --no-skills -e`.

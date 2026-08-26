@@ -651,6 +651,16 @@ python -m pi_tmux_orchestrator.token_efficiency \
   --state-root ~/.pi/agent/orchestrations --max-runs 100
 ```
 
+## Pre-release extension acceptance
+
+To test the exact checked-out extension before a version bump, tag, publication,
+or installation over the released package, use the staged-artifact workflow in
+[`prerelease-testing.md`](prerelease-testing.md). It produces a persistent local
+package root plus commit/tarball provenance, proves package discovery in a
+disposable provider-free Pi home, and documents a separately explicit temporary
+`-e` test with real authentication and rollback. No custom-role registry is
+required or included.
+
 ## Security boundaries
 
 - Only the implementer receives normal write tools.

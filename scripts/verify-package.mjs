@@ -57,6 +57,7 @@ const expectedFiles = [
   "extensions/orchestrator-worker.js",
   "extensions/orchestrator-result-policy.js",
   "references/usage.md",
+  "references/prerelease-testing.md",
   "references/protocol-v1.md",
   "references/dashboard-design.md",
   ...pythonFiles,
@@ -77,6 +78,7 @@ const declaredFiles = [
   "extensions/orchestrator-worker.js",
   "extensions/orchestrator-result-policy.js",
   "references/usage.md",
+  "references/prerelease-testing.md",
   "references/protocol-v1.md",
   "references/dashboard-design.md",
   "bin/pi-tmux-agents",
@@ -209,6 +211,7 @@ const packagedDocs = [
   "CHANGELOG.md",
   "SECURITY.md",
   "references/usage.md",
+  "references/prerelease-testing.md",
   "references/protocol-v1.md",
   "references/dashboard-design.md",
 ];

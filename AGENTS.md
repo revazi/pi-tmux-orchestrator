@@ -34,6 +34,7 @@ Provide a small, reusable, intentionally tmux-scoped Pi skill and modular standa
 - `extensions/orchestrator-result-policy.js`: orchestration-only worker input/result bounds and metadata
 - `bin/pi-tmux-agents`: thin executable launcher
 - `references/usage.md`: detailed operator guidance
+- `references/prerelease-testing.md`: staged local-package and manual acceptance workflow
 - `install.sh`: global Pi skill installation
 - `tests/`: model-free regressions
 
