@@ -94,7 +94,11 @@ node "$ROOT/scripts/verify-package.mjs"
 "$ROOT/scripts/package-smoke.sh"
 PRERELEASE_STAGE="$TEST_ROOT/prerelease-stage"
 "$ROOT/scripts/stage-prerelease.sh" --output "$PRERELEASE_STAGE" --allow-dirty
-"$ROOT/scripts/run-prerelease-isolated.sh" --stage "$PRERELEASE_STAGE" --check
+NO_PI_BIN="$TEST_ROOT/no-pi-bin"
+mkdir -m 700 "$NO_PI_BIN"
+ln -s "$(python3 -c 'import sys; print(sys.executable)')" "$NO_PI_BIN/python3"
+PATH="$NO_PI_BIN" /bin/bash "$ROOT/scripts/run-prerelease-isolated.sh" \
+  --stage "$PRERELEASE_STAGE" --check
 python3 - "$PRERELEASE_STAGE/provenance.json" <<'PY'
 import json
 from pathlib import Path

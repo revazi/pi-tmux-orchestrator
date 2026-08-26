@@ -45,11 +45,6 @@ if [[ "$CANONICAL_STAGE" != "$STAGE" || ( "$CHECK" != true && "$CANONICAL_PROJEC
   printf '%s\n' 'Stage and project paths must be canonical and contain no symlink components.' >&2
   exit 2
 fi
-if ! command -v pi >/dev/null 2>&1; then
-  printf '%s\n' 'pi is required to run the staged pre-release extension.' >&2
-  exit 1
-fi
-
 VALIDATED=$(python3 - "$STAGE" <<'PY'
 import hashlib
 import json
@@ -139,6 +134,10 @@ PACKAGE_ROOT="$STAGE/$PACKAGE_REL"
 if [[ "$CHECK" == true ]]; then
   printf 'Validated staged pre-release commit %s at %s\n' "$COMMIT" "$PACKAGE_ROOT"
   exit 0
+fi
+if ! command -v pi >/dev/null 2>&1; then
+  printf '%s\n' 'pi is required to run the staged pre-release extension.' >&2
+  exit 1
 fi
 
 TEMP=$(mktemp -d "${TMPDIR:-/tmp}/pi-tmux-prerelease-tui.XXXXXX")
