@@ -29,10 +29,13 @@ because it cannot display a startup trust prompt.
 
 Worker provider/model/thinking policy comes only from bounded explicit
 arguments or the strict user-global orchestrator configuration outside target
-repositories. The configuration accepts identifiers and thinking levels only;
-credential, endpoint, header, and arbitrary extra fields are rejected. Pi's own
-model registry and authentication remain authoritative. Bounded model discovery
-returns no authentication material.
+repositories. Version-3 configuration may additionally map existing canonical
+absolute project directories to bounded profile/model/flow/specialist/workspace
+defaults using exact matching only. It cannot grant trust, tools, writer/reviewer
+authority, forced execution, prompts, or skills. Credential, endpoint, header,
+and arbitrary extra fields are rejected. Pi's own model registry and
+authentication remain authoritative. Bounded model discovery returns no
+authentication material.
 
 ## Broker boundary
 
@@ -85,9 +88,11 @@ notifications, or widgets. Cleanup is not a secure-erasure claim.
 State roots, session/run directories, manifests, tokens, and databases must be
 canonical non-symlink paths with expected types. Private writes use no-follow
 opens where available, descriptor checks, atomic replacement, and restrictive
-permissions. Manifest v3 validates exact project/session/window identity,
-known roles, pane IDs, session paths, transport presentation, and
-`broker-v1` protocol identity.
+permissions. Manifest v3+ validates exact project/session/window identity,
+known roles, pane IDs, session paths, transport presentation, and `broker-v1`
+protocol identity. Manifest v5 additionally retains only bounded external config
+path/schema and exact-project mapping metadata, never configuration or workflow
+bodies.
 
 ## Delivery semantics
 

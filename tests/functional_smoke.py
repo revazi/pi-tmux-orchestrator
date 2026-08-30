@@ -342,14 +342,20 @@ def main() -> int:
             capture_output=True,
         )
         roles = {"implementer", "reviewer", "probe", "playwright", "django"}
-        if manifest["version"] != 4 or manifest["coordination"] != "broker-v1":
-            raise AssertionError("new run did not use manifest v4 broker coordination")
+        if manifest["version"] != 5 or manifest["coordination"] != "broker-v1":
+            raise AssertionError("new run did not use manifest v5 broker coordination")
         if manifest["execution_profile"] != {
             "name": "thorough",
             "kind": "packaged",
             "source": "packaged-default",
         }:
             raise AssertionError("manifest did not bind the execution profile")
+        if manifest["project_config"]["matched"] is not False:
+            raise AssertionError("manifest did not bind the unmatched project policy")
+        if manifest["orchestration_config"]["version"] != 3:
+            raise AssertionError(
+                "manifest did not bind the orchestration config schema"
+            )
         if set(manifest["roles"]) != roles:
             raise AssertionError("all roles were not started")
         if "SYNTHETIC_CONTEXT_CAPSULE_CANARY" in json.dumps(manifest):
@@ -674,7 +680,7 @@ def main() -> int:
         print("OK invoking Pi remains the parent across repeated attach/detach")
         print("OK detach returns the exact client without stopping worker panes")
         print("OK controller lifecycle")
-        print("OK TUI and RPC presentations share manifest-v4 broker-v1")
+        print("OK TUI and RPC presentations share manifest-v5 broker-v1")
         print("OK RPC panes render assistant progress plus tool inputs and outputs")
         print("OK owner-only broker accepted five authenticated role bridges")
         print("OK broker pane rendered the metadata-only adaptive dashboard")

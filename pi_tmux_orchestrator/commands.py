@@ -32,6 +32,10 @@ from .configuration import (
     empty_model_config,
     load_model_config,
     model_config_path,
+    project_model_config,
+    public_project_config,
+    retained_orchestration_config,
+    retained_project_config,
 )
 from .constants import (
     BROKER_COORDINATION,
@@ -112,11 +116,13 @@ def role_config(
     role: str,
     model_config: dict[str, Any] | None = None,
     execution_profile: dict[str, Any] | None = None,
+    project_config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     defaults = effective_model_config(
         role,
         model_config or empty_model_config(),
         execution_profile,
+        project_config,
     )
     config: dict[str, Any] = {
         "provider": getattr(args, f"{role}_provider") or defaults["provider"],
@@ -263,14 +269,52 @@ def start_command(args: argparse.Namespace) -> CommandResult:
     command_path("pi")
     command_path("tmux")
     project_input = Path(args.project).expanduser()
-    workspace_capsule_enabled = getattr(args, "workspace_capsule", False)
-    project = (
-        canonical_project_root(project_input)
-        if workspace_capsule_enabled
-        else project_input.resolve()
-    )
+    project = project_input.resolve()
     if not project.is_dir():
         raise OrchestrationError(f"Project directory does not exist: {project}")
+    configured_models = load_model_config(project=project)
+    matched_project = project_model_config(configured_models, project)
+    workspace_requested = getattr(args, "workspace_capsule", None)
+    workspace_capsule_enabled = (
+        workspace_requested
+        if workspace_requested is not None
+        else bool(
+            matched_project is not None and matched_project["workspace_capsule"] is True
+        )
+    )
+    if workspace_capsule_enabled:
+        project = canonical_project_root(project_input)
+    project_specialists = (
+        matched_project["specialists"]
+        if matched_project is not None and matched_project["specialists"] is not None
+        else []
+    )
+    with_probe = (
+        args.with_probe
+        if args.with_probe is not None
+        else "probe" in project_specialists
+    )
+    with_playwright = (
+        args.with_playwright
+        if args.with_playwright is not None
+        else "playwright" in project_specialists
+    )
+    with_django_expert = (
+        args.with_django_expert
+        if args.with_django_expert is not None
+        else "django" in project_specialists
+    )
+    requested_flow = getattr(args, "implementation_flow", None)
+    implementation_flow = (
+        requested_flow
+        if requested_flow is not None
+        else (
+            matched_project["implementation_flow"]
+            if matched_project is not None
+            and matched_project["implementation_flow"] is not None
+            else DEFAULT_IMPLEMENTATION_FLOW
+        )
+    )
     transport = RPC_TRANSPORT if getattr(args, "rpc_workers", False) else TUI_TRANSPORT
 
     task = read_text_argument(args.task, args.task_file, "task")
@@ -287,7 +331,7 @@ def start_command(args: argparse.Namespace) -> CommandResult:
         else ""
     )
     workspace_relevant_paths = getattr(args, "workspace_relevant_path", [])
-    if workspace_relevant_paths and not getattr(args, "workspace_capsule", False):
+    if workspace_relevant_paths and not workspace_capsule_enabled:
         raise OrchestrationError(
             "--workspace-relevant-path requires --workspace-capsule",
             "invalid_arguments",
@@ -297,7 +341,7 @@ def start_command(args: argparse.Namespace) -> CommandResult:
         if workspace_capsule_enabled
         else None
     )
-    if args.with_probe:
+    if with_probe:
         if args.probe_task is None and args.probe_task_file is None:
             probe_task = (
                 "Independently investigate the highest-risk integration, contract, runtime, or "
@@ -313,7 +357,7 @@ def start_command(args: argparse.Namespace) -> CommandResult:
             raise OrchestrationError("--probe-task requires --with-probe")
         probe_task = None
 
-    if args.with_playwright:
+    if with_playwright:
         if args.playwright_task is None and args.playwright_task_file is None:
             playwright_task = (
                 "Run an independent browser smoke against the actual local test application "
@@ -332,7 +376,7 @@ def start_command(args: argparse.Namespace) -> CommandResult:
             raise OrchestrationError("--playwright-task requires --with-playwright")
         playwright_task = None
 
-    if args.with_django_expert:
+    if with_django_expert:
         if args.django_task is None and args.django_task_file is None:
             django_task = (
                 "Independently review each brokered implementation report for Django ORM, "
@@ -369,22 +413,28 @@ def start_command(args: argparse.Namespace) -> CommandResult:
         )
 
     roles = ["implementer", "reviewer"]
-    if args.with_probe:
+    if with_probe:
         roles.append("probe")
-    if args.with_playwright:
+    if with_playwright:
         roles.append("playwright")
-    if args.with_django_expert:
+    if with_django_expert:
         roles.append("django")
     forced_specialists = validate_forced_specialists(
         getattr(args, "force_specialist", []), roles
     )
-    configured_models = load_model_config(project=project)
     execution_profile = resolve_execution_profile(
         configured_models,
         getattr(args, "profile", None),
+        matched_project,
     )
     configs = {
-        role: role_config(args, role, configured_models, execution_profile)
+        role: role_config(
+            args,
+            role,
+            configured_models,
+            execution_profile,
+            matched_project,
+        )
         for role in roles
     }
     worker_skills = resolve_worker_skills(
@@ -412,9 +462,11 @@ def start_command(args: argparse.Namespace) -> CommandResult:
         for role, config in configs.items():
             validate_model(role, config)
 
-    implementation_flow = getattr(
-        args, "implementation_flow", DEFAULT_IMPLEMENTATION_FLOW
-    )
+    project_config_metadata = public_project_config(matched_project)
+    orchestration_config_metadata = {
+        "path": str(model_config_path(project)),
+        "version": configured_models["version"],
+    }
     data: dict[str, Any] = {
         "project": str(project),
         "session": session,
@@ -438,6 +490,8 @@ def start_command(args: argparse.Namespace) -> CommandResult:
         },
         "budget_policy": budget_policy,
         "execution_profile": public_execution_profile(execution_profile),
+        "project_config": project_config_metadata,
+        "orchestration_config": orchestration_config_metadata,
         "worker_resources": {
             "skill_discovery": False,
             "skills": {
@@ -489,6 +543,15 @@ def start_command(args: argparse.Namespace) -> CommandResult:
         f"Execution profile: {execution_profile['name']} "
         f"({execution_profile['kind']}, source={execution_profile['source']})"
     )
+    human_print(f"Orchestration config: {model_config_path(project)}")
+    human_print(
+        "Project mapping: "
+        + (
+            f"matched {project_config_metadata['directory']}"
+            if project_config_metadata["matched"]
+            else "none"
+        )
+    )
     human_print("Worker skill discovery: disabled")
     for role in roles:
         paths = [skill["path"] for skill in worker_skills[role]]
@@ -535,7 +598,7 @@ def start_command(args: argparse.Namespace) -> CommandResult:
     try:
         secure_write(coord / "startup-state", "STARTING\n")
         manifest: dict[str, Any] = {
-            "version": 4,
+            "version": 5,
             "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
             "session": session,
             "window": WINDOW,
@@ -546,6 +609,8 @@ def start_command(args: argparse.Namespace) -> CommandResult:
             "coordination": BROKER_COORDINATION,
             "protocol_version": BROKER_PROTOCOL_VERSION,
             "execution_profile": public_execution_profile(execution_profile),
+            "project_config": project_config_metadata,
+            "orchestration_config": orchestration_config_metadata,
             "monitor_pane_id": None,
             "roles": {},
         }
@@ -621,6 +686,8 @@ def list_command(_: argparse.Namespace) -> CommandResult:
                     "valid": True,
                     "project": manifest["project"],
                     "execution_profile": retained_execution_profile(manifest),
+                    "project_config": retained_project_config(manifest),
+                    "orchestration_config": retained_orchestration_config(manifest),
                     "roles": role_values,
                     "paths": {"coordination": str(coord)},
                 }
@@ -720,12 +787,34 @@ def status_command(args: argparse.Namespace) -> CommandResult:
     human_print(f"Session: {session}")
     human_print(f"Project: {manifest['project']}")
     profile = retained_execution_profile(manifest)
+    project_config = retained_project_config(manifest)
+    orchestration_config = retained_orchestration_config(manifest)
     human_print(
         "Execution profile: "
         + (
             f"{profile['name']} ({profile['kind']}, source={profile['source']})"
             if profile["name"] is not None
             else "unavailable (legacy run)"
+        )
+    )
+    human_print(
+        "Orchestration config: "
+        + (
+            f"{orchestration_config['path']} (schema v{orchestration_config['version']})"
+            if orchestration_config["path"] is not None
+            else "unavailable (legacy run)"
+        )
+    )
+    human_print(
+        "Project mapping: "
+        + (
+            f"matched {project_config['directory']}"
+            if project_config["matched"] is True
+            else (
+                "none"
+                if project_config["matched"] is False
+                else "unavailable (legacy run)"
+            )
         )
     )
     human_print(f"Coordination: {coord}")
@@ -836,6 +925,8 @@ def status_command(args: argparse.Namespace) -> CommandResult:
             "session": session,
             "project": manifest["project"],
             "execution_profile": profile,
+            "project_config": project_config,
+            "orchestration_config": orchestration_config,
             "paths": paths,
             "roles": role_values,
             "panes": panes,
@@ -1176,16 +1267,29 @@ def stop_command(args: argparse.Namespace) -> CommandResult:
     )
 
 
-def doctor_command(_: argparse.Namespace) -> CommandResult:
-    configured_models = load_model_config()
-    config_path = model_config_path()
+def doctor_command(args: argparse.Namespace) -> CommandResult:
+    try:
+        project = Path(args.project).expanduser().resolve(strict=True)
+    except OSError as error:
+        raise OrchestrationError(
+            f"Project directory does not exist: {args.project}"
+        ) from error
+    if not project.is_dir():
+        raise OrchestrationError(f"Project directory does not exist: {project}")
+    configured_models = load_model_config(project=project)
+    config_path = model_config_path(project)
+    matched_project = project_model_config(configured_models, project)
+    project_metadata = public_project_config(matched_project)
     config_in_use = bool(
         configured_models["default_profile"]
         or configured_models["profiles"]
         or configured_models["defaults"]
         or any(configured_models["roles"].values())
+        or configured_models["projects"]
     )
-    execution_profile = resolve_execution_profile(configured_models)
+    execution_profile = resolve_execution_profile(
+        configured_models, project=matched_project
+    )
     configured_budget = load_budget_config()
     budget_path = budget_config_path()
     budget_in_use = configured_budget != packaged_budget_policy()
@@ -1216,12 +1320,14 @@ def doctor_command(_: argparse.Namespace) -> CommandResult:
                     "config_path": str(config_path),
                     "configured": config_in_use,
                     "execution_profile": public_execution_profile(execution_profile),
+                    "project_config": project_metadata,
                 },
                 "budget_policy": budget_data,
                 "paths": {
                     "state_root": str(absolute_path(runtime.STATE_ROOT)),
                     "model_config": str(config_path),
                     "budget_config": str(budget_path),
+                    "project": str(project),
                 },
             },
             code=1,
@@ -1271,7 +1377,9 @@ def doctor_command(_: argparse.Namespace) -> CommandResult:
 
     model_checks: list[dict[str, Any]] = []
     for role in DEFAULT_MODELS:
-        config = effective_model_config(role, configured_models, execution_profile)
+        config = effective_model_config(
+            role, configured_models, execution_profile, matched_project
+        )
         available, detail = model_available(config["provider"], config["model"])
         label = "OK" if available else "WARN"
         human_print(
@@ -1294,6 +1402,14 @@ def doctor_command(_: argparse.Namespace) -> CommandResult:
         f"({execution_profile['kind']}, source={execution_profile['source']})"
     )
     human_print(
+        "OK   project mapping: "
+        + (
+            f"matched {project_metadata['directory']}"
+            if project_metadata["matched"]
+            else f"none for {project}"
+        )
+    )
+    human_print(
         f"OK   budget config: {budget_path} "
         f"({'configured' if budget_in_use else 'packaged defaults'}; "
         f"mode={configured_budget['enforcement']}, observational=true)"
@@ -1308,12 +1424,14 @@ def doctor_command(_: argparse.Namespace) -> CommandResult:
                 "config_path": str(config_path),
                 "configured": config_in_use,
                 "execution_profile": public_execution_profile(execution_profile),
+                "project_config": project_metadata,
             },
             "budget_policy": budget_data,
             "paths": {
                 "state_root": str(absolute_path(runtime.STATE_ROOT)),
                 "model_config": str(config_path),
                 "budget_config": str(budget_path),
+                "project": str(project),
             },
         }
     )

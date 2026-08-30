@@ -22,6 +22,7 @@ from .constants import (
     RPC_TRANSPORT,
     SUPERVISOR_API_VERSION,
 )
+from .configuration import retained_orchestration_config, retained_project_config
 from .models import OrchestrationError
 from .output import bounded_message, public_role
 from .profiles import retained_execution_profile
@@ -101,6 +102,11 @@ def supervisor_capabilities() -> dict[str, Any]:
             "legacy": "unavailable",
             "provider_usage_and_quality_evidence": "unavailable",
         },
+        "project_configuration": {
+            "manifest_metadata_since": 5,
+            "legacy": "unavailable",
+            "matching": "exact-canonical-directory",
+        },
         "usage_accounting": {
             "cumulative_role_usage": True,
             "latest_assignment_usage": True,
@@ -158,6 +164,8 @@ def public_supervisor_run(coord: Path, manifest: dict[str, Any]) -> dict[str, An
         "project": manifest["project"],
         "transport": transport,
         "execution_profile": retained_execution_profile(manifest),
+        "project_config": retained_project_config(manifest),
+        "orchestration_config": retained_orchestration_config(manifest),
         "durable_workers": manifest.get("version", 0) >= 3
         or transport == RPC_TRANSPORT,
         "roles": [
@@ -369,6 +377,8 @@ def supervisor_snapshot(session: str, run_id: str | None) -> dict[str, Any]:
             "project": manifest["project"],
             "transport": transport,
             "execution_profile": retained_execution_profile(manifest),
+            "project_config": retained_project_config(manifest),
+            "orchestration_config": retained_orchestration_config(manifest),
             "coordination": manifest["coordination"],
             "durable_workers": True,
             "host_adapter": {"name": "tmux", "runtime_status": "not_observed"},
@@ -410,6 +420,8 @@ def supervisor_snapshot(session: str, run_id: str | None) -> dict[str, Any]:
         "project": manifest["project"],
         "transport": transport,
         "execution_profile": retained_execution_profile(manifest),
+        "project_config": retained_project_config(manifest),
+        "orchestration_config": retained_orchestration_config(manifest),
         "durable_workers": transport == RPC_TRANSPORT,
         "host_adapter": {
             "name": "tmux",

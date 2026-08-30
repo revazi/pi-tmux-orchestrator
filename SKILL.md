@@ -28,9 +28,9 @@ panes, file handoffs, relay scripts, or polling loops.
 2. Never approve an unfamiliar project. Parent trust does not transfer to child Pi sessions.
 3. Keep one writer: only the implementer may edit tracked files. Other roles are workflow-read-only but retain `bash` for verification and are not OS-sandboxed.
 4. Keep credentials, private documents, provider bodies, raw errors, diffs, and logs out of tasks and structured reports.
-5. Honor an explicit `economy`, `balanced`, `thorough`, or strict user-global custom profile through `profile`. Profiles change thinking only and never weaken review, tools, or routing. If omitted, use the configured default or packaged compatibility default.
-6. Select `implementationFlow: "phased"` for complex work that benefits from read-only discovery before editing; select `single` for simple work or compatibility. Do not make a separate classifier model request.
-7. Honor explicit user provider/model/thinking requests through `useParentModel` or `modelOverrides`; these win over profile thinking. Use the bounded `models` action to resolve exact available IDs; never invent IDs or inspect credentials.
+5. Honor an explicit `economy`, `balanced`, `thorough`, or strict user-global custom profile through `profile`. Profiles change thinking only and never weaken review, tools, or routing. If omitted, use the exact canonical project mapping, configured global default, or packaged compatibility default in that order.
+6. Honor an explicit `implementationFlow`; when omitted, use the exact-project default or `single`. Choose `phased` for complex work that benefits from read-only discovery before editing. Do not make a separate classifier model request.
+7. Honor explicit user provider/model/thinking requests through `useParentModel` or `modelOverrides`; these win over exact-project/global model policy and profile thinking. Use the bounded `models` action to resolve exact available IDs; never invent IDs or inspect credentials.
 8. Honor explicit per-run budget requests through `budgetOverrides`; never infer hard thresholds. Omitted values use the strict external user-global policy and packaged warn-only defaults.
 9. Configured specialists use conservative deterministic gates. Pass `forceSpecialists` or `--force-specialist ROLE` only when the user explicitly requires that enabled role to run regardless of a skip predicate; never add a classifier model call.
 10. Worker skill discovery is disabled. Pass `workerSkills` or `--worker-skill ROLE=PATH` only for exact Markdown files the user explicitly reviewed; never infer or auto-load a skill.
@@ -123,12 +123,15 @@ medium/medium for implementer/reviewer, `balanced` uses high/high, and `thorough
 preserves the previous xhigh/high values. Specialists use low-or-medium,
 medium, and high respectively. The packaged compatibility default is `thorough`
 until comparative provider usage and quality are measured; this is not a
-quality or savings recommendation. Strict version-2 user-global configuration
-may select a default and define complete custom mappings. Profiles do not select
-models, create roles, change tools, or skip review.
+quality or savings recommendation. Strict version-3 user-global configuration
+may select a default, define complete custom profiles, and map exact canonical
+project directories to profile/model/flow/specialist/workspace defaults. Profiles
+do not select models, create roles, change tools, or skip review.
 
-Global model policy is read from `~/.pi/agent/tmux-orchestrator.json` (or
-`PI_TMUX_ORCHESTRATOR_CONFIG`). Explicit CLI or model-tool role overrides win.
+Global and exact-project model policy is read from
+`~/.pi/agent/tmux-orchestrator.json` (or `PI_TMUX_ORCHESTRATOR_CONFIG`). Project
+policy remains outside target repositories. Explicit CLI or model-tool overrides
+win.
 Pi's own model registry and authentication remain authoritative; never place
 credentials or endpoint secrets in orchestrator configuration.
 

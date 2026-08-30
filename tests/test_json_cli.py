@@ -392,6 +392,97 @@ class JsonMainTests(unittest.TestCase):
             ("google", "configured-reviewer", "low"),
         )
 
+    def test_start_applies_exact_project_defaults_with_explicit_precedence(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "models.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "version": 3,
+                        "defaultProfile": "economy",
+                        "profiles": {},
+                        "defaults": {},
+                        "roles": {},
+                        "projects": [
+                            {
+                                "directory": str(ROOT),
+                                "profile": "balanced",
+                                "defaults": {
+                                    "provider": "project-provider",
+                                    "model": "project-model",
+                                },
+                                "roles": {"reviewer": {"thinking": "xhigh"}},
+                                "implementationFlow": "phased",
+                                "specialists": ["probe", "django"],
+                                "workspaceCapsule": False,
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with (
+                mock.patch.dict(
+                    os.environ,
+                    {"PI_TMUX_ORCHESTRATOR_CONFIG": str(config_path)},
+                ),
+                mock.patch.object(
+                    ORCHESTRATOR, "command_path", return_value="/usr/bin/true"
+                ),
+                mock.patch.object(ORCHESTRATOR, "session_exists", return_value=False),
+            ):
+                code, envelope, _, stderr = self.run_main(
+                    [
+                        "--json",
+                        "start",
+                        "--project",
+                        str(ROOT),
+                        "--task",
+                        "synthetic",
+                        "--skip-model-check",
+                        "--dry-run",
+                    ]
+                )
+                explicit_code, explicit, _, explicit_stderr = self.run_main(
+                    [
+                        "--json",
+                        "start",
+                        "--project",
+                        str(ROOT),
+                        "--task",
+                        "synthetic",
+                        "--profile",
+                        "economy",
+                        "--implementation-flow",
+                        "single",
+                        "--without-probe",
+                        "--without-django-expert",
+                        "--skip-model-check",
+                        "--dry-run",
+                    ]
+                )
+        self.assertEqual((code, stderr), (0, ""))
+        self.assertTrue(envelope["data"]["project_config"]["matched"])
+        self.assertEqual(envelope["data"]["implementation_flow"], "phased")
+        self.assertEqual(envelope["data"]["execution_profile"]["source"], "project")
+        roles = {role["name"]: role for role in envelope["data"]["roles"]}
+        self.assertEqual(set(roles), {"implementer", "reviewer", "probe", "django"})
+        self.assertEqual(roles["implementer"]["provider"], "project-provider")
+        self.assertEqual(roles["reviewer"]["thinking"], "xhigh")
+        self.assertEqual(
+            envelope["data"]["orchestration_config"]["path"], str(config_path)
+        )
+
+        self.assertEqual((explicit_code, explicit_stderr), (0, ""))
+        self.assertEqual(explicit["data"]["implementation_flow"], "single")
+        self.assertEqual(explicit["data"]["execution_profile"]["source"], "per-run")
+        self.assertEqual(
+            {role["name"] for role in explicit["data"]["roles"]},
+            {"implementer", "reviewer"},
+        )
+
     def test_start_budget_policy_uses_global_then_explicit_override_precedence(
         self,
     ) -> None:
@@ -486,7 +577,7 @@ class JsonMainTests(unittest.TestCase):
                 envelope["data"]["paths"]["observer_socket"], expected_socket
             )
             manifest = create_grid.call_args.args[4]
-            self.assertEqual(manifest["version"], 4)
+            self.assertEqual(manifest["version"], 5)
             self.assertEqual(
                 manifest["execution_profile"],
                 {
@@ -494,6 +585,11 @@ class JsonMainTests(unittest.TestCase):
                     "kind": "packaged",
                     "source": "packaged-default",
                 },
+            )
+            self.assertFalse(manifest["project_config"]["matched"])
+            self.assertEqual(
+                manifest["orchestration_config"],
+                envelope["data"]["orchestration_config"],
             )
             self.assertNotIn(canary, raw)
 

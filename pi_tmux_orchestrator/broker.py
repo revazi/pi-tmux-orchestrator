@@ -1765,6 +1765,9 @@ def _register_broker_signal_handlers(
         (signal.SIGINT, broker.stopping.set),
         (signal.SIGTERM, broker.stopping.set),
     ]
+    hangup_signal = getattr(signal, "SIGHUP", None)
+    if hangup_signal is not None:
+        handlers.append((hangup_signal, broker.stopping.set))
     resize_signal = getattr(signal, "SIGWINCH", None)
     if resize_signal is not None:
         handlers.append((resize_signal, broker.refresh_dashboard))
