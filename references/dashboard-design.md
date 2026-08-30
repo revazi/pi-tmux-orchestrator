@@ -118,8 +118,12 @@ whether to attach, inspect status, intervene, or stop the exact session.
 The parent extension also exposes `/or-dashboard`, a separate cross-session
 overlay inspired by Pi Fallow and Pi Tasklight. It reads the bounded `list` JSON
 projection plus current-project doctor metadata once on open and again only on
-explicit `r`. It never tails pane output or starts a refresh timer. Each running
-session row keeps exact session/project identity, workflow state/round, profile,
+explicit `r`. The two reads start together, but the fast session projection is
+rendered and becomes navigable as soon as it returns; full doctor/model checks
+continue independently in their bounded section. Doctor model discovery is
+shared per distinct provider within that CLI operation rather than launching Pi
+once per role. The overlay never tails pane output or starts a refresh timer.
+Each running session row keeps exact session/project identity, workflow state/round, profile,
 linked-role count, calls, operational tokens, complete provider-reported cost,
 and maximum available role context pressure. Doctor remains a separate bounded
 section, and missing provider values render as unavailable.

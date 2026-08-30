@@ -688,13 +688,8 @@ function createCommandHandlers(pi, superviseStart = () => {}) {
     try {
       await showOrchestrationDashboard(
         ctx,
-        async () => {
-          const [list, doctor] = await Promise.all([
-            runCli(pi, "list", [], ctx.signal),
-            runCli(pi, "doctor", ["--project", ctx.cwd], ctx.signal),
-          ]);
-          return { list, doctor };
-        },
+        () => runCli(pi, "list", [], ctx.signal),
+        () => runCli(pi, "doctor", ["--project", ctx.cwd], ctx.signal),
         async (session) => {
           const envelope = await attachAndSupervise(
             pi,

@@ -195,20 +195,41 @@ def read_text_argument(
     return value.strip() + "\n"
 
 
-def model_available(provider: str, model: str) -> tuple[bool, str]:
-    pi = command_path("pi")
-    result = run([pi, "--list-models", provider], check=False, capture=True)
-    if result.returncode != 0:
-        return False, f"pi --list-models failed with exit code {result.returncode}"
-    for line in result.stdout.splitlines()[1:]:
-        columns = line.split()
-        if len(columns) >= 2 and columns[0] == provider and columns[1] == model:
-            return True, "available"
+ModelCatalog = tuple[int, frozenset[tuple[str, str]]]
+
+
+def model_available(
+    provider: str,
+    model: str,
+    catalog_cache: dict[str, ModelCatalog] | None = None,
+) -> tuple[bool, str]:
+    cache = catalog_cache if catalog_cache is not None else {}
+    if provider not in cache:
+        pi = command_path("pi")
+        result = run([pi, "--list-models", provider], check=False, capture=True)
+        models: set[tuple[str, str]] = set()
+        if result.returncode == 0:
+            for line in result.stdout.splitlines()[1:]:
+                columns = line.split()
+                if len(columns) >= 2:
+                    models.add((columns[0], columns[1]))
+        cache[provider] = (result.returncode, frozenset(models))
+    returncode, models = cache[provider]
+    if returncode != 0:
+        return False, f"pi --list-models failed with exit code {returncode}"
+    if (provider, model) in models:
+        return True, "available"
     return False, f"{provider}/{model} is not listed as available"
 
 
-def validate_model(role: str, config: dict[str, str]) -> None:
-    available, detail = model_available(config["provider"], config["model"])
+def validate_model(
+    role: str,
+    config: dict[str, str],
+    catalog_cache: dict[str, ModelCatalog] | None = None,
+) -> None:
+    available, detail = model_available(
+        config["provider"], config["model"], catalog_cache
+    )
     if not available:
         raise OrchestrationError(f"{role} model unavailable: {detail}")
 

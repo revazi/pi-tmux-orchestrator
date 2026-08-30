@@ -27,6 +27,7 @@ All notable changes to this project are documented here.
 
 ### Changed
 
+- Changed the Pi dashboard to render running sessions independently of doctor completion, and reduced doctor/start model-catalog subprocesses to one per distinct provider within each CLI operation
 - Changed broker shutdown to handle tmux pane hangup signals gracefully so private Unix sockets are removed when a grid stops
 - Changed all provider-usage budget thresholds to observational metadata: hard-configured runs no longer block tools or downstream assignments and no budget-resume control is exposed
 - Changed TUI and RPC workers to disable automatic skill discovery and use one lean custom role prompt while preserving governing `AGENTS.md`/`CLAUDE.md` discovery, role authority, tool guidance, and final reporting

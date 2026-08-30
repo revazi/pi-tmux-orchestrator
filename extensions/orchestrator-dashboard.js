@@ -11,8 +11,10 @@ const violet = (text) => ansi(99, text);
 const cyan = (text) => ansi(81, text);
 const amber = (text) => ansi(215, text);
 
-export async function showOrchestrationDashboard(ctx, load, open) {
-  if (ctx.mode !== "tui" || !ctx.hasUI) return showPlainDashboard(ctx, load);
+export async function showOrchestrationDashboard(ctx, loadList, loadDoctor, open) {
+  if (ctx.mode !== "tui" || !ctx.hasUI) {
+    return showPlainDashboard(ctx, loadList, loadDoctor);
+  }
   const selection = await ctx.ui.custom(
     (tui, theme, keybindings, done) => {
       const visibleRows = resolveVisibleRows(tui.terminal?.rows);
@@ -20,7 +22,8 @@ export async function showOrchestrationDashboard(ctx, load, open) {
         theme,
         done,
         () => tui.requestRender(),
-        load,
+        loadList,
+        loadDoctor,
         visibleRows,
         keybindings,
       );
@@ -42,8 +45,9 @@ export async function showOrchestrationDashboard(ctx, load, open) {
   await openDashboardSelection(selection, open);
 }
 
-async function showPlainDashboard(ctx, load) {
-  const lines = dashboardPlainLines(await load());
+async function showPlainDashboard(ctx, loadList, loadDoctor) {
+  const [list, doctor] = await Promise.all([loadList(), loadDoctor()]);
+  const lines = dashboardPlainLines({ list, doctor });
   if (ctx.hasUI) ctx.ui.notify(lines.slice(0, 20).join("\n"), "info");
   else console.log(lines.join("\n"));
 }
@@ -53,11 +57,20 @@ async function openDashboardSelection(selection, open) {
 }
 
 export class OrchestrationDashboardOverlay {
-  constructor(theme, done, requestRender, load, visibleRows = 8, keybindings) {
+  constructor(
+    theme,
+    done,
+    requestRender,
+    loadList,
+    loadDoctor,
+    visibleRows = 8,
+    keybindings,
+  ) {
     this.theme = theme;
     this.done = done;
     this.requestRender = requestRender;
-    this.load = load;
+    this.loadList = loadList;
+    this.loadDoctor = loadDoctor;
     this.visibleRows = visibleRows;
     this.keybindings = keybindings;
     this.sessions = [];
@@ -65,6 +78,7 @@ export class OrchestrationDashboardOverlay {
     this.selected = 0;
     this.scrollStart = 0;
     this.loading = true;
+    this.doctorLoading = true;
     this.error = undefined;
     this.showDoctor = true;
     this.generation = 0;
@@ -72,23 +86,48 @@ export class OrchestrationDashboardOverlay {
   }
 
   async refresh() {
-    if (this.loading && this.generation > 0) return;
+    if ((this.loading || this.doctorLoading) && this.generation > 0) return;
     const generation = ++this.generation;
     const selectedSession = this.selectedSessionName();
     this.loading = true;
+    this.doctorLoading = true;
+    this.doctor = checkingDoctor();
     this.error = undefined;
     this.changed();
+
+    const doctorResult = this.startDoctorLoad();
+    await this.refreshSessions(generation, selectedSession);
+    this.finishDoctorLoad(generation, await doctorResult);
+  }
+
+  startDoctorLoad() {
+    return Promise.resolve()
+      .then(() => this.loadDoctor())
+      .then((value) => ({ value }), () => ({ failed: true }));
+  }
+
+  async refreshSessions(generation, selectedSession) {
     try {
-      const display = dashboardDisplay(await this.load());
-      this.commit(generation, () => this.applyDisplay(display, selectedSession));
+      const display = listDisplay(await this.loadList());
+      this.commit(generation, () => this.applyList(display, selectedSession));
     } catch {
-      this.commit(generation, () => this.applyFailure());
+      this.commit(generation, () => this.applyListFailure());
     } finally {
       this.commit(generation, () => {
         this.loading = false;
         this.changed();
       });
     }
+  }
+
+  finishDoctorLoad(generation, result) {
+    this.commit(generation, () => {
+      this.doctor = result.failed
+        ? warningDoctor("Doctor unavailable", [])
+        : doctorDisplay(result.value);
+      this.doctorLoading = false;
+      this.changed();
+    });
   }
 
   selectedSessionName() {
@@ -100,18 +139,16 @@ export class OrchestrationDashboardOverlay {
     if (!this.disposed && generation === this.generation) action();
   }
 
-  applyDisplay(display, selectedSession) {
+  applyList(display, selectedSession) {
     this.sessions = display.sessions;
-    this.doctor = display.doctor;
     this.error = display.error;
     this.selected = selectedIndex(this.sessions, selectedSession);
     this.ensureVisible();
   }
 
-  applyFailure() {
+  applyListFailure() {
     this.sessions = [];
-    this.doctor = warningDoctor("Doctor unavailable", []);
-    this.error = "Dashboard metadata is unavailable.";
+    this.error = "Running orchestration list unavailable.";
     this.selected = 0;
     this.scrollStart = 0;
   }
@@ -346,16 +383,28 @@ function sessionRoles(session) {
 
 function dashboardDisplay(snapshot) {
   const value = objectValue(snapshot);
-  const list = objectValue(value.list);
+  const list = listDisplay(value.list);
   const doctor = objectValue(value.doctor);
   const errors = [
-    [list.success !== true, "Running orchestration list unavailable."],
-    [doctor.success !== true, "Doctor reported unavailable prerequisites or policy."],
-  ].filter(([active]) => active).map(([, message]) => message);
+    list.error,
+    doctor.success === true
+      ? undefined
+      : "Doctor reported unavailable prerequisites or policy.",
+  ].filter(Boolean);
   return {
-    sessions: sessionsFromList(list),
+    sessions: list.sessions,
     doctor: doctorDisplay(doctor),
     error: errors.length ? errors.join(" ") : undefined,
+  };
+}
+
+function listDisplay(envelope) {
+  const list = objectValue(envelope);
+  return {
+    sessions: sessionsFromList(list),
+    error: list.success === true
+      ? undefined
+      : "Running orchestration list unavailable.",
   };
 }
 

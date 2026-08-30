@@ -459,8 +459,9 @@ def start_command(args: argparse.Namespace) -> CommandResult:
             workspace_capsule=workspace_capsule,
         )
     if not args.skip_model_check:
+        model_catalogs = {}
         for role, config in configs.items():
-            validate_model(role, config)
+            validate_model(role, config, model_catalogs)
 
     project_config_metadata = public_project_config(matched_project)
     orchestration_config_metadata = {
@@ -1422,11 +1423,14 @@ def doctor_command(args: argparse.Namespace) -> CommandResult:
         )
 
     model_checks: list[dict[str, Any]] = []
+    model_catalogs = {}
     for role in DEFAULT_MODELS:
         config = effective_model_config(
             role, configured_models, execution_profile, matched_project
         )
-        available, detail = model_available(config["provider"], config["model"])
+        available, detail = model_available(
+            config["provider"], config["model"], model_catalogs
+        )
         label = "OK" if available else "WARN"
         human_print(
             f"{label:<4} {role}: {config['provider']}/{config['model']} ({detail})"

@@ -295,20 +295,23 @@ test("dashboard display is bounded and keeps unavailable usage explicit", () => 
 });
 
 test("dashboard overlay refreshes, navigates, toggles doctor, and selects attach", async () => {
-  let loads = 0;
+  let listLoads = 0;
+  let doctorLoads = 0;
   let selected;
   let renders = 0;
   const overlay = new OrchestrationDashboardOverlay(
     dashboardTheme,
     (value) => { selected = value; },
     () => { renders += 1; },
-    async () => { loads += 1; return dashboardSnapshot(); },
+    async () => { listLoads += 1; return dashboardSnapshot().list; },
+    async () => { doctorLoads += 1; return dashboardSnapshot().doctor; },
     3,
     { matches: () => false },
   );
   assert.match(overlay.render(100).join("\n"), /Loading running orchestrations/);
   await overlay.refresh();
-  assert.equal(loads, 1);
+  assert.equal(listLoads, 1);
+  assert.equal(doctorLoads, 1);
   assert.ok(renders >= 2);
   const lines = overlay.render(100);
   assert.ok(lines.every((line) => dashboardHooks.visibleWidth(line) <= 100));
@@ -319,10 +322,41 @@ test("dashboard overlay refreshes, navigates, toggles doctor, and selects attach
   overlay.handleInput("d");
   assert.doesNotMatch(overlay.render(100).join("\n"), /Doctor passed/);
   overlay.handleInput("r");
-  await waitFor(() => loads === 2);
+  await waitFor(() => listLoads === 2 && doctorLoads === 2);
   overlay.handleInput("j");
   overlay.handleInput("\r");
   assert.deepEqual(selected, { type: "attach", session: "pi-beta-agents" });
+  overlay.dispose();
+});
+
+test("dashboard sessions become usable while doctor remains pending", async () => {
+  let releaseDoctor;
+  let selected;
+  const pendingDoctor = new Promise((resolve) => { releaseDoctor = resolve; });
+  const overlay = new OrchestrationDashboardOverlay(
+    dashboardTheme,
+    (value) => { selected = value; },
+    () => {},
+    async () => dashboardSnapshot().list,
+    () => pendingDoctor,
+    3,
+    { matches: () => false },
+  );
+
+  const refresh = overlay.refresh();
+  await waitFor(() => overlay.sessions.length === 2 && overlay.loading === false);
+  const partial = overlay.render(100).join("\n");
+  assert.match(partial, /pi-alpha-agents/);
+  assert.match(partial, /2 running/);
+  assert.doesNotMatch(partial, /refreshing/);
+  assert.match(partial, /Running doctor/);
+  overlay.handleInput("j");
+  overlay.handleInput("\r");
+  assert.deepEqual(selected, { type: "attach", session: "pi-beta-agents" });
+
+  releaseDoctor(dashboardSnapshot().doctor);
+  await refresh;
+  assert.match(overlay.render(100).join("\n"), /Doctor passed/);
   overlay.dispose();
 });
 
