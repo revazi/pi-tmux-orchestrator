@@ -25,6 +25,7 @@ from .constants import (
     MANIFEST_V1_FIELDS,
     MANIFEST_V3_FIELDS,
     MANIFEST_V4_FIELDS,
+    MANIFEST_V5_FIELDS,
     MAX_CONTROLLER_STATE_BYTES,
     MAX_MANIFEST_BYTES,
     PANE_ID_PATTERN,
@@ -36,6 +37,10 @@ from .constants import (
     THINKING_LEVELS,
     TUI_TRANSPORT,
     WINDOW,
+)
+from .configuration import (
+    validate_manifest_orchestration_config,
+    validate_manifest_project_config,
 )
 from .models import OrchestrationError
 from .profiles import validate_manifest_execution_profile
@@ -295,13 +300,14 @@ def validate_manifest(
     if not isinstance(value, dict):
         raise OrchestrationError("Orchestration manifest must be a JSON object")
     version = value.get("version")
-    if type(version) is not int or version not in {1, 2, 3, 4}:
+    if type(version) is not int or version not in {1, 2, 3, 4, 5}:
         raise OrchestrationError("Unsupported orchestration manifest version")
     expected_fields = {
         1: MANIFEST_V1_FIELDS,
         2: MANIFEST_FIELDS,
         3: MANIFEST_V3_FIELDS,
         4: MANIFEST_V4_FIELDS,
+        5: MANIFEST_V5_FIELDS,
     }[version]
     if set(value) != expected_fields:
         raise OrchestrationError(
@@ -340,7 +346,23 @@ def validate_manifest(
     ):
         raise OrchestrationError("Manifest broker coordination protocol is invalid")
     if version >= 4:
-        validate_manifest_execution_profile(value["execution_profile"])
+        execution_profile = validate_manifest_execution_profile(
+            value["execution_profile"]
+        )
+        if version == 4 and execution_profile["source"] == "project":
+            raise OrchestrationError(
+                "Manifest v4 execution profile cannot use project configuration"
+            )
+    if version >= 5:
+        project_config = validate_manifest_project_config(value["project_config"])
+        if (
+            project_config["matched"]
+            and project_config["directory"] != value["project"]
+        ):
+            raise OrchestrationError(
+                "Manifest project configuration does not match the project"
+            )
+        validate_manifest_orchestration_config(value["orchestration_config"])
 
     project_value = value["project"]
     if not isinstance(project_value, str):

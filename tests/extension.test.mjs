@@ -1275,6 +1275,44 @@ test("natural-language starts pass deterministic execution profiles", () => {
   assert.equal(args.includes("--implementer-thinking"), false);
 });
 
+test("natural-language starts preserve project defaults unless explicitly overridden", () => {
+  const inherited = testHooks.buildStartArgs(
+    {},
+    "/project",
+    { task: "/private/task" },
+  );
+  for (const flag of [
+    "--implementation-flow",
+    "--with-probe",
+    "--without-probe",
+    "--with-playwright",
+    "--without-playwright",
+    "--with-django-expert",
+    "--without-django-expert",
+    "--workspace-capsule",
+    "--no-workspace-capsule",
+  ]) {
+    assert.equal(inherited.includes(flag), false, flag);
+  }
+
+  const overridden = testHooks.buildStartArgs(
+    {
+      implementationFlow: "single",
+      withProbe: false,
+      withPlaywright: true,
+      withDjangoExpert: false,
+      workspaceCapsule: false,
+    },
+    "/project",
+    { task: "/private/task" },
+  );
+  assert.equal(overridden[overridden.indexOf("--implementation-flow") + 1], "single");
+  assert.equal(overridden.includes("--without-probe"), true);
+  assert.equal(overridden.includes("--with-playwright"), true);
+  assert.equal(overridden.includes("--without-django-expert"), true);
+  assert.equal(overridden.includes("--no-workspace-capsule"), true);
+});
+
 test("natural-language starts pass strict native per-run budget overrides", () => {
   const args = testHooks.buildStartArgs(
     {
@@ -1563,7 +1601,7 @@ test("doctor, list alias, and status commands delegate exact bounded JSON CLI ac
   await commands.get("orchestrator-status").handler("  pi-exact  ", ctx);
   await commands.get("orchestrator-status").handler("", ctx);
   assert.deepEqual(seen, [
-    ["--json", "doctor"],
+    ["--json", "doctor", "--project", process.cwd()],
     ["--json", "list"],
     ["--json", "status", "pi-exact"],
     ["--json", "list"],
@@ -1989,6 +2027,41 @@ test("start previews CLI policy, keeps private text out of argv, and cleans mode
   for (const path of paths) await assert.rejects(access(path));
 });
 
+test("slash start can inherit exact-project orchestration defaults", async () => {
+  let calls = 0;
+  const { commands } = harness(async (_command, args) => {
+    calls += 1;
+    for (const flag of [
+      "--implementation-flow",
+      "--with-probe",
+      "--without-probe",
+      "--with-playwright",
+      "--without-playwright",
+      "--with-django-expert",
+      "--without-django-expert",
+      "--workspace-capsule",
+      "--no-workspace-capsule",
+    ]) {
+      assert.equal(args.includes(flag), false, flag);
+    }
+    return {
+      code: 0,
+      stdout: JSON.stringify(success("start", {
+        project: process.cwd(),
+        session: "pi-project-defaults",
+        roles: [],
+        trust: { child_bypass: false },
+        dry_run: args.includes("--dry-run"),
+        paths: { state_root: "/tmp/state", coordination: null },
+      })),
+    };
+  });
+  const ctx = context({ confirmations: [false, true] });
+  await commands.get("orchestrator-start").handler("synthetic", ctx);
+  assert.equal(calls, 2);
+  assert.match(ctx.calls.confirmations[0].message, /configured project\/global defaults/);
+});
+
 test("controller mode requires and collects an explicit target project", async () => {
   const previous = process.env.PI_TMUX_CONTROLLER;
   process.env.PI_TMUX_CONTROLLER = "1";
@@ -2020,7 +2093,7 @@ test("controller mode requires and collects an explicit target project", async (
 
     const ctx = context({
       input: process.cwd(),
-      confirmations: [false, false, false, false, false, true],
+      confirmations: [true, false, false, false, false, false, true],
     });
     await commands.get("orchestrator-start").handler("synthetic", ctx);
     assert.equal(calls, 2);
@@ -2159,7 +2232,7 @@ test("canonical start command reuses private preview and explicit confirmation f
     };
   });
   const ctx = context({
-    confirmations: [true, false, false, false, true, true],
+    confirmations: [true, true, false, false, false, true, true],
     editors: ["src/service.py\ntests/test_service.py"],
   });
   await commands.get("orchestrator-start").handler(task, ctx);

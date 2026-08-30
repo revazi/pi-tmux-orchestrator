@@ -191,6 +191,69 @@ class ManifestValidationTests(PrivateStateFixture):
                         self.coord, expected_session=self.session
                     )
 
+    def test_valid_v5_manifest_binds_project_configuration_metadata(self) -> None:
+        manifest = self.manifest()
+        manifest["version"] = 5
+        manifest["transport"] = ORCHESTRATOR.TUI_TRANSPORT
+        manifest["coordination"] = ORCHESTRATOR.BROKER_COORDINATION
+        manifest["protocol_version"] = ORCHESTRATOR.BROKER_PROTOCOL_VERSION
+        manifest["execution_profile"] = {
+            "name": "balanced",
+            "kind": "packaged",
+            "source": "project",
+        }
+        manifest["project_config"] = {
+            "matched": True,
+            "directory": manifest["project"],
+            "profile": "balanced",
+            "implementation_flow": "phased",
+            "specialists": ["probe"],
+            "workspace_capsule": False,
+            "model_defaults": True,
+            "role_overrides": ["reviewer"],
+        }
+        manifest["orchestration_config"] = {
+            "path": "/tmp/tmux-orchestrator.json",
+            "version": 3,
+        }
+        for role, value in manifest["roles"].items():
+            del value["prompt_path"]
+            value["session_id"] = f"run-1-{role}"
+        ORCHESTRATOR.save_manifest(self.coord, manifest)
+        loaded = ORCHESTRATOR.load_manifest(self.coord, expected_session=self.session)
+        self.assertEqual(loaded["project_config"], manifest["project_config"])
+
+        invalid_values = (
+            {**manifest["project_config"], "matched": False},
+            {**manifest["project_config"], "specialists": ["reviewer"]},
+            {**manifest["project_config"], "workspace_capsule": "no"},
+            {**manifest["project_config"], "directory": "/other/project"},
+            {**manifest["project_config"], "extra": True},
+        )
+        for value in invalid_values:
+            with self.subTest(value=value):
+                invalid = copy.deepcopy(manifest)
+                invalid["project_config"] = value
+                self.write_raw_manifest(invalid)
+                with self.assertRaises(ORCHESTRATOR.OrchestrationError):
+                    ORCHESTRATOR.load_manifest(
+                        self.coord, expected_session=self.session
+                    )
+
+        for orchestration_config in (
+            {"path": "relative.json", "version": 3},
+            {"path": "/tmp/config.json", "version": 2},
+            {"path": "/tmp/config.json", "version": 3, "extra": True},
+        ):
+            with self.subTest(orchestration_config=orchestration_config):
+                invalid = copy.deepcopy(manifest)
+                invalid["orchestration_config"] = orchestration_config
+                self.write_raw_manifest(invalid)
+                with self.assertRaises(ORCHESTRATOR.OrchestrationError):
+                    ORCHESTRATOR.load_manifest(
+                        self.coord, expected_session=self.session
+                    )
+
     def test_malformed_unknown_role_and_path_tampering_are_rejected(self) -> None:
         base = self.manifest()
         cases: list[tuple[str, object]] = []

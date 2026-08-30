@@ -311,5 +311,7 @@ metadata-only guardrail schema, schema v5 adds retained
 forced-specialist set and activation table; runs without version-1 budget metadata
 retain packaged warn-only behavior. Manifest v3 introduced
 `coordination: "broker-v1"`; manifest v4 adds only bounded selected-profile
-metadata while retaining that protocol. Both remain readable, and there is no
+metadata, and manifest v5 adds the external configuration path/schema plus the
+bounded exact-project mapping selection while retaining that protocol. Earlier
+manifests report project configuration as unavailable. All remain readable, and there is no
 option or fallback that starts the legacy file coordination protocol.

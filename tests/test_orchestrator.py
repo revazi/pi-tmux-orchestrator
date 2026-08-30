@@ -247,9 +247,9 @@ class UtilityTests(unittest.TestCase):
         )
         self.assertEqual(parsed.context_capsule_file, "/private/context.md")
         self.assertIsNone(parsed.context_capsule)
-        self.assertFalse(parsed.workspace_capsule)
+        self.assertIsNone(parsed.workspace_capsule)
         self.assertEqual(parsed.workspace_relevant_path, [])
-        self.assertEqual(parsed.implementation_flow, "single")
+        self.assertIsNone(parsed.implementation_flow)
         workspace = ORCHESTRATOR.build_parser().parse_args(
             [
                 "start",
@@ -485,11 +485,12 @@ class UtilityTests(unittest.TestCase):
                 self.assertEqual(
                     ORCHESTRATOR.load_model_config(),
                     {
-                        "version": 2,
+                        "version": 3,
                         "default_profile": None,
                         "profiles": {},
                         "defaults": {},
                         "roles": {},
+                        "projects": [],
                     },
                 )
 
@@ -534,7 +535,7 @@ class UtilityTests(unittest.TestCase):
         legacy = ORCHESTRATOR.validate_model_config(
             {"version": 1, "defaults": {}, "roles": {}}
         )
-        self.assertEqual(legacy["version"], 2)
+        self.assertEqual(legacy["version"], 3)
         self.assertEqual(
             ORCHESTRATOR.resolve_execution_profile(legacy),
             {
@@ -627,6 +628,113 @@ class UtilityTests(unittest.TestCase):
             with self.subTest(invalid=invalid):
                 with self.assertRaises(ORCHESTRATOR.OrchestrationError):
                     ORCHESTRATOR.validate_model_config(invalid)
+
+    def test_project_model_config_is_exact_strict_and_overrides_global_policy(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            project = root / "project"
+            other = root / "other"
+            project.mkdir()
+            other.mkdir()
+            custom_mapping = {
+                "implementer": "medium",
+                "reviewer": "high",
+                "probe": "low",
+                "playwright": "medium",
+                "django": "medium",
+            }
+            value = {
+                "version": 3,
+                "defaultProfile": "economy",
+                "profiles": {"repo-careful": custom_mapping},
+                "defaults": {
+                    "provider": "global-provider",
+                    "model": "global-model",
+                },
+                "roles": {"reviewer": {"thinking": "low"}},
+                "projects": [
+                    {
+                        "directory": str(project),
+                        "profile": "repo-careful",
+                        "defaults": {
+                            "provider": "project-provider",
+                            "model": "project-model",
+                        },
+                        "roles": {"reviewer": {"thinking": "xhigh"}},
+                        "implementationFlow": "phased",
+                        "specialists": ["django", "probe"],
+                        "workspaceCapsule": False,
+                    }
+                ],
+            }
+            config = ORCHESTRATOR.validate_model_config(value)
+            matched = ORCHESTRATOR.project_model_config(config, project)
+            self.assertIsNotNone(matched)
+            assert matched is not None
+            self.assertIsNone(ORCHESTRATOR.project_model_config(config, other))
+            self.assertEqual(matched["specialists"], ["probe", "django"])
+            self.assertEqual(
+                ORCHESTRATOR.public_project_config(matched),
+                {
+                    "matched": True,
+                    "directory": str(project),
+                    "profile": "repo-careful",
+                    "implementation_flow": "phased",
+                    "specialists": ["probe", "django"],
+                    "workspace_capsule": False,
+                    "model_defaults": True,
+                    "role_overrides": ["reviewer"],
+                },
+            )
+            selected = ORCHESTRATOR.resolve_execution_profile(config, project=matched)
+            self.assertEqual(selected["name"], "repo-careful")
+            self.assertEqual(selected["source"], "project")
+            explicit = ORCHESTRATOR.resolve_execution_profile(
+                config, "thorough", matched
+            )
+            self.assertEqual(explicit["source"], "per-run")
+            self.assertEqual(
+                ORCHESTRATOR.effective_model_config(
+                    "implementer", config, selected, matched
+                ),
+                {
+                    "provider": "project-provider",
+                    "model": "project-model",
+                    "thinking": "medium",
+                },
+            )
+            self.assertEqual(
+                ORCHESTRATOR.effective_model_config(
+                    "reviewer", config, selected, matched
+                )["thinking"],
+                "xhigh",
+            )
+
+            linked = root / "linked"
+            linked.symlink_to(project, target_is_directory=True)
+            invalid_projects = (
+                [{"directory": "relative"}],
+                [{"directory": str(linked)}],
+                [{"directory": str(project)}, {"directory": str(project)}],
+                [{"directory": str(project), "profile": "missing"}],
+                [{"directory": str(project), "specialists": ["reviewer"]}],
+                [{"directory": str(project), "workspaceCapsule": "yes"}],
+                [{"directory": str(project), "unknown": True}],
+            )
+            for projects in invalid_projects:
+                with self.subTest(projects=projects):
+                    with self.assertRaises(ORCHESTRATOR.OrchestrationError):
+                        ORCHESTRATOR.validate_model_config(
+                            {
+                                "version": 3,
+                                "profiles": {},
+                                "defaults": {},
+                                "roles": {},
+                                "projects": projects,
+                            }
+                        )
 
     def test_parser_exposes_specialist_tasks_models_and_role_commands(self) -> None:
         parser = ORCHESTRATOR.build_parser()

@@ -2666,6 +2666,12 @@ class BrokerDashboardHookTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
             mock.call(signal.SIGTERM, broker.stopping.set),
             loop.add_signal_handler.call_args_list,
         )
+        hangup_signal = getattr(signal, "SIGHUP", None)
+        if hangup_signal is not None:
+            self.assertIn(
+                mock.call(hangup_signal, broker.stopping.set),
+                loop.add_signal_handler.call_args_list,
+            )
         resize_signal = getattr(signal, "SIGWINCH", None)
         if resize_signal is not None:
             self.assertIn(

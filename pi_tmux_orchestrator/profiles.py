@@ -13,7 +13,7 @@ MAX_CUSTOM_PROFILES = 16
 MAX_PROFILE_NAME_CHARS = 32
 PROFILE_NAME_PATTERN = re.compile(r"[a-z][a-z0-9-]{0,31}")
 PROFILE_KINDS = frozenset({"packaged", "custom"})
-PROFILE_SOURCES = frozenset({"per-run", "user-global", "packaged-default"})
+PROFILE_SOURCES = frozenset({"per-run", "project", "user-global", "packaged-default"})
 EXECUTION_PROFILE_FIELDS = frozenset({"name", "kind", "source"})
 
 # The compatibility default preserves the pre-profile worker thinking levels.
@@ -77,11 +77,16 @@ def validate_custom_profiles(value: object) -> dict[str, dict[str, str]]:
 
 
 def resolve_execution_profile(
-    config: dict[str, Any], requested: str | None = None
+    config: dict[str, Any],
+    requested: str | None = None,
+    project: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if requested is not None:
         name = profile_name(requested)
         source = "per-run"
+    elif project is not None and project.get("profile") is not None:
+        name = profile_name(project["profile"])
+        source = "project"
     elif config.get("default_profile") is not None:
         name = profile_name(config["default_profile"])
         source = "user-global"

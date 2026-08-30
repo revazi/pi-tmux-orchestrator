@@ -19,7 +19,7 @@ The strict user-global file `~/.pi/agent/tmux-orchestrator.json` supports:
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "defaultProfile": "balanced",
   "profiles": {
     "review-heavy-economy": {
@@ -39,18 +39,38 @@ The strict user-global file `~/.pi/agent/tmux-orchestrator.json` supports:
       "provider": "google",
       "model": "gemini-3.1-pro-preview"
     }
-  }
+  },
+  "projects": [
+    {
+      "directory": "/absolute/canonical/path/to/project",
+      "profile": "review-heavy-economy",
+      "defaults": {},
+      "roles": { "reviewer": { "thinking": "xhigh" } },
+      "implementationFlow": "phased",
+      "specialists": ["probe"],
+      "workspaceCapsule": false
+    }
+  ]
 }
 ```
 
 The file is relative to `PI_CODING_AGENT_DIR`; an absolute
-`PI_TMUX_ORCHESTRATOR_CONFIG` overrides its location. Legacy version 1 remains
-accepted. Version 2 may select one default profile and define at most 16 complete
-custom thinking mappings. Names match `[a-z][a-z0-9-]{0,31}`; packaged names
+`PI_TMUX_ORCHESTRATOR_CONFIG` overrides its location. Legacy versions 1 and 2
+remain accepted. Version 2 may select one default profile and define at most 16
+complete custom thinking mappings. Version 3 adds at most 64 exact project
+mappings. Names match `[a-z][a-z0-9-]{0,31}`; packaged names
 cannot be replaced; every custom map must contain exactly implementer, reviewer,
 probe, Playwright, and Django. Unknown fields/roles, partial mappings,
 unsupported levels, credentials, and configuration paths inside the target
 project fail closed.
+
+A project mapping uses one existing canonical absolute `directory`. Matching is
+exact: there are no globs, prefixes, implicit parent matches, repository-name
+matches, or project-local policy files. Duplicate, relative, missing,
+non-directory, and symlinked entries fail closed. A mapping may select a profile,
+model defaults/role overrides, implementation flow, enabled built-in specialists,
+and the workspace-capsule default. It cannot configure trust bypass, forced
+specialists, prompts, skills, tools, writers, or reviewer authority.
 
 Packaged thinking mappings are:
 
@@ -70,13 +90,16 @@ select models, add/remove roles, change tool authority, skip required review,
 alter result caps, or route workflow.
 
 Select a profile with `--profile NAME` or model-tool `profile`. Selection
-precedence is per-run profile, user-global `defaultProfile`, then packaged
-compatibility default. Thinking precedence is explicit per-role/all-role
-override, user role configuration, user global defaults, then the selected
-profile. Provider/model resolution retains its existing explicit, role, global,
-and packaged precedence. Dry-run, confirmation, manifest v4, status, list, and
-Supervisor reads expose bounded profile metadata and effective role levels;
-legacy runs report profile metadata as unavailable.
+precedence is per-run profile, exact project mapping, user-global
+`defaultProfile`, then packaged compatibility default. Thinking and model
+precedence is explicit per-role/all-role override, exact-project role override,
+exact-project defaults, user-global role configuration, user-global defaults,
+then the selected profile/package fallback. Explicit flow, specialist, and
+workspace-capsule options override their project defaults. Dry-run, confirmation,
+manifest v5, status, list, and Supervisor reads expose the external config path,
+matched canonical directory, bounded profile metadata, and effective role
+levels. Manifest v4 retains profile metadata; older project-mapping metadata is
+reported unavailable.
 
 The model tool's `models` action and `/or-models [query]` expose a maximum of 100
 available model metadata rows from the current Pi registry, respecting scoped
@@ -159,17 +182,17 @@ Common options:
 
 - `--project PATH`
 - `--session NAME`
-- `--implementation-flow single|phased`: compatibility/simple assignment or bounded inspect/plan boundary
-- `--profile NAME`: packaged or strict user-global execution profile
+- `--implementation-flow single|phased`: override the exact-project compatibility/simple or bounded inspect/plan default
+- `--profile NAME`: packaged or strict user-global execution profile; overrides an exact-project selection
 - `--context-capsule TEXT` or `--context-capsule-file PATH`: optional bounded parent recap
-- `--workspace-capsule`: opt in to the ephemeral cold-assignment workspace experiment
+- `--workspace-capsule` / `--no-workspace-capsule`: override the exact-project cold-assignment experiment default
 - repeatable `--workspace-relevant-path PROJECT_RELATIVE_PATH`: bounded existing parent-supplied hint; requires the experiment
 - `--approve-project`: separately confirmed Pi trust bypass for inspected projects
 - repeatable `--worker-skill ROLE=/absolute/path/SKILL.md`: explicit reviewed per-role skill opt-in
-- `--with-probe` and optional `--probe-task[-file]`
+- `--with-probe` / `--without-probe` and optional `--probe-task[-file]`
 - repeatable `--force-specialist probe|playwright|django` for an enabled role
-- `--with-playwright` and optional `--playwright-task[-file]`
-- `--with-django-expert` and optional `--django-task[-file]`
+- `--with-playwright` / `--without-playwright` and optional `--playwright-task[-file]`
+- `--with-django-expert` / `--without-django-expert` and optional `--django-task[-file]`
 - `--rpc-workers`: headless RPC event panes instead of interactive TUI panes
 - `--attach`
 - `--dry-run`
@@ -456,11 +479,12 @@ unprovable assignment remains `uncertain`; it is not blindly replayed.
 Kills only the selected tmux grid. Pi sessions and metadata-only broker state
 remain under `~/.pi/agent/orchestrations/`.
 
-### `doctor`
+### `doctor [--project PATH]`
 
 Checks Pi, Python, tmux, tmux extended-key settings, model and budget
-configuration paths, the effective budget policy, and configured model
-availability without a provider request.
+configuration paths, the exact canonical project mapping, effective profile,
+and configured model availability without a provider request. The project
+defaults to the current directory; `/or-doctor` passes the current Pi project.
 
 ### `supervisor ...`
 

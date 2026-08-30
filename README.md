@@ -189,7 +189,7 @@ worker defaults outside project repositories in
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "defaultProfile": "balanced",
   "profiles": {
     "review-heavy-economy": {
@@ -209,18 +209,47 @@ worker defaults outside project repositories in
       "provider": "google",
       "model": "gemini-3.1-pro-preview"
     }
-  }
+  },
+  "projects": [
+    {
+      "directory": "/absolute/canonical/path/to/project",
+      "profile": "review-heavy-economy",
+      "defaults": {
+        "provider": "anthropic",
+        "model": "claude-sonnet-4-6"
+      },
+      "roles": {
+        "reviewer": { "thinking": "xhigh" }
+      },
+      "implementationFlow": "phased",
+      "specialists": ["probe"],
+      "workspaceCapsule": false
+    }
+  ]
 }
 ```
 
-The file is read for every new start. Version-1 model files remain accepted and
-are normalized without changing their prior thinking choices. Version 2 adds a
-default profile and up to 16 strict custom profiles. A custom name matches
+The file is read for every new start. Version-1 and version-2 model files remain
+accepted and are normalized without changing their prior behavior. Version 2
+adds a default profile and up to 16 strict custom profiles. Version 3 adds up to
+64 exact per-project mappings. A custom profile name matches
 `[a-z][a-z0-9-]{0,31}`, cannot replace a packaged name, and must map all five
 known roles to supported thinking levels. Profiles never select provider/model,
 change tools or authority, create roles, disable review, or control routing.
 Credential and endpoint fields are rejected, and a configuration path inside the
 target project fails closed.
+
+Each `projects` entry requires an existing canonical absolute `directory`; exact
+matching is used with no glob, prefix, or repository-name fallback. Duplicate,
+relative, missing, non-directory, or symlinked mappings fail closed before tmux
+or provider activity. A mapping may select a top-level packaged/custom profile,
+project model defaults and role overrides, `single`/`phased` flow, enabled
+built-in read-only specialists, and the workspace-capsule default. It cannot
+configure trust bypass, force a specialist, load prompts/skills, add a writer,
+or disable the mandatory reviewer. The matched directory and config path appear
+in doctor, start confirmation, status, manifest-v5 metadata, and Supervisor
+reads. Version-4 and older retained manifests report project mapping metadata as
+unavailable.
 
 Packaged profiles are immutable:
 
@@ -241,16 +270,19 @@ or billing claim. Validate that policy record with
 
 Select a profile with `--profile NAME` or
 the model tool's `profile`. The effective name, kind, source, and per-role
-thinking levels appear in dry-run, confirmation, private manifest v4 metadata,
+thinking levels appear in dry-run, confirmation, private manifest v4+ metadata,
 status, and Supervisor reads. Older manifests report profile metadata as
 unavailable.
 
 `defaults` applies to every role and `roles` overrides individual roles. Set
 `PI_TMUX_ORCHESTRATOR_CONFIG` to an absolute path to keep the file elsewhere.
-Precedence is: explicit per-role/all-role CLI or model-tool override, user-global
-role override, user-global defaults, selected custom/packaged profile, then the
-compatibility fallback. The selected profile comes from a per-run request,
-`defaultProfile`, or the packaged compatibility default, in that order.
+Model precedence is: explicit per-role/all-role CLI or model-tool override,
+exact-project role override, exact-project defaults, user-global role override,
+user-global defaults, selected custom/packaged profile, then the compatibility
+fallback. Profile selection precedence is explicit per-run request, exact
+project mapping, user-global `defaultProfile`, then the packaged compatibility
+default. Explicit flow, specialist enable/disable, and workspace-capsule flags
+similarly override project defaults.
 
 ### Provider-usage budget configuration
 
@@ -693,9 +725,10 @@ registries, or Supervisor API output. Newly started workers never create or poll
 task/handoff/review/specialist payload files or readiness markers.
 
 Retained `0.4.x` runs remain readable and operable through compatibility code.
-Retained manifest-v3 broker runs remain readable. Current starts create manifest
-v4 with `coordination: "broker-v1"` and bounded execution-profile metadata;
-there is no selectable legacy fallback.
+Retained manifest-v3/v4 broker runs remain readable. Current starts create
+manifest v5 with `coordination: "broker-v1"`, bounded execution-profile metadata,
+and external exact-project configuration provenance; there is no selectable
+legacy fallback.
 
 ## Token policy
 

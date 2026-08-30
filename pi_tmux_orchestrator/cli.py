@@ -10,7 +10,6 @@ import textwrap
 
 from . import runtime
 from .constants import (
-    DEFAULT_IMPLEMENTATION_FLOW,
     IMPLEMENTATION_FLOWS,
     MAX_JSON_ITEMS,
     MAX_RPC_EVENTS,
@@ -217,11 +216,20 @@ def build_parser() -> argparse.ArgumentParser:
     start.add_argument("--task-file")
     start.add_argument("--context-capsule")
     start.add_argument("--context-capsule-file")
-    start.add_argument(
+    workspace_capsule = start.add_mutually_exclusive_group()
+    workspace_capsule.add_argument(
         "--workspace-capsule",
+        dest="workspace_capsule",
         action="store_true",
         help="enable the ephemeral experimental cold-assignment workspace capsule",
     )
+    workspace_capsule.add_argument(
+        "--no-workspace-capsule",
+        dest="workspace_capsule",
+        action="store_false",
+        help="disable a project-configured workspace capsule for this run",
+    )
+    start.set_defaults(workspace_capsule=None)
     start.add_argument(
         "--workspace-relevant-path",
         action="append",
@@ -233,8 +241,8 @@ def build_parser() -> argparse.ArgumentParser:
     start.add_argument(
         "--implementation-flow",
         choices=IMPLEMENTATION_FLOWS,
-        default=DEFAULT_IMPLEMENTATION_FLOW,
-        help="use the compatibility single assignment or a phased inspect/plan boundary",
+        default=None,
+        help="override the project/global compatibility flow for this run",
     )
     start.add_argument(
         "--profile",
@@ -248,13 +256,30 @@ def build_parser() -> argparse.ArgumentParser:
         default=[],
         help="force one enabled specialist to run whenever applicable; repeatable",
     )
-    start.add_argument("--with-probe", action="store_true")
+    probe = start.add_mutually_exclusive_group()
+    probe.add_argument("--with-probe", dest="with_probe", action="store_true")
+    probe.add_argument("--without-probe", dest="with_probe", action="store_false")
+    start.set_defaults(with_probe=None)
     start.add_argument("--probe-task")
     start.add_argument("--probe-task-file")
-    start.add_argument("--with-playwright", action="store_true")
+    playwright = start.add_mutually_exclusive_group()
+    playwright.add_argument(
+        "--with-playwright", dest="with_playwright", action="store_true"
+    )
+    playwright.add_argument(
+        "--without-playwright", dest="with_playwright", action="store_false"
+    )
+    start.set_defaults(with_playwright=None)
     start.add_argument("--playwright-task")
     start.add_argument("--playwright-task-file")
-    start.add_argument("--with-django-expert", action="store_true")
+    django = start.add_mutually_exclusive_group()
+    django.add_argument(
+        "--with-django-expert", dest="with_django_expert", action="store_true"
+    )
+    django.add_argument(
+        "--without-django-expert", dest="with_django_expert", action="store_false"
+    )
+    start.set_defaults(with_django_expert=None)
     start.add_argument("--django-task")
     start.add_argument("--django-task-file")
     start.add_argument("--approve-project", action="store_true")
@@ -467,6 +492,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     doctor = subparsers.add_parser(
         "doctor", help="check local prerequisites and defaults"
+    )
+    doctor.add_argument(
+        "--project",
+        default=os.getcwd(),
+        help="show the exact project mapping for this directory",
     )
     doctor.set_defaults(handler=doctor_command)
 
