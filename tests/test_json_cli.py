@@ -593,6 +593,78 @@ class JsonMainTests(unittest.TestCase):
             )
             self.assertNotIn(canary, raw)
 
+    def test_running_orchestration_dashboard_summary_is_bounded_metadata(self) -> None:
+        snapshot = {
+            "workflow": {
+                "state": "active",
+                "round": 2,
+                "implementation_flow": "phased",
+            },
+            "usage": {"provider_calls": 9, "total_tokens": 12345},
+            "roles": [
+                {
+                    "connected": True,
+                    "cost_total": 0.25,
+                    "context_percent": 42.5,
+                },
+                {
+                    "connected": False,
+                    "cost_total": 0.1,
+                    "context_percent": None,
+                },
+            ],
+        }
+        with mock.patch.object(
+            ORCHESTRATOR, "public_broker_snapshot", return_value=snapshot
+        ):
+            summary = ORCHESTRATOR.orchestration_dashboard_summary(
+                Path("/private/run"), {"version": 5}
+            )
+        self.assertEqual(
+            summary,
+            {
+                "available": True,
+                "workflow": {
+                    "state": "active",
+                    "round": 2,
+                    "implementation_flow": "phased",
+                },
+                "usage": {
+                    "provider_calls": 9,
+                    "operational_tokens": 12345,
+                    "cost_total": 0.35,
+                    "context_percent": 42.5,
+                    "actual_provider_usage_only": True,
+                },
+                "roles": {"total": 2, "connected": 1},
+            },
+        )
+        snapshot["roles"][1]["cost_total"] = None
+        with mock.patch.object(
+            ORCHESTRATOR, "public_broker_snapshot", return_value=snapshot
+        ):
+            unavailable_cost = ORCHESTRATOR.orchestration_dashboard_summary(
+                Path("/private/run"), {"version": 5}
+            )
+        self.assertIsNone(unavailable_cost["usage"]["cost_total"])
+        self.assertEqual(
+            ORCHESTRATOR.orchestration_dashboard_summary(
+                Path("/private/run"), {"version": 2}
+            ),
+            {"available": False, "reason": "legacy-run"},
+        )
+        with mock.patch.object(
+            ORCHESTRATOR,
+            "public_broker_snapshot",
+            side_effect=RuntimeError("PRIVATE_DASHBOARD_FAILURE_CANARY"),
+        ):
+            self.assertEqual(
+                ORCHESTRATOR.orchestration_dashboard_summary(
+                    Path("/private/run"), {"version": 5}
+                ),
+                {"available": False, "reason": "temporarily-unavailable"},
+            )
+
     def test_list_status_send_restart_and_stop_return_structured_metadata(self) -> None:
         manifest = {
             "project": str(ROOT),

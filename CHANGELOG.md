@@ -6,6 +6,7 @@ All notable changes to this project are documented here.
 
 ### Added
 
+- Added a Pi-native running-orchestration dashboard overlay with compact provider usage, current-project doctor output, keyboard attach/watch, bounded manual refresh, non-TUI fallback, and a read-only future profile-management surface
 - Added strict version-3 user-global per-project orchestration mappings for exact canonical directories, with project profile/model/flow/specialist/workspace defaults, explicit-run precedence, manifest-v5 provenance, and bounded doctor/start/status/Supervisor visibility
 - Added persistent local pre-release package staging with commit/tree/tarball provenance, isolated provider-free Pi discovery, a disposable staged-package TUI runner, and a manual acceptance/rollback guide that keeps real-auth provider testing explicit without publishing or replacing the installed package
 - Added an opt-in ephemeral cold-assignment workspace-capsule experiment with strict canonical Git/instruction identity validation, bounded allowlisted discovery hints, shared TUI/RPC delivery, fail-closed replay, no cross-run persistence, and a checked model-free proxy benchmark that makes no provider savings or correctness claim

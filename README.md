@@ -158,6 +158,7 @@ The package exposes:
 - `/orchestrator-about`
 - `/orchestrator-doctor`
 - `/orchestrator-models [query]`
+- `/orchestrator-dashboard`
 - `/orchestrator-start [task]`
 - `/orchestrator-list`
 - `/orchestrator-status [session]`
@@ -165,12 +166,31 @@ The package exposes:
 - `/orchestrator-attach [session]`
 - `/orchestrator-send [session]`
 - `/orchestrator-stop [session]`
-- Short aliases: `/or-help`, `/or-about`, `/or-doctor`, `/or-models`, `/or-start`, `/or-list`,
+- Short aliases: `/or-help`, `/or-about`, `/or-doctor`, `/or-models`, `/or-dashboard`, `/or-start`, `/or-list`,
   `/or-status`, `/or-watch`, `/or-attach`, `/or-send`, and `/or-stop`
 - `/orchestrate` and `/orchestrations` compatibility aliases
 
 The `/or-*` aliases use the exact same handlers, confirmations, selectors, and
 safety boundaries as their canonical `/orchestrator-*` commands.
+
+### Dashboard overlay
+
+Use `/or-dashboard`, `/orchestrator-dashboard`, or `Ctrl+Shift+G` to open a
+Pi-native overlay inspired by Pi Fallow and Pi Tasklight. It shows all currently
+running managed orchestrations with workflow state, round, profile, linked-role
+count, provider calls, operational tokens, provider-reported cost when complete,
+and peak current context pressure. The same overlay runs doctor for the current
+canonical project and shows its config path, exact project mapping, effective
+profile, model availability, tmux status, and observational budget mode.
+
+Navigate with arrows or `j`/`k`, press Enter to watch and attach to the selected
+orchestration, use `r` for a bounded manual refresh, `d` to toggle doctor, and
+`q`/Escape to close. Direct attach requires the invoking Pi to be inside tmux,
+matching `/or-attach`. The dashboard does not poll and reads only metadata-only
+CLI/broker summaries. Pi's current public overlay API does not expose row-click
+callbacks, so true mouse-row activation is deferred rather than emulated with
+unsafe terminal URL handlers. Project-profile editing is intentionally read-only
+in this version and remains a future dashboard action.
 
 At interactive Pi startup, the extension makes one best-effort, time-bounded
 request to the public npm registry. If a newer release exists, it shows a

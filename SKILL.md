@@ -6,7 +6,7 @@ compatibility: Requires Pi, Python 3.11+, and tmux 3.2+. tmux 3.5+ with extended
 
 # Pi Tmux Orchestrator
 
-Prefer `/or-start`, `/or-list`, `/or-status`, `/or-watch`, `/or-attach`,
+Prefer `/or-dashboard`, `/or-start`, `/or-list`, `/or-status`, `/or-watch`, `/or-attach`,
 `/or-send`, and `/or-stop` when the package extension is available. The
 canonical `/orchestrator-*` names remain equivalent. The bounded
 `tmux_orchestrator` tool exposes the same authoritative control plane. New
@@ -19,7 +19,9 @@ to enter, navigate, or directly steer the worker panes; it switches the invoking
 Pi's existing tmux client into the grid while keeping that Pi and its observer
 alive. Prefix then `L` detaches from
 the grid by returning to the same invoking Pi without stopping the workers. The
-standalone `pi-tmux-agents` CLI fallback is authoritative; do not hand-build
+dashboard overlay uses explicit refresh and Enter-based selection because Pi's
+public overlay API does not expose row-click callbacks. The standalone `pi-tmux-agents` CLI fallback
+is authoritative; do not hand-build
 panes, file handoffs, relay scripts, or polling loops.
 
 ## Operating rules

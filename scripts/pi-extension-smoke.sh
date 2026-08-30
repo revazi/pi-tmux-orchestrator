@@ -147,6 +147,7 @@ expected = {
     "orchestrator-about": ("extension", "extensions/tmux-orchestrator.js"),
     "orchestrator-doctor": ("extension", "extensions/tmux-orchestrator.js"),
     "orchestrator-models": ("extension", "extensions/tmux-orchestrator.js"),
+    "orchestrator-dashboard": ("extension", "extensions/tmux-orchestrator.js"),
     "orchestrator-start": ("extension", "extensions/tmux-orchestrator.js"),
     "orchestrator-list": ("extension", "extensions/tmux-orchestrator.js"),
     "orchestrator-status": ("extension", "extensions/tmux-orchestrator.js"),
@@ -158,6 +159,7 @@ expected = {
     "or-about": ("extension", "extensions/tmux-orchestrator.js"),
     "or-doctor": ("extension", "extensions/tmux-orchestrator.js"),
     "or-models": ("extension", "extensions/tmux-orchestrator.js"),
+    "or-dashboard": ("extension", "extensions/tmux-orchestrator.js"),
     "or-start": ("extension", "extensions/tmux-orchestrator.js"),
     "or-list": ("extension", "extensions/tmux-orchestrator.js"),
     "or-status": ("extension", "extensions/tmux-orchestrator.js"),
@@ -204,4 +206,4 @@ for record in records:
         raise SystemExit("Pi RPC emitted an unexpected non-response record")
 PY
 
-printf '%s\n' 'Isolated Pi local-package install + RPC discovery passed (exact twenty-four commands/root skill from the npm-installed tarball path; no prompt, provider request, or real home/auth access).'
+printf '%s\n' 'Isolated Pi local-package install + RPC discovery passed (exact twenty-six commands/root skill from the npm-installed tarball path; no prompt, provider request, or real home/auth access).'

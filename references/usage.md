@@ -419,6 +419,23 @@ different coordination protocol. RPC panes are a plain headless automation
 view; interactive TUI panes are the default and retain Pi's native highlighting,
 tool rendering, and input editor for direct steering.
 
+### `dashboard`
+
+`/or-dashboard`, `/orchestrator-dashboard`, and `Ctrl+Shift+G` open a bounded
+Pi-native overlay containing every running managed orchestration plus doctor for
+the current canonical project. Session rows show workflow/round, selected
+profile, linked roles, provider calls, operational tokens, provider-reported cost
+when complete, and current context pressure when available. Unavailable provider
+fields remain unavailable rather than estimated.
+
+Use arrows or `j`/`k` to select, Enter to watch and attach, `r` to refresh, `d`
+to toggle doctor, and `q`/Escape to close. Refresh is explicit; the overlay starts
+no timer or background poll. Attach requires the invoking Pi to be inside tmux.
+Pi's current public overlay API does not route row-click callbacks to extension
+components, so true mouse activation is deferred. The project/profile section is
+read-only in this version; future editing must use the same strict external
+configuration validation and explicit confirmation.
+
 ### `list`
 
 Lists live tmux sessions marked as Pi Tmux Orchestrator grids. In the Pi TUI,
@@ -483,7 +500,8 @@ remain under `~/.pi/agent/orchestrations/`.
 
 Checks Pi, Python, tmux, tmux extended-key settings, model and budget
 configuration paths, the exact canonical project mapping, effective profile,
-and configured model availability without a provider request. The project
+and configured model availability without a provider request. This bounded
+metadata also appears in the dashboard overlay. The project
 defaults to the current directory; `/or-doctor` passes the current Pi project.
 
 ### `supervisor ...`

@@ -664,6 +664,51 @@ def start_command(args: argparse.Namespace) -> CommandResult:
     return CommandResult(data=data)
 
 
+def orchestration_dashboard_summary(
+    coord: Path, manifest: dict[str, Any]
+) -> dict[str, Any]:
+    if manifest.get("version", 0) < 3:
+        return {"available": False, "reason": "legacy-run"}
+    try:
+        snapshot = public_broker_snapshot(coord)
+    except Exception:
+        # This optional read projection must never make list/control unavailable.
+        return {"available": False, "reason": "temporarily-unavailable"}
+    roles = snapshot["roles"]
+    costs = [role["cost_total"] for role in roles]
+    cost_total = (
+        sum(costs)
+        if costs and all(type(value) in {int, float} for value in costs)
+        else None
+    )
+    context_values = [
+        role["context_percent"]
+        for role in roles
+        if type(role["context_percent"]) in {int, float}
+    ]
+    workflow = snapshot["workflow"]
+    usage = snapshot["usage"]
+    return {
+        "available": True,
+        "workflow": {
+            "state": workflow["state"],
+            "round": workflow["round"],
+            "implementation_flow": workflow["implementation_flow"],
+        },
+        "usage": {
+            "provider_calls": usage["provider_calls"],
+            "operational_tokens": usage["total_tokens"],
+            "cost_total": cost_total,
+            "context_percent": max(context_values) if context_values else None,
+            "actual_provider_usage_only": True,
+        },
+        "roles": {
+            "total": len(roles),
+            "connected": sum(role["connected"] is True for role in roles),
+        },
+    }
+
+
 def list_command(_: argparse.Namespace) -> CommandResult:
     sessions = orchestrated_sessions()
     values: list[dict[str, Any]] = []
@@ -688,6 +733,7 @@ def list_command(_: argparse.Namespace) -> CommandResult:
                     "execution_profile": retained_execution_profile(manifest),
                     "project_config": retained_project_config(manifest),
                     "orchestration_config": retained_orchestration_config(manifest),
+                    "dashboard": orchestration_dashboard_summary(coord, manifest),
                     "roles": role_values,
                     "paths": {"coordination": str(coord)},
                 }
