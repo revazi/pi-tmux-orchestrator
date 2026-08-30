@@ -97,6 +97,7 @@ In the TUI, do not send a model prompt. Check:
 - `/or-help` lists the command workflow;
 - `/or-doctor` uses paths under the disposable environment;
 - `/or-models` returns bounded model metadata without credentials;
+- `/or-dashboard` opens the overlay, reports no running sessions, and embeds bounded doctor output;
 - command completion includes the canonical `/orchestrator-*` and `/or-*`
   aliases;
 - the `tmux_orchestrator` model tool and `tmux-agent-orchestrator` skill appear
@@ -146,8 +147,9 @@ Run the smallest useful matrix rather than every expensive combination:
 
 ### A. Command and parent supervision
 
-- Run `/or-about`, `/or-doctor`, and `/or-models`.
+- Run `/or-about`, `/or-doctor`, `/or-models`, and `/or-dashboard`.
 - Start one small `single` workflow with only implementer and mandatory reviewer.
+- Reopen `/or-dashboard`, confirm the run and usage metadata appear, and use Enter to attach when the parent Pi is inside tmux.
 - Confirm the invoking Pi remains the parent and receives lifecycle/final reports.
 - Verify idle workers do not poll or issue provider turns.
 

@@ -31,6 +31,7 @@ import {
   scheduleOrchestratorUpdateNotice,
   showOrchestratorAbout,
 } from "./orchestrator-update.js";
+import { showOrchestrationDashboard } from "./orchestrator-dashboard.js";
 
 const CLI_PATH = fileURLToPath(new URL("../bin/pi-tmux-agents", import.meta.url));
 const MAX_VISIBLE_CHARS = 12_000;
@@ -40,6 +41,7 @@ const COMMAND_OVERVIEW = [
   "/orchestrator-about — show installed/latest versions, update command, and project links",
   "/orchestrator-doctor — check local prerequisites and configured worker models without a provider request",
   "/orchestrator-models [query] — list bounded available Pi model metadata without a provider request",
+  "/orchestrator-dashboard — open the running-orchestration and doctor overlay",
   "/orchestrator-start [task] — confirm and start an orchestration",
   "/orchestrator-list — list running orchestrations",
   "/orchestrator-status [session] — show metadata-only status",
@@ -47,7 +49,7 @@ const COMMAND_OVERVIEW = [
   "/orchestrator-attach [session] — switch this tmux client into the live worker grid",
   "/orchestrator-send [session] — privately send a message to one role",
   "/orchestrator-stop [session] — confirm and stop one exact session",
-  "Short aliases: /or-help, /or-about, /or-doctor, /or-models, /or-start, /or-list, /or-status, /or-watch, /or-attach, /or-send, /or-stop",
+  "Short aliases: /or-help, /or-about, /or-doctor, /or-models, /or-dashboard, /or-start, /or-list, /or-status, /or-watch, /or-attach, /or-send, /or-stop",
   "/orchestrate — backward-compatible alias for /orchestrator-start",
   "/orchestrations — backward-compatible alias for /orchestrator-list",
   "Omit [session] on status, watch, attach, send, or stop to choose from the running orchestration list.",
@@ -614,6 +616,7 @@ function requireInteractiveTui(ctx, command) {
 function notifyCommandFailure(ctx, action) {
   const labels = {
     doctor: "run orchestrator doctor",
+    dashboard: "show the orchestration dashboard",
     list: "list orchestrations",
     status: "show orchestration status",
     watch: "watch orchestration updates",
@@ -679,6 +682,33 @@ function createCommandHandlers(pi, superviseStart = () => {}) {
 
   const models = async (args, ctx) => {
     notifyEnvelope(ctx, modelCatalogEnvelope(ctx, args));
+  };
+
+  const dashboard = async (_args, ctx) => {
+    try {
+      await showOrchestrationDashboard(
+        ctx,
+        async () => {
+          const [list, doctor] = await Promise.all([
+            runCli(pi, "list", [], ctx.signal),
+            runCli(pi, "doctor", ["--project", ctx.cwd], ctx.signal),
+          ]);
+          return { list, doctor };
+        },
+        async (session) => {
+          const envelope = await attachAndSupervise(
+            pi,
+            { session },
+            ctx.signal,
+            ctx,
+            superviseStart,
+          );
+          notifyEnvelope(ctx, envelope);
+        },
+      );
+    } catch {
+      notifyCommandFailure(ctx, "dashboard");
+    }
   };
 
   const start = async (args, ctx) => {
@@ -817,7 +847,7 @@ function createCommandHandlers(pi, superviseStart = () => {}) {
     await runCommandCli(pi, "stop", [session, "--yes"], ctx);
   };
 
-  return { help, about, doctor, models, start, list, status, watch, attach, send, stop };
+  return { help, about, doctor, models, dashboard, start, list, status, watch, attach, send, stop };
 }
 
 export default function tmuxOrchestratorExtension(pi) {
@@ -909,6 +939,10 @@ export default function tmuxOrchestratorExtension(pi) {
     description: "List bounded available Pi model metadata with an optional query",
     handler: commandHandlers.models,
   });
+  pi.registerCommand("orchestrator-dashboard", {
+    description: "Open the running-orchestration and doctor dashboard overlay",
+    handler: commandHandlers.dashboard,
+  });
   pi.registerCommand("orchestrator-start", {
     description: "Confirm and start a tmux orchestration",
     handler: commandHandlers.start,
@@ -942,6 +976,7 @@ export default function tmuxOrchestratorExtension(pi) {
     "or-about": ["Show version and update details", commandHandlers.about],
     "or-doctor": ["Check prerequisites and configured models", commandHandlers.doctor],
     "or-models": ["List available Pi model metadata", commandHandlers.models],
+    "or-dashboard": ["Open the orchestration dashboard overlay", commandHandlers.dashboard],
     "or-start": ["Confirm and start a tmux orchestration", commandHandlers.start],
     "or-list": ["List running tmux orchestrations", commandHandlers.list],
     "or-status": ["Show metadata-only orchestration status", commandHandlers.status],
@@ -953,6 +988,10 @@ export default function tmuxOrchestratorExtension(pi) {
   for (const [name, [description, handler]] of Object.entries(shortAliases)) {
     pi.registerCommand(name, { description, handler });
   }
+  pi.registerShortcut("ctrl+shift+g", {
+    description: "Open the orchestration dashboard overlay",
+    handler: async (ctx) => commandHandlers.dashboard("", ctx),
+  });
   pi.registerCommand("orchestrate", {
     description: "Alias for /orchestrator-start",
     handler: commandHandlers.start,

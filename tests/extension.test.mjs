@@ -5,6 +5,10 @@ import { dirname, join } from "node:path";
 import net from "node:net";
 import { test } from "node:test";
 import extension, { testHooks } from "../extensions/tmux-orchestrator.js";
+import {
+  OrchestrationDashboardOverlay,
+  testHooks as dashboardHooks,
+} from "../extensions/orchestrator-dashboard.js";
 import { updateTestHooks as updateHooks } from "../extensions/orchestrator-update.js";
 import { testHooks as workerHooks } from "../extensions/orchestrator-worker.js";
 import {
@@ -43,15 +47,17 @@ function harness(exec) {
   const commands = new Map();
   const events = new Map();
   const messages = [];
+  const shortcuts = new Map();
   const pi = {
     exec,
     sendMessage(message, options) { messages.push({ message, options }); },
     registerTool(tool) { tools.push(tool); },
     registerCommand(name, command) { commands.set(name, command); },
+    registerShortcut(name, shortcut) { shortcuts.set(name, shortcut); },
     on(name, handler) { events.set(name, handler); },
   };
   extension(pi);
-  return { pi, tool: tools[0], tools, commands, events, messages };
+  return { pi, tool: tools[0], tools, commands, shortcuts, events, messages };
 }
 
 function context(overrides = {}) {
@@ -108,7 +114,7 @@ function context(overrides = {}) {
 }
 
 test("registers one bounded model tool and the exact canonical/alias command surface", () => {
-  const { tool, tools, commands, events } = harness(async () => ({ code: 0, stdout: "" }));
+  const { tool, tools, commands, shortcuts, events } = harness(async () => ({ code: 0, stdout: "" }));
   assert.equal(tools.length, 1);
   assert.equal(tool.name, "tmux_orchestrator");
   assert.deepEqual(tool.parameters.properties.action.enum, ["doctor", "models", "list", "status", "watch", "attach", "start", "send"]);
@@ -166,6 +172,7 @@ test("registers one bounded model tool and the exact canonical/alias command sur
       "orchestrator-about",
       "orchestrator-doctor",
       "orchestrator-models",
+      "orchestrator-dashboard",
       "orchestrator-start",
       "orchestrator-list",
       "orchestrator-status",
@@ -177,6 +184,7 @@ test("registers one bounded model tool and the exact canonical/alias command sur
       "or-about",
       "or-doctor",
       "or-models",
+      "or-dashboard",
       "or-start",
       "or-list",
       "or-status",
@@ -192,13 +200,145 @@ test("registers one bounded model tool and the exact canonical/alias command sur
   assert.equal(commands.has("orchestrator-restart"), false);
   assert.equal(commands.get("orchestrator-start").handler, commands.get("orchestrate").handler);
   assert.equal(commands.get("orchestrator-list").handler, commands.get("orchestrations").handler);
-  for (const action of ["help", "about", "doctor", "models", "start", "list", "status", "watch", "attach", "send", "stop"]) {
+  for (const action of ["help", "about", "doctor", "models", "dashboard", "start", "list", "status", "watch", "attach", "send", "stop"]) {
     assert.equal(commands.get(`or-${action}`).handler, commands.get(`orchestrator-${action}`).handler);
   }
+  assert.equal(shortcuts.get("ctrl+shift+g").handler instanceof Function, true);
   assert.equal(events.has("session_start"), true);
   assert.ok(events.has("session_before_switch"));
   assert.ok(events.has("session_before_fork"));
   assert.equal(events.has("session_shutdown"), true);
+});
+
+function dashboardSnapshot() {
+  return {
+    list: success("list", {
+      sessions: [
+        {
+          session: "pi-alpha-agents",
+          valid: true,
+          project: "/work/alpha",
+          execution_profile: { name: "balanced", kind: "packaged", source: "project" },
+          roles: [{ name: "implementer" }, { name: "reviewer" }],
+          dashboard: {
+            available: true,
+            workflow: { state: "active", round: 2, implementation_flow: "phased" },
+            usage: {
+              provider_calls: 7,
+              operational_tokens: 12500,
+              cost_total: 0.2345,
+              context_percent: 42.25,
+              actual_provider_usage_only: true,
+            },
+            roles: { total: 2, connected: 2 },
+          },
+        },
+        {
+          session: "pi-beta-agents",
+          valid: true,
+          project: "/work/beta",
+          execution_profile: { name: "economy", kind: "packaged", source: "per-run" },
+          roles: [{ name: "implementer" }, { name: "reviewer" }],
+          dashboard: { available: false, reason: "temporarily-unavailable" },
+        },
+        { session: "invalid", valid: false, project: null },
+      ],
+    }),
+    doctor: success("doctor", {
+      commands: [
+        { name: "pi", status: "ok" },
+        { name: "tmux", status: "ok" },
+        { name: "python3", status: "ok" },
+      ],
+      tmux: { version: "tmux 3.5" },
+      model_checks: [{ role: "implementer", available: true }],
+      model_policy: {
+        config_path: "/external/tmux-orchestrator.json",
+        execution_profile: { name: "balanced", source: "project" },
+        project_config: { matched: true, directory: "/work/alpha" },
+      },
+      budget_policy: { effective: { enforcement: "warn-only" } },
+    }),
+  };
+}
+
+const dashboardTheme = {
+  bold: (text) => text,
+  fg: (_color, text) => text,
+  bg: (_color, text) => text,
+};
+
+test("dashboard display is bounded and keeps unavailable usage explicit", () => {
+  const display = dashboardHooks.dashboardDisplay(dashboardSnapshot());
+  assert.equal(display.sessions.length, 2);
+  assert.equal(display.doctor.status, "success");
+  assert.match(display.doctor.projectMapping, /matched \/work\/alpha/);
+  const lines = dashboardHooks.dashboardPlainLines(dashboardSnapshot());
+  assert.ok(lines.length <= 40);
+  assert.match(lines.join("\n"), /7 calls · 12\.5k tok · \$0\.234 · ctx 42\.3%/);
+  assert.match(lines.join("\n"), /usage unavailable/);
+  const empty = dashboardSnapshot();
+  empty.list.data.sessions = [];
+  assert.match(dashboardHooks.dashboardPlainLines(empty).join("\n"), /none running/);
+
+  const warning = dashboardHooks.doctorDisplay({
+    ...dashboardSnapshot().doctor,
+    success: false,
+    data: {
+      ...dashboardSnapshot().doctor.data,
+      commands: [{ name: "tmux", status: "fail" }],
+      model_checks: [{ role: "reviewer", available: false }],
+    },
+  });
+  assert.equal(warning.status, "warning");
+  assert.match(warning.headline, /issues/);
+});
+
+test("dashboard overlay refreshes, navigates, toggles doctor, and selects attach", async () => {
+  let loads = 0;
+  let selected;
+  let renders = 0;
+  const overlay = new OrchestrationDashboardOverlay(
+    dashboardTheme,
+    (value) => { selected = value; },
+    () => { renders += 1; },
+    async () => { loads += 1; return dashboardSnapshot(); },
+    3,
+    { matches: () => false },
+  );
+  assert.match(overlay.render(100).join("\n"), /Loading running orchestrations/);
+  await overlay.refresh();
+  assert.equal(loads, 1);
+  assert.ok(renders >= 2);
+  const lines = overlay.render(100);
+  assert.ok(lines.every((line) => dashboardHooks.visibleWidth(line) <= 100));
+  assert.match(lines.join("\n"), /Orchestration Dashboard/);
+  assert.match(lines.join("\n"), /Doctor passed/);
+  assert.equal(dashboardHooks.visibleWidth(overlay.render(3)[0]), 3);
+
+  overlay.handleInput("d");
+  assert.doesNotMatch(overlay.render(100).join("\n"), /Doctor passed/);
+  overlay.handleInput("r");
+  await waitFor(() => loads === 2);
+  overlay.handleInput("j");
+  overlay.handleInput("\r");
+  assert.deepEqual(selected, { type: "attach", session: "pi-beta-agents" });
+  overlay.dispose();
+});
+
+test("dashboard command has a bounded non-TUI fallback", async () => {
+  const calls = [];
+  const { commands } = harness(async (_command, args) => {
+    calls.push(args);
+    if (args[2] === "list") return { code: 0, stdout: JSON.stringify(dashboardSnapshot().list) };
+    if (args[2] === "doctor") return { code: 0, stdout: JSON.stringify(dashboardSnapshot().doctor) };
+    throw new Error("unexpected action");
+  });
+  const ctx = context({ context: { mode: "rpc", hasUI: true } });
+  await commands.get("or-dashboard").handler("", ctx);
+  assert.deepEqual(calls.map((args) => args[2]).sort(), ["doctor", "list"]);
+  assert.equal(ctx.calls.notifications.length, 1);
+  assert.match(ctx.calls.notifications[0].message, /Orchestrations: 2/);
 });
 
 test("shows a non-blocking update notice once and exposes version details", async () => {

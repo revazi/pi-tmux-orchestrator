@@ -61,6 +61,11 @@ Never place credentials, private customer/career/production data, raw provider
 requests/responses, system prompts, private endpoints, unbounded errors, copied
 diffs, or logs in task or report fields.
 
+The Pi dashboard overlay reads only bounded `list`/broker summaries and doctor
+metadata on open or explicit refresh. It does not inspect pane output, Pi
+histories, workflow bodies, or provider payloads, and starts no timer or
+background poll.
+
 The metadata-only SQLite database retains:
 
 - workflow and role lifecycle, worker generations, and body-free context-boundary events;

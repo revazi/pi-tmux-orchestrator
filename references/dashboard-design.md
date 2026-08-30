@@ -112,3 +112,21 @@ The dashboard is a control-plane summary, not another worker log:
 
 These omissions keep the pane bounded, metadata-only, and useful for deciding
 whether to attach, inspect status, intervene, or stop the exact session.
+
+## Pi overlay projection
+
+The parent extension also exposes `/or-dashboard`, a separate cross-session
+overlay inspired by Pi Fallow and Pi Tasklight. It reads the bounded `list` JSON
+projection plus current-project doctor metadata once on open and again only on
+explicit `r`. It never tails pane output or starts a refresh timer. Each running
+session row keeps exact session/project identity, workflow state/round, profile,
+linked-role count, calls, operational tokens, complete provider-reported cost,
+and maximum available role context pressure. Doctor remains a separate bounded
+section, and missing provider values render as unavailable.
+
+Arrows or `j`/`k` select; Enter closes the overlay and reuses the existing
+watch/attach path; `d` toggles doctor; `q`/Escape closes. The invoking Pi must be
+inside tmux for attach. Pi's public overlay API currently has no row-click
+callback, so mouse activation is not emulated with terminal links. The profile
+row is deliberately read-only until a later strict, confirmed configuration
+editor is designed.
