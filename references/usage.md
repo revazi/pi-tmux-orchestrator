@@ -16,9 +16,23 @@ never starts another network check. Update with `pi update npm:pi-tmux-orchestra
 `PI_TMUX_ORCHESTRATOR_DISABLE_UPDATE_NOTICE=1` to disable the startup check.
 Worker and controller sessions never perform this check.
 
-### Model policy
+### Profiles and exact project policy
 
-The strict user-global file `~/.pi/agent/tmux-orchestrator.json` supports:
+Execution profiles are deterministic thinking-level maps for the five built-in
+roles. They do not change models, tools, role authority, required review,
+workflow routing, result caps, or budget behavior. Select a packaged/custom
+profile explicitly for one run with:
+
+```bash
+pi-tmux-agents start \
+  --project /absolute/path/to/project \
+  --task "Describe the requested change" \
+  --profile economy \
+  --dry-run
+```
+
+The strict user-global file `~/.pi/agent/tmux-orchestrator.json` supports global
+profiles and exact per-project orchestration defaults:
 
 ```json
 {
@@ -56,6 +70,12 @@ The strict user-global file `~/.pi/agent/tmux-orchestrator.json` supports:
   ]
 }
 ```
+
+This example selects `balanced` for unmatched projects, defines one complete
+custom profile, and gives one exact project its own profile, reviewer thinking,
+phased flow, probe activation, and workspace-capsule default. Project
+`defaults`/`roles` may also choose exact provider/model IDs from `/or-models`;
+use empty objects or omit them when no model override is needed.
 
 The file is relative to `PI_CODING_AGENT_DIR`; an absolute
 `PI_TMUX_ORCHESTRATOR_CONFIG` overrides its location. Legacy versions 1 and 2
