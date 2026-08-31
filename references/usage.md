@@ -514,8 +514,13 @@ Switches the existing tmux client when already inside tmux or attaches from
 outside. JSON mode is allowed only for the in-tmux `switch-client` path used by
 the Pi extension; it never attempts to replace or suspend the invoking Pi
 process. Prefix then `L` is the detach/return operation: it switches that exact
-client back to the invoking Pi while leaving the worker grid running. Reattach
-with the same `attach` command.
+client back to the invoking Pi while leaving the worker grid running and without
+changing the Pi's original project context. Attach observes future workflow
+transitions, but an existing initial `ready`, `uncertain`, or `needs_attention`
+state produces only bounded non-triggering progress; historical reports are not
+replayed as a new parent task. Use explicit model-tool `watch` when the current
+Pi should assess an existing actionable outcome. Reattach with the same `attach`
+command.
 
 ### `send SESSION --role ROLE --message[-file] ...`
 
@@ -589,11 +594,13 @@ to subscribe the invoking Pi to a compatible existing run without changing the
 terminal.
 
 Use Enter on a selected `/or-dashboard` row or the model tool's `attach` action
-to ensure that subscription and switch the invoking Pi's existing tmux client
-into the live worker grid. Select panes with normal tmux keys and type directly
-into a native Pi worker's input editor to steer it. Prefix then `L` detaches from the
-grid by returning that exact client to the same invoking Pi; the workers and
-observer continue running, so attach/detach can be repeated. Pi exposes no
+to watch future transitions and switch the invoking Pi's existing tmux client
+into the live worker grid. An existing initial actionable outcome is shown only
+as non-triggering progress; explicit `watch` requests existing-outcome
+supervision. Select panes with normal tmux keys and type directly into a native
+Pi worker's input editor to steer it. Prefix then `L` returns that exact client
+to the same invoking Pi and original project context; the workers and observer
+continue running, so attach/detach can be repeated. Pi exposes no
 supported terminal-suspension API for an outside-tmux parent, so seamless
 in-place attach deliberately requires the invoking Pi to already run inside
 tmux.

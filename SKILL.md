@@ -19,8 +19,10 @@ orchestrations for explicit selection; model-tool calls should continue to use
 an exact session whenever multiple runs exist. Use `attach` when the user wants
 to enter, navigate, or directly steer the worker panes; it switches the invoking
 Pi's existing tmux client into the grid while keeping that Pi and its observer
-alive. Prefix then `L` detaches from
-the grid by returning to the same invoking Pi without stopping the workers. The
+alive. Attach watches future transitions but does not replay an existing initial
+actionable outcome as a task in the invoking Pi. Prefix then `L` detaches from
+the grid by returning to the same invoking Pi and original project context
+without stopping the workers. The
 dashboard overlay uses explicit refresh and Enter-based selection because Pi's
 public overlay API does not expose row-click callbacks. The standalone `pi-tmux-agents` CLI fallback
 is authoritative; do not hand-build
@@ -59,9 +61,11 @@ the tmux panes for live visibility, watch lifecycle progress in the invoking Pi,
 then interpret the bounded structured completion or attention update returned
 by the broker observer. Use the model tool's `watch` action to subscribe this Pi
 to a compatible existing run without taking over the terminal. In interactive
-Pi, select the run in `/or-dashboard` and press Enter to watch and enter its
-native worker grid; prefix then `L` returns while leaving the grid live for later
-reattachment.
+Pi, select the run in `/or-dashboard` and press Enter to watch future transitions
+and enter its native worker grid; an existing actionable outcome is not replayed
+as a new parent task. Prefix then `L` returns to the same Pi and project context
+while leaving the grid live for later reattachment. Use explicit `watch` when
+that Pi should assess an existing actionable outcome.
 The broker stores metadata-only SQLite state and actual provider token totals
 when Pi reports them; it does not persist task, context-capsule, workspace-capsule,
 report, prompt, message, diff, or log bodies. The optional workspace capsule is

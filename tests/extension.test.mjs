@@ -1655,6 +1655,7 @@ test("authenticated broker observer steers progress and returns structured final
         },
         observer,
         () => { stopped = true; },
+        { triggerInitialActionable: false },
       );
     });
     const delivered = await parentMessage;
@@ -1672,6 +1673,82 @@ test("authenticated broker observer steers progress and returns structured final
     assert.match(progress[0].message.content, /Parent supervision attached/);
     assert.match(progress[1].message.content, /reviewer is now waiting/);
     assert.doesNotMatch(progress[2].message.content, /The implementation is ready/);
+  } finally {
+    await new Promise((resolve) => server?.close(resolve) ?? resolve());
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("attach observation does not replay an already-actionable initial outcome", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "pi-tmux-existing-outcome-test-"));
+  await chmod(directory, 0o700);
+  const token = "d".repeat(32);
+  const socketPath = join(directory, "broker.sock");
+  await writeFile(join(directory, "control.token"), `${token}\n`, { mode: 0o600 });
+  const session = "pi-existing-ready-test";
+  let server;
+  try {
+    server = net.createServer((socket) => {
+      socket.once("data", (chunk) => {
+        const size = chunk.readUInt32BE(0);
+        const hello = JSON.parse(chunk.subarray(4, size + 4).toString("utf8"));
+        socket.write(testHooks.brokerFrame({
+          version: 1, type: "response", id: hello.id, success: true, status: "observing",
+        }));
+        socket.write(testHooks.brokerFrame({
+          version: 1,
+          type: "report",
+          session,
+          id: "e".repeat(32),
+          assignment_id: "f".repeat(32),
+          role: "reviewer",
+          round: 2,
+          report: { kind: "review", summary: "HISTORICAL_REPORT_MUST_NOT_TRIGGER", verdict: "approved" },
+        }));
+        socket.write(testHooks.brokerFrame({
+          version: 1,
+          type: "snapshot",
+          session,
+          state: "ready",
+          round: 2,
+          roles: [
+            { role: "implementer", state: "idle" },
+            { role: "reviewer", state: "idle" },
+          ],
+          report_count: 1,
+          report_replay_complete: true,
+        }));
+      });
+    });
+    await new Promise((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(socketPath, resolve);
+    });
+    const deliveredMessages = [];
+    let stopped = false;
+    const observer = { closed: false, socket: undefined, timer: undefined, stop: () => {} };
+    const attached = await testHooks.attachParentObserver(
+      {
+        sendMessage: (message, options) => deliveredMessages.push({ message, options }),
+      },
+      {
+        data: {
+          session,
+          paths: { coordination: directory, observer_socket: socketPath },
+        },
+      },
+      observer,
+      () => { stopped = true; },
+      { triggerInitialActionable: false },
+    );
+    await attached.ready;
+    await waitFor(() => stopped);
+    assert.equal(deliveredMessages.length, 1);
+    assert.equal(deliveredMessages[0].message.details.event, "existing_actionable");
+    assert.deepEqual(deliveredMessages[0].options, { triggerTurn: false, deliverAs: "steer" });
+    assert.match(deliveredMessages[0].message.content, /already ready/);
+    assert.match(deliveredMessages[0].message.content, /not replayed as a new task/);
+    assert.doesNotMatch(deliveredMessages[0].message.content, /HISTORICAL_REPORT_MUST_NOT_TRIGGER/);
   } finally {
     await new Promise((resolve) => server?.close(resolve) ?? resolve());
     await rm(directory, { recursive: true, force: true });
@@ -1832,7 +1909,7 @@ test("dashboard selection watches and attaches the exact running orchestration",
     };
     const handlers = testHooks.createCommandHandlers(
       pi,
-      async (envelope) => { supervised = envelope; },
+      async (envelope, options) => { supervised = { envelope, options }; },
     );
     const ctx = context({ customResult: { type: "attach", session: "pi-two" } });
     await handlers.dashboard("", ctx);
@@ -1840,7 +1917,8 @@ test("dashboard selection watches and attaches the exact running orchestration",
       ["--json", "status", "pi-two"],
       ["--json", "attach", "pi-two"],
     ]);
-    assert.equal(supervised.data.session, "pi-two");
+    assert.equal(supervised.envelope.data.session, "pi-two");
+    assert.deepEqual(supervised.options, { triggerInitialActionable: false });
     assert.match(ctx.calls.notifications.at(-1).message, /Switched to pi-two/);
   } finally {
     if (previousTmux === undefined) delete process.env.TMUX;
