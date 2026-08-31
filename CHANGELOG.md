@@ -6,6 +6,12 @@ All notable changes to this project are documented here.
 
 ### Added
 
+### Changed
+
+## 0.9.0 - 2026-08-31
+
+### Added
+
 - Added a Pi-native running-orchestration dashboard overlay with compact provider usage, explicit on-demand current-project doctor, concise help, a Tasklight-style About footer, keyboard attach/watch and confirmed stop, bounded session-only refresh, and a non-TUI fallback
 - Added strict version-3 user-global per-project orchestration mappings for exact canonical directories, with project profile/model/flow/specialist/workspace defaults, explicit-run precedence, manifest-v5 provenance, and bounded doctor/start/status/Supervisor visibility
 - Added persistent local pre-release package staging with commit/tree/tarball provenance, isolated provider-free Pi discovery, a disposable staged-package TUI runner, and a manual acceptance/rollback guide that keeps real-auth provider testing explicit without publishing or replacing the installed package
