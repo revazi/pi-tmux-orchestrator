@@ -6,7 +6,7 @@ All notable changes to this project are documented here.
 
 ### Added
 
-- Added a Pi-native running-orchestration dashboard overlay with compact provider usage, current-project doctor output, keyboard attach/watch, bounded manual refresh, non-TUI fallback, and a read-only future profile-management surface
+- Added a Pi-native running-orchestration dashboard overlay with compact provider usage, explicit on-demand current-project doctor, concise help, a Tasklight-style About footer, keyboard attach/watch and confirmed stop, bounded session-only refresh, and a non-TUI fallback
 - Added strict version-3 user-global per-project orchestration mappings for exact canonical directories, with project profile/model/flow/specialist/workspace defaults, explicit-run precedence, manifest-v5 provenance, and bounded doctor/start/status/Supervisor visibility
 - Added persistent local pre-release package staging with commit/tree/tarball provenance, isolated provider-free Pi discovery, a disposable staged-package TUI runner, and a manual acceptance/rollback guide that keeps real-auth provider testing explicit without publishing or replacing the installed package
 - Added an opt-in ephemeral cold-assignment workspace-capsule experiment with strict canonical Git/instruction identity validation, bounded allowlisted discovery hints, shared TUI/RPC delivery, fail-closed replay, no cross-run persistence, and a checked model-free proxy benchmark that makes no provider savings or correctness claim
@@ -27,7 +27,9 @@ All notable changes to this project are documented here.
 
 ### Changed
 
-- Changed the Pi dashboard to render running sessions independently of doctor completion, and reduced doctor/start model-catalog subprocesses to one per distinct provider within each CLI operation
+- Simplified the Pi command surface to the short-only `/or-dashboard`, `/or-models`, `/or-start`, `/or-send`, and `/or-stop` commands; consolidated list/status/help/about/doctor/attach/watch and selected-run stop into the dashboard while retaining the full CLI and model-tool surfaces
+- Changed the Pi dashboard to never run doctor on open or session refresh; doctor is now an explicit `d` action, while the About footer loads version, repository, issues, npm, contribution, and cached startup update metadata locally
+- Reduced doctor/start model-catalog subprocesses to one per distinct provider within each CLI operation
 - Changed broker shutdown to handle tmux pane hangup signals gracefully so private Unix sockets are removed when a grid stops
 - Changed all provider-usage budget thresholds to observational metadata: hard-configured runs no longer block tools or downstream assignments and no budget-resume control is exposed
 - Changed TUI and RPC workers to disable automatic skill discovery and use one lean custom role prompt while preserving governing `AGENTS.md`/`CLAUDE.md` discovery, role authority, tool guidance, and final reporting

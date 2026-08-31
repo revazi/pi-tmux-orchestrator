@@ -2,14 +2,17 @@
 
 ## Commands
 
-Every canonical `/orchestrator-*` Pi command also has an `/or-*` short alias,
-for example `/or-attach` and `/or-status`. Aliases share the canonical handler,
-selector, confirmation, and safety behavior.
+The Pi extension intentionally registers only `/or-dashboard`, `/or-models`,
+`/or-start`, `/or-send`, and `/or-stop`. The dashboard consolidates help, concise
+package metadata, running-session list/status, on-demand doctor, attach/watch,
+and confirmed stop. Duplicate `/orchestrator-*` and read-only helper slash
+commands are not registered. The standalone CLI and `tmux_orchestrator` model
+tool retain their full command/action surfaces.
 
 A regular interactive Pi session checks the public npm package metadata once at
 startup and shows a non-blocking warning only when a newer release is available.
-Use `/or-about` for installed/latest versions and update links, update with
-`pi update npm:pi-tmux-orchestrator`, or set
+The dashboard's Tasklight-style About footer reuses cached update metadata and
+never starts another network check. Update with `pi update npm:pi-tmux-orchestrator`, or set
 `PI_TMUX_ORCHESTRATOR_DISABLE_UPDATE_NOTICE=1` to disable the startup check.
 Worker and controller sessions never perform this check.
 
@@ -421,27 +424,27 @@ tool rendering, and input editor for direct steering.
 
 ### `dashboard`
 
-`/or-dashboard`, `/orchestrator-dashboard`, and `Ctrl+Shift+G` open a bounded
-Pi-native overlay containing every running managed orchestration plus doctor for
-the current canonical project. Session rows show workflow/round, selected
-profile, linked roles, provider calls, operational tokens, provider-reported cost
-when complete, and current context pressure when available. Unavailable provider
-fields remain unavailable rather than estimated.
+`/or-dashboard` and `Ctrl+Shift+G` open a bounded Pi-native overlay containing
+every running managed orchestration and a compact local About footer with the
+installed version, repository, issues, npm, and contribution details. Opening
+and refreshing load the session list but never run doctor. Session rows show
+workflow/round, selected profile, linked roles, provider calls, operational
+tokens, provider-reported cost when complete, and current context pressure when
+available. Unavailable provider fields remain unavailable rather than estimated.
 
-Use arrows or `j`/`k` to select, Enter to watch and attach, `r` to refresh, `d`
-to toggle doctor, and `q`/Escape to close. Refresh is explicit; the overlay starts
-no timer or background poll. Attach requires the invoking Pi to be inside tmux.
-Pi's current public overlay API does not route row-click callbacks to extension
-components, so true mouse activation is deferred. The project/profile section is
-read-only in this version; future editing must use the same strict external
-configuration validation and explicit confirmation.
+Use arrows or `j`/`k` to select, Enter to watch and attach, `x` to confirm stop,
+`r` to refresh sessions, `d` to explicitly run and toggle doctor, `?` for help,
+and `q`/Escape to close. Refresh is explicit; the overlay starts no timer or
+background poll. Attach requires the invoking Pi to be inside tmux. Pi's current
+public overlay API does not route row-click callbacks to extension components,
+so true mouse activation is deferred.
 
 ### `list`
 
-Lists live tmux sessions marked as Pi Tmux Orchestrator grids. In the Pi TUI,
-omitting `[SESSION]` from `status`, `watch`, `attach`, `send`, or `stop` opens a
-selector populated from this metadata-only list. Each option shows the exact
-session and project; invalid orchestration metadata is excluded.
+Lists live tmux sessions marked as Pi Tmux Orchestrator grids. The Pi dashboard
+uses this projection directly. Omitting `[SESSION]` from `/or-send` or `/or-stop`
+opens a selector populated from the same metadata-only list. Each option shows
+the exact session and project; invalid orchestration metadata is excluded.
 
 ### `status [SESSION]`
 
@@ -501,8 +504,8 @@ remain under `~/.pi/agent/orchestrations/`.
 Checks Pi, Python, tmux, tmux extended-key settings, model and budget
 configuration paths, the exact canonical project mapping, effective profile,
 and configured model availability without a provider request. This bounded
-metadata also appears in the dashboard overlay. The project
-defaults to the current directory; `/or-doctor` passes the current Pi project.
+metadata appears in the dashboard only after the user presses `d`. The CLI
+project defaults to the current directory.
 
 ### `supervisor ...`
 
@@ -533,14 +536,14 @@ truncated.
 When the package extension starts a run, the invoking Pi itself is the parent
 supervisor and opens an authenticated, read-only broker observer. Starting a
 normal run creates one detached worker grid; it does not start a second parent
-Pi, parent window, or persistent controller. Use `/orchestrator-watch SESSION`
-or the model tool's `watch` action to subscribe the invoking Pi to a compatible
-existing run without changing the terminal.
+Pi, parent window, or persistent controller. Use the model tool's `watch` action
+to subscribe the invoking Pi to a compatible existing run without changing the
+terminal.
 
-Use `/orchestrator-attach SESSION` or the model tool's `attach` action to ensure
-that subscription and switch the invoking Pi's existing tmux client into the
-live worker grid. Select panes with normal tmux keys and type directly into a
-native Pi worker's input editor to steer it. Prefix then `L` detaches from the
+Use Enter on a selected `/or-dashboard` row or the model tool's `attach` action
+to ensure that subscription and switch the invoking Pi's existing tmux client
+into the live worker grid. Select panes with normal tmux keys and type directly
+into a native Pi worker's input editor to steer it. Prefix then `L` detaches from the
 grid by returning that exact client to the same invoking Pi; the workers and
 observer continue running, so attach/detach can be repeated. Pi exposes no
 supported terminal-suspension API for an outside-tmux parent, so seamless

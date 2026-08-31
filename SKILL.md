@@ -6,13 +6,15 @@ compatibility: Requires Pi, Python 3.11+, and tmux 3.2+. tmux 3.5+ with extended
 
 # Pi Tmux Orchestrator
 
-Prefer `/or-dashboard`, `/or-start`, `/or-list`, `/or-status`, `/or-watch`, `/or-attach`,
-`/or-send`, and `/or-stop` when the package extension is available. The
-canonical `/orchestrator-*` names remain equivalent. The bounded
-`tmux_orchestrator` tool exposes the same authoritative control plane. New
+Prefer the compact extension surface—`/or-dashboard`, `/or-start`, `/or-models`,
+`/or-send`, and `/or-stop`—when interacting through Pi. The dashboard lists
+runs, shows concise help/about metadata, runs doctor only after `d`, attaches
+with Enter, and confirms stop with `x`. Duplicate `/orchestrator-*` and
+read-only helper slash commands are intentionally not registered. The bounded
+`tmux_orchestrator` tool exposes the complete authoritative control plane. New
 starts are watched automatically; use its
 `watch` action for an existing run so the parent receives lifecycle and final
-updates. Pi slash commands with an omitted session list valid running
+updates. `/or-send` and `/or-stop` with an omitted session list valid running
 orchestrations for explicit selection; model-tool calls should continue to use
 an exact session whenever multiple runs exist. Use `attach` when the user wants
 to enter, navigate, or directly steer the worker panes; it switches the invoking
@@ -55,10 +57,11 @@ started through the package extension, the invoking Pi remains the parent
 supervisor; no second parent Pi, parent window, or controller is started. Use
 the tmux panes for live visibility, watch lifecycle progress in the invoking Pi,
 then interpret the bounded structured completion or attention update returned
-by the broker observer. `/orchestrator-watch SESSION` subscribes this Pi to a
-compatible existing run without taking over the terminal;
-`/orchestrator-attach SESSION` enters its native worker grid, and prefix then
-`L` returns while leaving the grid live for later reattachment.
+by the broker observer. Use the model tool's `watch` action to subscribe this Pi
+to a compatible existing run without taking over the terminal. In interactive
+Pi, select the run in `/or-dashboard` and press Enter to watch and enter its
+native worker grid; prefix then `L` returns while leaving the grid live for later
+reattachment.
 The broker stores metadata-only SQLite state and actual provider token totals
 when Pi reports them; it does not persist task, context-capsule, workspace-capsule,
 report, prompt, message, diff, or log bodies. The optional workspace capsule is

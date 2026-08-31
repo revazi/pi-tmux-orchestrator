@@ -28,36 +28,14 @@ import {
   startInputWithParentModel,
 } from "./orchestrator-models.js";
 import {
+  getOrchestratorAboutSummary,
   scheduleOrchestratorUpdateNotice,
-  showOrchestratorAbout,
 } from "./orchestrator-update.js";
 import { showOrchestrationDashboard } from "./orchestrator-dashboard.js";
 
 const CLI_PATH = fileURLToPath(new URL("../bin/pi-tmux-agents", import.meta.url));
 const MAX_VISIBLE_CHARS = 12_000;
 const ACTIONS = ["doctor", "models", "list", "status", "watch", "attach", "start", "send"];
-const COMMAND_OVERVIEW = [
-  "/orchestrator-help — show this bounded command overview",
-  "/orchestrator-about — show installed/latest versions, update command, and project links",
-  "/orchestrator-doctor — check local prerequisites and configured worker models without a provider request",
-  "/orchestrator-models [query] — list bounded available Pi model metadata without a provider request",
-  "/orchestrator-dashboard — open the running-orchestration and doctor overlay",
-  "/orchestrator-start [task] — confirm and start an orchestration",
-  "/orchestrator-list — list running orchestrations",
-  "/orchestrator-status [session] — show metadata-only status",
-  "/orchestrator-watch [session] — subscribe this parent Pi to lifecycle and final-report updates",
-  "/orchestrator-attach [session] — switch this tmux client into the live worker grid",
-  "/orchestrator-send [session] — privately send a message to one role",
-  "/orchestrator-stop [session] — confirm and stop one exact session",
-  "Short aliases: /or-help, /or-about, /or-doctor, /or-models, /or-dashboard, /or-start, /or-list, /or-status, /or-watch, /or-attach, /or-send, /or-stop",
-  "/orchestrate — backward-compatible alias for /orchestrator-start",
-  "/orchestrations — backward-compatible alias for /orchestrator-list",
-  "Omit [session] on status, watch, attach, send, or stop to choose from the running orchestration list.",
-  "The invoking Pi is the parent supervisor; start creates no separate parent Pi, parent window, or controller.",
-  "Tmux panes show live worker activity; lifecycle and structured ready/attention reports return to the invoking Pi watching the run.",
-  "Attach requires the invoking Pi to run inside tmux. Use normal pane navigation; prefix then L detaches back to the same Pi without stopping workers. Native TUI panes accept direct steering, while plain RPC panes remain headless/display-only.",
-  "Supervisor API reads, RPC events/abort, and restart remain terminal-only.",
-].join("\n");
 
 const parameters = {
   type: "object",
@@ -506,7 +484,7 @@ const successSummaries = {
   start(data) {
     return data.dry_run
       ? `Validated ${data.session} with ${data.implementation_flow || "single"} implementation flow`
-      : `Started detached ${data.session} with ${data.transport === "rpc" ? "headless RPC" : "native Pi TUI"} workers and ${data.implementation_flow || "single"} implementation flow. This invoking Pi remains the parent; use /orchestrator-attach ${data.session} to enter the grid.`;
+      : `Started detached ${data.session} with ${data.transport === "rpc" ? "headless RPC" : "native Pi TUI"} workers and ${data.implementation_flow || "single"} implementation flow. This invoking Pi remains the parent; use /or-dashboard and Enter to attach.`;
   },
   send(data) {
     return data.acknowledged
@@ -615,11 +593,7 @@ function requireInteractiveTui(ctx, command) {
 
 function notifyCommandFailure(ctx, action) {
   const labels = {
-    doctor: "run orchestrator doctor",
     dashboard: "show the orchestration dashboard",
-    list: "list orchestrations",
-    status: "show orchestration status",
-    watch: "watch orchestration updates",
     attach: "attach to the orchestration grid",
     start: "start orchestration",
     send: "send orchestration message",
@@ -667,19 +641,6 @@ async function requestedSession(pi, args, ctx) {
 }
 
 function createCommandHandlers(pi, superviseStart = () => {}) {
-  const help = async (_args, ctx) => {
-    ctx.ui.notify(bounded(COMMAND_OVERVIEW, 2400), "info");
-  };
-
-  const about = async (_args, ctx) => {
-    if (!requireInteractiveTui(ctx, "orchestrator-about")) return;
-    await showOrchestratorAbout(ctx);
-  };
-
-  const doctor = async (_args, ctx) => {
-    await runCommandCli(pi, "doctor", ["--project", ctx.cwd], ctx);
-  };
-
   const models = async (args, ctx) => {
     notifyEnvelope(ctx, modelCatalogEnvelope(ctx, args));
   };
@@ -690,10 +651,16 @@ function createCommandHandlers(pi, superviseStart = () => {}) {
         ctx,
         () => runCli(pi, "list", [], ctx.signal),
         () => runCli(pi, "doctor", ["--project", ctx.cwd], ctx.signal),
-        async (session) => {
+        () => getOrchestratorAboutSummary(),
+        async (selection) => {
+          if (selection.type === "stop") {
+            await stopSession(selection.session, ctx);
+            return;
+          }
+          if (selection.type !== "attach") return;
           const envelope = await attachAndSupervise(
             pi,
-            { session },
+            { session: selection.session },
             ctx.signal,
             ctx,
             superviseStart,
@@ -707,7 +674,7 @@ function createCommandHandlers(pi, superviseStart = () => {}) {
   };
 
   const start = async (args, ctx) => {
-    if (!requireInteractiveTui(ctx, "orchestrator-start")) return;
+    if (!requireInteractiveTui(ctx, "or-start")) return;
     const task = String(args || "").trim() || await ctx.ui.editor("Orchestration task", "");
     if (!task?.trim()) return;
     let project;
@@ -746,64 +713,8 @@ function createCommandHandlers(pi, superviseStart = () => {}) {
     }
   };
 
-  const list = async (_args, ctx) => {
-    await runCommandCli(pi, "list", [], ctx);
-  };
-
-  const status = async (args, ctx) => {
-    if (!requireInteractiveTui(ctx, "orchestrator-status")) return;
-    try {
-      const session = await requestedSession(pi, args, ctx);
-      if (!session) return;
-      await runCommandCli(pi, "status", [session], ctx);
-    } catch {
-      notifyCommandFailure(ctx, "status");
-    }
-  };
-
-  const watch = async (args, ctx) => {
-    if (!requireInteractiveTui(ctx, "orchestrator-watch")) return;
-    let session;
-    try {
-      session = await requestedSession(pi, args, ctx);
-    } catch {
-      notifyCommandFailure(ctx, "watch");
-      return;
-    }
-    if (!session) return;
-    try {
-      const statusEnvelope = await runCli(pi, "status", [session], ctx.signal);
-      if (!statusEnvelope.success) {
-        notifyEnvelope(ctx, statusEnvelope);
-        return;
-      }
-      await superviseStart(statusEnvelope);
-      notifyEnvelope(ctx, { ...statusEnvelope, command: "watch" });
-    } catch {
-      notifyCommandFailure(ctx, "watch");
-    }
-  };
-
-  const attach = async (args, ctx) => {
-    if (!requireInteractiveTui(ctx, "orchestrator-attach")) return;
-    try {
-      const session = await requestedSession(pi, args, ctx);
-      if (!session) return;
-      const envelope = await attachAndSupervise(
-        pi,
-        { session },
-        ctx.signal,
-        ctx,
-        superviseStart,
-      );
-      notifyEnvelope(ctx, envelope);
-    } catch {
-      notifyCommandFailure(ctx, "attach");
-    }
-  };
-
   const send = async (args, ctx) => {
-    if (!requireInteractiveTui(ctx, "orchestrator-send")) return;
+    if (!requireInteractiveTui(ctx, "or-send")) return;
     let session;
     try {
       session = await requestedSession(pi, args, ctx);
@@ -824,16 +735,7 @@ function createCommandHandlers(pi, superviseStart = () => {}) {
     }
   };
 
-  const stop = async (args, ctx) => {
-    if (!requireInteractiveTui(ctx, "orchestrator-stop")) return;
-    let session;
-    try {
-      session = await requestedSession(pi, args, ctx);
-    } catch {
-      notifyCommandFailure(ctx, "stop");
-      return;
-    }
-    if (!session) return;
+  const stopSession = async (session, ctx) => {
     const confirmed = await ctx.ui.confirm(
       "Stop tmux orchestration?",
       `Kill only ${bounded(session, 160)}? External coordination state and child session records are retained.`,
@@ -842,7 +744,19 @@ function createCommandHandlers(pi, superviseStart = () => {}) {
     await runCommandCli(pi, "stop", [session, "--yes"], ctx);
   };
 
-  return { help, about, doctor, models, dashboard, start, list, status, watch, attach, send, stop };
+  const stop = async (args, ctx) => {
+    if (!requireInteractiveTui(ctx, "or-stop")) return;
+    let session;
+    try {
+      session = await requestedSession(pi, args, ctx);
+    } catch {
+      notifyCommandFailure(ctx, "stop");
+      return;
+    }
+    if (session) await stopSession(session, ctx);
+  };
+
+  return { models, dashboard, start, send, stop };
 }
 
 export default function tmuxOrchestratorExtension(pi) {
@@ -918,82 +832,19 @@ export default function tmuxOrchestratorExtension(pi) {
   });
 
   const commandHandlers = createCommandHandlers(pi, superviseStart);
-  pi.registerCommand("orchestrator-help", {
-    description: "Show the bounded tmux orchestrator command overview",
-    handler: commandHandlers.help,
-  });
-  pi.registerCommand("orchestrator-about", {
-    description: "Show installed and latest versions, update guidance, and project links",
-    handler: commandHandlers.about,
-  });
-  pi.registerCommand("orchestrator-doctor", {
-    description: "Check local tmux orchestrator prerequisites and configured models",
-    handler: commandHandlers.doctor,
-  });
-  pi.registerCommand("orchestrator-models", {
-    description: "List bounded available Pi model metadata with an optional query",
-    handler: commandHandlers.models,
-  });
-  pi.registerCommand("orchestrator-dashboard", {
-    description: "Open the running-orchestration and doctor dashboard overlay",
-    handler: commandHandlers.dashboard,
-  });
-  pi.registerCommand("orchestrator-start", {
-    description: "Confirm and start a tmux orchestration",
-    handler: commandHandlers.start,
-  });
-  pi.registerCommand("orchestrator-list", {
-    description: "List running tmux orchestrations",
-    handler: commandHandlers.list,
-  });
-  pi.registerCommand("orchestrator-status", {
-    description: "Show metadata-only orchestration status for an optional exact session",
-    handler: commandHandlers.status,
-  });
-  pi.registerCommand("orchestrator-watch", {
-    description: "Subscribe this invoking Pi to lifecycle and final-report updates for an orchestration",
-    handler: commandHandlers.watch,
-  });
-  pi.registerCommand("orchestrator-attach", {
-    description: "Switch this tmux client into the live worker grid for navigation and steering",
-    handler: commandHandlers.attach,
-  });
-  pi.registerCommand("orchestrator-send", {
-    description: "Privately send a message to one role in an exact orchestration session",
-    handler: commandHandlers.send,
-  });
-  pi.registerCommand("orchestrator-stop", {
-    description: "Confirm and stop one exact tmux orchestration session",
-    handler: commandHandlers.stop,
-  });
-  const shortAliases = {
-    "or-help": ["Show the tmux orchestrator command overview", commandHandlers.help],
-    "or-about": ["Show version and update details", commandHandlers.about],
-    "or-doctor": ["Check prerequisites and configured models", commandHandlers.doctor],
+  const commands = {
     "or-models": ["List available Pi model metadata", commandHandlers.models],
-    "or-dashboard": ["Open the orchestration dashboard overlay", commandHandlers.dashboard],
+    "or-dashboard": ["Open the orchestration dashboard with doctor, attach/watch, and confirmed stop", commandHandlers.dashboard],
     "or-start": ["Confirm and start a tmux orchestration", commandHandlers.start],
-    "or-list": ["List running tmux orchestrations", commandHandlers.list],
-    "or-status": ["Show metadata-only orchestration status", commandHandlers.status],
-    "or-watch": ["Subscribe this Pi to orchestration updates", commandHandlers.watch],
-    "or-attach": ["Enter a live worker grid", commandHandlers.attach],
     "or-send": ["Send a private message to one orchestration role", commandHandlers.send],
     "or-stop": ["Confirm and stop one orchestration", commandHandlers.stop],
   };
-  for (const [name, [description, handler]] of Object.entries(shortAliases)) {
+  for (const [name, [description, handler]] of Object.entries(commands)) {
     pi.registerCommand(name, { description, handler });
   }
   pi.registerShortcut("ctrl+shift+g", {
     description: "Open the orchestration dashboard overlay",
     handler: async (ctx) => commandHandlers.dashboard("", ctx),
-  });
-  pi.registerCommand("orchestrate", {
-    description: "Alias for /orchestrator-start",
-    handler: commandHandlers.start,
-  });
-  pi.registerCommand("orchestrations", {
-    description: "Alias for /orchestrator-list",
-    handler: commandHandlers.list,
   });
 
   pi.on("session_start", (_event, ctx) => {
