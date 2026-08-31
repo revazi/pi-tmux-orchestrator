@@ -56,9 +56,9 @@ This checklist prepares a human-controlled release. It does not authorize public
 - [ ] Confirm the npm README has a prominent, version-specific upgrade section with the old-to-new command map, safe update sequence, compatibility facts, and rollback link.
 - [ ] Confirm `CHANGELOG.md` labels removals under `Breaking`, rather than leaving them buried under general changes.
 - [ ] Review `releases/v$RELEASE_VERSION.md` as the authoritative GitHub Release body. It must include migration steps, dashboard controls, profiles, exact per-project configuration, compatibility/safety facts, rollback, and support links without provider-cost or quality claims.
-- [ ] Publish a public pre-release announcement issue linking the migration guide. Keep it open through release so repository subscribers and users checking Issues can find it; pin it when repository permissions and pin capacity permit.
+- [ ] Publish a public pre-release announcement issue linking the migration guide and pin it when repository permissions and pin capacity permit. Once the reviewed, versioned migration docs link back to it, the issue may close as a durable discussion archive rather than remain the release-state tracker.
 - [ ] Allow a reasonable migration-notice window before moving the `latest` tag when timing permits. For an urgent release, explicitly record why the window was shortened.
-- [ ] Prepare a post-release comment for the announcement with the exact GitHub Release, npm version, tag commit, and verified install command.
+- [ ] Prepare a post-release follow-up for the announcement archive with the exact GitHub Release, npm version, tag commit, and verified install command; GitHub permits maintainers to comment on a closed issue.
 
 ## 5. Trusted publishing setup
 
@@ -87,4 +87,4 @@ This is a one-time maintainer setup, not a per-release token workflow.
 - [ ] If npm already contains that exact version from the exact tagged commit, a workflow rerun may skip publication and create the missing GitHub Release. Any metadata mismatch must fail closed.
 - [ ] Verify npm `latest`, `dist.integrity`, and `gitHead`; then install the exact version into disposable npm and Pi homes and rerun CLI/version and package-provenance discovery without a provider request.
 - [ ] Verify the GitHub Release tag and target commit match npm `gitHead`. Manual npm publication is recovery-only and must be followed by the exact matching tag and GitHub Release.
-- [ ] Add the verified release/npm/install details to the public announcement issue, then close it only after the migration links and rollback guidance are live.
+- [ ] Add the verified release/npm/install details to the public announcement archive even if it is already closed; reopen it only when migration support requires active issue tracking.

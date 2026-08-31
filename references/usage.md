@@ -16,8 +16,11 @@ The Pi extension intentionally registers only `/or-dashboard`, `/or-models`,
 `/or-start`, `/or-send`, and `/or-stop`. The dashboard consolidates help, concise
 package metadata, running-session list/status, on-demand doctor, attach/watch,
 and confirmed stop. Duplicate `/orchestrator-*` and read-only helper slash
-commands are not registered. The standalone CLI and `tmux_orchestrator` model
-tool retain their full command/action surfaces.
+commands are not registered. A user may start explicitly with `/or-start [task]`
+or ask Pi naturally, for example: `Describe the change. Use the orchestrator.`
+The natural-language path uses the `tmux_orchestrator` model tool and preserves
+the same preview, trust, and confirmation boundaries. The standalone CLI and
+model tool retain their full command/action surfaces.
 
 A regular interactive Pi session checks the public npm package metadata once at
 startup and shows a non-blocking warning only when a newer release is available.

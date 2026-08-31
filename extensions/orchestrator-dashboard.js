@@ -3,7 +3,7 @@ import { basename } from "node:path";
 const MAX_DOCTOR_LINES = 6;
 const MAX_VISIBLE_SESSIONS = 12;
 const MIN_VISIBLE_SESSIONS = 2;
-const DASHBOARD_STATIC_ROWS = 9;
+const DASHBOARD_STATIC_ROWS = 10;
 const DOCTOR_FIXED_ROWS = 2;
 const HELP_SECTION_ROWS = 3;
 const CLOSE_KEYS = new Set(["q", "Q"]);
@@ -347,10 +347,11 @@ export class OrchestrationDashboardOverlay {
 
   renderAbout(rows) {
     const color = this.about.status === "update" ? "warning" : "dim";
-    rows.frame(`  ${violet("●")} ${this.theme.fg("accent", this.theme.bold("About"))} ${this.theme.fg(color, this.about.text)}  ${pink("Contribute")} ${this.theme.fg("muted", "Ideas, issues, and PRs are welcome.")}`);
+    rows.frame(`  ${violet("●")} ${this.theme.fg("accent", this.theme.bold("About"))} ${this.theme.fg(color, this.about.text)}`);
     rows.frame(`${violet("Repository")} ${this.theme.fg("muted", this.about.repositoryUrl)}`);
     rows.frame(`${cyan("Issues")}     ${this.theme.fg("muted", this.about.issuesUrl)}`);
     rows.frame(`${amber("NPM")}        ${this.theme.fg("muted", this.about.npmUrl)}`);
+    rows.frame(`${pink("Contribute")} ${this.theme.fg("muted", "Ideas, issues, and PRs are welcome.")}`);
   }
 
   move(delta) {

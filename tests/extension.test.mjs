@@ -332,6 +332,7 @@ test("dashboard loads doctor only on demand, shows help, refreshes sessions, and
   assert.match(aboutFooter, /Issues.*pi-tmux-orchestrator\/issues/);
   assert.match(aboutFooter, /NPM.*npmjs\.com\/package\/pi-tmux-orchestrator/);
   assert.match(aboutFooter, /Contribute.*Ideas, issues, and PRs are welcome/);
+  assert.ok(aboutFooter.indexOf("Contribute") > aboutFooter.indexOf("NPM"));
   overlay.dispose();
 });
 

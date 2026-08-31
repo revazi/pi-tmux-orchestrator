@@ -171,13 +171,18 @@ cd /absolute/path/to/project
 pi
 ```
 
-Then:
+Then start in either of these ways:
 
-1. Run `/or-start Describe the change you want`.
-2. Review Pi's project, roles, models, profile, and safety confirmation.
-3. Confirm to start one implementer and the mandatory independent reviewer.
-4. Run `/or-dashboard` to inspect progress. Press `?` for its keys.
-5. Return from attached worker panes with tmux prefix, then `L`.
+- Run `/or-start Describe the change you want`.
+- Or ask Pi naturally: `Describe the change you want. Use the orchestrator.`
+
+Pi's natural-language path uses the `tmux_orchestrator` tool and the same preview
+and confirmation boundary. Next:
+
+1. Review Pi's project, roles, models, profile, and safety confirmation.
+2. Confirm to start one implementer and the mandatory independent reviewer.
+3. Run `/or-dashboard` to inspect progress. Press `?` for its keys.
+4. Return from attached worker panes with tmux prefix, then `L`.
 
 The no-configuration behavior uses the compatibility `thorough` thinking
 profile and `single` implementation flow. Models come from the packaged policy
@@ -186,7 +191,7 @@ writers.
 
 | Common task | What to use |
 |---|---|
-| Start normal reviewed work | `/or-start [task]` |
+| Start normal reviewed work | `/or-start [task]`, or ask Pi: `[task]. Use the orchestrator.` |
 | See runs or attach to workers | `/or-dashboard` |
 | Check current-project setup | `/or-dashboard`, then `d` |
 | Find an exact model ID | `/or-models [query]` |
@@ -225,7 +230,9 @@ doctor. Existing retained manifest v1-v4 runs remain readable, new runs use
 manifest v5, the mandatory reviewer and one-writer policy are unchanged, and
 `thorough` remains the compatibility profile. See the reviewed
 [0.9.0 release notes](https://github.com/revazi/pi-tmux-orchestrator/blob/v0.9.0/releases/v0.9.0.md) for the complete migration, new
-configuration features, and rollback guidance.
+configuration features, and rollback guidance. The public
+[pre-release migration announcement](https://github.com/revazi/pi-tmux-orchestrator/issues/82)
+is retained as the discussion archive.
 
 ## Daily use from Pi
 
