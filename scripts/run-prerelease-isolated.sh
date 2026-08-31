@@ -154,7 +154,7 @@ mkdir -p \
 
 printf 'Launching staged commit %s from %s\n' "$COMMIT" "$PACKAGE_ROOT"
 printf '%s\n' \
-  'This Pi home is disposable and has no real authentication. Use /or-about, /or-help, /or-doctor, /or-models, command completion, and preview/cancel /or-start. Do not send a model prompt. Offline/update-disabled and blackhole proxy settings are not an OS network sandbox.'
+  'This Pi home is disposable and has no real authentication. Use /or-dashboard (including help and on-demand doctor), /or-models, command completion, and preview/cancel /or-start. Do not send a model prompt. Offline/update-disabled and blackhole proxy settings are not an OS network sandbox.'
 (
   cd "$PROJECT"
   env -i \

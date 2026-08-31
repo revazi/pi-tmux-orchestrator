@@ -107,13 +107,17 @@ function context(overrides = {}) {
         calls.inputs.push({ title, placeholder });
         return inputs ? inputs.shift() : overrides.input;
       },
+      custom: async () => {
+        if (overrides.customError) throw overrides.customError;
+        return overrides.customResult;
+      },
       theme: { fg: (_color, text) => text },
     },
     ...overrides.context,
   };
 }
 
-test("registers one bounded model tool and the exact canonical/alias command surface", () => {
+test("registers one bounded model tool and the exact short-only command surface", () => {
   const { tool, tools, commands, shortcuts, events } = harness(async () => ({ code: 0, stdout: "" }));
   assert.equal(tools.length, 1);
   assert.equal(tool.name, "tmux_orchestrator");
@@ -167,42 +171,14 @@ test("registers one bounded model tool and the exact canonical/alias command sur
   );
   assert.deepEqual(
     [...commands.keys()],
-    [
-      "orchestrator-help",
-      "orchestrator-about",
-      "orchestrator-doctor",
-      "orchestrator-models",
-      "orchestrator-dashboard",
-      "orchestrator-start",
-      "orchestrator-list",
-      "orchestrator-status",
-      "orchestrator-watch",
-      "orchestrator-attach",
-      "orchestrator-send",
-      "orchestrator-stop",
-      "or-help",
-      "or-about",
-      "or-doctor",
-      "or-models",
-      "or-dashboard",
-      "or-start",
-      "or-list",
-      "or-status",
-      "or-watch",
-      "or-attach",
-      "or-send",
-      "or-stop",
-      "orchestrate",
-      "orchestrations",
-    ],
+    ["or-models", "or-dashboard", "or-start", "or-send", "or-stop"],
   );
-  assert.equal(commands.has("orchestrator-attach"), true);
-  assert.equal(commands.has("orchestrator-restart"), false);
-  assert.equal(commands.get("orchestrator-start").handler, commands.get("orchestrate").handler);
-  assert.equal(commands.get("orchestrator-list").handler, commands.get("orchestrations").handler);
-  for (const action of ["help", "about", "doctor", "models", "dashboard", "start", "list", "status", "watch", "attach", "send", "stop"]) {
-    assert.equal(commands.get(`or-${action}`).handler, commands.get(`orchestrator-${action}`).handler);
+  for (const removed of ["help", "about", "doctor", "list", "status", "watch", "attach"]) {
+    assert.equal(commands.has(`or-${removed}`), false);
   }
+  assert.equal([...commands.keys()].some((name) => name.startsWith("orchestrator-")), false);
+  assert.equal(commands.has("orchestrate"), false);
+  assert.equal(commands.has("orchestrations"), false);
   assert.equal(shortcuts.get("ctrl+shift+g").handler instanceof Function, true);
   assert.equal(events.has("session_start"), true);
   assert.ok(events.has("session_before_switch"));
@@ -244,6 +220,15 @@ function dashboardSnapshot() {
         { session: "invalid", valid: false, project: null },
       ],
     }),
+    about: {
+      currentVersion: packageJson.version,
+      latestVersion: packageJson.version,
+      updateAvailable: false,
+      npmUrl: "https://www.npmjs.com/package/pi-tmux-orchestrator",
+      repositoryUrl: "https://github.com/revazi/pi-tmux-orchestrator",
+      issuesUrl: "https://github.com/revazi/pi-tmux-orchestrator/issues",
+      updateCommand: "pi update npm:pi-tmux-orchestrator",
+    },
     doctor: success("doctor", {
       commands: [
         { name: "pi", status: "ok" },
@@ -271,12 +256,16 @@ const dashboardTheme = {
 test("dashboard display is bounded and keeps unavailable usage explicit", () => {
   const display = dashboardHooks.dashboardDisplay(dashboardSnapshot());
   assert.equal(display.sessions.length, 2);
-  assert.equal(display.doctor.status, "success");
-  assert.match(display.doctor.projectMapping, /matched \/work\/alpha/);
+  assert.equal(display.error, undefined);
   const lines = dashboardHooks.dashboardPlainLines(dashboardSnapshot());
   assert.ok(lines.length <= 40);
   assert.match(lines.join("\n"), /7 calls · 12\.5k tok · \$0\.234 · ctx 42\.3%/);
   assert.match(lines.join("\n"), /usage unavailable/);
+  assert.match(lines.join("\n"), new RegExp(`About: v${packageJson.version}`));
+  assert.match(lines.join("\n"), /Repository: https:\/\/github\.com\/revazi\/pi-tmux-orchestrator/);
+  assert.match(lines.join("\n"), /Issues: https:\/\/github\.com\/revazi\/pi-tmux-orchestrator\/issues/);
+  assert.match(lines.join("\n"), /NPM: https:\/\/www\.npmjs\.com\/package\/pi-tmux-orchestrator/);
+  assert.match(lines.join("\n"), /Contribute: Ideas, issues, and PRs are welcome\./);
   const empty = dashboardSnapshot();
   empty.list.data.sessions = [];
   assert.match(dashboardHooks.dashboardPlainLines(empty).join("\n"), /none running/);
@@ -294,9 +283,10 @@ test("dashboard display is bounded and keeps unavailable usage explicit", () => 
   assert.match(warning.headline, /issues/);
 });
 
-test("dashboard overlay refreshes, navigates, toggles doctor, and selects attach", async () => {
+test("dashboard loads doctor only on demand, shows help, refreshes sessions, and selects actions", async () => {
   let listLoads = 0;
   let doctorLoads = 0;
+  let aboutLoads = 0;
   let selected;
   let renders = 0;
   const overlay = new OrchestrationDashboardOverlay(
@@ -305,32 +295,74 @@ test("dashboard overlay refreshes, navigates, toggles doctor, and selects attach
     () => { renders += 1; },
     async () => { listLoads += 1; return dashboardSnapshot().list; },
     async () => { doctorLoads += 1; return dashboardSnapshot().doctor; },
+    async () => { aboutLoads += 1; return dashboardSnapshot().about; },
     3,
     { matches: () => false },
   );
   assert.match(overlay.render(100).join("\n"), /Loading running orchestrations/);
   await overlay.refresh();
   assert.equal(listLoads, 1);
-  assert.equal(doctorLoads, 1);
+  assert.equal(doctorLoads, 0);
+  await waitFor(() => aboutLoads === 1);
   assert.ok(renders >= 2);
   const lines = overlay.render(100);
   assert.ok(lines.every((line) => dashboardHooks.visibleWidth(line) <= 100));
   assert.match(lines.join("\n"), /Orchestration Dashboard/);
-  assert.match(lines.join("\n"), /Doctor passed/);
+  assert.doesNotMatch(lines.join("\n"), /Doctor passed|Running doctor/);
   assert.equal(dashboardHooks.visibleWidth(overlay.render(3)[0]), 3);
 
+  overlay.handleInput("?");
+  assert.match(overlay.render(100).join("\n"), /\/or-start.*\/or-models.*\/or-send.*\/or-stop/);
   overlay.handleInput("d");
-  assert.doesNotMatch(overlay.render(100).join("\n"), /Doctor passed/);
+  await waitFor(() => doctorLoads === 1 && overlay.doctorLoading === false);
+  assert.match(overlay.render(100).join("\n"), /Doctor passed/);
   overlay.handleInput("r");
-  await waitFor(() => listLoads === 2 && doctorLoads === 2);
+  await waitFor(() => listLoads === 2);
+  assert.equal(doctorLoads, 1);
+  assert.equal(aboutLoads, 1);
+  overlay.handleInput("x");
+  assert.deepEqual(selected, { type: "stop", session: "pi-alpha-agents" });
   overlay.handleInput("j");
   overlay.handleInput("\r");
   assert.deepEqual(selected, { type: "attach", session: "pi-beta-agents" });
+
+  const aboutFooter = overlay.render(100).join("\n");
+  assert.match(aboutFooter, new RegExp(`About.*v${packageJson.version}`));
+  assert.match(aboutFooter, /Repository.*github\.com\/revazi\/pi-tmux-orchestrator/);
+  assert.match(aboutFooter, /Issues.*pi-tmux-orchestrator\/issues/);
+  assert.match(aboutFooter, /NPM.*npmjs\.com\/package\/pi-tmux-orchestrator/);
+  assert.match(aboutFooter, /Contribute.*Ideas, issues, and PRs are welcome/);
   overlay.dispose();
 });
 
-test("dashboard sessions become usable while doctor remains pending", async () => {
+test("dashboard remains within a short terminal row budget for doctor and help", async () => {
+  const overlay = new OrchestrationDashboardOverlay(
+    dashboardTheme,
+    () => {},
+    () => {},
+    async () => dashboardSnapshot().list,
+    async () => dashboardSnapshot().doctor,
+    async () => dashboardSnapshot().about,
+    10,
+    { matches: () => false },
+    18,
+  );
+
+  await overlay.refresh();
+  overlay.handleInput("d");
+  await waitFor(() => overlay.doctorLoading === false);
+  assert.ok(overlay.render(100).length <= 18);
+  overlay.handleInput("?");
+  const help = overlay.render(100).join("\n");
+  assert.ok(overlay.render(100).length <= 18);
+  assert.match(help, /Enter watches and attaches/);
+  assert.doesNotMatch(help, /Doctor passed/);
+  overlay.dispose();
+});
+
+test("dashboard sessions become usable while an explicitly requested doctor remains pending", async () => {
   let releaseDoctor;
+  let doctorLoads = 0;
   let selected;
   const pendingDoctor = new Promise((resolve) => { releaseDoctor = resolve; });
   const overlay = new OrchestrationDashboardOverlay(
@@ -338,12 +370,16 @@ test("dashboard sessions become usable while doctor remains pending", async () =
     (value) => { selected = value; },
     () => {},
     async () => dashboardSnapshot().list,
-    () => pendingDoctor,
+    () => { doctorLoads += 1; return pendingDoctor; },
+    async () => dashboardSnapshot().about,
     3,
     { matches: () => false },
   );
 
-  const refresh = overlay.refresh();
+  await overlay.refresh();
+  assert.equal(doctorLoads, 0);
+  overlay.handleInput("d");
+  await waitFor(() => doctorLoads === 1);
   await waitFor(() => overlay.sessions.length === 2 && overlay.loading === false);
   const partial = overlay.render(100).join("\n");
   assert.match(partial, /pi-alpha-agents/);
@@ -355,7 +391,7 @@ test("dashboard sessions become usable while doctor remains pending", async () =
   assert.deepEqual(selected, { type: "attach", session: "pi-beta-agents" });
 
   releaseDoctor(dashboardSnapshot().doctor);
-  await refresh;
+  await waitFor(() => overlay.doctorLoading === false);
   assert.match(overlay.render(100).join("\n"), /Doctor passed/);
   overlay.dispose();
 });
@@ -370,12 +406,12 @@ test("dashboard command has a bounded non-TUI fallback", async () => {
   });
   const ctx = context({ context: { mode: "rpc", hasUI: true } });
   await commands.get("or-dashboard").handler("", ctx);
-  assert.deepEqual(calls.map((args) => args[2]).sort(), ["doctor", "list"]);
+  assert.deepEqual(calls.map((args) => args[2]), ["list"]);
   assert.equal(ctx.calls.notifications.length, 1);
   assert.match(ctx.calls.notifications[0].message, /Orchestrations: 2/);
 });
 
-test("shows a non-blocking update notice once and exposes version details", async () => {
+test("shows a non-blocking update notice once and reuses cached version details in the dashboard", async () => {
   const originalFetch = globalThis.fetch;
   const originalDisable = process.env.PI_TMUX_ORCHESTRATOR_DISABLE_UPDATE_NOTICE;
   const originalRole = process.env.PI_TMUX_ORCHESTRATOR_ROLE;
@@ -391,12 +427,17 @@ test("shows a non-blocking update notice once and exposes version details", asyn
   updateHooks.reset();
 
   try {
-    const { commands, events } = harness(async () => ({ code: 0, stdout: "" }));
+    const { commands, events } = harness(async (_command, args) => {
+      if (args[2] === "list") {
+        return { code: 0, stdout: JSON.stringify(success("list", { sessions: [] })) };
+      }
+      throw new Error("unexpected action");
+    });
     const ctx = context();
     events.get("session_start")({}, ctx);
     await waitFor(() => ctx.calls.notifications.length === 1);
     assert.deepEqual(ctx.calls.notifications, [{
-      message: `Pi Tmux Orchestrator 99.0.0 is available (you have ${packageJson.version}). Update: pi update npm:pi-tmux-orchestrator. Details: /or-about`,
+      message: `Pi Tmux Orchestrator 99.0.0 is available (you have ${packageJson.version}). Update: pi update npm:pi-tmux-orchestrator. Details: /or-dashboard`,
       level: "warning",
     }]);
 
@@ -404,14 +445,12 @@ test("shows a non-blocking update notice once and exposes version details", asyn
     await drainPromises();
     assert.equal(ctx.calls.notifications.length, 1);
 
-    const aboutCtx = context();
-    await commands.get("or-about").handler("", aboutCtx);
-    assert.equal(fetchCalls, 2);
+    const aboutCtx = context({ context: { mode: "rpc", hasUI: true } });
+    await commands.get("or-dashboard").handler("", aboutCtx);
+    assert.equal(fetchCalls, 1);
     assert.equal(aboutCtx.calls.notifications.length, 1);
-    assert.match(aboutCtx.calls.notifications[0].message, new RegExp(`Installed version: ${packageJson.version}`));
-    assert.match(aboutCtx.calls.notifications[0].message, /Latest npm version: 99\.0\.0/);
-    assert.match(aboutCtx.calls.notifications[0].message, /Update command: pi update npm:pi-tmux-orchestrator/);
-    assert.equal(aboutCtx.calls.notifications[0].level, "warning");
+    assert.match(aboutCtx.calls.notifications[0].message, new RegExp(`About: v${packageJson.version} · update 99\\.0\\.0 available`));
+    assert.match(aboutCtx.calls.notifications[0].message, /pi update npm:pi-tmux-orchestrator/);
   } finally {
     globalThis.fetch = originalFetch;
     if (originalDisable === undefined) delete process.env.PI_TMUX_ORCHESTRATOR_DISABLE_UPDATE_NOTICE;
@@ -1728,70 +1767,6 @@ test("parent updates keep only the latest bounded report per role", () => {
   assert.ok(update.content.length <= 192 * 1024);
 });
 
-test("help is bounded, subprocess-free, and documents terminal-only operations", async () => {
-  let execCalls = 0;
-  const { commands } = harness(async () => {
-    execCalls += 1;
-    return { code: 0, stdout: "" };
-  });
-  const ctx = context();
-  await commands.get("orchestrator-help").handler("PRIVATE_HELP_ARGUMENT", ctx);
-  assert.equal(execCalls, 0);
-  assert.equal(ctx.calls.notifications.length, 1);
-  const message = ctx.calls.notifications[0].message;
-  assert.ok(message.length <= 2400);
-  assert.match(message, /\/orchestrator-start/);
-  assert.match(message, /\/orchestrator-watch/);
-  assert.match(message, /\/orchestrator-attach/);
-  assert.match(message, /prefix then L/);
-  assert.equal(message.includes("PRIVATE_HELP_ARGUMENT"), false);
-});
-
-test("doctor, list alias, and status commands delegate exact bounded JSON CLI actions with session selection", async () => {
-  const seen = [];
-  const { commands } = harness(async (command, args) => {
-    assert.equal(command, "python3");
-    assert.equal(args[0], testHooks.CLI_PATH);
-    seen.push(args.slice(1));
-    const action = args[2];
-    const data = action === "list"
-      ? { sessions: [{ session: "pi-one", project: "/tmp/project", valid: true }] }
-      : action === "status"
-        ? {
-            session: args[3],
-            execution_profile: { name: "balanced", kind: "packaged", source: "per-run" },
-            roles: [], panes: [], files: [],
-            broker: {
-              workflow: { state: "ready", round: 4 },
-              roles: [{ role: "reviewer", state: "idle" }],
-            },
-          }
-        : { commands: [] };
-    return { code: 0, stdout: JSON.stringify(success(action, data)) };
-  });
-  const ctx = context({ selection: "pi-one · /tmp/project" });
-  await commands.get("orchestrator-doctor").handler("", ctx);
-  await commands.get("orchestrations").handler("", ctx);
-  await commands.get("orchestrator-status").handler("  pi-exact  ", ctx);
-  await commands.get("orchestrator-status").handler("", ctx);
-  assert.deepEqual(seen, [
-    ["--json", "doctor", "--project", process.cwd()],
-    ["--json", "list"],
-    ["--json", "status", "pi-exact"],
-    ["--json", "list"],
-    ["--json", "status", "pi-one"],
-  ]);
-  assert.deepEqual(ctx.calls.selections[0], {
-    title: "Select a running orchestration",
-    options: ["pi-one · /tmp/project"],
-  });
-  assert.equal(ctx.calls.widgets.length, 0);
-  assert.equal(ctx.calls.statuses.length, 0);
-  assert.ok(ctx.calls.notifications.every(({ message }) => message.length <= 800));
-  assert.ok(ctx.calls.notifications.some(({ message }) => message.includes("profile=balanced (packaged, source=per-run)")));
-  assert.ok(ctx.calls.notifications.some(({ message }) => message.includes("workflow=ready round=4")));
-});
-
 test("session picker lists valid running orchestrations and returns the exact selection", async () => {
   let calls = 0;
   const pi = {
@@ -1820,7 +1795,7 @@ test("session picker lists valid running orchestrations and returns the exact se
   assert.equal(calls, 1);
 });
 
-test("attach without an argument selects a running orchestration before switching", async () => {
+test("dashboard selection watches and attaches the exact running orchestration", async () => {
   const previousTmux = process.env.TMUX;
   process.env.TMUX = "/tmp/tmux-test";
   try {
@@ -1830,17 +1805,6 @@ test("attach without an argument selects a running orchestration before switchin
       exec: async (_command, args) => {
         const action = args[2];
         seen.push(args.slice(1));
-        if (action === "list") {
-          return {
-            code: 0,
-            stdout: JSON.stringify(success("list", {
-              sessions: [
-                { session: "pi-one", project: "/work/one", valid: true },
-                { session: "pi-two", project: "/work/two", valid: true },
-              ],
-            })),
-          };
-        }
         if (action === "status") {
           return {
             code: 0,
@@ -1869,18 +1833,13 @@ test("attach without an argument selects a running orchestration before switchin
       pi,
       async (envelope) => { supervised = envelope; },
     );
-    const ctx = context({ selection: "pi-two · /work/two" });
-    await handlers.attach("", ctx);
+    const ctx = context({ customResult: { type: "attach", session: "pi-two" } });
+    await handlers.dashboard("", ctx);
     assert.deepEqual(seen, [
-      ["--json", "list"],
       ["--json", "status", "pi-two"],
       ["--json", "attach", "pi-two"],
     ]);
     assert.equal(supervised.data.session, "pi-two");
-    assert.deepEqual(ctx.calls.selections[0].options, [
-      "pi-one · /work/one",
-      "pi-two · /work/two",
-    ]);
     assert.match(ctx.calls.notifications.at(-1).message, /Switched to pi-two/);
   } finally {
     if (previousTmux === undefined) delete process.env.TMUX;
@@ -1902,15 +1861,15 @@ test("session picker handles cancellation and an empty running list without free
   assert.equal(ctx.calls.notifications[0].message, "No running orchestrations are available.");
 });
 
-test("slash-command failures are bounded and redact raw subprocess errors", async () => {
+test("dashboard failures are bounded and redact raw errors", async () => {
   const canary = "PRIVATE_COMMAND_ERROR_CANARY_12ab";
   const { commands } = harness(async () => {
     throw new Error(canary.repeat(100));
   });
-  const ctx = context();
-  await commands.get("orchestrator-status").handler("pi-test", ctx);
+  const ctx = context({ customError: new Error(canary.repeat(100)) });
+  await commands.get("or-dashboard").handler("", ctx);
   assert.equal(ctx.calls.notifications.length, 1);
-  assert.equal(ctx.calls.notifications[0].message, "Unable to show orchestration status");
+  assert.equal(ctx.calls.notifications[0].message, "Unable to show the orchestration dashboard");
   assert.equal(JSON.stringify(ctx.calls).includes(canary), false);
   assert.ok(ctx.calls.notifications[0].message.length <= 300);
   assert.equal(ctx.calls.statuses.length, 0);
@@ -2231,7 +2190,7 @@ test("slash start can inherit exact-project orchestration defaults", async () =>
     };
   });
   const ctx = context({ confirmations: [false, true] });
-  await commands.get("orchestrator-start").handler("synthetic", ctx);
+  await commands.get("or-start").handler("synthetic", ctx);
   assert.equal(calls, 2);
   assert.match(ctx.calls.confirmations[0].message, /configured project\/global defaults/);
 });
@@ -2269,7 +2228,7 @@ test("controller mode requires and collects an explicit target project", async (
       input: process.cwd(),
       confirmations: [true, false, false, false, false, false, true],
     });
-    await commands.get("orchestrator-start").handler("synthetic", ctx);
+    await commands.get("or-start").handler("synthetic", ctx);
     assert.equal(calls, 2);
     assert.equal(ctx.calls.inputs[0].title, "Target project directory");
   } finally {
@@ -2370,7 +2329,7 @@ test("trusted approval requires explicit bypass and start confirmations", async 
   assert.match(ctx.calls.confirmations[0].message, /does not automatically apply/);
 });
 
-test("canonical start command reuses private preview and explicit confirmation flow", async () => {
+test("short start command reuses private preview and explicit confirmation flow", async () => {
   const task = "PRIVATE_SLASH_START_TASK_51ce";
   const paths = [];
   let execCalls = 0;
@@ -2409,7 +2368,7 @@ test("canonical start command reuses private preview and explicit confirmation f
     confirmations: [true, true, false, false, false, true, true],
     editors: ["src/service.py\ntests/test_service.py"],
   });
-  await commands.get("orchestrator-start").handler(task, ctx);
+  await commands.get("or-start").handler(task, ctx);
   assert.equal(execCalls, 2);
   assert.equal(ctx.calls.confirmations.at(-1).title, "Start tmux orchestration?");
   assert.equal(ctx.calls.editors[0].title, "Workspace capsule relevant paths");
@@ -2432,12 +2391,12 @@ test("start command rejects non-TUI use and cannot start after confirmation decl
     };
   });
   const rpcCtx = context({ context: { mode: "rpc", hasUI: true } });
-  await commands.get("orchestrator-start").handler("synthetic", rpcCtx);
+  await commands.get("or-start").handler("synthetic", rpcCtx);
   assert.equal(execCalls, 0);
   assert.match(rpcCtx.calls.notifications[0].message, /interactive TUI/);
 
   const declinedCtx = context({ confirmations: [false, false, false, false] });
-  await commands.get("orchestrate").handler("synthetic", declinedCtx);
+  await commands.get("or-start").handler("synthetic", declinedCtx);
   assert.equal(execCalls, 1);
   assert.equal(declinedCtx.calls.notifications.at(-1).message, "Unable to start orchestration");
 });
@@ -2510,13 +2469,13 @@ test("interactive send cancels safely at TUI, session, role, or message boundari
     assert.equal(args[2], "list");
     return { code: 0, stdout: JSON.stringify(success("list", { sessions: [] })) };
   });
-  await commands.get("orchestrator-send").handler(
+  await commands.get("or-send").handler(
     "pi-test",
     context({ context: { mode: "rpc", hasUI: true } }),
   );
-  await commands.get("orchestrator-send").handler("", context());
-  await commands.get("orchestrator-send").handler("pi-test", context());
-  await commands.get("orchestrator-send").handler(
+  await commands.get("or-send").handler("", context());
+  await commands.get("or-send").handler("pi-test", context());
+  await commands.get("or-send").handler(
     "pi-test",
     context({ selection: "reviewer", editor: "   " }),
   );
@@ -2548,7 +2507,7 @@ test("interactive send selects an exact session/role and redacts the private fil
     selections: ["pi-test · /tmp/project", "reviewer"],
     editor: canary,
   });
-  await commands.get("orchestrator-send").handler("", ctx);
+  await commands.get("or-send").handler("", ctx);
   assert.deepEqual(ctx.calls.selections[0].options, ["pi-test · /tmp/project"]);
   assert.deepEqual(ctx.calls.selections[1].options, ["implementer", "reviewer", "probe", "playwright", "django"]);
   assert.equal(ctx.calls.notifications.at(-1).message, "Sent to pi-test/reviewer");
@@ -2565,7 +2524,7 @@ test("interactive send cleans private files and bounds errors when delegation fa
     throw new Error(`${message}:${"x".repeat(20_000)}`);
   });
   const ctx = context({ selection: "implementer", editor: message });
-  await commands.get("orchestrator-send").handler("pi-test", ctx);
+  await commands.get("or-send").handler("pi-test", ctx);
   assert.equal(ctx.calls.notifications.at(-1).message, "Unable to send orchestration message");
   assert.equal(JSON.stringify(ctx.calls).includes(message), false);
   await assert.rejects(access(path));
@@ -2585,7 +2544,7 @@ test("stop selects an exact session and requires explicit UI confirmation before
     selection: "pi-test · /tmp/project",
     confirmations: [true],
   });
-  await commands.get("orchestrator-stop").handler("", ctx);
+  await commands.get("or-stop").handler("", ctx);
   assert.deepEqual(argvs.map((args) => args.slice(1)), [
     ["--json", "list"],
     ["--json", "stop", "pi-test", "--yes"],
@@ -2593,7 +2552,15 @@ test("stop selects an exact session and requires explicit UI confirmation before
   assert.equal(ctx.calls.inputs.length, 0);
   assert.match(ctx.calls.confirmations[0].message, /retained/);
 
+  const dashboardCtx = context({
+    customResult: { type: "stop", session: "pi-dashboard" },
+    confirmations: [true],
+  });
+  await commands.get("or-dashboard").handler("", dashboardCtx);
+  assert.deepEqual(argvs.at(-1).slice(1), ["--json", "stop", "pi-dashboard", "--yes"]);
+  assert.match(dashboardCtx.calls.confirmations[0].message, /pi-dashboard/);
+
   const declinedCtx = context({ confirmations: [false] });
-  await commands.get("orchestrator-stop").handler("pi-other", declinedCtx);
-  assert.equal(argvs.length, 2);
+  await commands.get("or-stop").handler("pi-other", declinedCtx);
+  assert.equal(argvs.length, 3);
 });

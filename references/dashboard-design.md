@@ -115,22 +115,24 @@ whether to attach, inspect status, intervene, or stop the exact session.
 
 ## Pi overlay projection
 
-The parent extension also exposes `/or-dashboard`, a separate cross-session
-overlay inspired by Pi Fallow and Pi Tasklight. It reads the bounded `list` JSON
-projection plus current-project doctor metadata once on open and again only on
-explicit `r`. The two reads start together, but the fast session projection is
-rendered and becomes navigable as soon as it returns; full doctor/model checks
-continue independently in their bounded section. Doctor model discovery is
-shared per distinct provider within that CLI operation rather than launching Pi
-once per role. The overlay never tails pane output or starts a refresh timer.
-Each running session row keeps exact session/project identity, workflow state/round, profile,
-linked-role count, calls, operational tokens, complete provider-reported cost,
-and maximum available role context pressure. Doctor remains a separate bounded
-section, and missing provider values render as unavailable.
+The parent extension exposes `/or-dashboard`, a separate cross-session overlay
+inspired by Pi Fallow and Pi Tasklight. Opening or pressing `r` reads only the
+bounded `list` JSON projection; it never runs doctor as a side effect. A local,
+network-free, Tasklight-style About footer loads independently, shows version,
+repository, issues, npm, and contribution details, and reuses any update metadata
+already cached by the startup notice. Pressing `d` explicitly starts the
+current-project doctor operation and displays its bounded result. Doctor model
+discovery is shared per distinct provider within that CLI operation rather than
+launching Pi once per role. The overlay never tails pane output or starts a
+refresh timer. Each running session row keeps exact session/project identity,
+workflow state/round, profile, linked-role count, calls, operational tokens,
+complete provider-reported cost, and maximum available role context pressure.
+Missing provider values render as unavailable.
 
-Arrows or `j`/`k` select; Enter closes the overlay and reuses the existing
-watch/attach path; `d` toggles doctor; `q`/Escape closes. The invoking Pi must be
-inside tmux for attach. Pi's public overlay API currently has no row-click
-callback, so mouse activation is not emulated with terminal links. The profile
-row is deliberately read-only until a later strict, confirmed configuration
-editor is designed.
+Arrows or `j`/`k` select; Enter closes the overlay and reuses the watch/attach
+path; `x` closes it and requests the existing explicit stop confirmation; `d`
+runs/toggles doctor; `?` toggles concise help; `q`/Escape closes. Help and
+doctor panels replace one another so the overlay can reduce session rows and,
+on short terminals, doctor detail lines without exceeding Pi's row budget. The
+invoking Pi must be inside tmux for attach. Pi's public overlay API currently has no
+row-click callback, so mouse activation is not emulated with terminal links.

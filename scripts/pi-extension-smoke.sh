@@ -143,32 +143,11 @@ package_commands = [
     and Path(command["sourceInfo"]["baseDir"]).resolve() == root_path
 ]
 expected = {
-    "orchestrator-help": ("extension", "extensions/tmux-orchestrator.js"),
-    "orchestrator-about": ("extension", "extensions/tmux-orchestrator.js"),
-    "orchestrator-doctor": ("extension", "extensions/tmux-orchestrator.js"),
-    "orchestrator-models": ("extension", "extensions/tmux-orchestrator.js"),
-    "orchestrator-dashboard": ("extension", "extensions/tmux-orchestrator.js"),
-    "orchestrator-start": ("extension", "extensions/tmux-orchestrator.js"),
-    "orchestrator-list": ("extension", "extensions/tmux-orchestrator.js"),
-    "orchestrator-status": ("extension", "extensions/tmux-orchestrator.js"),
-    "orchestrator-watch": ("extension", "extensions/tmux-orchestrator.js"),
-    "orchestrator-attach": ("extension", "extensions/tmux-orchestrator.js"),
-    "orchestrator-send": ("extension", "extensions/tmux-orchestrator.js"),
-    "orchestrator-stop": ("extension", "extensions/tmux-orchestrator.js"),
-    "or-help": ("extension", "extensions/tmux-orchestrator.js"),
-    "or-about": ("extension", "extensions/tmux-orchestrator.js"),
-    "or-doctor": ("extension", "extensions/tmux-orchestrator.js"),
     "or-models": ("extension", "extensions/tmux-orchestrator.js"),
     "or-dashboard": ("extension", "extensions/tmux-orchestrator.js"),
     "or-start": ("extension", "extensions/tmux-orchestrator.js"),
-    "or-list": ("extension", "extensions/tmux-orchestrator.js"),
-    "or-status": ("extension", "extensions/tmux-orchestrator.js"),
-    "or-watch": ("extension", "extensions/tmux-orchestrator.js"),
-    "or-attach": ("extension", "extensions/tmux-orchestrator.js"),
     "or-send": ("extension", "extensions/tmux-orchestrator.js"),
     "or-stop": ("extension", "extensions/tmux-orchestrator.js"),
-    "orchestrate": ("extension", "extensions/tmux-orchestrator.js"),
-    "orchestrations": ("extension", "extensions/tmux-orchestrator.js"),
     "skill:tmux-agent-orchestrator": ("skill", "SKILL.md"),
 }
 actual = {command.get("name"): command.get("source") for command in package_commands}
@@ -206,4 +185,4 @@ for record in records:
         raise SystemExit("Pi RPC emitted an unexpected non-response record")
 PY
 
-printf '%s\n' 'Isolated Pi local-package install + RPC discovery passed (exact twenty-six commands/root skill from the npm-installed tarball path; no prompt, provider request, or real home/auth access).'
+printf '%s\n' 'Isolated Pi local-package install + RPC discovery passed (exact five-command/root-skill surface from the npm-installed tarball path; no prompt, provider request, or real home/auth access).'

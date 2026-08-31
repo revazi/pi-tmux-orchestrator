@@ -1,31 +1,43 @@
 import { basename } from "node:path";
 
-const MAX_DOCTOR_LINES = 7;
+const MAX_DOCTOR_LINES = 6;
 const MAX_VISIBLE_SESSIONS = 12;
-const DASHBOARD_STATIC_ROWS = 15;
+const MIN_VISIBLE_SESSIONS = 2;
+const DASHBOARD_STATIC_ROWS = 9;
+const DOCTOR_FIXED_ROWS = 2;
+const HELP_SECTION_ROWS = 3;
 const CLOSE_KEYS = new Set(["q", "Q"]);
+const HELP_LINES = [
+  "Enter watches and attaches; x confirms stopping the selected orchestration.",
+  "d runs doctor on demand; version and project links stay in the About footer.",
+  "Use /or-start, /or-models, /or-send, or /or-stop for write/control actions.",
+];
 
 const ansi = (code, text) => `\x1b[38;5;${code}m${text}\x1b[39m`;
 const purple = (text) => ansi(141, text);
 const violet = (text) => ansi(99, text);
+const pink = (text) => ansi(213, text);
 const cyan = (text) => ansi(81, text);
 const amber = (text) => ansi(215, text);
 
-export async function showOrchestrationDashboard(ctx, loadList, loadDoctor, open) {
+export async function showOrchestrationDashboard(ctx, loadList, loadDoctor, loadAbout, open) {
   if (ctx.mode !== "tui" || !ctx.hasUI) {
-    return showPlainDashboard(ctx, loadList, loadDoctor);
+    return showPlainDashboard(ctx, loadList, loadAbout);
   }
   const selection = await ctx.ui.custom(
     (tui, theme, keybindings, done) => {
-      const visibleRows = resolveVisibleRows(tui.terminal?.rows);
+      const terminalRows = tui.terminal?.rows;
+      const visibleRows = resolveVisibleRows(terminalRows);
       const overlay = new OrchestrationDashboardOverlay(
         theme,
         done,
         () => tui.requestRender(),
         loadList,
         loadDoctor,
+        loadAbout,
         visibleRows,
         keybindings,
+        resolveOverlayRows(terminalRows),
       );
       void overlay.refresh();
       return overlay;
@@ -45,15 +57,15 @@ export async function showOrchestrationDashboard(ctx, loadList, loadDoctor, open
   await openDashboardSelection(selection, open);
 }
 
-async function showPlainDashboard(ctx, loadList, loadDoctor) {
-  const [list, doctor] = await Promise.all([loadList(), loadDoctor()]);
-  const lines = dashboardPlainLines({ list, doctor });
+async function showPlainDashboard(ctx, loadList, loadAbout) {
+  const [list, about] = await Promise.all([loadList(), loadAbout()]);
+  const lines = dashboardPlainLines({ list, about });
   if (ctx.hasUI) ctx.ui.notify(lines.slice(0, 20).join("\n"), "info");
   else console.log(lines.join("\n"));
 }
 
 async function openDashboardSelection(selection, open) {
-  if (selection?.type === "attach") await open(selection.session);
+  if (selection) await open(selection);
 }
 
 export class OrchestrationDashboardOverlay {
@@ -63,47 +75,67 @@ export class OrchestrationDashboardOverlay {
     requestRender,
     loadList,
     loadDoctor,
+    loadAbout,
     visibleRows = 8,
     keybindings,
+    rowBudget = Number.POSITIVE_INFINITY,
   ) {
     this.theme = theme;
     this.done = done;
     this.requestRender = requestRender;
     this.loadList = loadList;
     this.loadDoctor = loadDoctor;
+    this.loadAbout = loadAbout;
     this.visibleRows = visibleRows;
     this.keybindings = keybindings;
+    this.rowBudget = rowBudget;
     this.sessions = [];
-    this.doctor = checkingDoctor();
+    this.about = idleAbout();
+    this.doctor = idleDoctor();
     this.selected = 0;
     this.scrollStart = 0;
     this.loading = true;
-    this.doctorLoading = true;
+    this.doctorLoading = false;
     this.error = undefined;
-    this.showDoctor = true;
+    this.showDoctor = false;
+    this.showHelp = false;
     this.generation = 0;
+    this.doctorGeneration = 0;
+    this.aboutGeneration = 0;
     this.disposed = false;
   }
 
   async refresh() {
-    if ((this.loading || this.doctorLoading) && this.generation > 0) return;
+    if (this.loading && this.generation > 0) return;
     const generation = ++this.generation;
     const selectedSession = this.selectedSessionName();
     this.loading = true;
-    this.doctorLoading = true;
-    this.doctor = checkingDoctor();
     this.error = undefined;
     this.changed();
-
-    const doctorResult = this.startDoctorLoad();
+    if (this.about.status === "idle") void this.loadAboutSummary();
     await this.refreshSessions(generation, selectedSession);
-    this.finishDoctorLoad(generation, await doctorResult);
   }
 
-  startDoctorLoad() {
-    return Promise.resolve()
+  async loadAboutSummary() {
+    const generation = ++this.aboutGeneration;
+    const result = await Promise.resolve()
+      .then(() => this.loadAbout())
+      .then((value) => ({ value }), () => ({ failed: true }));
+    if (this.disposed || generation !== this.aboutGeneration) return;
+    this.about = result.failed ? unavailableAbout() : aboutDisplay(result.value);
+    this.changed();
+  }
+
+  async loadDoctorOnDemand() {
+    if (this.doctorLoading || this.doctor.status !== "idle") return;
+    const generation = ++this.doctorGeneration;
+    this.doctorLoading = true;
+    this.doctor = checkingDoctor();
+    this.changed();
+    const result = await Promise.resolve()
       .then(() => this.loadDoctor())
       .then((value) => ({ value }), () => ({ failed: true }));
+    this.finishDoctorLoad(generation, result);
   }
 
   async refreshSessions(generation, selectedSession) {
@@ -121,13 +153,12 @@ export class OrchestrationDashboardOverlay {
   }
 
   finishDoctorLoad(generation, result) {
-    this.commit(generation, () => {
-      this.doctor = result.failed
-        ? warningDoctor("Doctor unavailable", [])
-        : doctorDisplay(result.value);
-      this.doctorLoading = false;
-      this.changed();
-    });
+    if (this.disposed || generation !== this.doctorGeneration) return;
+    this.doctor = result.failed
+      ? warningDoctor("Doctor unavailable", [])
+      : doctorDisplay(result.value);
+    this.doctorLoading = false;
+    this.changed();
   }
 
   selectedSessionName() {
@@ -174,16 +205,28 @@ export class OrchestrationDashboardOverlay {
       },
       { active: matchesFallback(data, ["\x1b[H", "\x1b[1~"]), action: () => this.select(0) },
       { active: matchesFallback(data, ["\x1b[F", "\x1b[4~"]), action: () => this.select(this.sessions.length - 1) },
-      { active: this.matches(data, "tui.select.pageUp", ["\x1b[5~"]), action: () => this.move(-this.visibleRows) },
-      { active: this.matches(data, "tui.select.pageDown", ["\x1b[6~"]), action: () => this.move(this.visibleRows) },
+      { active: this.matches(data, "tui.select.pageUp", ["\x1b[5~"]), action: () => this.move(-this.activeVisibleRows()) },
+      { active: this.matches(data, "tui.select.pageDown", ["\x1b[6~"]), action: () => this.move(this.activeVisibleRows()) },
       { active: this.matches(data, "tui.select.confirm", ["\r", "\n"]), action: () => this.attachSelected() },
+      { active: ["x", "X"].includes(data), action: () => this.stopSelected() },
       { active: ["r", "R"].includes(data), action: () => void this.refresh() },
       { active: ["d", "D"].includes(data), action: () => this.toggleDoctor() },
+      { active: data === "?", action: () => this.toggleHelp() },
     ];
   }
 
   toggleDoctor() {
     this.showDoctor = !this.showDoctor;
+    if (this.showDoctor) this.showHelp = false;
+    this.ensureVisible();
+    this.changed();
+    if (this.showDoctor) void this.loadDoctorOnDemand();
+  }
+
+  toggleHelp() {
+    this.showHelp = !this.showHelp;
+    if (this.showHelp) this.showDoctor = false;
+    this.ensureVisible();
     this.changed();
   }
 
@@ -196,6 +239,7 @@ export class OrchestrationDashboardOverlay {
     const rows = new DashboardRows(width, this.theme);
     rows.topBorder(this.header());
     rows.frame(this.helpLine());
+    if (this.showHelp) this.renderHelp(rows);
     rows.separator();
     this.renderSessions(rows);
     if (this.showDoctor) {
@@ -203,7 +247,7 @@ export class OrchestrationDashboardOverlay {
       this.renderDoctor(rows);
     }
     rows.separator();
-    rows.frame(this.profileFooter());
+    this.renderAbout(rows);
     rows.bottomBorder();
     return rows.lines;
   }
@@ -213,6 +257,8 @@ export class OrchestrationDashboardOverlay {
   dispose() {
     this.disposed = true;
     this.generation += 1;
+    this.doctorGeneration += 1;
+    this.aboutGeneration += 1;
   }
 
   header() {
@@ -225,10 +271,16 @@ export class OrchestrationDashboardOverlay {
     return [
       `${pill("↑↓/jk", violet)} ${this.theme.fg("muted", "navigate")}`,
       `${pill("Enter", violet)} ${this.theme.fg("muted", "attach/watch")}`,
+      `${pill("x", violet)} ${this.theme.fg("muted", "stop")}`,
       `${pill("r", violet)} ${this.theme.fg("muted", "refresh")}`,
       `${pill("d", violet)} ${this.theme.fg("muted", "doctor")}`,
+      `${pill("?", violet)} ${this.theme.fg("muted", "help")}`,
       `${pill("q", violet)} ${this.theme.fg("muted", "close")}`,
     ].join("  ");
+  }
+
+  renderHelp(rows) {
+    for (const line of HELP_LINES) rows.frame(`  ${this.theme.fg("dim", line)}`);
   }
 
   renderSessions(rows) {
@@ -256,7 +308,7 @@ export class OrchestrationDashboardOverlay {
 
   renderSessionWindow(rows) {
     this.ensureVisible();
-    const end = Math.min(this.sessions.length, this.scrollStart + this.visibleRows);
+    const end = Math.min(this.sessions.length, this.scrollStart + this.activeVisibleRows());
     this.renderEarlierCount(rows);
     for (let index = this.scrollStart; index < end; index += 1) {
       rows.frame(this.sessionLine(this.sessions[index], index));
@@ -288,14 +340,17 @@ export class OrchestrationDashboardOverlay {
   renderDoctor(rows) {
     const { color, icon } = doctorStyle(this.doctor.status);
     rows.frame(`  ${violet("●")} ${this.theme.fg("accent", this.theme.bold("Doctor"))} ${this.theme.fg(color, `${icon} ${this.doctor.headline}`)}`);
-    for (const line of this.doctor.lines.slice(0, MAX_DOCTOR_LINES)) {
+    for (const line of this.doctor.lines.slice(0, this.doctorLineLimit())) {
       rows.frame(`    ${this.theme.fg("dim", line)}`);
     }
   }
 
-  profileFooter() {
-    const mapping = this.doctor.projectMapping ?? "project mapping unavailable";
-    return `${cyan("Profiles")} ${this.theme.fg("muted", `${mapping} · read-only in this version; dashboard editing is planned`)}`;
+  renderAbout(rows) {
+    const color = this.about.status === "update" ? "warning" : "dim";
+    rows.frame(`  ${violet("●")} ${this.theme.fg("accent", this.theme.bold("About"))} ${this.theme.fg(color, this.about.text)}  ${pink("Contribute")} ${this.theme.fg("muted", "Ideas, issues, and PRs are welcome.")}`);
+    rows.frame(`${violet("Repository")} ${this.theme.fg("muted", this.about.repositoryUrl)}`);
+    rows.frame(`${cyan("Issues")}     ${this.theme.fg("muted", this.about.issuesUrl)}`);
+    rows.frame(`${amber("NPM")}        ${this.theme.fg("muted", this.about.npmUrl)}`);
   }
 
   move(delta) {
@@ -308,20 +363,49 @@ export class OrchestrationDashboardOverlay {
     this.changed();
   }
 
+  doctorLineLimit() {
+    if (!Number.isFinite(this.rowBudget)) return MAX_DOCTOR_LINES;
+    return Math.max(
+      0,
+      Math.min(
+        MAX_DOCTOR_LINES,
+        this.rowBudget - DASHBOARD_STATIC_ROWS - MIN_VISIBLE_SESSIONS - DOCTOR_FIXED_ROWS,
+      ),
+    );
+  }
+
+  activeVisibleRows() {
+    const doctorRows = this.showDoctor
+      ? DOCTOR_FIXED_ROWS + this.doctorLineLimit()
+      : 0;
+    const sectionRows = doctorRows + (this.showHelp ? HELP_SECTION_ROWS : 0);
+    const available = this.rowBudget - DASHBOARD_STATIC_ROWS - sectionRows;
+    return Math.max(
+      MIN_VISIBLE_SESSIONS,
+      Math.min(this.visibleRows, Number.isFinite(available) ? available : this.visibleRows),
+    );
+  }
+
   ensureVisible() {
+    const visibleRows = this.activeVisibleRows();
     if (this.selected < this.scrollStart) this.scrollStart = this.selected;
-    if (this.selected >= this.scrollStart + this.visibleRows) {
-      this.scrollStart = this.selected - this.visibleRows + 1;
+    if (this.selected >= this.scrollStart + visibleRows) {
+      this.scrollStart = this.selected - visibleRows + 1;
     }
     this.scrollStart = Math.max(
       0,
-      Math.min(this.scrollStart, Math.max(0, this.sessions.length - this.visibleRows)),
+      Math.min(this.scrollStart, Math.max(0, this.sessions.length - visibleRows)),
     );
   }
 
   attachSelected() {
     const session = this.sessions[this.selected];
     if (session) this.done({ type: "attach", session: session.session });
+  }
+
+  stopSelected() {
+    const session = this.sessions[this.selected];
+    if (session) this.done({ type: "stop", session: session.session });
   }
 
   changed() {
@@ -384,17 +468,10 @@ function sessionRoles(session) {
 function dashboardDisplay(snapshot) {
   const value = objectValue(snapshot);
   const list = listDisplay(value.list);
-  const doctor = objectValue(value.doctor);
-  const errors = [
-    list.error,
-    doctor.success === true
-      ? undefined
-      : "Doctor reported unavailable prerequisites or policy.",
-  ].filter(Boolean);
   return {
     sessions: list.sessions,
-    doctor: doctorDisplay(doctor),
-    error: errors.length ? errors.join(" ") : undefined,
+    about: aboutDisplay(value.about),
+    error: list.error,
   };
 }
 
@@ -449,8 +526,7 @@ function doctorLines(data, modelPolicy, profile, mapping, commands, modelChecks,
     `Profile: ${profileText(profile)}`,
     `Project: ${mapping}`,
     `Models: ${modelChecks.length - unavailableModels.length}/${modelChecks.length} available`,
-    `Budget: ${stringValue(budget.enforcement)} (observational)`,
-    `Config: ${stringValue(modelPolicy.config_path)}`,
+    `Budget: ${stringValue(budget.enforcement)} (observational) · Config: ${stringValue(modelPolicy.config_path)}`,
   ];
 }
 
@@ -476,8 +552,11 @@ function dashboardPlainLines(snapshot) {
     lines.push(`  ${session.session} · ${basename(session.project)} · ${sessionUsage(session)}`);
   }
   if (!display.sessions.length) lines.push("  none running");
-  lines.push(`Doctor: ${display.doctor.headline}`);
-  lines.push(...display.doctor.lines.map((line) => `  ${line}`));
+  lines.push(`About: ${display.about.text}`);
+  lines.push(`  Repository: ${display.about.repositoryUrl}`);
+  lines.push(`  Issues: ${display.about.issuesUrl}`);
+  lines.push(`  NPM: ${display.about.npmUrl}`);
+  lines.push("  Contribute: Ideas, issues, and PRs are welcome.");
   if (display.error) lines.push(`Warning: ${display.error}`);
   return lines.slice(0, 40);
 }
@@ -547,6 +626,51 @@ function isObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+function aboutDisplay(value) {
+  const about = objectValue(value);
+  const current = stringValue(about.currentVersion);
+  const links = {
+    repositoryUrl: stringValue(about.repositoryUrl),
+    issuesUrl: stringValue(about.issuesUrl),
+    npmUrl: stringValue(about.npmUrl),
+  };
+  if (about.updateAvailable === true && typeof about.latestVersion === "string") {
+    return {
+      ...links,
+      status: "update",
+      text: `v${current} · update ${about.latestVersion} available · ${stringValue(about.updateCommand)}`,
+    };
+  }
+  return { ...links, status: "ready", text: `v${current}` };
+}
+
+function idleAbout() {
+  return aboutPlaceholder("idle", "loading version…", "loading…");
+}
+
+function unavailableAbout() {
+  return aboutPlaceholder("unavailable", "version details unavailable", "unavailable");
+}
+
+function aboutPlaceholder(status, text, link) {
+  return {
+    status,
+    text,
+    repositoryUrl: link,
+    issuesUrl: link,
+    npmUrl: link,
+  };
+}
+
+function idleDoctor() {
+  return {
+    status: "idle",
+    headline: "Press d to run doctor",
+    lines: [],
+    projectMapping: "not checked",
+  };
+}
+
 function checkingDoctor() {
   return {
     status: "checking",
@@ -575,10 +699,19 @@ function clamp(index, count) {
   return Math.max(0, Math.min(Math.max(0, count - 1), index));
 }
 
+function resolveOverlayRows(terminalRows) {
+  return Number.isFinite(terminalRows)
+    ? Math.floor(terminalRows * 0.92)
+    : Number.POSITIVE_INFINITY;
+}
+
 function resolveVisibleRows(terminalRows) {
-  if (!Number.isFinite(terminalRows)) return 8;
-  const overlayRows = Math.floor(terminalRows * 0.92);
-  return Math.max(3, Math.min(MAX_VISIBLE_SESSIONS, overlayRows - DASHBOARD_STATIC_ROWS));
+  const overlayRows = resolveOverlayRows(terminalRows);
+  if (!Number.isFinite(overlayRows)) return 8;
+  return Math.max(
+    MIN_VISIBLE_SESSIONS,
+    Math.min(MAX_VISIBLE_SESSIONS, overlayRows - DASHBOARD_STATIC_ROWS),
+  );
 }
 
 function matchesFallback(data, values) {

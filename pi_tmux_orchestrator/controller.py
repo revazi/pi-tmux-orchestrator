@@ -64,8 +64,8 @@ def controller_prompt_text(state_root: Path) -> str:
         - Never inspect or copy Pi/provider credentials.
         - External orchestration state is rooted at {state_root}.
 
-        Use /orchestrator-help for the available Pi commands. Attach and role restart remain
-        terminal-only operations.
+        Use /or-dashboard for the interactive command overview and running sessions.
+        Role restart remains a terminal-only operation.
         """).strip()
         + "\n"
     )

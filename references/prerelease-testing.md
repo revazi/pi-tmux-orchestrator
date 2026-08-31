@@ -93,13 +93,13 @@ depth; these are not an OS network sandbox.
 
 In the TUI, do not send a model prompt. Check:
 
-- `/or-about` opens and reports package information;
-- `/or-help` lists the command workflow;
-- `/or-doctor` uses paths under the disposable environment;
+- `/or-dashboard` opens with no running sessions, concise help, and an About
+  footer with version, repository, issues, npm, and contribution details, with
+  no automatic doctor invocation;
+- pressing `d` in the dashboard runs doctor with paths under the disposable environment;
 - `/or-models` returns bounded model metadata without credentials;
-- `/or-dashboard` opens the overlay, reports no running sessions, and embeds bounded doctor output;
-- command completion includes the canonical `/orchestrator-*` and `/or-*`
-  aliases;
+- command completion contains only `/or-dashboard`, `/or-models`, `/or-start`,
+  `/or-send`, and `/or-stop` from the extension;
 - the `tmux_orchestrator` model tool and `tmux-agent-orchestrator` skill appear
   as resources from the staged package;
 - `/or-start` reaches its bounded preview/confirmation path; cancel before the
@@ -147,9 +147,13 @@ Run the smallest useful matrix rather than every expensive combination:
 
 ### A. Command and parent supervision
 
-- Run `/or-about`, `/or-doctor`, `/or-models`, and `/or-dashboard`.
+- Run `/or-models` and open `/or-dashboard`; confirm help is concise, the About
+  footer contains version/project/package/contribution details, and doctor
+  appears only after `d`.
 - Start one small `single` workflow with only implementer and mandatory reviewer.
-- Reopen `/or-dashboard`, confirm the run and usage metadata appear, and use Enter to attach when the parent Pi is inside tmux.
+- Reopen `/or-dashboard`, confirm the run and usage metadata appear, use Enter
+  to attach when the parent Pi is inside tmux, and verify `x` requires explicit
+  confirmation before stopping the selected run.
 - Confirm the invoking Pi remains the parent and receives lifecycle/final reports.
 - Verify idle workers do not poll or issue provider turns.
 

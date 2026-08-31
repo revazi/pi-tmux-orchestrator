@@ -152,53 +152,46 @@ pi install npm:pi-tmux-orchestrator
 
 ## Start from Pi
 
-The package exposes:
+The package exposes a compact, short-only Pi command surface:
 
-- `/orchestrator-help`
-- `/orchestrator-about`
-- `/orchestrator-doctor`
-- `/orchestrator-models [query]`
-- `/orchestrator-dashboard`
-- `/orchestrator-start [task]`
-- `/orchestrator-list`
-- `/orchestrator-status [session]`
-- `/orchestrator-watch [session]`
-- `/orchestrator-attach [session]`
-- `/orchestrator-send [session]`
-- `/orchestrator-stop [session]`
-- Short aliases: `/or-help`, `/or-about`, `/or-doctor`, `/or-models`, `/or-dashboard`, `/or-start`, `/or-list`,
-  `/or-status`, `/or-watch`, `/or-attach`, `/or-send`, and `/or-stop`
-- `/orchestrate` and `/orchestrations` compatibility aliases
+- `/or-dashboard` — list and inspect runs, show concise package details, run doctor on demand, attach/watch, or confirm stop
+- `/or-models [query]` — list bounded available model metadata
+- `/or-start [task]` — confirm and start an orchestration
+- `/or-send [session]` — send a private role message
+- `/or-stop [session]` — select and confirm stopping a run
 
-The `/or-*` aliases use the exact same handlers, confirmations, selectors, and
-safety boundaries as their canonical `/orchestrator-*` commands.
+The authoritative `pi-tmux-agents` CLI and `tmux_orchestrator` model tool retain
+their complete operational surfaces. The extension intentionally does not
+register duplicate `/orchestrator-*`, help, about, doctor, list, status, watch,
+or attach slash commands.
 
 ### Dashboard overlay
 
-Use `/or-dashboard`, `/orchestrator-dashboard`, or `Ctrl+Shift+G` to open a
-Pi-native overlay inspired by Pi Fallow and Pi Tasklight. It shows all currently
-running managed orchestrations with workflow state, round, profile, linked-role
-count, provider calls, operational tokens, provider-reported cost when complete,
-and peak current context pressure. The same overlay runs doctor for the current
-canonical project and shows its config path, exact project mapping, effective
-profile, model availability, tmux status, and observational budget mode.
+Use `/or-dashboard` or `Ctrl+Shift+G` to open a Pi-native overlay inspired by
+Pi Fallow and Pi Tasklight. It initially loads only the running-session list and
+a compact local About footer modeled on Pi Tasklight, with version, repository,
+issues, npm, and contribution details. Session rows show workflow state, round, profile,
+linked-role count, provider calls, operational tokens, provider-reported cost
+when complete, and peak current context pressure. Doctor is never run just by
+opening or refreshing the dashboard; press `d` to request its current-project
+config, model, tmux, and budget checks.
 
 Navigate with arrows or `j`/`k`, press Enter to watch and attach to the selected
-orchestration, use `r` for a bounded manual refresh, `d` to toggle doctor, and
-`q`/Escape to close. Direct attach requires the invoking Pi to be inside tmux,
-matching `/or-attach`. The dashboard does not poll and reads only metadata-only
-CLI/broker summaries. Pi's current public overlay API does not expose row-click
-callbacks, so true mouse-row activation is deferred rather than emulated with
-unsafe terminal URL handlers. Project-profile editing is intentionally read-only
-in this version and remains a future dashboard action.
+orchestration, use `x` to confirm stopping it, `r` to refresh the session list,
+`d` to show or hide the on-demand doctor result, `?` for concise help, and
+`q`/Escape to close. Attach requires the invoking Pi to be inside tmux. The
+dashboard does not poll and reads only metadata-only CLI/broker summaries. Pi's
+current public overlay API does not expose row-click callbacks, so true mouse-row
+activation is deferred rather than emulated with unsafe terminal URL handlers.
 
 At interactive Pi startup, the extension makes one best-effort, time-bounded
 request to the public npm registry. If a newer release exists, it shows a
-non-blocking warning with `pi update npm:pi-tmux-orchestrator`. `/or-about`
-shows the installed version, latest npm version, update command, and project
-links. Set `PI_TMUX_ORCHESTRATOR_DISABLE_UPDATE_NOTICE=1` to disable startup
-notices. Update checks are skipped in orchestration worker and controller
-sessions.
+non-blocking warning with `pi update npm:pi-tmux-orchestrator`. The dashboard's
+About footer shows the installed version and project/package links, plus a cached
+update status when the startup check found a newer release; opening the dashboard
+does not make another network request. Set
+`PI_TMUX_ORCHESTRATOR_DISABLE_UPDATE_NOTICE=1` to disable startup notices.
+Update checks are skipped in orchestration worker and controller sessions.
 
 ### Worker model configuration
 
@@ -546,10 +539,10 @@ pi-tmux-agents start --task-file /tmp/task.md \
   --reviewer-thinking medium
 ```
 
-When a session argument is omitted, `status`, `watch`, `attach`, `send`, and
-`stop` list valid running orchestrations in a Pi selector showing session and
-project. Choosing one passes its exact session name to the authoritative CLI;
-providing a session argument still bypasses the picker.
+When a session argument is omitted from `/or-send` or `/or-stop`, Pi opens a
+selector showing valid session/project pairs. Dashboard selection handles
+status/attach/watch and can confirm stop. Model-tool operations should continue
+to use an exact session whenever multiple runs exist.
 
 The `tmux_orchestrator` model tool provides bounded `doctor`, `list`, `status`,
 `watch`, `attach`, `start`, and `send` actions. Start requires interactive
@@ -557,8 +550,9 @@ confirmation. The Pi session that invokes `start` is the parent supervisor; a
 run creates only the detached worker grid and does not start another parent Pi,
 parent window, or controller. New runs are watched automatically. `watch`
 subscribes that invoking Pi to lifecycle/final updates without changing the
-terminal. `attach` (or `/orchestrator-attach SESSION`) switches its existing
-tmux client into the worker grid after ensuring observation. Use normal tmux
+terminal. `attach` switches its existing tmux client into the worker grid after
+ensuring observation; interactive users can select the same action with Enter
+in `/or-dashboard`. Use normal tmux
 pane keys to select a subagent and type directly into its native Pi editor.
 Press the tmux prefix followed by `L` to detach from the grid and return to the
 same invoking Pi; the orchestration keeps running and can be reattached.
@@ -687,8 +681,9 @@ pi-tmux-agents restart SESSION --role implementer --yes
 pi-tmux-agents stop SESSION --yes
 ```
 
-When the invoking Pi is already inside tmux, `/orchestrator-attach SESSION`
-performs the exact client switch without replacing or stopping that Pi. Prefix
+When the invoking Pi is already inside tmux, selecting a session in
+`/or-dashboard` and pressing Enter performs the exact client switch without
+replacing or stopping that Pi. Prefix
 then `L` detaches the client from the grid by returning it to the invoking Pi;
 it does not stop the workers. Attach and detach can be repeated while the run is
 live.

@@ -31,12 +31,20 @@ export function scheduleOrchestratorUpdateNotice(ctx) {
     });
 }
 
-export async function showOrchestratorAbout(ctx) {
-  const info = await getOrchestratorVersionInfo({ forceRefresh: true });
-  if (ctx.hasUI) {
-    ctx.ui?.notify(formatOrchestratorAbout(info), info.updateAvailable ? "warning" : "info");
-  }
-  return info;
+export async function getOrchestratorAboutSummary() {
+  const currentVersion = await getCurrentVersion();
+  const latestVersion = latestVersionCache?.expiresAt > Date.now()
+    ? latestVersionCache.value
+    : undefined;
+  return {
+    currentVersion,
+    latestVersion,
+    updateAvailable: isUpdateAvailable(currentVersion, latestVersion),
+    npmUrl: NPM_URL,
+    repositoryUrl: REPOSITORY_URL,
+    issuesUrl: ISSUES_URL,
+    updateCommand: UPDATE_COMMAND,
+  };
 }
 
 function shouldCheckForUpdate(ctx) {
@@ -164,23 +172,7 @@ function parseVersionParts(version) {
 }
 
 function buildShortUpdateNotice(info) {
-  return `${PRODUCT_NAME} ${info.latestVersion} is available (you have ${info.currentVersion}). Update: ${info.updateCommand}. Details: /or-about`;
-}
-
-function formatOrchestratorAbout(info) {
-  return [
-    PRODUCT_NAME,
-    `Installed version: ${info.currentVersion}`,
-    `Latest npm version: ${info.latestVersion ?? "unavailable"}`,
-    `Update available: ${info.updateAvailable ? "yes" : "no"}`,
-    info.error ? `Update check: ${info.error}` : `Update check: ${info.checkedAt}`,
-    `Update command: ${info.updateCommand}`,
-    `npm: ${info.npmUrl}`,
-    `Repository: ${info.repositoryUrl}`,
-    `Releases: ${info.releasesUrl}`,
-    `Issues: ${info.issuesUrl}`,
-    `Disable startup update notices with ${info.disableEnv}=1.`,
-  ].join("\n");
+  return `${PRODUCT_NAME} ${info.latestVersion} is available (you have ${info.currentVersion}). Update: ${info.updateCommand}. Details: /or-dashboard`;
 }
 
 export const updateTestHooks = {
