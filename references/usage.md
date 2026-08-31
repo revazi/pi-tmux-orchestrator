@@ -1,5 +1,15 @@
 # Usage reference
 
+This is the complete operator reference. If you are installing the package or
+starting your first run, begin with the README's
+[quick start](../README.md#quick-start). Existing users upgrading to `0.9.0`
+should read the [command migration](../README.md#upgrading-to-090) first.
+
+Use this reference when you need profiles, exact project mappings, model and
+budget precedence, CLI flags, retained state, recovery, or controller details.
+Wire-protocol and ACL details live separately in
+[coordination protocol v1](protocol-v1.md).
+
 ## Commands
 
 The Pi extension intentionally registers only `/or-dashboard`, `/or-models`,

@@ -26,6 +26,39 @@ prompt, message, provider response, diff, or log bodies.
 Authenticated parent-observer report bodies are ephemeral in broker memory and
 may become durable only in Pi session history.
 
+## Configuration boundary
+
+Execution profiles and exact per-project mappings are control-plane policy, not
+a new transport or wire-protocol version. The CLI resolves the strict
+user-global configuration before starting tmux or the broker. The resulting
+workflow still uses protocol version 1, the same role ACLs, the same one-writer
+implementer authority, and mandatory reviewer routing.
+
+Profiles contribute only effective per-role Pi thinking levels. Project mappings
+may contribute model defaults/role overrides, `single|phased` flow, configured
+built-in read-only specialists, and the workspace-capsule default. No mapping can
+grant project trust, add a writer, remove review, force a specialist, change
+worker tools/authority, or supply prompt or skill bodies. Explicit run options
+remain outside the wire protocol and take precedence before the run is created.
+
+Manifest v5 retains bounded provenance so status and Supervisor reads can
+explain the resolved policy without copying the configuration body:
+
+- `execution_profile`: selected name, `packaged|custom` kind, and
+  `per-run|project|user-global|packaged-default` source;
+- `orchestration_config`: canonical external configuration path and schema
+  version;
+- `project_config`: whether an exact canonical directory matched, selected
+  profile/flow/specialist/workspace defaults, booleans indicating model
+  defaults, and role names with overrides.
+
+The manifest does not retain the custom-profile map, unmatched project entries,
+credentials, endpoints, prompts, skills, or configuration file body. Older
+manifest versions keep their compatibility behavior and report these newer
+provenance fields as unavailable. Profile/project configuration therefore
+changes deterministic startup resolution and bounded manifest metadata, but not
+frame shape, authentication, report ACLs, or delivery/recovery semantics.
+
 ## Worker lifecycle
 
 Workers authenticate with `hello`, then report one of:
