@@ -266,6 +266,8 @@ export function parentProgressContent(session, state, round, roles, update) {
     sections.push(`${update.role} submitted its structured report for round ${update.reportRound}.`);
   } else if (update.kind === "workflow") {
     sections.push(`The workflow moved to ${state} for round ${round}.`);
+  } else if (update.kind === "existing_actionable") {
+    sections.push(`This existing orchestration is already ${state}. Its prior outcome was not replayed as a new task for this Pi.`);
   }
   if (roleLines.length) sections.push(`Worker states:\n${roleLines.join("\n")}`);
   const content = sections.join("\n\n");
@@ -313,8 +315,9 @@ function consumeFrames(state, chunk, onValue) {
   invalidUnless(state.buffer.length <= MAX_BROKER_FRAME_BYTES + 4, "observer_buffer_too_large");
 }
 
-export async function attachParentObserver(pi, envelope, observer, onStop) {
+export async function attachParentObserver(pi, envelope, observer, onStop, options = {}) {
   const identity = await readObserverIdentity(envelope);
+  const triggerInitialActionable = options.triggerInitialActionable !== false;
   if (observer.closed) {
     onStop();
     throw new Error("observer_closed");
@@ -408,7 +411,7 @@ export async function attachParentObserver(pi, envelope, observer, onStop) {
     }
   }
 
-  function acceptWorkflow(state, valueRound) {
+  function acceptWorkflow(state, valueRound, allowActionableTurn = true) {
     const changed = workflowState !== state || round !== valueRound;
     workflowState = state;
     round = valueRound;
@@ -418,10 +421,12 @@ export async function attachParentObserver(pi, envelope, observer, onStop) {
     }
     if (state === "needs_attention" && !attentionNotified) {
       attentionNotified = true;
-      notifyParent(state);
+      if (allowActionableTurn) notifyParent(state);
+      else notifyProgress({ kind: "existing_actionable" });
     }
     if (state === "ready" || state === "uncertain") {
-      notifyParent(state);
+      if (allowActionableTurn) notifyParent(state);
+      else notifyProgress({ kind: "existing_actionable" });
       stop();
     }
   }
@@ -450,7 +455,11 @@ export async function attachParentObserver(pi, envelope, observer, onStop) {
         notifyProgress({ kind: "attached" });
       }
     }
-    acceptWorkflow(replayLost ? "uncertain" : value.state, value.round);
+    acceptWorkflow(
+      replayLost ? "uncertain" : value.state,
+      value.round,
+      !firstSnapshot || triggerInitialActionable,
+    );
   }
 
   function acceptLifecycle(value) {

@@ -129,8 +129,9 @@ workflow state/round, profile, linked-role count, calls, operational tokens,
 complete provider-reported cost, and maximum available role context pressure.
 Missing provider values render as unavailable.
 
-Arrows or `j`/`k` select; Enter closes the overlay and reuses the watch/attach
-path; `x` closes it and requests the existing explicit stop confirmation; `d`
+Arrows or `j`/`k` select; Enter closes the overlay and attaches while watching
+future transitions without replaying an existing actionable outcome as a new
+parent task; `x` closes it and requests the existing explicit stop confirmation; `d`
 runs/toggles doctor; `?` toggles concise help; `q`/Escape closes. Help and
 doctor panels replace one another so the overlay can reduce session rows and,
 on short terminals, doctor detail lines without exceeding Pi's row budget. The

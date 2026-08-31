@@ -263,7 +263,10 @@ config, model, tmux, and budget checks.
 Navigate with arrows or `j`/`k`, press Enter to watch and attach to the selected
 orchestration, use `x` to confirm stopping it, `r` to refresh the session list,
 `d` to show or hide the on-demand doctor result, `?` for concise help, and
-`q`/Escape to close. Attach requires the invoking Pi to be inside tmux. The
+`q`/Escape to close. Attach watches future transitions but does not replay an
+existing initial `ready`, `uncertain`, or `needs_attention` outcome as a new task
+for the invoking Pi. Prefix then `L` returns to the same Pi and its original
+project context. Attach requires the invoking Pi to be inside tmux. The
 dashboard does not poll and reads only metadata-only CLI/broker summaries. Pi's
 current public overlay API does not expose row-click callbacks, so true mouse-row
 activation is deferred rather than emulated with unsafe terminal URL handlers.
@@ -701,12 +704,14 @@ confirmation. The Pi session that invokes `start` is the parent supervisor; a
 run creates only the detached worker grid and does not start another parent Pi,
 parent window, or controller. New runs are watched automatically. `watch`
 subscribes that invoking Pi to lifecycle/final updates without changing the
-terminal. `attach` switches its existing tmux client into the worker grid after
-ensuring observation; interactive users can select the same action with Enter
-in `/or-dashboard`. Use normal tmux
-pane keys to select a subagent and type directly into its native Pi editor.
-Press the tmux prefix followed by `L` to detach from the grid and return to the
-same invoking Pi; the orchestration keeps running and can be reattached.
+terminal. `attach` switches its existing tmux client into the worker grid and
+watches future transitions; interactive users can select the same action with
+Enter in `/or-dashboard`. It does not replay an existing initial actionable
+outcome as a new parent task. Use normal tmux pane keys to select a subagent and
+type directly into its native Pi editor. Press the tmux prefix followed by `L`
+to return to the same invoking Pi and original project context; the orchestration
+keeps running and can be reattached. Use explicit `watch` when this Pi should
+assess an existing actionable outcome.
 
 Native Pi TUI workers are the interactive default, preserving Pi's highlighting,
 tool rendering, and input field in every subagent pane. Plain RPC panes remain

@@ -175,8 +175,12 @@ updates in its own Pi session and remains responsible for interpreting results
 and choosing operator follow-up. Switching the tmux client into native worker panes
 does not close the parent observer; the parent Pi keeps running in its original
 pane and receives updates for display when the user returns. Client switching
-is presentation-only and does not change detached operation or broker workflow
-state.
+is presentation-only and does not change detached operation, broker workflow
+state, or the invoking Pi's project context. Dashboard/model-tool attach treats
+an initial pre-existing `ready`, `uncertain`, or `needs_attention` snapshot as
+bounded non-triggering progress: it does not replay historical reports as a new
+parent task. A later actionable transition still triggers normal supervision.
+Explicit `watch` retains existing-outcome supervision semantics.
 
 ## Structured reports
 

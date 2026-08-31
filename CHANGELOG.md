@@ -44,6 +44,10 @@ All notable changes to this project are documented here.
 - Changed TUI and RPC workers to disable automatic skill discovery and use one lean custom role prompt while preserving governing `AGENTS.md`/`CLAUDE.md` discovery, role authority, tool guidance, and final reporting
 - Preserved the pre-profile xhigh/high packaged thinking behavior as the `thorough` compatibility default until fixed-benchmark provider usage and quality evidence supports a different default
 
+### Fixed
+
+- Prevented dashboard/model-tool attach from replaying an existing initial ready, uncertain, or needs-attention outcome as a new task in the invoking Pi after tmux prefix then `L`; future transitions remain supervised, explicit watch retains existing-outcome supervision, and returning does not change the Pi's project context
+
 ## 0.8.1 - 2026-08-20
 
 ### Added
