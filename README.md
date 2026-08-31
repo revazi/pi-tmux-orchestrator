@@ -9,6 +9,14 @@ A [Pi](https://github.com/earendil-works/pi) extension, skill, and
 dependency-free Python CLI for coordinating coding agents in monitorable tmux
 grids.
 
+**Choose the shortest path for what you need:**
+
+- New user: [install](#installation), then follow the [quick start](#quick-start).
+- Upgrading: read the [0.9.0 command migration](#upgrading-to-090).
+- Configuring repeatable behavior: use [profiles and exact project defaults](#optional-configuration).
+- Power user: open the [complete usage reference](references/usage.md) or
+  [coordination protocol](references/protocol-v1.md).
+
 ## Demo
 
 ![Pi Tmux Orchestrator native worker grid and broker dashboard](https://raw.githubusercontent.com/revazi/pi-tmux-orchestrator/main/assets/pi-tmux-orchestrator-demo.png)
@@ -152,6 +160,43 @@ pi remove npm:@revazi/pi-tmux-orchestrator
 pi install npm:pi-tmux-orchestrator
 ```
 
+## Quick start
+
+No configuration file is required. Start Pi inside tmux from the project you
+want the agents to inspect:
+
+```bash
+tmux new -s coding
+cd /absolute/path/to/project
+pi
+```
+
+Then:
+
+1. Run `/or-start Describe the change you want`.
+2. Review Pi's project, roles, models, profile, and safety confirmation.
+3. Confirm to start one implementer and the mandatory independent reviewer.
+4. Run `/or-dashboard` to inspect progress. Press `?` for its keys.
+5. Return from attached worker panes with tmux prefix, then `L`.
+
+The no-configuration behavior uses the compatibility `thorough` thinking
+profile and `single` implementation flow. Models come from the packaged policy
+unless you configured worker models separately. Optional specialists are not
+writers.
+
+| Common task | What to use |
+|---|---|
+| Start normal reviewed work | `/or-start [task]` |
+| See runs or attach to workers | `/or-dashboard` |
+| Check current-project setup | `/or-dashboard`, then `d` |
+| Find an exact model ID | `/or-models [query]` |
+| Send private guidance to one role | `/or-send [session]` |
+| Stop a run with confirmation | `/or-stop [session]` |
+
+That is enough for regular use. Profiles and exact per-project defaults are
+optional; configure them only when you want repeatable differences between
+projects.
+
 ## Upgrading to 0.9.0
 
 **Version 0.9.0 has a breaking Pi slash-command migration.** The duplicate
@@ -182,7 +227,7 @@ manifest v5, the mandatory reviewer and one-writer policy are unchanged, and
 [0.9.0 release notes](https://github.com/revazi/pi-tmux-orchestrator/blob/v0.9.0/releases/v0.9.0.md) for the complete migration, new
 configuration features, and rollback guidance.
 
-## Start from Pi
+## Daily use from Pi
 
 The package exposes a compact, short-only Pi command surface:
 
@@ -225,13 +270,38 @@ does not make another network request. Set
 `PI_TMUX_ORCHESTRATOR_DISABLE_UPDATE_NOTICE=1` to disable startup notices.
 Update checks are skipped in orchestration worker and controller sessions.
 
-### Profiles and per-project orchestration configuration
+## Optional configuration
 
-Version 0.9.0 adds deterministic execution profiles and exact per-project
-defaults. A profile controls only each built-in role's Pi `thinking` level; it
-never changes models, tools, role authority, mandatory review, workflow routing,
-or budget enforcement. Select a packaged or configured profile for one run
-without changing the file:
+Keep orchestration policy in the user-global
+`~/.pi/agent/tmux-orchestrator.json`, never in a target repository. Pi's own
+provider authentication and `models.json` remain authoritative; the
+orchestrator never reads or copies credentials.
+
+### 1. Choose a profile
+
+Profiles set only the deterministic Pi `thinking` level for each built-in role:
+
+| Profile | Implementer | Reviewer | Probe | Playwright | Django |
+|---|---|---|---|---|---|
+| `economy` | `medium` | `medium` | `low` | `medium` | `medium` |
+| `balanced` | `high` | `high` | `medium` | `medium` | `medium` |
+| `thorough` | `xhigh` | `high` | `high` | `high` | `high` |
+
+`thorough` is the compatibility default. Profile names are not quality,
+provider-cost, billing, or recommended-use claims. A profile never changes
+models, tools, role authority, mandatory review, workflow routing, result caps,
+or budget behavior.
+
+To make `balanced` the default for every unmatched project:
+
+```json
+{
+  "version": 3,
+  "defaultProfile": "balanced"
+}
+```
+
+For one CLI run only, without changing the file:
 
 ```bash
 pi-tmux-agents start \
@@ -241,46 +311,22 @@ pi-tmux-agents start \
   --dry-run
 ```
 
-Pi's own provider authentication and `models.json` remain authoritative. The
-orchestrator never reads or copies provider credentials. Configure a global
-profile, custom profiles, worker model defaults, and exact project mappings
-outside project repositories in `~/.pi/agent/tmux-orchestrator.json` (or under
-`PI_CODING_AGENT_DIR`):
+The `tmux_orchestrator` model tool exposes the same `profile` override. A normal
+`/or-start` uses the exact project mapping, then `defaultProfile`, then
+`thorough`.
+
+### 2. Give one project repeatable defaults
+
+Add an exact canonical directory under `projects`:
 
 ```json
 {
   "version": 3,
-  "defaultProfile": "balanced",
-  "profiles": {
-    "review-heavy-economy": {
-      "implementer": "medium",
-      "reviewer": "high",
-      "probe": "low",
-      "playwright": "medium",
-      "django": "medium"
-    }
-  },
-  "defaults": {
-    "provider": "anthropic",
-    "model": "claude-sonnet-4-6"
-  },
-  "roles": {
-    "reviewer": {
-      "provider": "google",
-      "model": "gemini-3.1-pro-preview"
-    }
-  },
+  "defaultProfile": "thorough",
   "projects": [
     {
       "directory": "/absolute/canonical/path/to/project",
-      "profile": "review-heavy-economy",
-      "defaults": {
-        "provider": "anthropic",
-        "model": "claude-sonnet-4-6"
-      },
-      "roles": {
-        "reviewer": { "thinking": "xhigh" }
-      },
+      "profile": "balanced",
       "implementationFlow": "phased",
       "specialists": ["probe"],
       "workspaceCapsule": false
@@ -289,66 +335,78 @@ outside project repositories in `~/.pi/agent/tmux-orchestrator.json` (or under
 }
 ```
 
-In this example, every unmatched project uses `balanced`; the exact mapped
-project uses the custom `review-heavy-economy` profile, a different reviewer
-thinking level, phased implementation, and the probe specialist. Replace the
-example provider/model IDs with exact IDs from `/or-models`. Use `{}` or omit
-`defaults`/`roles` when a mapping needs no model override.
+This project uses `balanced`, starts the first round with the bounded
+inspect/plan phase, enables deterministic probe evaluation, and keeps the
+experimental workspace capsule off. Other projects still use `thorough` and
+`single`. Explicit run options override the matching project entry.
 
-The file is read for every new start. Version-1 and version-2 model files remain
-accepted and are normalized without changing their prior behavior. Version 2
-adds a default profile and up to 16 strict custom profiles. Version 3 adds up to
-64 exact per-project mappings. A custom profile name matches
-`[a-z][a-z0-9-]{0,31}`, cannot replace a packaged name, and must map all five
-known roles to supported thinking levels. Profiles never select provider/model,
-change tools or authority, create roles, disable review, or control routing.
-Credential and endpoint fields are rejected, and a configuration path inside the
-target project fails closed.
+Matching is exact. There are no globs, prefixes, implicit parent matches,
+repository-name matches, symlink components, or project-local policy files. A
+mapping cannot bypass trust, add a writer, remove the reviewer, force a
+specialist, or provide prompts/skills.
 
-Each `projects` entry requires an existing canonical absolute `directory`; exact
-matching is used with no glob, prefix, or repository-name fallback. Duplicate,
-relative, missing, non-directory, or symlinked mappings fail closed before tmux
-or provider activity. A mapping may select a top-level packaged/custom profile,
-project model defaults and role overrides, `single`/`phased` flow, enabled
-built-in read-only specialists, and the workspace-capsule default. It cannot
-configure trust bypass, force a specialist, load prompts/skills, add a writer,
-or disable the mandatory reviewer. The matched directory and config path appear
-in doctor, start confirmation, status, manifest-v5 metadata, and Supervisor
-reads. Version-4 and older retained manifests report project mapping metadata as
-unavailable.
+### 3. Define a custom profile
 
-Packaged profiles are immutable:
+A custom profile must map all five built-in roles exactly once:
 
-| Profile | Implementer | Reviewer | Probe | Playwright | Django |
-|---|---|---|---|---|---|
-| `economy` | `medium` | `medium` | `low` | `medium` | `medium` |
-| `balanced` | `high` | `high` | `medium` | `medium` | `medium` |
-| `thorough` | `xhigh` | `high` | `high` | `high` | `high` |
+```json
+{
+  "version": 3,
+  "profiles": {
+    "review-heavy": {
+      "implementer": "medium",
+      "reviewer": "high",
+      "probe": "low",
+      "playwright": "medium",
+      "django": "medium"
+    }
+  },
+  "projects": [
+    {
+      "directory": "/absolute/canonical/path/to/project",
+      "profile": "review-heavy"
+    }
+  ]
+}
+```
 
-`thorough` is the compatibility default because it exactly preserves the
-pre-profile packaged thinking settings. This is not a quality or cost
-recommendation. The checked profile baseline defines simple, medium, and
-multi-round cases plus required provider-call/token/cost and acceptance-test/
-review metrics, but comparative provider usage and quality are currently marked
-unavailable. It therefore makes no savings, equivalence, recommended-default,
-or billing claim. Validate that policy record with
-`node scripts/execution-profile-baseline.mjs --check`.
+Names match `[a-z][a-z0-9-]{0,31}` and cannot replace packaged names. Version 3
+allows at most 16 custom profiles and 64 exact project mappings. Legacy version-1
+and version-2 files remain accepted.
 
-Select a profile with `--profile NAME` or
-the model tool's `profile`. The effective name, kind, source, and per-role
-thinking levels appear in dry-run, confirmation, private manifest v4+ metadata,
-status, and Supervisor reads. Older manifests report profile metadata as
-unavailable.
+### 4. Override models only when needed
 
-`defaults` applies to every role and `roles` overrides individual roles. Set
-`PI_TMUX_ORCHESTRATOR_CONFIG` to an absolute path to keep the file elsewhere.
-Model precedence is: explicit per-role/all-role CLI or model-tool override,
-exact-project role override, exact-project defaults, user-global role override,
-user-global defaults, selected custom/packaged profile, then the compatibility
-fallback. Profile selection precedence is explicit per-run request, exact
-project mapping, user-global `defaultProfile`, then the packaged compatibility
-default. Explicit flow, specialist enable/disable, and workspace-capsule flags
-similarly override project defaults.
+Global `defaults`, global `roles`, project `defaults`, and project `roles` may
+set exact provider/model IDs returned by `/or-models`. For example, inside one
+project entry:
+
+```json
+{
+  "directory": "/absolute/canonical/path/to/project",
+  "defaults": {
+    "provider": "your-provider-id",
+    "model": "your-model-id"
+  },
+  "roles": {
+    "reviewer": {
+      "provider": "another-provider-id",
+      "model": "another-model-id",
+      "thinking": "xhigh"
+    }
+  }
+}
+```
+
+`defaults` applies to enabled roles and `roles` narrows an override. Credential
+and endpoint fields are rejected. Set `PI_TMUX_ORCHESTRATOR_CONFIG` to another
+absolute external path if needed. The effective configuration is shown before
+start and in dashboard doctor.
+
+Precedence, from strongest to fallback, is explicit run override → exact project
+role/default → user-global role/default → selected profile → packaged model
+fallback. Profile selection is explicit run → exact project → user-global
+default → `thorough`. See the [usage reference](references/usage.md#profiles-and-exact-project-policy)
+for the complete schema, validation, model-tool fields, and retained metadata.
 
 ### Provider-usage budget configuration
 
