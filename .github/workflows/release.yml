@@ -57,6 +57,10 @@ jobs:
           test "$(tr -d '\n' < VERSION)" = "$package_version"
           test "$(python -c 'from pi_tmux_orchestrator.constants import VERSION; print(VERSION)')" = "$package_version"
           grep -F "## $package_version - " CHANGELOG.md
+          release_notes="releases/v$package_version.md"
+          test -f "$release_notes"
+          grep -F "## Breaking change" "$release_notes"
+          grep -F "## Upgrade safely" "$release_notes"
           test -z "$(git status --porcelain)"
           test "$(npm --version)" = "11.6.2"
 
@@ -122,10 +126,12 @@ jobs:
           if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "GitHub release $GITHUB_REF_NAME already exists; continuing."
           else
+            release_notes="releases/$GITHUB_REF_NAME.md"
+            test -f "$release_notes"
             gh release create "$GITHUB_REF_NAME" \
               --repo "$GITHUB_REPOSITORY" \
               --verify-tag \
               --title "Pi Tmux Orchestrator $GITHUB_REF_NAME" \
-              --generate-notes \
+              --notes-file "$release_notes" \
               --latest
           fi

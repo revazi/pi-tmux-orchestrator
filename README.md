@@ -37,6 +37,8 @@ workflow, role, model, usage, context, and recent metadata state.
   crash-`uncertain` semantics
 - User-configurable provider/model/thinking policy for every role, including Pi
   custom providers, with exact natural-language overrides through the model tool
+- Immutable packaged and strict custom thinking profiles, plus exact canonical
+  per-project defaults for profiles, models, flow, specialists, and workspace capsules
 - Actual provider token/cost accounting when Pi exposes it, plus context pressure
   and strict user-global/per-run budget policy
 - A versioned JSON CLI and tmux-independent Supervisor API v2
@@ -150,6 +152,36 @@ pi remove npm:@revazi/pi-tmux-orchestrator
 pi install npm:pi-tmux-orchestrator
 ```
 
+## Upgrading to 0.9.0
+
+**Version 0.9.0 has a breaking Pi slash-command migration.** The duplicate
+`/orchestrator-*` names and separate read-only helper commands are removed. The
+extension now exposes exactly five short commands:
+
+| Before 0.9.0 | Use in 0.9.0 |
+|---|---|
+| `/orchestrator-dashboard` | `/or-dashboard` |
+| `/orchestrator-models` | `/or-models` |
+| `/orchestrator-start` | `/or-start` |
+| `/orchestrator-send` | `/or-send` |
+| `/orchestrator-stop` | `/or-stop` |
+| list, status, help, about, doctor, watch, attach helper commands | `/or-dashboard`, then use its keyboard actions |
+| supervisor and restart helper commands | `pi-tmux-agents` or the `tmux_orchestrator` model tool |
+
+Before updating, finish or stop active orchestrations so one run is not managed
+by two installed package versions. Then update and restart Pi:
+
+```bash
+pi update npm:pi-tmux-orchestrator
+```
+
+Open `/or-dashboard`; press `?` for help and `d` for the explicit current-project
+doctor. Existing retained manifest v1-v4 runs remain readable, new runs use
+manifest v5, the mandatory reviewer and one-writer policy are unchanged, and
+`thorough` remains the compatibility profile. See the reviewed
+[0.9.0 release notes](https://github.com/revazi/pi-tmux-orchestrator/blob/v0.9.0/releases/v0.9.0.md) for the complete migration, new
+configuration features, and rollback guidance.
+
 ## Start from Pi
 
 The package exposes a compact, short-only Pi command surface:
@@ -193,12 +225,27 @@ does not make another network request. Set
 `PI_TMUX_ORCHESTRATOR_DISABLE_UPDATE_NOTICE=1` to disable startup notices.
 Update checks are skipped in orchestration worker and controller sessions.
 
-### Worker model configuration
+### Profiles and per-project orchestration configuration
+
+Version 0.9.0 adds deterministic execution profiles and exact per-project
+defaults. A profile controls only each built-in role's Pi `thinking` level; it
+never changes models, tools, role authority, mandatory review, workflow routing,
+or budget enforcement. Select a packaged or configured profile for one run
+without changing the file:
+
+```bash
+pi-tmux-agents start \
+  --project /absolute/path/to/project \
+  --task "Describe the requested change" \
+  --profile balanced \
+  --dry-run
+```
 
 Pi's own provider authentication and `models.json` remain authoritative. The
-orchestrator never reads or copies provider credentials. Configure global
-worker defaults outside project repositories in
-`~/.pi/agent/tmux-orchestrator.json` (or under `PI_CODING_AGENT_DIR`):
+orchestrator never reads or copies provider credentials. Configure a global
+profile, custom profiles, worker model defaults, and exact project mappings
+outside project repositories in `~/.pi/agent/tmux-orchestrator.json` (or under
+`PI_CODING_AGENT_DIR`):
 
 ```json
 {
@@ -241,6 +288,12 @@ worker defaults outside project repositories in
   ]
 }
 ```
+
+In this example, every unmatched project uses `balanced`; the exact mapped
+project uses the custom `review-heavy-economy` profile, a different reviewer
+thinking level, phased implementation, and the probe specialist. Replace the
+example provider/model IDs with exact IDs from `/or-models`. Use `{}` or omit
+`defaults`/`roles` when a mapping needs no model override.
 
 The file is read for every new start. Version-1 and version-2 model files remain
 accepted and are normalized without changing their prior behavior. Version 2
