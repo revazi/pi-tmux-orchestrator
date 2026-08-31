@@ -824,6 +824,44 @@ class MetadataOutputTests(PrivateStateFixture):
         self.assertIn("bytes", rendered)
 
 
+class ModelAvailabilityTests(unittest.TestCase):
+    def test_catalog_is_queried_once_per_provider_within_an_operation(self) -> None:
+        results = {
+            "provider-a": "Provider Model\nprovider-a model-1\nprovider-a model-2\n",
+            "provider-b": "Provider Model\nprovider-b model-3\n",
+        }
+
+        def listed(
+            command: list[str], **_kwargs: object
+        ) -> subprocess.CompletedProcess:
+            provider = command[-1]
+            return subprocess.CompletedProcess(command, 0, results[provider], "")
+
+        catalogs = {}
+        with (
+            mock.patch.object(ORCHESTRATOR, "command_path", return_value="/bin/pi"),
+            mock.patch.object(ORCHESTRATOR, "run", side_effect=listed) as run,
+        ):
+            self.assertEqual(
+                ORCHESTRATOR.model_available("provider-a", "model-1", catalogs),
+                (True, "available"),
+            )
+            self.assertEqual(
+                ORCHESTRATOR.model_available("provider-a", "missing", catalogs),
+                (False, "provider-a/missing is not listed as available"),
+            )
+            self.assertEqual(
+                ORCHESTRATOR.model_available("provider-b", "model-3", catalogs),
+                (True, "available"),
+            )
+
+        self.assertEqual(run.call_count, 2)
+        self.assertEqual(
+            [call.args[0][-1] for call in run.call_args_list],
+            ["provider-a", "provider-b"],
+        )
+
+
 class StartupRecoveryTests(PrivateStateFixture):
     def test_failed_start_kills_partial_session_and_marks_run_failed(self) -> None:
         session = "pi-startup-failure"
