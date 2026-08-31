@@ -42,14 +42,16 @@ pi-tmux-agents start \
 ```
 
 The strict user-global file `~/.pi/agent/tmux-orchestrator.json` supports global
-profiles and exact per-project orchestration defaults:
+profiles and exact per-project orchestration defaults. Obtain every directory
+with `pwd -P`; all mapped directories must already exist when the file is read.
+A complete multi-project setup can look like this:
 
 ```json
 {
   "version": 3,
   "defaultProfile": "balanced",
   "profiles": {
-    "review-heavy-economy": {
+    "review-heavy": {
       "implementer": "medium",
       "reviewer": "high",
       "probe": "low",
@@ -57,35 +59,48 @@ profiles and exact per-project orchestration defaults:
       "django": "medium"
     }
   },
-  "defaults": {
-    "provider": "anthropic",
-    "model": "claude-sonnet-4-5"
-  },
-  "roles": {
-    "reviewer": {
-      "provider": "google",
-      "model": "gemini-3.1-pro-preview"
-    }
-  },
   "projects": [
     {
-      "directory": "/absolute/canonical/path/to/project",
-      "profile": "review-heavy-economy",
-      "defaults": {},
-      "roles": { "reviewer": { "thinking": "xhigh" } },
+      "directory": "/Users/alice/Work/storefront",
+      "profile": "balanced",
       "implementationFlow": "phased",
-      "specialists": ["probe"],
+      "specialists": ["playwright"],
+      "workspaceCapsule": false
+    },
+    {
+      "directory": "/Users/alice/Work/payments-api",
+      "profile": "review-heavy",
+      "roles": {
+        "reviewer": { "thinking": "xhigh" }
+      },
+      "implementationFlow": "phased",
+      "specialists": ["probe", "django"],
+      "workspaceCapsule": false
+    },
+    {
+      "directory": "/Users/alice/Work/docs-site",
+      "profile": "economy",
+      "implementationFlow": "single",
+      "specialists": [],
       "workspaceCapsule": false
     }
   ]
 }
 ```
 
-This example selects `balanced` for unmatched projects, defines one complete
-custom profile, and gives one exact project its own profile, reviewer thinking,
-phased flow, probe activation, and workspace-capsule default. Project
-`defaults`/`roles` may also choose exact provider/model IDs from `/or-models`;
-use empty objects or omit them when no model override is needed.
+| Match | Resolved project policy |
+|---|---|
+| exact `storefront` directory | packaged `balanced`; phased flow; Playwright configured |
+| exact `payments-api` directory | custom `review-heavy`; reviewer `xhigh`; phased flow; probe and Django configured |
+| exact `docs-site` directory | packaged `economy`; single flow; specialists explicitly disabled |
+| no exact match | user-global `balanced`; packaged flow/specialist/workspace defaults |
+
+Configured specialists are still selected or skipped by the deterministic
+activation policy; listing one does not force it. Explicit run options override
+the exact project entry. Project `defaults` and `roles` may additionally select
+exact provider/model IDs from `/or-models`; omit them when no project-specific
+model override is needed. The README has a separate
+[model-override recipe](../README.md#4-override-models-only-when-needed).
 
 The file is relative to `PI_CODING_AGENT_DIR`; an absolute
 `PI_TMUX_ORCHESTRATOR_CONFIG` overrides its location. Legacy versions 1 and 2

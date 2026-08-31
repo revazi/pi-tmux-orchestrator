@@ -315,9 +315,18 @@ The `tmux_orchestrator` model tool exposes the same `profile` override. A normal
 `/or-start` uses the exact project mapping, then `defaultProfile`, then
 `thorough`.
 
-### 2. Give one project repeatable defaults
+### 2. Configure several projects
 
-Add an exact canonical directory under `projects`:
+First obtain each existing project's canonical absolute path:
+
+```bash
+(cd ~/Work/storefront && pwd -P)
+(cd ~/Work/payments-api && pwd -P)
+(cd ~/Work/docs-site && pwd -P)
+```
+
+Put those paths in the single user-global configuration file—not in any of the
+projects:
 
 ```json
 {
@@ -325,25 +334,49 @@ Add an exact canonical directory under `projects`:
   "defaultProfile": "thorough",
   "projects": [
     {
-      "directory": "/absolute/canonical/path/to/project",
+      "directory": "/Users/alice/Work/storefront",
       "profile": "balanced",
       "implementationFlow": "phased",
-      "specialists": ["probe"],
+      "specialists": ["playwright"],
+      "workspaceCapsule": false
+    },
+    {
+      "directory": "/Users/alice/Work/payments-api",
+      "profile": "thorough",
+      "roles": {
+        "reviewer": { "thinking": "xhigh" }
+      },
+      "implementationFlow": "phased",
+      "specialists": ["probe", "django"],
+      "workspaceCapsule": false
+    },
+    {
+      "directory": "/Users/alice/Work/docs-site",
+      "profile": "economy",
+      "implementationFlow": "single",
+      "specialists": [],
       "workspaceCapsule": false
     }
   ]
 }
 ```
 
-This project uses `balanced`, starts the first round with the bounded
-inspect/plan phase, enables deterministic probe evaluation, and keeps the
-experimental workspace capsule off. Other projects still use `thorough` and
-`single`. Explicit run options override the matching project entry.
+| Exact project | Effective defaults |
+|---|---|
+| `storefront` | `balanced`, phased plan/implementation, Playwright evaluation |
+| `payments-api` | `thorough`, reviewer `xhigh`, phased flow, probe and Django evaluation |
+| `docs-site` | `economy`, single flow, specialists explicitly disabled |
+| Any unmatched project | user-global `thorough`, packaged `single` flow, no specialists |
 
-Matching is exact. There are no globs, prefixes, implicit parent matches,
-repository-name matches, symlink components, or project-local policy files. A
-mapping cannot bypass trust, add a writer, remove the reviewer, force a
-specialist, or provide prompts/skills.
+Configured specialists still pass through deterministic activation gates; a
+listed specialist is not automatically forced to run. Explicit run options can
+override the matching project's profile, flow, specialists, or workspace setting
+for one run.
+
+Every listed directory must already exist and must exactly equal `pwd -P`.
+Matching has no globs, prefixes, implicit parent matches, repository-name
+matches, or symlink components. A mapping cannot bypass trust, add a writer,
+remove the reviewer, force a specialist, or provide prompts/skills.
 
 ### 3. Define a custom profile
 
