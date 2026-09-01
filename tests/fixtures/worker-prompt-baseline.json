@@ -2,7 +2,7 @@
   "schema_version": 1,
   "metric_scope": "model-free-built-worker-system-prompt",
   "caveat": "Normalized serialized characters and UTF-8 bytes are deterministic prompt-size proxies, not provider tokens, billing, cache efficiency, or production-wire acceptance.",
-  "pi_version": "0.84.1",
+  "pi_version": "0.84.4",
   "role": "reviewer",
   "before": {
     "characters": 5000,
@@ -13,16 +13,16 @@
     ]
   },
   "after": {
-    "characters": 2479,
-    "utf8_bytes": 2481,
+    "characters": 2480,
+    "utf8_bytes": 2482,
     "skill_discovery": false,
     "loaded_skills": [
       "opted"
     ]
   },
   "reduction": {
-    "characters": 2521,
-    "utf8_bytes": 2519,
+    "characters": 2520,
+    "utf8_bytes": 2518,
     "character_percent": 50.4
   }
 }

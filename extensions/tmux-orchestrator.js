@@ -843,11 +843,6 @@ export default function tmuxOrchestratorExtension(pi) {
   for (const [name, [description, handler]] of Object.entries(commands)) {
     pi.registerCommand(name, { description, handler });
   }
-  pi.registerShortcut("ctrl+shift+g", {
-    description: "Open the orchestration dashboard overlay",
-    handler: async (ctx) => commandHandlers.dashboard("", ctx),
-  });
-
   pi.on("session_start", (_event, ctx) => {
     scheduleOrchestratorUpdateNotice(ctx);
   });
