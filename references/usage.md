@@ -531,6 +531,14 @@ Sends one operator message through the authenticated broker bridge. `steer` and
 `follow-up` delivery are supported. A successful response acknowledges
 acceptance; completion is observed through lifecycle/events.
 
+If the workflow is already `ready`, an accepted implementer message
+conservatively opens exactly one new implementation round: the broker queues the
+latest run state and operator message without an unassigned provider turn,
+creates the implementation assignment, and requires normal specialist routing
+and mandatory review again. Retry of the same command ID does not open another
+round. Messages to other roles and guidance for an existing active or
+`needs_attention` assignment retain their existing steering behavior.
+
 Use `--command-id` with a 32-character lowercase hexadecimal ID for retry-safe
 deduplication. Conflicting reuse is rejected. An interrupted unprovable delivery
 is `uncertain` and requires explicit retry.

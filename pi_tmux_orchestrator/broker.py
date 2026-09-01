@@ -578,6 +578,7 @@ class Broker:
                 "Control message fields are invalid", "invalid_protocol"
             )
         resumed_round: int | None = None
+        repair_round: int | None = None
         uncertain_round: int | None = None
         restarted_client: Client | None = None
         with connect_broker_database(self.coord) as database:
@@ -640,20 +641,12 @@ class Broker:
             else:
                 status = "accepted"
                 if action == "send":
-                    current_round = self.current_round(database)
-                    await self.deliver(
+                    resumed_round, repair_round = await self._handle_operator_send(
+                        database,
                         role,
-                        "operator_message",
-                        current_round,
                         body.strip(),
-                        trigger=True,
+                        command_id,
                     )
-                    workflow_state = database.execute(
-                        "SELECT value FROM meta WHERE key='workflow_state'"
-                    ).fetchone()["value"]
-                    if workflow_state == "needs_attention":
-                        set_meta(database, "workflow_state", "active")
-                        resumed_round = current_round
                 elif action == "abort":
                     await self.send(
                         self.clients[role],
@@ -706,8 +699,62 @@ class Broker:
         self.refresh_dashboard()
         if resumed_round is not None:
             await self.broadcast_workflow("active", resumed_round)
+        if repair_round is not None:
+            await self.broadcast_workflow("active", repair_round)
+            await self.assign(
+                "implementer",
+                "implementation",
+                repair_round,
+                self._assignment("implementer", repair_round),
+            )
+            self.refresh_dashboard()
         if uncertain_round is not None:
             await self.broadcast_workflow("uncertain", uncertain_round)
+
+    async def _handle_operator_send(
+        self,
+        database: Any,
+        role: str,
+        body: str,
+        command_id: str,
+    ) -> tuple[int | None, int | None]:
+        current_round = self.current_round(database)
+        workflow_state = database.execute(
+            "SELECT value FROM meta WHERE key='workflow_state'"
+        ).fetchone()["value"]
+        if workflow_state == "ready" and role == "implementer":
+            repair_round = current_round + 1
+            await self._deliver_run_state((role,), current_round)
+            await self._flush_pending_run_state(role, current_round)
+            await self.deliver(
+                role,
+                "operator_message",
+                repair_round,
+                body,
+                trigger=False,
+            )
+            set_meta(database, "round", str(repair_round))
+            set_meta(database, "workflow_state", "active")
+            record_event(
+                database,
+                "workflow_reopened",
+                role=role,
+                round_number=repair_round,
+                delivery_id=command_id,
+                status="active",
+            )
+            return None, repair_round
+        await self.deliver(
+            role,
+            "operator_message",
+            current_round,
+            body,
+            trigger=True,
+        )
+        if workflow_state == "needs_attention":
+            set_meta(database, "workflow_state", "active")
+            return current_round, None
+        return None, None
 
     def current_round(self, database: Any) -> int:
         return int(
