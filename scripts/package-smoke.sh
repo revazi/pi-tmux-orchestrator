@@ -126,7 +126,7 @@ printf '%s\n' '{"name":"package-smoke-host","version":"1.0.0","private":true}' >
 
 PACKAGE="$TEMP/install/node_modules/pi-tmux-orchestrator"
 VERSION=$($TEMP/install/node_modules/.bin/pi-tmux-agents --version)
-test "$VERSION" = "pi-tmux-agents 0.9.0"
+test "$VERSION" = "pi-tmux-agents 0.9.1"
 test ! -e "$TEMP/install/node_modules/@earendil-works"
 test -f "$PACKAGE/LICENSE.md"
 test -z "$(find "$PACKAGE" -type d -name node_modules -print -quit)"
@@ -144,7 +144,7 @@ dependencies = tree.get("dependencies", {})
 if set(dependencies) != {"pi-tmux-orchestrator"}:
     raise SystemExit("installed root dependency surface was not exact")
 package = dependencies["pi-tmux-orchestrator"]
-if package.get("version") != "0.9.0" or package.get("dependencies"):
+if package.get("version") != "0.9.1" or package.get("dependencies"):
     raise SystemExit("installed package owns a dependency tree")
 PY
 
@@ -180,7 +180,7 @@ else:
     report = raw_report
 if not isinstance(report, dict):
     raise SystemExit("publication dry-run report shape mismatch")
-if report.get("name") != package_name or report.get("version") != "0.9.0":
+if report.get("name") != package_name or report.get("version") != "0.9.1":
     raise SystemExit("publication dry-run name/version mismatch")
 if report.get("bundled") != []:
     raise SystemExit("publication dry-run reported bundled dependencies")

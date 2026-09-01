@@ -1272,7 +1272,7 @@ class JsonMainTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(stderr, "")
         self.assert_envelope(envelope, "version", True)
-        self.assertEqual(envelope["data"]["version"], "0.9.0")
+        self.assertEqual(envelope["data"]["version"], "0.9.1")
 
         code, envelope, _, stderr = self.run_main(["--json", "--help"])
         self.assertEqual(code, 2)

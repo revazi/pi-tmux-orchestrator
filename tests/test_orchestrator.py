@@ -368,7 +368,7 @@ class UtilityTests(unittest.TestCase):
         self.assertTrue(stopped.confirm)
 
     def test_version(self) -> None:
-        self.assertEqual(ORCHESTRATOR.VERSION, "0.9.0")
+        self.assertEqual(ORCHESTRATOR.VERSION, "0.9.1")
 
     def test_default_model_contract_for_all_roles(self) -> None:
         self.assertEqual(
