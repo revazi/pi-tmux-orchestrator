@@ -20,9 +20,10 @@ coordination mechanisms.
   exposes peer credentials.
 
 The control-plane SQLite database stores tokens and metadata, including role
-generations, assignment-boundary state, and bounded assignment guardrail facts,
-but never task, parent context capsule, assignment, run-state capsule, report,
-prompt, message, provider response, diff, or log bodies.
+generations, assignment-boundary state, assignment-bound live activity phase
+and pulse sequence, and bounded assignment guardrail facts, but never task,
+parent context capsule, assignment, run-state capsule, report, prompt, message,
+provider response, diff, or log bodies.
 Authenticated parent-observer report bodies are ephemeral in broker memory and
 may become durable only in Pi session history.
 
@@ -71,6 +72,15 @@ Workers authenticate with `hello`, then report one of:
 A socket close records `disconnected`. A worker settling with an active
 assignment and no report marks the workflow `needs_attention`. Retained PIDs
 never imply liveness.
+
+While an assignment is active, the bridge sends throttled, assignment-bound
+`progress` frames for real Pi turn, assistant-stream, tool, and report-tool
+events. Frames contain only the phase enum, a request and assignment identity,
+and optional finalized provider usage. The broker updates the role's live phase
+and monotonic pulse sequence immediately and refreshes the dashboard without
+waiting for a report or workflow handoff. It clears live activity when the role
+settles, disconnects, or changes assignment. Raw messages, thinking, tool input,
+tool result, and provider bodies are never included.
 
 Every worker receives baseline context with no model trigger. Baseline may
 include one parent-authored context capsule of at most 12 KiB. The capsule is a

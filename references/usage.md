@@ -222,8 +222,10 @@ provider-call count.
 
 Creates a detached tmux grid with an implementer, reviewer, broker/status
 monitor, and optional probe, Playwright, and Django roles. The monitor is an
-in-place, event-driven dashboard with full, compact, and narrow layouts; it does
-not tail worker output or poll broker state.
+in-place, event-driven dashboard with full, compact, and narrow layouts. Worker
+turn, stream, tool, and report events refresh a bounded live phase marker and
+finalized usage directly; the monitor does not tail worker output, wait for a
+handoff, or poll broker state.
 
 Required:
 
@@ -500,8 +502,9 @@ Shows bounded pane metadata, broker workflow state, role lifecycle, actual
 provider token totals when available, and context pressure. The live broker
 pane presents the same metadata hierarchy with exact configured
 provider/model/thinking values, assignment/generation where available,
-soft-budget warnings, assignment guardrail markers, a bounded metadata-event
-rail, and attach/status/stop help. Healthy/success is green, active is cyan,
+assignment-bound live phase and pulse metadata, soft-budget warnings,
+assignment guardrail markers, a bounded metadata-event rail, and
+attach/status/stop help. Healthy/success is green, active is cyan,
 attention/budget is yellow,
 error/uncertainty is red, and secondary metadata is dim. `NO_COLOR`,
 `TERM=dumb`, and non-TTY output remain plain. Neither view prints workflow

@@ -550,6 +550,101 @@ def main() -> int:
                 f"{leaked_metadata_paths}"
             )
 
+        # Exercise the exact normalized plan shape emitted by orchestrator-worker.js.
+        plan_assignment = receive(clients["implementer"])
+        if (
+            plan_assignment.get("type") != "assignment"
+            or plan_assignment.get("kind") != "plan"
+        ):
+            raise AssertionError("phased flow did not deliver its plan assignment")
+        plan_request_id = "c" * 32
+        clients["implementer"].sendall(
+            frame(
+                {
+                    "version": 1,
+                    "type": "report",
+                    "role": "implementer",
+                    "token": (coord / "implementer.token")
+                    .read_text(encoding="utf-8")
+                    .strip(),
+                    "id": plan_request_id,
+                    "assignment_id": plan_assignment["assignment_id"],
+                    "report": json.loads(
+                        (
+                            ROOT / "tests" / "fixtures" / "phased-plan-wire.json"
+                        ).read_text(encoding="utf-8")
+                    )["wire_report"],
+                }
+            )
+        )
+        plan_handoff = [receive(clients["implementer"]) for _ in range(3)]
+        plan_response = next(
+            (
+                value
+                for value in plan_handoff
+                if value.get("type") == "response"
+                and value.get("id") == plan_request_id
+            ),
+            None,
+        )
+        implementation_assignment = next(
+            (
+                value
+                for value in plan_handoff
+                if value.get("type") == "assignment"
+                and value.get("kind") == "implementation"
+            ),
+            None,
+        )
+        if not plan_response or not plan_response.get("success"):
+            raise AssertionError("broker rejected the normalized phased plan report")
+        if implementation_assignment is None:
+            raise AssertionError("phased plan did not hand off to implementation")
+
+        progress_request_id = "f" * 32
+        clients["implementer"].sendall(
+            frame(
+                {
+                    "version": 1,
+                    "type": "progress",
+                    "role": "implementer",
+                    "token": (coord / "implementer.token")
+                    .read_text(encoding="utf-8")
+                    .strip(),
+                    "id": progress_request_id,
+                    "assignment_id": implementation_assignment["assignment_id"],
+                    "phase": "streaming",
+                    "usage": None,
+                }
+            )
+        )
+        progress_response = receive(clients["implementer"])
+        if (
+            progress_response.get("type") != "response"
+            or progress_response.get("id") != progress_request_id
+            or not progress_response.get("success")
+        ):
+            raise AssertionError("broker rejected live worker progress")
+        deadline = time.time() + 3
+        while time.time() < deadline:
+            monitor_output = subprocess.run(
+                [
+                    "tmux",
+                    "capture-pane",
+                    "-p",
+                    "-t",
+                    manifest["monitor_pane_id"],
+                ],
+                check=True,
+                text=True,
+                capture_output=True,
+            ).stdout
+            if "streaming" in monitor_output:
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError("broker dashboard did not render live worker progress")
+
         # The authenticated operator path is brokered and acknowledged for both presentations.
         send_id = "a" * 32
         sent = ORCHESTRATOR.send_command(
@@ -687,6 +782,8 @@ def main() -> int:
         print(
             "OK new runs created no handoff, readiness, mailbox, or relay payload files"
         )
+        print("OK normalized phased plan handoff reached implementation")
+        print("OK live worker progress refreshed the broker dashboard without handoff")
         print("OK broker send/abort acknowledgement and idempotent retry")
         print("OK metadata-only status and Supervisor API v2 retained reads")
         print("OK exact tmux targeting preserved prefix collision")

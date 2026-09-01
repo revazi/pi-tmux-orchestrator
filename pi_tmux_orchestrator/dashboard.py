@@ -44,6 +44,9 @@ _ACTIVE_STATES = {
     "restarting",
     "started",
     "streaming",
+    "thinking",
+    "tool",
+    "reporting",
 }
 _WARNING_STATES = {"needs_attention", "waiting", "warning"}
 _ERROR_STATES = {
@@ -271,6 +274,17 @@ def _assignment_guardrail_marker(role: dict[str, Any]) -> str:
     return ""
 
 
+def _live_state(role: dict[str, Any], *, unicode: bool) -> str:
+    state = sanitize_terminal_text(role.get("state"), fallback="unknown").lower()
+    activity = role.get("activity")
+    if state != "active" or not isinstance(activity, str) or not activity:
+        return state
+    sequence = role.get("activity_sequence")
+    index = sequence % 4 if type(sequence) is int and sequence >= 0 else 0
+    pulse = ("·", "•", "●", "•")[index] if unicode else (".", "o", "O", "o")[index]
+    return f"{activity} {pulse}"
+
+
 def _assignment(role: dict[str, Any]) -> str:
     assignment = role.get("assignment")
     if not isinstance(assignment, dict):
@@ -396,7 +410,7 @@ def _full_role_lines(
     headings = [
         ("ROLE", "role"),
         ("LINK", "link"),
-        ("STATE", "state"),
+        ("LIVE", "state"),
         ("ASSIGNMENT", "work"),
         ("MODEL", "model"),
         ("THINK", "think"),
@@ -413,7 +427,8 @@ def _full_role_lines(
     lines: list[Line] = [[header], [Span(divider_character * width, "muted")]]
     for name, config, role in _ordered_roles(manifest, snapshot):
         connection_semantic = "success" if role.get("connected") is True else "error"
-        lifecycle_semantic = state_semantic(role.get("state"))
+        live_state = _live_state(role, unicode=unicode)
+        lifecycle_semantic = state_semantic(live_state.split(" ", 1)[0])
         budget = role.get("soft_budget_exceeded") is True
         token_text = _format_role_tokens(role)
         if budget:
@@ -435,7 +450,7 @@ def _full_role_lines(
             ),
             Span(gap),
             Span(
-                _cell(role.get("state"), columns["state"], unicode=unicode),
+                _cell(live_state, columns["state"], unicode=unicode),
                 lifecycle_semantic,
             ),
             Span(gap),
@@ -508,8 +523,12 @@ def _compact_role_lines(
                 Span(_cell(name, role_width, unicode=unicode)),
                 Span(" "),
                 Span(
-                    _cell(role.get("state"), state_width, unicode=unicode),
-                    state_semantic(role.get("state")),
+                    _cell(
+                        _live_state(role, unicode=unicode),
+                        state_width,
+                        unicode=unicode,
+                    ),
+                    state_semantic(_live_state(role, unicode=unicode).split(" ", 1)[0]),
                 ),
                 Span(" "),
                 Span(
@@ -626,7 +645,7 @@ def _compact_layout(
     lines.extend(
         [
             _line(),
-            _line("ROLES  LINK/GEN · STATE · TOTAL/Δ · CTX · THINK · MODEL", "muted"),
+            _line("ROLES  LINK/GEN · LIVE · TOTAL/Δ · CTX · THINK · MODEL", "muted"),
         ]
     )
     lines.extend(_compact_role_lines(manifest, snapshot, width, unicode=unicode))
@@ -682,8 +701,8 @@ def _narrow_layout(
                 Span(name),
                 Span("  "),
                 Span(
-                    sanitize_terminal_text(role.get("state")),
-                    state_semantic(role.get("state")),
+                    _live_state(role, unicode=unicode),
+                    state_semantic(_live_state(role, unicode=unicode).split(" ", 1)[0]),
                 ),
                 Span(f"  {token_text}  {_format_context(role)}"),
             ]

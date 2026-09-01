@@ -8,6 +8,24 @@ All notable changes to this project are documented here.
 
 ### Changed
 
+## 0.9.3 - 2026-09-01
+
+### Added
+
+- Added assignment-bound live worker phases and pulse metadata so the broker dashboard refreshes on thinking, streaming, tool, and reporting events without waiting for a workflow handoff
+- Added shared JavaScript/Python wire fixtures covering phased plans and every standard actor report kind, plus a real-tmux regression for pre-handoff dashboard activity
+
+### Changed
+
+- Reused Pi's bounded in-memory model registry during startup when every resolved role model is already available, retaining the authoritative CLI model check as a fallback
+
+### Fixed
+
+- Accepted the worker bridge's normalized read-only plan envelope at the broker boundary while continuing to reject implementation or review claims during plan assignments
+- Preserved the originating request ID on broker protocol rejections so workers receive deterministic errors instead of `coordination_delivery_uncertain`
+- Normalized phase-inapplicable implementer report fields before Pi validates the final tool call, preventing schema-union retries while preserving changed paths, checks, findings, risks, and limitations
+- Cleared live worker activity safely across settlement, disconnect, and assignment transitions without retaining message, reasoning, tool, result, or provider bodies
+
 ## 0.9.2 - 2026-09-01
 
 ### Changed

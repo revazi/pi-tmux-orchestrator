@@ -29,10 +29,18 @@ const PLAN_REPORT_FIELDS = [
   "kind", "summary", "relevant_paths", "relevant_symbols", "intended_changes",
   "required_checks", "risks", "open_questions",
 ];
+const PLAN_ONLY_REPORT_FIELDS = [
+  "relevant_paths", "relevant_symbols", "intended_changes", "required_checks", "open_questions",
+];
+const PLAN_EMPTY_COMMON_FIELDS = ["changed_paths", "checks", "findings", "limitations", "verdict"];
+const STANDARD_REPORT_FIELDS = [
+  "kind", "summary", "changed_paths", "checks", "findings", "risks", "limitations", "verdict",
+];
 const PLAN_REPORT_MAX_ITEMS = 12;
 const PLAN_REPORT_MAX_ITEM_CHARS = 300;
 const PLAN_REPORT_MAX_SUMMARY_CHARS = 1000;
 const PLAN_READ_ONLY_TOOLS = new Set(["read", "bash", "grep", "find", "ls", "orchestrator_report"]);
+const PROGRESS_INTERVAL_MS = 500;
 
 function id() {
   return randomBytes(16).toString("hex");
@@ -406,8 +414,48 @@ function reportParameters(role) {
   return { type: "object", additionalProperties: false, required, properties };
 }
 
+function emptyReportClaim(value) {
+  return value == null || (Array.isArray(value) && value.length === 0);
+}
+
+function reportArgumentObject(value) {
+  if (!value) return undefined;
+  if (typeof value !== "object") return undefined;
+  if (Array.isArray(value)) return undefined;
+  return { ...value };
+}
+
+function deleteReportFields(input, fields) {
+  for (const field of fields) delete input[field];
+}
+
+function deleteEmptyReportFields(input, fields) {
+  for (const field of fields) {
+    if (emptyReportClaim(input[field])) delete input[field];
+  }
+}
+
+const REPORT_ARGUMENT_PREPARERS = {
+  implementation: (input) => deleteReportFields(input, PLAN_ONLY_REPORT_FIELDS),
+  plan: (input) => deleteEmptyReportFields(input, PLAN_EMPTY_COMMON_FIELDS),
+};
+
+function prepareReportArguments(value) {
+  const input = reportArgumentObject(value);
+  if (!input) return value;
+  const prepare = REPORT_ARGUMENT_PREPARERS[input.kind];
+  if (prepare) prepare(input);
+  return input;
+}
+
+function unsupportedReportFields(input, allowedFields) {
+  return Object.keys(input).filter((field) => !allowedFields.includes(field));
+}
+
 function normalizedPlanReport(input) {
-  if (!exactObjectKeys(input, PLAN_REPORT_FIELDS)) throw new Error("invalid_plan_report_fields");
+  if (unsupportedReportFields(input, PLAN_REPORT_FIELDS).length) {
+    throw new Error("invalid_plan_report_fields");
+  }
   return {
     kind: "plan",
     summary: text(input.summary, PLAN_REPORT_MAX_SUMMARY_CHARS),
@@ -512,10 +560,9 @@ function normalizedVerdict(value, role) {
 }
 
 function normalizedStandardReport(input, role) {
-  const allowedFields = new Set([
-    "kind", "summary", "changed_paths", "checks", "findings", "risks", "limitations", "verdict",
-  ]);
-  if (Object.keys(input).some((field) => !allowedFields.has(field))) throw new Error("invalid_report_fields");
+  if (unsupportedReportFields(input, STANDARD_REPORT_FIELDS).length) {
+    throw new Error("invalid_report_fields");
+  }
   const changedPaths = relativePaths(input.changed_paths, "changed_paths");
   if (role !== "implementer" && changedPaths.length) throw new Error("read_only_role_changed_paths");
   return {
@@ -530,8 +577,9 @@ function normalizedStandardReport(input, role) {
   };
 }
 
-function normalizeReport(input, assignmentKind, role = ROLE) {
-  if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("invalid_report");
+function normalizeReport(value, assignmentKind, role = ROLE) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("invalid_report");
+  const input = prepareReportArguments(value);
   const expectedKind = expectedReportKind(role, assignmentKind);
   if (input.kind !== expectedKind) throw new Error("invalid_report_kind");
   return input.kind === "plan"
@@ -751,6 +799,18 @@ function acceptedReportResult(report, assignment, role) {
   };
 }
 
+function progressShouldEmit(
+  phase,
+  previousPhase,
+  now,
+  previousAt,
+  force = false,
+) {
+  return force
+    || phase !== previousPhase
+    || now - previousAt >= PROGRESS_INTERVAL_MS;
+}
+
 function planToolDecision(activeAssignment, role, toolName) {
   const planActive = [
     role === "implementer",
@@ -785,6 +845,8 @@ export default function orchestratorWorker(pi) {
   const toolInputPolicies = new Map();
   let pendingLimitedResults = [];
   let normalTools = [];
+  let lastProgressAt = 0;
+  let lastProgressPhase;
 
   function applyActiveToolPolicy() {
     pi.setActiveTools(assignmentToolNames(normalTools, ROLE, activeAssignment?.kind));
@@ -861,6 +923,21 @@ export default function orchestratorWorker(pi) {
     brokerRequest(value).catch(() => {});
   }
 
+  function progress(phase, ctx, { includeUsage = false, force = false } = {}) {
+    if (!activeAssignment) return;
+    const now = Date.now();
+    if (!progressShouldEmit(
+      phase, lastProgressPhase, now, lastProgressAt, force,
+    )) return;
+    lastProgressAt = now;
+    lastProgressPhase = phase;
+    brokerRequest(message("progress", {
+      assignment_id: activeAssignment.id,
+      phase,
+      usage: includeUsage ? totalUsage(ctx) : null,
+    })).catch(() => {});
+  }
+
   function acknowledge(deliveryId, status) {
     brokerRequest(message("ack", { delivery_id: deliveryId, status })).catch(() => {});
   }
@@ -926,6 +1003,8 @@ export default function orchestratorWorker(pi) {
         kind: value.kind,
         usageBaseline,
       };
+      lastProgressAt = 0;
+      lastProgressPhase = undefined;
       applyActiveToolPolicy();
     }
     acknowledge(value.id, "accepted");
@@ -1012,6 +1091,7 @@ export default function orchestratorWorker(pi) {
       "After reporting, end the turn. Never wait, sleep, or poll for coordination work.",
     ],
     parameters: reportParameters(ROLE),
+    prepareArguments: prepareReportArguments,
     async execute(_toolCallId, input, _signal, _onUpdate, ctx) {
       if (!activeAssignment) throw new Error("no_active_orchestration_assignment");
       const report = normalizeReport(input, activeAssignment.kind);
@@ -1057,6 +1137,11 @@ export default function orchestratorWorker(pi) {
 
   function onToolCall(event, ctx) {
     recordImmediateFollowup(event);
+    progress(
+      event.toolName === "orchestrator_report" ? "reporting" : "tool",
+      ctx,
+      { includeUsage: true, force: true },
+    );
     const planDecision = planToolDecision(activeAssignment, ROLE, event.toolName);
     if (planDecision) return planDecision;
     prepareToolInput(event);
@@ -1130,7 +1215,16 @@ export default function orchestratorWorker(pi) {
   }));
   pi.on("tool_call", onToolCall);
   pi.on("tool_result", onToolResult);
-  pi.on("agent_start", (_event, ctx) => lifecycle("active", ctx));
+  pi.on("turn_start", (_event, ctx) => progress("thinking", ctx, { force: true }));
+  pi.on("message_update", (event, ctx) => {
+    if (event.message?.role === "assistant") progress("streaming", ctx);
+  });
+  pi.on("message_end", (event, ctx) => {
+    if (event.message?.role === "assistant") {
+      progress("streaming", ctx, { includeUsage: true, force: true });
+    }
+  });
+  pi.on("agent_start", (_event, ctx) => lifecycle("active", ctx, true));
   pi.on("agent_settled", (_event, ctx) => lifecycle(activeAssignment ? "waiting" : "idle", ctx, true));
   pi.on("session_shutdown", () => {
     stopping = true;
@@ -1152,6 +1246,8 @@ export const testHooks = {
   normalizeReport,
   parseGuardrailPolicy,
   planToolDecision,
+  prepareReportArguments,
+  progressShouldEmit,
   reportParameters,
   reportUsage,
   reportedAssignmentRemainsActive,

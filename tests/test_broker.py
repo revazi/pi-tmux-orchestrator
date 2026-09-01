@@ -241,27 +241,59 @@ class ProtocolTests(unittest.TestCase):
             with self.subTest(changes=changes), self.assertRaises(Exception):
                 validate_client_message({**message, **changes})
 
-    def test_plan_report_is_bounded_read_only_and_implementer_only(self) -> None:
-        value = {
-            "kind": "plan",
-            "summary": "Inspect complete; implementation can be targeted.",
-            "relevant_paths": ["src/service.py", "tests/test_service.py"],
-            "relevant_symbols": ["Service.run", "test_run_failure"],
-            "intended_changes": ["Handle the bounded failure before committing state."],
-            "required_checks": ["Run the focused service tests."],
-            "risks": ["Transaction behavior may differ across backends."],
-            "open_questions": [],
+    def test_worker_progress_is_assignment_bound_metadata_only(self) -> None:
+        message = {
+            "version": BROKER_PROTOCOL_VERSION,
+            "type": "progress",
+            "role": "implementer",
+            "token": "a" * 32,
+            "id": "b" * 32,
+            "assignment_id": "c" * 32,
+            "phase": "streaming",
+            "usage": None,
         }
+        self.assertEqual(validate_client_message(message), message)
+        for changes in (
+            {"phase": "PRIVATE_MESSAGE_BODY"},
+            {"assignment_id": "invalid"},
+            {"content": "PRIVATE_MESSAGE_BODY"},
+        ):
+            with self.subTest(changes=changes), self.assertRaises(Exception):
+                validate_client_message({**message, **changes})
+
+    def test_plan_report_is_bounded_read_only_and_implementer_only(self) -> None:
+        contract = json.loads(
+            (Path(__file__).parent / "fixtures" / "phased-plan-wire.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        value = contract["tool_input"]
         report = validate_report(value, "implementer")
+        self.assertEqual(report, contract["wire_report"])
         self.assertEqual(report["kind"], "plan")
         self.assertEqual(report["changed_paths"], [])
         self.assertEqual(report["checks"], [])
         self.assertEqual(report["findings"], [])
         self.assertIsNone(report["verdict"])
         self.assertEqual(report["relevant_symbols"], value["relevant_symbols"])
+        self.assertEqual(validate_report(report, "implementer"), report)
 
         invalid_values = (
             ({**value, "changed_paths": ["src/service.py"]}, "implementer"),
+            ({**report, "changed_paths": ["src/service.py"]}, "implementer"),
+            (
+                {**report, "checks": [{"name": "unit", "status": "passed"}]},
+                "implementer",
+            ),
+            (
+                {
+                    **report,
+                    "findings": [{"severity": "info", "summary": "A claim."}],
+                },
+                "implementer",
+            ),
+            ({**report, "limitations": ["A claimed limitation."]}, "implementer"),
+            ({**report, "verdict": "approved"}, "implementer"),
             ({**value, "verdict": "approved"}, "implementer"),
             (
                 {**value, "checks": [{"name": "unit", "status": "passed"}]},
@@ -287,6 +319,19 @@ class ProtocolTests(unittest.TestCase):
             with self.subTest(role=role, fields=sorted(invalid)):
                 with self.assertRaises(Exception):
                     validate_report(invalid, role)
+
+    def test_standard_worker_report_wire_contracts_match_the_broker(self) -> None:
+        contract = json.loads(
+            (
+                Path(__file__).parent / "fixtures" / "standard-report-wire.json"
+            ).read_text(encoding="utf-8")
+        )
+        for value in contract["cases"]:
+            with self.subTest(role=value["role"]):
+                self.assertEqual(
+                    validate_report(value["wire_report"], value["role"]),
+                    value["wire_report"],
+                )
 
     def test_report_acl_and_bounds(self) -> None:
         report = validate_report(
@@ -536,9 +581,10 @@ class BrokerStoreTests(BrokerFixture):
             report_columns = {
                 row["name"] for row in database.execute("PRAGMA table_info(reports)")
             }
-        self.assertEqual(schema_version, "7")
+        self.assertEqual(schema_version, "8")
         self.assertIn("boundary_effective", assignment_columns)
         self.assertIn("provider_calls", role_columns)
+        self.assertIn("activity_sequence", role_columns)
         self.assertIn("peak_context_tokens", report_columns)
         with broker_store.connect_broker_database(
             self.coord, readonly=True
@@ -581,7 +627,7 @@ class BrokerStoreTests(BrokerFixture):
                 database.execute(
                     "SELECT value FROM meta WHERE key='schema_version'"
                 ).fetchone()["value"],
-                "7",
+                "8",
             )
             tables = {
                 row["name"]
@@ -1114,7 +1160,7 @@ class BrokerObserverTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
                 {
                     "id": "6" * 32,
                     "assignment_id": assignment_id,
-                    "report": plan,
+                    "report": validate_report(plan, "implementer"),
                 },
             )
             await broker.handle_report(
@@ -1122,7 +1168,7 @@ class BrokerObserverTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
                 {
                     "id": "5" * 32,
                     "assignment_id": assignment_id,
-                    "report": plan,
+                    "report": validate_report(plan, "implementer"),
                 },
             )
         normalized = validate_report(plan, "implementer")
@@ -2218,6 +2264,61 @@ class BrokerObserverTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("PRIVATE_STALE_RUN_STATE_CANARY", dump)
         self.assertNotIn("PRIVATE_DEFERRED_RUN_STATE_CANARY", dump)
 
+    async def test_worker_rejection_uses_the_request_id_before_disconnect(self) -> None:
+        initialize_broker_run(self.coord, self.manifest, "task", {})
+        broker = Broker(self.coord, self.manifest)
+        with broker_store.connect_broker_database(self.coord) as database:
+            token = database.execute(
+                "SELECT auth_token FROM roles WHERE role='implementer'"
+            ).fetchone()["auth_token"]
+        hello = {
+            "version": BROKER_PROTOCOL_VERSION,
+            "type": "hello",
+            "role": "implementer",
+            "token": token,
+            "id": "a" * 32,
+            "generation": 1,
+        }
+        request = {
+            "version": BROKER_PROTOCOL_VERSION,
+            "type": "lifecycle",
+            "role": "implementer",
+            "token": token,
+            "id": "b" * 32,
+            "state": "active",
+            "usage": None,
+        }
+        writer = mock.Mock()
+        writer.wait_closed = mock.AsyncMock()
+        with (
+            mock.patch.object(broker, "_verify_peer"),
+            mock.patch.object(
+                broker, "read_raw_frame", new=mock.AsyncMock(return_value=hello)
+            ),
+            mock.patch.object(
+                broker, "read_frame", new=mock.AsyncMock(return_value=request)
+            ),
+            mock.patch.object(broker, "maybe_start_workflow", new=mock.AsyncMock()),
+            mock.patch.object(
+                broker,
+                "handle_message",
+                new=mock.AsyncMock(
+                    side_effect=OrchestrationError(
+                        "Synthetic request rejection", "invalid_protocol"
+                    )
+                ),
+            ),
+            mock.patch.object(broker, "reply", new=mock.AsyncMock()) as reply,
+        ):
+            await broker.handle_client(mock.Mock(), writer)
+        self.assertEqual(reply.await_count, 2)
+        self.assertEqual(reply.await_args_list[0].args[1], hello["id"])
+        self.assertEqual(reply.await_args_list[1].args[1], request["id"])
+        self.assertFalse(reply.await_args_list[1].args[2])
+        self.assertEqual(
+            reply.await_args_list[1].kwargs["error"], "Synthetic request rejection"
+        )
+
     async def test_replacement_disconnect_during_recovery_fails_closed(self) -> None:
         initialize_broker_run(self.coord, self.manifest, "task", {})
         broker = Broker(self.coord, self.manifest)
@@ -2577,6 +2678,66 @@ class BrokerObserverTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
         broadcast_workflow.assert_awaited_once_with("uncertain", 1)
         snapshot = broker_store.public_broker_snapshot(self.coord)
         self.assertEqual(snapshot["workflow"]["state"], "uncertain")
+
+    async def test_worker_progress_updates_live_activity_without_a_handoff(
+        self,
+    ) -> None:
+        initialize_broker_run(self.coord, self.manifest, "task", {})
+        broker = Broker(self.coord, self.manifest)
+        assignment_id = "c" * 32
+        now = broker_store.utc_now()
+        with broker_store.connect_broker_database(self.coord) as database:
+            database.execute(
+                "INSERT INTO assignments(id,role,round,kind,state,delivery_id,created_at,updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (
+                    assignment_id,
+                    "implementer",
+                    1,
+                    "implementation",
+                    "accepted",
+                    "d" * 32,
+                    now,
+                    now,
+                ),
+            )
+            database.execute(
+                "UPDATE roles SET active_assignment_id=?,state='active' "
+                "WHERE role='implementer'",
+                (assignment_id,),
+            )
+        client = Client("implementer", mock.Mock(), mock.Mock())
+        usage = {
+            "providerCalls": 2,
+            "input": 100,
+            "output": 20,
+            "cacheRead": 30,
+            "cacheWrite": 4,
+            "reasoning": 5,
+            "cost": {"total": 0.1},
+            "contextTokens": 120,
+            "contextWindow": 1000,
+            "contextPercent": 12.0,
+        }
+        with mock.patch.object(broker, "reply", new=mock.AsyncMock()) as reply:
+            await broker.handle_progress(
+                client,
+                {
+                    "id": "e" * 32,
+                    "assignment_id": assignment_id,
+                    "phase": "streaming",
+                    "usage": usage,
+                },
+            )
+        reply.assert_awaited_once_with(client, "e" * 32, True, status="recorded")
+        snapshot = broker_store.public_broker_snapshot(self.coord)
+        implementer = next(
+            role for role in snapshot["roles"] if role["role"] == "implementer"
+        )
+        self.assertEqual(implementer["activity"], "streaming")
+        self.assertEqual(implementer["activity_sequence"], 1)
+        self.assertEqual(implementer["provider_calls"], 2)
+        self.assertEqual(implementer["total_tokens"], 154)
 
     async def test_settled_assignment_without_report_requires_parent_attention(
         self,

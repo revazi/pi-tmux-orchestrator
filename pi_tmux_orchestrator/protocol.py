@@ -19,6 +19,7 @@ from .constants import (
     MAX_REPORT_ITEMS,
     MAX_REPORT_SUMMARY_CHARS,
     RPC_TOKEN_PATTERN,
+    WORKER_ACTIVITY_PHASES,
 )
 from .models import OrchestrationError
 
@@ -121,13 +122,32 @@ def _validate_plan_report(value: dict[str, Any], role: str) -> dict[str, Any]:
         "risks",
         "open_questions",
     }
+    # The worker bridge adds the empty common report envelope before wire delivery.
+    normalized_fields = fields | {
+        "changed_paths",
+        "checks",
+        "findings",
+        "limitations",
+        "verdict",
+    }
     if role != "implementer":
         raise OrchestrationError(
             "Plan reports are permitted only for the implementer", "forbidden"
         )
-    if set(value) != fields:
+    if set(value) not in {frozenset(fields), frozenset(normalized_fields)}:
         raise OrchestrationError(
             "Plan report has missing or unknown fields", "invalid_protocol"
+        )
+    if set(value) == normalized_fields and (
+        value["changed_paths"] != []
+        or value["checks"] != []
+        or value["findings"] != []
+        or value["limitations"] != []
+        or value["verdict"] is not None
+    ):
+        raise OrchestrationError(
+            "Plan report cannot contain implementation or review claims",
+            "invalid_protocol",
         )
     report = _empty_common_report(
         "plan",
@@ -368,6 +388,8 @@ def validate_client_message(value: object) -> dict[str, Any]:
         expected = (legacy, legacy | {"usage"})
     elif message_type == "lifecycle":
         expected = (base | {"state", "usage"},)
+    elif message_type == "progress":
+        expected = (base | {"assignment_id", "phase", "usage"},)
     elif message_type == "guardrail":
         expected = (
             base | {"assignment_id", "level", "metric", "observed", "threshold"},
@@ -397,6 +419,18 @@ def validate_client_message(value: object) -> dict[str, Any]:
         )
     if message_type == "guardrail":
         _validate_guardrail_message(value)
+    if message_type == "progress":
+        assignment_id = value.get("assignment_id")
+        if not isinstance(assignment_id, str) or not RPC_TOKEN_PATTERN.fullmatch(
+            assignment_id
+        ):
+            raise OrchestrationError(
+                "Progress assignment ID is invalid", "invalid_protocol"
+            )
+        if value.get("phase") not in WORKER_ACTIVITY_PHASES:
+            raise OrchestrationError(
+                "Worker progress phase is invalid", "invalid_protocol"
+            )
     return value
 
 

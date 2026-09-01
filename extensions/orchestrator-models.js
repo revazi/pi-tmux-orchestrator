@@ -82,12 +82,56 @@ export function availableThinkingLevels(model, pinnedThinking) {
   return [...standard, ...extended];
 }
 
+function registryModels(ctx) {
+  const registry = ctx && ctx.modelRegistry;
+  const getAvailable = registry && registry.getAvailable;
+  return typeof getAvailable === "function" ? getAvailable.call(registry) : [];
+}
+
+function selectedModels(ctx) {
+  const scopedModels = ctx && ctx.scopedModels;
+  if (Array.isArray(scopedModels) && scopedModels.length > 0) {
+    return { models: scopedModels, scoped: true };
+  }
+  return { models: registryModels(ctx), scoped: false };
+}
+
+function modelKey(model) {
+  if (!model || typeof model.provider !== "string" || typeof model.id !== "string") {
+    return undefined;
+  }
+  return `${model.provider}\0${model.id}`;
+}
+
+function availableModelKeys(selection) {
+  const keys = new Set();
+  for (const entry of selection.models.slice(0, MAX_MODEL_SCAN)) {
+    const key = modelKey(selection.scoped ? entry.model : entry);
+    if (key) keys.add(key);
+  }
+  return keys;
+}
+
+function roleModelKey(role) {
+  if (!role) return undefined;
+  return modelKey({ provider: role.provider, id: role.model });
+}
+
+export function previewModelsAreAvailable(ctx, roles) {
+  if (!Array.isArray(roles) || roles.length === 0) return false;
+  const selection = selectedModels(ctx);
+  if (!Array.isArray(selection.models) || selection.models.length === 0) return false;
+  const available = availableModelKeys(selection);
+  return roles.every((role) => available.has(roleModelKey(role)));
+}
+
 export function modelCatalogEnvelope(ctx, query = "") {
   const normalizedQuery = bounded(query, 200).toLowerCase();
-  const scoped = Array.isArray(ctx.scopedModels) && ctx.scopedModels.length > 0;
+  const selection = selectedModels(ctx);
+  const scoped = selection.scoped;
   const source = scoped
-    ? ctx.scopedModels
-    : (ctx.modelRegistry?.getAvailable?.() || []).map((model) => ({ model }));
+    ? selection.models
+    : selection.models.map((model) => ({ model }));
   const { matches, scanned } = collectModelMatches(source, normalizedQuery);
   const models = matches.slice(0, MAX_MODEL_RESULTS);
   return {

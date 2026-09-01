@@ -1,0 +1,104 @@
+{
+  "cases": [
+    {
+      "role": "implementer",
+      "assignment_kind": "implementation",
+      "tool_input": {
+        "kind": "implementation",
+        "summary": "Implemented the bounded change.",
+        "changed_paths": ["src/service.py"],
+        "checks": [{"name": "focused tests", "status": "passed"}],
+        "relevant_paths": ["src/service.py"],
+        "relevant_symbols": ["run_service"],
+        "intended_changes": ["Obsolete plan-only evidence."],
+        "required_checks": ["Obsolete plan-only evidence."],
+        "open_questions": []
+      },
+      "wire_report": {
+        "kind": "implementation",
+        "summary": "Implemented the bounded change.",
+        "changed_paths": ["src/service.py"],
+        "checks": [{"name": "focused tests", "status": "passed"}],
+        "findings": [],
+        "risks": [],
+        "limitations": [],
+        "verdict": null
+      }
+    },
+    {
+      "role": "reviewer",
+      "assignment_kind": "review",
+      "tool_input": {
+        "kind": "review",
+        "summary": "The implementation satisfies the task.",
+        "verdict": "approved"
+      },
+      "wire_report": {
+        "kind": "review",
+        "summary": "The implementation satisfies the task.",
+        "changed_paths": [],
+        "checks": [],
+        "findings": [],
+        "risks": [],
+        "limitations": [],
+        "verdict": "approved"
+      }
+    },
+    {
+      "role": "probe",
+      "assignment_kind": "probe",
+      "tool_input": {
+        "kind": "probe",
+        "summary": "The high-risk assumption is bounded."
+      },
+      "wire_report": {
+        "kind": "probe",
+        "summary": "The high-risk assumption is bounded.",
+        "changed_paths": [],
+        "checks": [],
+        "findings": [],
+        "risks": [],
+        "limitations": [],
+        "verdict": null
+      }
+    },
+    {
+      "role": "playwright",
+      "assignment_kind": "playwright",
+      "tool_input": {
+        "kind": "playwright",
+        "summary": "The authorized browser smoke passed.",
+        "verdict": "pass"
+      },
+      "wire_report": {
+        "kind": "playwright",
+        "summary": "The authorized browser smoke passed.",
+        "changed_paths": [],
+        "checks": [],
+        "findings": [],
+        "risks": [],
+        "limitations": [],
+        "verdict": "pass"
+      }
+    },
+    {
+      "role": "django",
+      "assignment_kind": "django",
+      "tool_input": {
+        "kind": "django",
+        "summary": "No Django-specific blocker was found.",
+        "verdict": "advisory_approved"
+      },
+      "wire_report": {
+        "kind": "django",
+        "summary": "No Django-specific blocker was found.",
+        "changed_paths": [],
+        "checks": [],
+        "findings": [],
+        "risks": [],
+        "limitations": [],
+        "verdict": "advisory_approved"
+      }
+    }
+  ]
+}

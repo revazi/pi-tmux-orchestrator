@@ -520,18 +520,127 @@ test("worker report schemas expose only fields valid for each role", () => {
   assert.deepEqual(reviewer.required, ["kind", "summary", "verdict"]);
 });
 
-test("implementer plan reports and active tools are strictly read-only and bounded", () => {
-  const input = {
-    kind: "plan",
-    summary: "The change surface is bounded.",
-    relevant_paths: ["src/service.js", "tests/service.test.js"],
-    relevant_symbols: ["runService", "service failure test"],
-    intended_changes: ["Guard the transition before committing state."],
-    required_checks: ["Run the focused service tests."],
-    risks: ["Preserve retry behavior."],
-    open_questions: [],
+test("worker installs the report compatibility shim before Pi validates tool arguments", async () => {
+  const names = [
+    "PI_TMUX_ORCHESTRATOR_ROLE",
+    "PI_TMUX_ORCHESTRATOR_TOKEN",
+    "PI_TMUX_ORCHESTRATOR_SOCKET",
+    "PI_TMUX_ORCHESTRATOR_GENERATION",
+    "PI_TMUX_ORCHESTRATOR_GUARDRAILS",
+  ];
+  const previous = Object.fromEntries(names.map((name) => [name, process.env[name]]));
+  Object.assign(process.env, {
+    PI_TMUX_ORCHESTRATOR_ROLE: "implementer",
+    PI_TMUX_ORCHESTRATOR_TOKEN: "a".repeat(32),
+    PI_TMUX_ORCHESTRATOR_SOCKET: "/tmp/synthetic-orchestrator.sock",
+    PI_TMUX_ORCHESTRATOR_GENERATION: "1",
+    PI_TMUX_ORCHESTRATOR_GUARDRAILS: JSON.stringify({
+      enforcement: "warn-only", warning: {}, hard: {},
+    }),
+  });
+  try {
+    const loaded = await import(
+      `../extensions/orchestrator-worker.js?report-shim=${Date.now()}`
+    );
+    const tools = [];
+    loaded.default({
+      registerTool: (tool) => tools.push(tool),
+      on() {},
+    });
+    const reportTool = tools.find((tool) => tool.name === "orchestrator_report");
+    assert.equal(reportTool.prepareArguments, loaded.testHooks.prepareReportArguments);
+  } finally {
+    for (const name of names) {
+      if (previous[name] === undefined) delete process.env[name];
+      else process.env[name] = previous[name];
+    }
+  }
+});
+
+test("implementer report arguments tolerate phase-union schema fields without losing evidence", () => {
+  const implementationInput = {
+    kind: "implementation",
+    summary: "Implemented the bounded change.",
+    changed_paths: ["src/service.js"],
+    checks: [{ name: "focused tests", status: "passed" }],
+    limitations: ["Production wire behavior was not exercised."],
+    relevant_paths: ["src/service.js"],
+    relevant_symbols: ["runService"],
+    intended_changes: ["An obsolete plan statement."],
+    required_checks: ["An obsolete planned check."],
+    open_questions: ["An obsolete plan question."],
   };
+  const prepared = workerHooks.prepareReportArguments(implementationInput);
+  for (const field of [
+    "relevant_paths", "relevant_symbols", "intended_changes", "required_checks", "open_questions",
+  ]) {
+    assert.equal(prepared[field], undefined, field);
+  }
+  assert.deepEqual(prepared.limitations, implementationInput.limitations);
+  assert.deepEqual(
+    workerHooks.normalizeReport(implementationInput, "implementation", "implementer"),
+    {
+      kind: "implementation",
+      summary: implementationInput.summary,
+      changed_paths: implementationInput.changed_paths,
+      checks: implementationInput.checks,
+      findings: [],
+      risks: [],
+      limitations: implementationInput.limitations,
+      verdict: null,
+    },
+  );
+
+  const sparsePlan = {
+    kind: "plan",
+    summary: "Inspection is complete.",
+    changed_paths: [],
+    checks: [],
+    findings: [],
+    limitations: [],
+    verdict: null,
+  };
+  assert.deepEqual(
+    workerHooks.normalizeReport(sparsePlan, "plan", "implementer"),
+    {
+      kind: "plan",
+      summary: sparsePlan.summary,
+      changed_paths: [],
+      checks: [],
+      findings: [],
+      relevant_paths: [],
+      relevant_symbols: [],
+      intended_changes: [],
+      required_checks: [],
+      risks: [],
+      limitations: [],
+      open_questions: [],
+      verdict: null,
+    },
+  );
+  assert.throws(
+    () => workerHooks.normalizeReport(
+      { ...sparsePlan, changed_paths: ["src/service.js"] }, "plan", "implementer",
+    ),
+    /invalid_plan_report_fields/,
+  );
+  assert.throws(
+    () => workerHooks.normalizeReport(
+      { kind: "implementation", summary: "Done.", typo_field: [] },
+      "implementation",
+      "implementer",
+    ),
+    /invalid_report_fields/,
+  );
+});
+
+test("implementer plan reports and active tools are strictly read-only and bounded", async () => {
+  const contract = JSON.parse(
+    await readFile(new URL("fixtures/phased-plan-wire.json", import.meta.url), "utf8"),
+  );
+  const input = contract.tool_input;
   const report = workerHooks.normalizeReport(input, "plan", "implementer");
+  assert.deepEqual(report, contract.wire_report);
   assert.equal(report.kind, "plan");
   assert.deepEqual(report.changed_paths, []);
   assert.deepEqual(report.checks, []);
@@ -596,6 +705,33 @@ test("implementer plan reports and active tools are strictly read-only and bound
     workerHooks.assignmentToolNames(normalTools, "implementer", restored.activeAssignment.kind),
     ["read", "bash", "grep", "find", "ls", "orchestrator_report"],
   );
+});
+
+test("worker live progress is phase-aware and stream-throttled", () => {
+  assert.equal(workerHooks.progressShouldEmit("streaming", "streaming", 499, 0), false);
+  assert.equal(workerHooks.progressShouldEmit("streaming", "streaming", 500, 0), true);
+  assert.equal(workerHooks.progressShouldEmit("tool", "streaming", 1, 0), true);
+  assert.equal(
+    workerHooks.progressShouldEmit("streaming", "streaming", 1, 0, true),
+    true,
+  );
+});
+
+test("all worker roles share exact standard report wire contracts with the broker", async () => {
+  const contract = JSON.parse(
+    await readFile(new URL("fixtures/standard-report-wire.json", import.meta.url), "utf8"),
+  );
+  for (const value of contract.cases) {
+    assert.deepEqual(
+      workerHooks.normalizeReport(
+        value.tool_input,
+        value.assignment_kind,
+        value.role,
+      ),
+      value.wire_report,
+      value.role,
+    );
+  }
 });
 
 test("worker guardrail policy is strict and preserves supported assignment thresholds", () => {
@@ -1375,6 +1511,37 @@ test("model discovery uses bounded available metadata and respects scoped models
   assert.match(slashCtx.calls.notifications[0].message, /1\/1 available model/);
 });
 
+test("start reuses exact in-memory model availability without weakening fallback checks", () => {
+  const roles = [
+    { provider: "provider", model: "implementer" },
+    { provider: "provider", model: "reviewer" },
+  ];
+  const available = context({
+    context: {
+      modelRegistry: {
+        getAvailable: () => [
+          { provider: "provider", id: "implementer" },
+          { provider: "provider", id: "reviewer" },
+        ],
+      },
+    },
+  });
+  assert.equal(testHooks.previewModelsAreAvailable(available, roles), true);
+  assert.equal(
+    testHooks.previewModelsAreAvailable(available, [
+      ...roles,
+      { provider: "provider", model: "missing" },
+    ]),
+    false,
+  );
+  assert.equal(
+    testHooks.buildStartArgs({}, process.cwd(), { task: "/tmp/task" }).includes(
+      "--skip-model-check",
+    ),
+    false,
+  );
+});
+
 test("natural-language starts can use the parent model with exact per-role overrides", () => {
   const input = testHooks.startInputWithParentModel(
     {
@@ -2152,6 +2319,7 @@ test("start previews CLI policy, keeps private text out of argv, and cleans mode
     assert.equal(args.includes(canary), false);
     assert.equal(args.includes(contextCanary), false);
     assert.ok(args.includes("reviewer=/reviewed/reviewer/SKILL.md"));
+    assert.ok(args.includes("--skip-model-check"));
     assert.equal(args[args.indexOf("--force-specialist") + 1], "playwright");
     assert.ok(options.signal);
     const taskPath = args[args.indexOf("--task-file") + 1];
@@ -2203,7 +2371,18 @@ test("start previews CLI policy, keeps private text out of argv, and cleans mode
     return { code: 0, stdout: JSON.stringify(success("start", data)) };
   });
   const signal = new AbortController().signal;
-  const ctx = context({ confirmations: [true], signal });
+  const ctx = context({
+    confirmations: [true],
+    signal,
+    context: {
+      modelRegistry: {
+        getAvailable: () => [
+          { provider: "provider", id: "writer" },
+          { provider: "provider", id: "reviewer" },
+        ],
+      },
+    },
+  });
   const result = await tool.execute(
     "call",
     {
