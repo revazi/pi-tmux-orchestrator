@@ -72,7 +72,7 @@ The extension intentionally exposes only five commands:
 | `/or-dashboard` | List, inspect, attach/watch, run doctor, or confirm stop |
 | `/or-models [query]` | Find exact provider/model IDs |
 | `/or-start [task]` | Preview, confirm, and start work |
-| `/or-send [session]` | Send private guidance to one role |
+| `/or-send [session]` | Send private guidance; post-ready implementer guidance opens a reviewed repair round |
 | `/or-stop [session]` | Select and confirm stopping a run |
 
 The dashboard is keyboard-driven:

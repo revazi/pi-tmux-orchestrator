@@ -712,6 +712,76 @@ def main() -> int:
         if "SYNTHETIC_CONTEXT_CAPSULE_CANARY" in public_metadata:
             raise AssertionError("public metadata exposed the context capsule")
 
+        # Synthesize the terminal ready boundary after exercising the active-run controls,
+        # then prove a post-ready implementer send opens a real repair assignment.
+        abort_delivery = receive(clients["implementer"])
+        if abort_delivery.get("type") != "abort":
+            raise AssertionError("implementer did not receive the brokered abort")
+        with ORCHESTRATOR.connect_broker_database(coord) as database:
+            database.execute(
+                "UPDATE assignments SET state='completed',updated_at=updated_at "
+                "WHERE state IN ('delivering','accepted')"
+            )
+            database.execute(
+                "UPDATE roles SET active_assignment_id=NULL,state='idle',activity=NULL,"
+                "activity_at=NULL"
+            )
+            ORCHESTRATOR.set_meta(database, "workflow_state", "ready")
+            ORCHESTRATOR.set_meta(database, "round", "1")
+        repair_send_id = "d" * 32
+        repair_send = ORCHESTRATOR.send_command(
+            argparse.Namespace(
+                session=session,
+                run=None,
+                role="implementer",
+                message="Synthetic post-ready repair guidance.",
+                message_file=None,
+                delivery="follow-up",
+                command_id=repair_send_id,
+            )
+        )
+        if not repair_send.data["acknowledged"]:
+            raise AssertionError("post-ready repair send was not acknowledged")
+        repair_deliveries = [receive(clients["implementer"]) for _ in range(3)]
+        repair_wire = [
+            (value.get("type"), value.get("kind"), value.get("trigger"))
+            for value in repair_deliveries
+        ]
+        if repair_wire != [
+            ("context", "run_state", False),
+            ("context", "operator_message", False),
+            ("assignment", "implementation", True),
+        ]:
+            raise AssertionError(
+                f"post-ready repair delivery order drifted: {repair_wire!r}"
+            )
+        if repair_deliveries[-1].get("round") != 2:
+            raise AssertionError("post-ready repair did not advance exactly one round")
+        repair_retry = ORCHESTRATOR.send_command(
+            argparse.Namespace(
+                session=session,
+                run=None,
+                role="implementer",
+                message="A duplicate command body must not create another round.",
+                message_file=None,
+                delivery="follow-up",
+                command_id=repair_send_id,
+            )
+        )
+        repair_snapshot = ORCHESTRATOR.public_broker_snapshot(coord)
+        with ORCHESTRATOR.connect_broker_database(coord, readonly=True) as database:
+            repair_assignments = database.execute(
+                "SELECT COUNT(*) AS count FROM assignments "
+                "WHERE role='implementer' AND round=2 AND kind='implementation'"
+            ).fetchone()["count"]
+        if (
+            not repair_retry.data["duplicate"]
+            or repair_snapshot["workflow"]["state"] != "active"
+            or repair_snapshot["workflow"]["round"] != 2
+            or repair_assignments != 1
+        ):
+            raise AssertionError("post-ready repair command was not idempotent")
+
         for stream in clients.values():
             stream.close()
         ORCHESTRATOR.stop_command(argparse.Namespace(session=session, yes=True))
@@ -785,6 +855,9 @@ def main() -> int:
         print("OK normalized phased plan handoff reached implementation")
         print("OK live worker progress refreshed the broker dashboard without handoff")
         print("OK broker send/abort acknowledgement and idempotent retry")
+        print(
+            "OK post-ready implementer guidance opened one review-required repair round"
+        )
         print("OK metadata-only status and Supervisor API v2 retained reads")
         print("OK exact tmux targeting preserved prefix collision")
         cleanup()

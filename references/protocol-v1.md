@@ -129,6 +129,12 @@ poll and must end the turn when there is no active assignment.
 11. `approved` marks the workflow `ready`; it does not wake the implementer just
    to acknowledge approval. Budget metadata cannot skip required review or make
    a workflow ready.
+12. An authenticated operator message to the implementer after `ready` queues
+   the latest run state and message without triggering an unassigned turn,
+   advances exactly one round, creates an `implementation` assignment, and
+   requires normal specialist routing and mandatory review again. Retry with the
+   same command ID is idempotent. Other role messages and sends during an active
+   or `needs_attention` assignment retain normal steering semantics.
 
 Only the implementer has normal write tools. Other roles are read-only. When the
 broker creates an implementer `plan` assignment, the shared bridge temporarily

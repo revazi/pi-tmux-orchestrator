@@ -2438,6 +2438,127 @@ class BrokerObserverTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
             any(event["event"] == "worker_handover_uncertain" for event in events)
         )
 
+    async def test_post_ready_implementer_send_opens_one_reviewed_repair_round(
+        self,
+    ) -> None:
+        initialize_broker_run(self.coord, self.manifest, "task", {})
+        broker = Broker(self.coord, self.manifest)
+        broker.clients = {
+            role: Client(role, mock.Mock(), mock.Mock())
+            for role in ("implementer", "reviewer")
+        }
+        with broker_store.connect_broker_database(self.coord) as database:
+            broker_store.set_meta(database, "workflow_state", "ready")
+            broker_store.set_meta(database, "round", "1")
+        token = (self.coord / "control.token").read_text(encoding="ascii").strip()
+        command_id = "7" * 32
+        message = {
+            "version": BROKER_PROTOCOL_VERSION,
+            "type": "control",
+            "token": token,
+            "id": command_id,
+            "action": "send",
+            "role": "implementer",
+            "delivery": "follow-up",
+            "message": "PRIVATE_POST_READY_REPAIR_CANARY",
+        }
+        worker_messages: list[dict[str, Any]] = []
+
+        async def capture_worker_send(_client: Client, value: dict[str, Any]) -> None:
+            worker_messages.append(value)
+
+        with (
+            mock.patch.object(broker, "send", new=capture_worker_send),
+            mock.patch.object(broker, "send_raw", new=mock.AsyncMock()) as send_raw,
+            mock.patch.object(
+                broker, "broadcast_workflow", new=mock.AsyncMock()
+            ) as broadcast_workflow,
+        ):
+            await broker.handle_control(mock.Mock(), mock.Mock(), message)
+            self.assertEqual(
+                [
+                    (value["type"], value.get("kind"), value.get("trigger"))
+                    for value in worker_messages
+                ],
+                [
+                    ("context", "run_state", False),
+                    ("context", "operator_message", False),
+                    ("assignment", "implementation", True),
+                ],
+            )
+            self.assertEqual(worker_messages[-1]["round"], 2)
+            self.assertEqual(worker_messages[-2]["round"], 2)
+            self.assertIn(
+                "PRIVATE_POST_READY_REPAIR_CANARY", worker_messages[-2]["content"]
+            )
+            broadcast_workflow.assert_awaited_once_with("active", 2)
+            response = send_raw.await_args_list[0].args[1]
+            self.assertTrue(response["success"])
+
+            worker_message_count = len(worker_messages)
+            await broker.handle_control(mock.Mock(), mock.Mock(), message)
+            self.assertEqual(len(worker_messages), worker_message_count)
+            duplicate_response = send_raw.await_args_list[-1].args[1]
+            self.assertTrue(duplicate_response["duplicate"])
+
+            with broker_store.connect_broker_database(
+                self.coord, readonly=True
+            ) as database:
+                repair = database.execute(
+                    "SELECT id,round,kind,state FROM assignments "
+                    "WHERE role='implementer' AND round=2"
+                ).fetchone()
+                self.assertIsNotNone(repair)
+                self.assertEqual(
+                    dict(repair),
+                    {
+                        "id": repair["id"],
+                        "round": 2,
+                        "kind": "implementation",
+                        "state": "delivering",
+                    },
+                )
+                self.assertEqual(
+                    database.execute(
+                        "SELECT COUNT(*) AS count FROM assignments "
+                        "WHERE role='implementer' AND round=2"
+                    ).fetchone()["count"],
+                    1,
+                )
+
+            report = validate_report(
+                {
+                    "kind": "implementation",
+                    "summary": "The bounded repair is complete.",
+                    "changed_paths": ["src/scan.ts"],
+                    "checks": [{"name": "focused tests", "status": "passed"}],
+                },
+                "implementer",
+            )
+            with mock.patch.object(broker, "reply", new=mock.AsyncMock()):
+                await broker.handle_report(
+                    broker.clients["implementer"],
+                    {
+                        "id": "8" * 32,
+                        "assignment_id": repair["id"],
+                        "report": report,
+                    },
+                )
+
+        snapshot = broker_store.public_broker_snapshot(self.coord)
+        self.assertEqual(snapshot["workflow"]["state"], "active")
+        self.assertEqual(snapshot["workflow"]["round"], 2)
+        reviewer = next(
+            role for role in snapshot["roles"] if role["role"] == "reviewer"
+        )
+        self.assertEqual(reviewer["assignment"]["kind"], "review")
+        self.assertEqual(reviewer["assignment"]["round"], 2)
+        with broker_store.connect_broker_database(
+            self.coord, readonly=True
+        ) as database:
+            dump = "\n".join(database.iterdump())
+        self.assertNotIn("PRIVATE_POST_READY_REPAIR_CANARY", dump)
+
     async def test_restart_control_advances_broker_generation(self) -> None:
         initialize_broker_run(self.coord, self.manifest, "task", {})
         broker = Broker(self.coord, self.manifest)
