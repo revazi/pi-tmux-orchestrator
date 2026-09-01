@@ -276,6 +276,7 @@ class Broker:
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
         client: Client | None = None
+        request_id: str | None = None
         try:
             self._verify_peer(writer)
             raw_hello = await self.read_raw_frame(reader)
@@ -314,7 +315,8 @@ class Broker:
                 interrupted_handover = row["state"] == "recovering"
                 connected_state = "recovering" if handover else "idle"
                 database.execute(
-                    "UPDATE roles SET connected=1,state=?,updated_at=? WHERE role=?",
+                    "UPDATE roles SET connected=1,state=?,activity=NULL,activity_at=NULL,"
+                    "updated_at=? WHERE role=?",
                     (connected_state, utc_now(), role),
                 )
                 record_event(
@@ -346,7 +348,9 @@ class Broker:
                     raise OrchestrationError(
                         "Worker authentication failed", "unauthorized"
                     )
+                request_id = message["id"]
                 await self.handle_message(client, message)
+                request_id = None
         except (asyncio.IncompleteReadError, BrokenPipeError, ConnectionError, OSError):
             pass
         except OrchestrationError as error:
@@ -354,7 +358,7 @@ class Broker:
                 try:
                     await self.reply(
                         client,
-                        secrets.token_hex(16),
+                        request_id or secrets.token_hex(16),
                         False,
                         status=error.code,
                         error=bounded_message(error),
@@ -379,7 +383,8 @@ class Broker:
                     elif state not in {"restarting", "recovering", "uncertain"}:
                         state = "disconnected"
                     database.execute(
-                        "UPDATE roles SET connected=0,state=?,updated_at=? WHERE role=?",
+                        "UPDATE roles SET connected=0,state=?,activity=NULL,activity_at=NULL,"
+                        "updated_at=? WHERE role=?",
                         (state, utc_now(), client.role),
                     )
                     record_event(
@@ -740,6 +745,8 @@ class Broker:
                 await self.handle_lifecycle(client, message)
             elif message["type"] == "report":
                 await self.handle_report(client, message)
+            elif message["type"] == "progress":
+                await self.handle_progress(client, message)
             elif message["type"] == "guardrail":
                 await self.handle_guardrail(client, message)
             elif message["type"] == "ack":
@@ -993,7 +1000,8 @@ class Broker:
                 ),
             )
             database.execute(
-                "UPDATE roles SET active_assignment_id=?,state='active',updated_at=? WHERE role=?",
+                "UPDATE roles SET active_assignment_id=?,state='active',activity=NULL,"
+                "activity_at=NULL,updated_at=? WHERE role=?",
                 (assignment_id, now, role),
             )
             record_event(
@@ -1181,6 +1189,58 @@ class Broker:
             status="duplicate" if duplicate else "recorded",
         )
 
+    @staticmethod
+    def _usage_fields(usage: dict[str, Any]) -> dict[str, Any]:
+        fields = {
+            "input_tokens": usage["input"],
+            "output_tokens": usage["output"],
+            "cache_read_tokens": usage["cacheRead"],
+            "cache_write_tokens": usage["cacheWrite"],
+            "reasoning_tokens": usage.get("reasoning"),
+            "cost_total": usage["cost"]["total"],
+            "context_tokens": usage.get("contextTokens"),
+            "context_window": usage.get("contextWindow"),
+            "context_percent": usage.get("contextPercent"),
+        }
+        if "providerCalls" in usage:
+            fields["provider_calls"] = usage["providerCalls"]
+        return fields
+
+    async def handle_progress(self, client: Client, message: dict[str, Any]) -> None:
+        usage = message["usage"]
+        if usage is not None and not self._valid_usage(
+            usage, require_provider_calls=True
+        ):
+            raise OrchestrationError(
+                "Worker progress usage is invalid", "invalid_protocol"
+            )
+        assignment_id = message["assignment_id"]
+        now = utc_now()
+        with connect_broker_database(self.coord) as database:
+            active_assignment_id = database.execute(
+                "SELECT active_assignment_id FROM roles WHERE role=?", (client.role,)
+            ).fetchone()["active_assignment_id"]
+            if active_assignment_id != assignment_id:
+                raise OrchestrationError(
+                    "Worker progress assignment is not active", "conflict"
+                )
+            changes = [
+                "activity=?",
+                "activity_sequence=activity_sequence+1",
+                "activity_at=?",
+                "updated_at=?",
+            ]
+            values: list[Any] = [message["phase"], now, now]
+            if usage is not None:
+                for field, value in self._usage_fields(usage).items():
+                    changes.append(f"{field}=?")
+                    values.append(value)
+            values.append(client.role)
+            database.execute(
+                f"UPDATE roles SET {','.join(changes)} WHERE role=?", values
+            )
+        await self.reply(client, message["id"], True, status="recorded")
+
     async def handle_lifecycle(self, client: Client, message: dict[str, Any]) -> None:
         state = message["state"]
         if state not in {"idle", "active", "waiting", "uncertain"}:
@@ -1194,21 +1254,10 @@ class Broker:
         with connect_broker_database(self.coord) as database:
             changes = ["state=?", "updated_at=?"]
             values: list[Any] = [state, now]
+            if state != "active":
+                changes.extend(["activity=NULL", "activity_at=NULL"])
             if usage is not None:
-                fields = {
-                    "input_tokens": usage["input"],
-                    "output_tokens": usage["output"],
-                    "cache_read_tokens": usage["cacheRead"],
-                    "cache_write_tokens": usage["cacheWrite"],
-                    "reasoning_tokens": usage.get("reasoning"),
-                    "cost_total": usage["cost"]["total"],
-                    "context_tokens": usage.get("contextTokens"),
-                    "context_window": usage.get("contextWindow"),
-                    "context_percent": usage.get("contextPercent"),
-                }
-                if "providerCalls" in usage:
-                    fields["provider_calls"] = usage["providerCalls"]
-                for field, value in fields.items():
+                for field, value in self._usage_fields(usage).items():
                     changes.append(f"{field}=?")
                     values.append(value)
             values.append(client.role)
@@ -1450,7 +1499,8 @@ class Broker:
                 (utc_now(), assignment_id),
             )
             database.execute(
-                "UPDATE roles SET active_assignment_id=NULL,state='idle',updated_at=? WHERE role=?",
+                "UPDATE roles SET active_assignment_id=NULL,state='idle',activity=NULL,"
+                "activity_at=NULL,updated_at=? WHERE role=?",
                 (utc_now(), client.role),
             )
             record_event(

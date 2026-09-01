@@ -1,0 +1,43 @@
+{
+  "tool_input": {
+    "kind": "plan",
+    "summary": "The synthetic change surface is bounded.",
+    "relevant_paths": [
+      "pi_tmux_orchestrator/protocol.py"
+    ],
+    "relevant_symbols": [
+      "validate_report"
+    ],
+    "intended_changes": [
+      "Keep normalized plan delivery compatible."
+    ],
+    "required_checks": [
+      "Run model-free orchestration tests."
+    ],
+    "risks": [],
+    "open_questions": []
+  },
+  "wire_report": {
+    "kind": "plan",
+    "summary": "The synthetic change surface is bounded.",
+    "changed_paths": [],
+    "checks": [],
+    "findings": [],
+    "relevant_paths": [
+      "pi_tmux_orchestrator/protocol.py"
+    ],
+    "relevant_symbols": [
+      "validate_report"
+    ],
+    "intended_changes": [
+      "Keep normalized plan delivery compatible."
+    ],
+    "required_checks": [
+      "Run model-free orchestration tests."
+    ],
+    "risks": [],
+    "limitations": [],
+    "open_questions": [],
+    "verdict": null
+  }
+}

@@ -143,6 +143,34 @@ class DashboardRenderingTests(DashboardFixture):
         self.assertIn("pi-tmux-agents stop pi-dashboard-test --yes", rendered)
         self.assertIn("prefix + L return", rendered)
 
+    def test_live_worker_activity_pulses_in_every_layout(self) -> None:
+        snapshot = copy.deepcopy(self.snapshot)
+        snapshot["roles"][0].update({"activity": "streaming", "activity_sequence": 1})
+        first = []
+        for width, height in ((180, 30), (80, 18), (45, 14)):
+            with self.subTest(width=width):
+                rendered = render_dashboard(
+                    self.manifest,
+                    snapshot,
+                    self.events,
+                    width=width,
+                    height=height,
+                    color=False,
+                )
+                self.assertIn("streaming", rendered)
+                first.append(rendered)
+        snapshot["roles"][0]["activity_sequence"] = 2
+        second = render_dashboard(
+            self.manifest,
+            snapshot,
+            self.events,
+            width=180,
+            height=30,
+            color=False,
+        )
+        self.assertIn("streaming", second)
+        self.assertNotEqual(first[0], second)
+
     def test_assignment_guardrail_markers_are_visible_in_every_layout(self) -> None:
         snapshot = copy.deepcopy(self.snapshot)
         snapshot["roles"][0]["assignment_guardrails"] = [

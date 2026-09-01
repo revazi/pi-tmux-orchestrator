@@ -8,10 +8,11 @@
 A [Pi](https://github.com/earendil-works/pi) package for coordinating coding
 agents in a monitorable tmux grid.
 
-- One implementer writes.
-- One independent reviewer is always required.
-- Optional probe, Playwright, and Django specialists stay read-only.
-- Native Pi workers remain visible and directly steerable.
+- One implementer writes and one independent reviewer is always required.
+- Configure each orchestration's models, thinking profile, flow, budgets, skills,
+  workspace hints, and optional built-in specialists.
+- Native Pi workers remain visible and directly steerable in a grid that adapts
+  to the roles enabled for that run.
 - An event-driven broker handles structured coordination and recovery.
 - Durable orchestration state is bounded and metadata-only.
 
@@ -99,16 +100,24 @@ bounded typed reports, and schedules the mandatory review.
 
 The invoking Pi remains the parent supervisor. It receives event-driven
 completion or attention updates while each worker keeps its normal durable Pi
-session. Crashes and ambiguous delivery fail to `uncertain` rather than blindly
-replaying work.
+session. The broker dashboard refreshes assignment-bound thinking, streaming,
+tool, reporting, and finalized-usage metadata directly from worker events; it
+does not wait for handoff. Crashes and ambiguous delivery fail to `uncertain`
+rather than blindly replaying work.
 
 The package supports interactive native Pi panes and explicit headless RPC
 workers through the same broker protocol. New runs use manifest v5 and
 `broker-v1`; retained older runs remain readable.
 
-## Optional configuration
+## Configure orchestrations
 
-Configuration is user-global, never project-local:
+Every start can choose exact role models and thinking levels, a `single` or
+`phased` implementation flow, optional probe/Playwright/Django specialists,
+observational budgets, explicitly reviewed worker skills, and the experimental
+workspace capsule. Use `/or-start`, natural language, the model tool, or the
+terminal CLI; explicit run options take precedence.
+
+Reusable defaults are user-global, never project-local:
 
 ```text
 ~/.pi/agent/tmux-orchestrator.json

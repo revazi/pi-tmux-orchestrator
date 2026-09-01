@@ -25,6 +25,7 @@ from .constants import (
     IMPLEMENTATION_FLOWS,
     MAX_BROKER_EVENTS,
     MAX_JSON_ITEMS,
+    WORKER_ACTIVITY_PHASES,
 )
 from .models import OrchestrationError
 from .specialist_activation import (
@@ -34,7 +35,7 @@ from .specialist_activation import (
 )
 from .storage import ensure_private_directory, validate_coordination_directory
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 _ACTIVATION_RULE_PATTERN = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
 
 
@@ -144,6 +145,9 @@ def initialize_broker_database(
                 context_tokens INTEGER,
                 context_window INTEGER,
                 context_percent REAL,
+                activity TEXT,
+                activity_sequence INTEGER NOT NULL DEFAULT 0,
+                activity_at TEXT,
                 updated_at TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS assignments (
@@ -326,6 +330,20 @@ def prepare_broker_database(coord: Path) -> None:
                 "('forced_specialists','[]')"
             )
             version = 7
+        if version == 7:
+            role_columns = {
+                value["name"] for value in database.execute("PRAGMA table_info(roles)")
+            }
+            for column, declaration in (
+                ("activity", "TEXT"),
+                ("activity_sequence", "INTEGER NOT NULL DEFAULT 0"),
+                ("activity_at", "TEXT"),
+            ):
+                if column not in role_columns:
+                    database.execute(
+                        f"ALTER TABLE roles ADD COLUMN {column} {declaration}"
+                    )
+            version = 8
         if version != SCHEMA_VERSION:
             raise OrchestrationError("Broker database schema is unsupported")
         database.execute(
@@ -573,15 +591,28 @@ def public_broker_snapshot(coord: Path) -> dict[str, Any]:
         provider_calls = (
             "provider_calls" if schema_version >= 3 else "NULL AS provider_calls"
         )
+        activity_columns = (
+            "activity,activity_sequence,activity_at"
+            if schema_version >= 8
+            else "NULL AS activity,0 AS activity_sequence,NULL AS activity_at"
+        )
         roles = []
         for row in database.execute(
             f"SELECT role,state,connected,active_assignment_id,generation,{provider_calls},"
             "input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,reasoning_tokens,"
-            "cost_total,context_tokens,context_window,context_percent,updated_at "
+            f"cost_total,context_tokens,context_window,context_percent,{activity_columns},updated_at "
             "FROM roles ORDER BY role"
         ):
             value = dict(row)
             value["connected"] = bool(value["connected"])
+            if (
+                value["activity"] is not None
+                and value["activity"] not in WORKER_ACTIVITY_PHASES
+            ) or (
+                type(value["activity_sequence"]) is not int
+                or value["activity_sequence"] < 0
+            ):
+                raise OrchestrationError("Retained worker activity is invalid")
             assignment_id = value.pop("active_assignment_id")
             assignment = None
             if assignment_id is not None:

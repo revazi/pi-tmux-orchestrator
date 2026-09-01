@@ -14,9 +14,9 @@ The pane answers these questions in order:
 2. **What needs attention?** Workflow state and round are the strongest line.
 3. **How is it coordinated?** Worker transport, broker protocol, and actual
    provider-reported run tokens.
-4. **Who is doing what?** One row per role: connection/generation, lifecycle,
-   active assignment, configured provider/model/thinking, tokens, context, and
-   a body-free assignment-guardrail marker when present.
+4. **Who is doing what?** One row per role: connection/generation, live
+   assignment activity, active assignment, configured provider/model/thinking,
+   tokens, context, and a body-free assignment-guardrail marker when present.
 5. **What just changed?** Up to eight newest metadata events, without IDs or
    bodies.
 6. **What can I do?** Exact attach, status, confirmed stop, return, and zoom
@@ -31,9 +31,9 @@ BROKER + STATUS  /  PROJECT /work/example
 TRANSPORT TUI   PROTOCOL BROKER-V1 / V1   ACTUAL USAGE 42.8k TOKENS
 
 ROLES
-ROLE         LINK       STATE       ASSIGNMENT          MODEL                    THINK   TOKENS   CTX
+ROLE         LINK       LIVE        ASSIGNMENT          MODEL                    THINK   TOKENS   CTX
 ------------------------------------------------------------------------------------------------------
-implementer  + up / g1  active      r2 implementation   anthropic/model-name     high     31.2k  62.4%
+implementer  + up / g1  streaming * r2 implementation   anthropic/model-name     high     31.2k  62.4%
 reviewer     + up / g1  idle        -                   google/model-name        medium   11.6k  28.1%
 
 RECENT METADATA EVENTS
@@ -52,7 +52,7 @@ never the only state signal.
 | Token | ANSI intent | States and uses |
 |---|---|---|
 | `success` | green | `ready`, connected/idle health, accepted/completed/delivered |
-| `active` | cyan | `active`, `connecting`, `initializing`, delivering/streaming |
+| `active` | cyan | `active`, `connecting`, `initializing`, delivering, thinking/streaming/tool/reporting |
 | `warning` | yellow | `needs_attention`, `waiting`, soft-budget warnings, assignment guardrails, context at 80%+ |
 | `error` | red | `uncertain`, disconnected, error/failed/rejected/conflict |
 | `muted` | dim neutral | secondary labels, timestamps, unknown/starting metadata |
@@ -97,18 +97,21 @@ The dashboard is a control-plane summary, not another worker log:
 - Assignment, delivery, report, command, and authentication IDs are omitted;
   they add diagnostic noise and are available through bounded metadata APIs
   where appropriate.
-- Raw assistant/tool progress stays in worker panes. The event rail shows only
-  sequence, time, role, event name, status, and round metadata.
+- Raw assistant/tool progress stays in worker panes. The role row receives only
+  an assignment-bound phase (`thinking`, `streaming`, `tool`, or `reporting`),
+  a monotonic pulse sequence, and finalized provider usage when available. No
+  message, thinking, tool-input, result, or provider body crosses this boundary.
 - PIDs and inferred process liveness are omitted. Connection state comes from
   the live broker; retained reads continue to report host runtime as not
   observed.
 - Cost, detailed token categories, full timestamps, and long model identifiers
   yield to state and role legibility at constrained sizes; exact retained data
   remains available through status/Supervisor APIs.
-- Spinners, animations, progress estimates, and hard-budget gauges are omitted
-  because they would imply polling or precision the broker does not have. A
-  compact `G~`/`G!` prefix denotes a retained assignment warning/hard fact
-  without presenting it as a live gauge.
+- Timer-driven spinners, progress estimates, and hard-budget gauges are omitted
+  because they would imply polling or precision the broker does not have. The
+  live phase marker advances only on real worker events. A compact `G~`/`G!`
+  prefix denotes a retained assignment warning/hard fact without presenting it
+  as a live gauge.
 
 These omissions keep the pane bounded, metadata-only, and useful for deciding
 whether to attach, inspect status, intervene, or stop the exact session.

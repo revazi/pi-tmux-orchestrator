@@ -24,6 +24,7 @@ import {
   modelCatalogContent,
   modelCatalogEnvelope,
   modelOverrideParameters,
+  previewModelsAreAvailable,
   ROLES,
   startInputWithParentModel,
 } from "./orchestrator-models.js";
@@ -229,7 +230,12 @@ function appendSpecialistSelection(args, input, field, enabledFlag, disabledFlag
   if (input[field] === false) args.push(disabledFlag);
 }
 
-function buildStartArgs(input, project, paths, { dryRun = false } = {}) {
+function buildStartArgs(
+  input,
+  project,
+  paths,
+  { dryRun = false, skipModelCheck = false } = {},
+) {
   const args = ["--project", project, "--task-file", paths.task];
   if (paths.contextCapsule) args.push("--context-capsule-file", paths.contextCapsule);
   appendSpecialistSelection(args, input, "withProbe", "--with-probe", "--without-probe");
@@ -251,7 +257,8 @@ function buildStartArgs(input, project, paths, { dryRun = false } = {}) {
       args.push("--worker-skill", `${role}=${path}`);
     }
   }
-  if (dryRun) args.push("--dry-run", "--skip-model-check");
+  if (dryRun) args.push("--dry-run");
+  if (dryRun || skipModelCheck) args.push("--skip-model-check");
   return args;
 }
 
@@ -409,7 +416,13 @@ async function runStart(pi, input, signal, ctx) {
     if (!preview.success) return preview;
     const confirmed = await ctx.ui.confirm("Start tmux orchestration?", startConfirmation(preview));
     if (!confirmed) throw new Error("start_confirmation_declined");
-    return runCli(pi, "start", buildStartArgs(startInput, project, paths), signal);
+    const skipModelCheck = previewModelsAreAvailable(ctx, preview.data?.roles);
+    return runCli(
+      pi,
+      "start",
+      buildStartArgs(startInput, project, paths, { skipModelCheck }),
+      signal,
+    );
   });
 }
 
@@ -881,6 +894,7 @@ export const testHooks = {
   brokerFrame,
   parentProgressContent,
   parentUpdateContent,
+  previewModelsAreAvailable,
   runAttach,
   runStart,
   startInputWithParentModel,
