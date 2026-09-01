@@ -8,6 +8,12 @@ All notable changes to this project are documented here.
 
 ### Changed
 
+## 0.9.2 - 2026-09-01
+
+### Changed
+
+- Removed the package-wide `Ctrl+Shift+G` dashboard shortcut, which conflicted with Pi's built-in `tui.altScreen.searchPrevious` binding; use `/or-dashboard` to open the overlay
+
 ## 0.9.1 - 2026-09-01
 
 ### Changed

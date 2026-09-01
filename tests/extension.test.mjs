@@ -117,7 +117,7 @@ function context(overrides = {}) {
   };
 }
 
-test("registers one bounded model tool and the exact short-only command surface", () => {
+test("registers one bounded model tool and the exact short-only command surface without shortcuts", () => {
   const { tool, tools, commands, shortcuts, events } = harness(async () => ({ code: 0, stdout: "" }));
   assert.equal(tools.length, 1);
   assert.equal(tool.name, "tmux_orchestrator");
@@ -179,7 +179,7 @@ test("registers one bounded model tool and the exact short-only command surface"
   assert.equal([...commands.keys()].some((name) => name.startsWith("orchestrator-")), false);
   assert.equal(commands.has("orchestrate"), false);
   assert.equal(commands.has("orchestrations"), false);
-  assert.equal(shortcuts.get("ctrl+shift+g").handler instanceof Function, true);
+  assert.equal(shortcuts.size, 0);
   assert.equal(events.has("session_start"), true);
   assert.ok(events.has("session_before_switch"));
   assert.ok(events.has("session_before_fork"));

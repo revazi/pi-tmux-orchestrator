@@ -472,7 +472,7 @@ tool rendering, and input editor for direct steering.
 
 ### `dashboard`
 
-`/or-dashboard` and `Ctrl+Shift+G` open a bounded Pi-native overlay containing
+`/or-dashboard` opens a bounded Pi-native overlay containing
 every running managed orchestration and a compact local About footer with the
 installed version, repository, issues, npm, and contribution details. Opening
 and refreshing load the session list but never run doctor. Session rows show
