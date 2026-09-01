@@ -8,6 +8,8 @@ All notable changes to this project are documented here.
 
 ### Changed
 
+- Reduced the README to a concise installation, quick-start, migration, safety, and documentation guide while keeping complete operational detail in the packaged references
+
 ## 0.9.0 - 2026-08-31
 
 ### Breaking

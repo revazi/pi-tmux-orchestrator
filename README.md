@@ -5,165 +5,38 @@
 [![CI](https://github.com/revazi/pi-tmux-orchestrator/actions/workflows/ci.yml/badge.svg)](https://github.com/revazi/pi-tmux-orchestrator/actions/workflows/ci.yml)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.md)
 
-A [Pi](https://github.com/earendil-works/pi) extension, skill, and
-dependency-free Python CLI for coordinating coding agents in monitorable tmux
-grids.
+A [Pi](https://github.com/earendil-works/pi) package for coordinating coding
+agents in a monitorable tmux grid.
 
-**Choose the shortest path for what you need:**
-
-- New user: [install](#installation), then follow the [quick start](#quick-start).
-- Upgrading: read the [0.9.0 command migration](#upgrading-to-090).
-- Configuring repeatable behavior: use [profiles and exact project defaults](#optional-configuration).
-- Power user: open the [complete usage reference](references/usage.md) or
-  [coordination protocol](references/protocol-v1.md).
-
-## Demo
+- One implementer writes.
+- One independent reviewer is always required.
+- Optional probe, Playwright, and Django specialists stay read-only.
+- Native Pi workers remain visible and directly steerable.
+- An event-driven broker handles structured coordination and recovery.
+- Durable orchestration state is bounded and metadata-only.
 
 ![Pi Tmux Orchestrator native worker grid and broker dashboard](https://raw.githubusercontent.com/revazi/pi-tmux-orchestrator/main/assets/pi-tmux-orchestrator-demo.png)
 
-Native Pi TUI workers remain directly steerable while the broker dashboard shows
-workflow, role, model, usage, context, and recent metadata state.
+## Install
 
-## What it provides
-
-- One implementer with normal Pi coding tools
-- One independent reviewer with read/verification tools
-- Optional technical probe, Playwright tester, and Django expert
-- One event-driven owner-only Unix-socket broker per run
-- An adaptive broker/status dashboard for workflow, role, model, usage, context, and recent metadata events
-- The same worker-bridge protocol for interactive TUI and headless RPC workers
-- Native worker output in TUI panes and assistant/tool input/tool output visibility in RPC panes
-- Parent Pi supervision with event-driven final structured reports and attention alerts
-- Assignment-boundary context resets with bounded parent capsules, coalesced latest-per-role run state, and complete Pi history
-- An opt-in, ephemeral, evidence-gated workspace-capsule experiment for cold assignments
-- Lean worker system prompts, disabled automatic skill discovery, and explicit digest-bound per-role skill opt-in
-- Orchestration-only UTF-8 read/grep/bash result caps with actionable continuation and metadata-only tuning facts
-- Bounded typed reports through a terminating Pi tool
-- No Markdown handoffs, readiness markers, mailbox payload files, relay polling,
-  lifecycle sleeps, or tmux key injection in newly started runs
-- Metadata-only SQLite state, durable Pi sessions, idempotent command IDs, and
-  crash-`uncertain` semantics
-- User-configurable provider/model/thinking policy for every role, including Pi
-  custom providers, with exact natural-language overrides through the model tool
-- Immutable packaged and strict custom thinking profiles, plus exact canonical
-  per-project defaults for profiles, models, flow, specialists, and workspace capsules
-- Actual provider token/cost accounting when Pi exposes it, plus context pressure
-  and strict user-global/per-run budget policy
-- A versioned JSON CLI and tmux-independent Supervisor API v2
-- A persistent project-neutral controller Pi session
-- Explicit project trust, one-writer policy, bounded output, and confirmations
-  for restart/stop
-
-## Grid
-
-```text
-┌──────────────────────────────┬──────────────────────────────┐
-│ Implementer                  │ Reviewer                     │
-│ configured provider/model    │ configured provider/model    │
-│ configured thinking          │ configured thinking          │
-├──────────────────────────────┼──────────────────────────────┤
-│ Optional probe               │ Optional Playwright tester   │
-│ configured provider/model    │ configured provider/model    │
-│ configured thinking          │ configured thinking          │
-├──────────────────────────────┼──────────────────────────────┤
-│ Optional Django expert       │ Broker + status              │
-│ configured provider/model    │ state, roles, models, usage  │
-│ configured thinking          │ recent metadata events       │
-└──────────────────────────────┴──────────────────────────────┘
-```
-
-Tmux hosts and displays the broker and workers. It is not the coordination
-transport.
-
-The broker pane is an event-driven terminal dashboard rather than a log tail.
-It prioritizes session identity and workflow state/round, then transport and
-protocol, per-role connection/lifecycle/assignment/model/thinking/actual usage,
-soft-budget pressure, and a bounded recent metadata event rail. Green denotes
-healthy/success, cyan active work, yellow attention or budget pressure, red
-failure/uncertainty, and dim text secondary metadata. Full, compact, and narrow
-layouts adapt to the pane without wrapping. State changes and supported
-`SIGWINCH` resize notifications repaint TTYs in place and restore cursor state;
-`NO_COLOR`, `TERM=dumb`, non-TTY, and non-UTF-8 outputs
-have plain safe fallbacks. The dashboard never renders workflow or provider
-bodies and never polls to refresh. See the reviewable
-[broker dashboard design](references/dashboard-design.md) for the wireframe,
-hierarchy, semantic tokens, breakpoints, and intentional omissions.
-
-## Architecture
-
-`bin/pi-tmux-agents` is a thin executable. The authoritative standard-library
-implementation is `pi_tmux_orchestrator/`:
-
-- CLI/controller/tmux host control
-- strict manifests and private storage
-- framed broker protocol and metadata-only SQLite state machine
-- focused dependency-free broker dashboard presentation
-- broker clients and TUI/RPC worker supervision
-- role system prompts and worker bridge
-- retained-run Supervisor API
-
-The extension delegates orchestration control actions as bounded argument
-arrays to the Python JSON CLI, reads only bounded model metadata from Pi's
-current registry, and owns the parent-session observer/presentation bridge. For
-Pi-started runs, the invoking parent Pi keeps an authenticated
-read-only broker observer: tmux panes provide live worker visibility, while
-structured completion/attention reports return to the parent for decisions.
-The broker is the only current-run metadata writer. Pi owns conversation
-durability. Reviewer roles inspect the shared worktree directly instead of
-receiving copied diffs or logs.
-
-See [coordination protocol v1](references/protocol-v1.md) for schemas, role ACLs,
-authentication, lifecycle, report limits, acknowledgements, retry, crash
-recovery, and token accounting.
-
-## Requirements
-
-- Pi available as `pi`
-- Python 3.11+
-- tmux 3.2+; tmux 3.5+ recommended
-- Node 22.19+ for package verification
-- Ruff 0.11.11 for repository development checks only
-
-Recommended tmux 3.5+ configuration:
-
-```tmux
-set -g extended-keys on
-set -g extended-keys-format csi-u
-```
-
-## Installation
+Requirements: Pi, Python 3.11+, tmux 3.2+, and macOS or Linux.
 
 ```bash
 pi install npm:pi-tmux-orchestrator
 ```
 
-One run without installation:
+Run once without installing:
 
 ```bash
 pi -e npm:pi-tmux-orchestrator
 ```
 
-Reviewed Git commit or local checkout:
-
-```bash
-pi install git:github.com/revazi/pi-tmux-orchestrator@<reviewed-full-commit>
-pi install /absolute/path/to/pi-tmux-orchestrator
-```
-
-Pi packages execute with the current user's permissions. Inspect source before
-installation. This package has no runtime dependency tree and is MIT licensed.
-
-If an old installation uses the removed scoped npm identity:
-
-```bash
-pi remove npm:@revazi/pi-tmux-orchestrator
-pi install npm:pi-tmux-orchestrator
-```
+Pi packages execute with your user permissions. Inspect packages before
+installing them.
 
 ## Quick start
 
-No configuration file is required. Start Pi inside tmux from the project you
-want the agents to inspect:
+Start Pi inside tmux from the project you want to change:
 
 ```bash
 tmux new -s coding
@@ -171,835 +44,181 @@ cd /absolute/path/to/project
 pi
 ```
 
-Then start in either of these ways:
+Then use either:
 
-- Run `/or-start Describe the change you want`.
-- Or ask Pi naturally: `Describe the change you want. Use the orchestrator.`
+```text
+/or-start Describe the change you want
+```
 
-Pi's natural-language path uses the `tmux_orchestrator` tool and the same preview
-and confirmation boundary. Next:
+or natural language:
 
-1. Review Pi's project, roles, models, profile, and safety confirmation.
-2. Confirm to start one implementer and the mandatory independent reviewer.
-3. Run `/or-dashboard` to inspect progress. Press `?` for its keys.
-4. Return from attached worker panes with tmux prefix, then `L`.
+```text
+Describe the change you want. Use the orchestrator.
+```
 
-The no-configuration behavior uses the compatibility `thorough` thinking
-profile and `single` implementation flow. Models come from the packaged policy
-unless you configured worker models separately. Optional specialists are not
-writers.
+Review the preview and confirm. The default run starts one implementer and the
+mandatory reviewer. No configuration file is required.
 
-| Common task | What to use |
+Open `/or-dashboard` to inspect or attach to runs. When attached to the worker
+grid, press the tmux prefix followed by `L` to return to the same Pi session.
+
+## Pi commands
+
+The extension intentionally exposes only five commands:
+
+| Command | Purpose |
 |---|---|
-| Start normal reviewed work | `/or-start [task]`, or ask Pi: `[task]. Use the orchestrator.` |
-| See runs or attach to workers | `/or-dashboard` |
-| Check current-project setup | `/or-dashboard`, then `d` |
-| Find an exact model ID | `/or-models [query]` |
-| Send private guidance to one role | `/or-send [session]` |
-| Stop a run with confirmation | `/or-stop [session]` |
+| `/or-dashboard` | List, inspect, attach/watch, run doctor, or confirm stop |
+| `/or-models [query]` | Find exact provider/model IDs |
+| `/or-start [task]` | Preview, confirm, and start work |
+| `/or-send [session]` | Send private guidance to one role |
+| `/or-stop [session]` | Select and confirm stopping a run |
 
-That is enough for regular use. Profiles and exact per-project defaults are
-optional; configure them only when you want repeatable differences between
-projects.
+The dashboard is keyboard-driven:
 
-## Upgrading to 0.9.0
+| Key | Action |
+|---|---|
+| arrows or `j`/`k` | Select a run |
+| Enter | Watch future transitions and attach |
+| `d` | Run current-project doctor explicitly |
+| `r` | Refresh the session list |
+| `x` | Request confirmed stop |
+| `?` | Show help |
+| `q` or Escape | Close |
 
-**Version 0.9.0 has a breaking Pi slash-command migration.** The duplicate
-`/orchestrator-*` names and separate read-only helper commands are removed. The
-extension now exposes exactly five short commands:
+Opening or refreshing the dashboard never runs doctor and never starts
+background polling. Attaching does not replay an already-completed outcome into
+the invoking Pi; use explicit watch behavior when that Pi should assess an
+existing outcome.
 
-| Before 0.9.0 | Use in 0.9.0 |
+## How it works
+
+Tmux hosts the worker panes but does not transport workflow messages. Each run
+has an owner-only Unix-socket broker that authenticates role bridges, accepts
+bounded typed reports, and schedules the mandatory review.
+
+The invoking Pi remains the parent supervisor. It receives event-driven
+completion or attention updates while each worker keeps its normal durable Pi
+session. Crashes and ambiguous delivery fail to `uncertain` rather than blindly
+replaying work.
+
+The package supports interactive native Pi panes and explicit headless RPC
+workers through the same broker protocol. New runs use manifest v5 and
+`broker-v1`; retained older runs remain readable.
+
+## Optional configuration
+
+Configuration is user-global, never project-local:
+
+```text
+~/.pi/agent/tmux-orchestrator.json
+```
+
+Packaged profiles change only Pi thinking levels:
+
+- `economy`
+- `balanced`
+- `thorough` — compatibility default
+
+Profiles do not change models, tools, role authority, mandatory review,
+routing, or budget behavior.
+
+Version-3 configuration can apply exact defaults to canonical project paths:
+
+```json
+{
+  "version": 3,
+  "defaultProfile": "balanced",
+  "projects": [
+    {
+      "directory": "/absolute/canonical/path/from/pwd-P",
+      "profile": "thorough",
+      "implementationFlow": "phased",
+      "specialists": ["probe"],
+      "workspaceCapsule": false
+    }
+  ]
+}
+```
+
+Project directories must already exist and exactly match `pwd -P`; there are no
+globs, prefix matches, repository-name matches, or symlink components. Explicit
+run options override an exact project mapping.
+
+Pi remains authoritative for provider authentication. The orchestrator does not
+read or copy provider credentials. Model policy, custom profiles, specialist
+activation, observational budgets, worker skills, and workspace capsules are
+documented in the [complete usage reference](references/usage.md).
+
+## Upgrading to 0.9
+
+Version 0.9 removed duplicate long-form commands and separate helper commands:
+
+| Before | Now |
 |---|---|
 | `/orchestrator-dashboard` | `/or-dashboard` |
 | `/orchestrator-models` | `/or-models` |
 | `/orchestrator-start` | `/or-start` |
 | `/orchestrator-send` | `/or-send` |
 | `/orchestrator-stop` | `/or-stop` |
-| list, status, help, about, doctor, watch, attach helper commands | `/or-dashboard`, then use its keyboard actions |
-| supervisor and restart helper commands | `pi-tmux-agents` or the `tmux_orchestrator` model tool |
+| list/status/help/about/doctor/watch/attach helpers | `/or-dashboard` |
+| supervisor/restart helpers | `pi-tmux-agents` or the model tool |
 
-Before updating, finish or stop active orchestrations so one run is not managed
-by two installed package versions. Then update and restart Pi:
+Finish or stop active runs, update, and restart Pi:
 
 ```bash
 pi update npm:pi-tmux-orchestrator
 ```
 
-Open `/or-dashboard`; press `?` for help and `d` for the explicit current-project
-doctor. Existing retained manifest v1-v4 runs remain readable, new runs use
-manifest v5, the mandatory reviewer and one-writer policy are unchanged, and
-`thorough` remains the compatibility profile. See the reviewed
-[0.9.0 release notes](https://github.com/revazi/pi-tmux-orchestrator/blob/v0.9.0/releases/v0.9.0.md) for the complete migration, new
-configuration features, and rollback guidance. The public
-[pre-release migration announcement](https://github.com/revazi/pi-tmux-orchestrator/issues/82)
-is retained as the discussion archive.
+Existing manifest v1-v4 runs remain readable. The mandatory reviewer,
+one-writer policy, and `thorough` compatibility profile are unchanged.
 
-## Daily use from Pi
-
-The package exposes a compact, short-only Pi command surface:
-
-- `/or-dashboard` — list and inspect runs, show concise package details, run doctor on demand, attach/watch, or confirm stop
-- `/or-models [query]` — list bounded available model metadata
-- `/or-start [task]` — confirm and start an orchestration
-- `/or-send [session]` — send a private role message
-- `/or-stop [session]` — select and confirm stopping a run
-
-The authoritative `pi-tmux-agents` CLI and `tmux_orchestrator` model tool retain
-their complete operational surfaces. The extension intentionally does not
-register duplicate `/orchestrator-*`, help, about, doctor, list, status, watch,
-or attach slash commands.
-
-### Dashboard overlay
-
-Use `/or-dashboard` or `Ctrl+Shift+G` to open a Pi-native overlay inspired by
-Pi Fallow and Pi Tasklight. It initially loads only the running-session list and
-a compact local About footer modeled on Pi Tasklight, with version, repository,
-issues, npm, and contribution details. Session rows show workflow state, round, profile,
-linked-role count, provider calls, operational tokens, provider-reported cost
-when complete, and peak current context pressure. Doctor is never run just by
-opening or refreshing the dashboard; press `d` to request its current-project
-config, model, tmux, and budget checks.
-
-Navigate with arrows or `j`/`k`, press Enter to watch and attach to the selected
-orchestration, use `x` to confirm stopping it, `r` to refresh the session list,
-`d` to show or hide the on-demand doctor result, `?` for concise help, and
-`q`/Escape to close. Attach watches future transitions but does not replay an
-existing initial `ready`, `uncertain`, or `needs_attention` outcome as a new task
-for the invoking Pi. Prefix then `L` returns to the same Pi and its original
-project context. Attach requires the invoking Pi to be inside tmux. The
-dashboard does not poll and reads only metadata-only CLI/broker summaries. Pi's
-current public overlay API does not expose row-click callbacks, so true mouse-row
-activation is deferred rather than emulated with unsafe terminal URL handlers.
-
-At interactive Pi startup, the extension makes one best-effort, time-bounded
-request to the public npm registry. If a newer release exists, it shows a
-non-blocking warning with `pi update npm:pi-tmux-orchestrator`. The dashboard's
-About footer shows the installed version and project/package links, plus a cached
-update status when the startup check found a newer release; opening the dashboard
-does not make another network request. Set
-`PI_TMUX_ORCHESTRATOR_DISABLE_UPDATE_NOTICE=1` to disable startup notices.
-Update checks are skipped in orchestration worker and controller sessions.
-
-## Optional configuration
-
-Keep orchestration policy in the user-global
-`~/.pi/agent/tmux-orchestrator.json`, never in a target repository. Pi's own
-provider authentication and `models.json` remain authoritative; the
-orchestrator never reads or copies credentials.
-
-### 1. Choose a profile
-
-Profiles set only the deterministic Pi `thinking` level for each built-in role:
-
-| Profile | Implementer | Reviewer | Probe | Playwright | Django |
-|---|---|---|---|---|---|
-| `economy` | `medium` | `medium` | `low` | `medium` | `medium` |
-| `balanced` | `high` | `high` | `medium` | `medium` | `medium` |
-| `thorough` | `xhigh` | `high` | `high` | `high` | `high` |
-
-`thorough` is the compatibility default. Profile names are not quality,
-provider-cost, billing, or recommended-use claims. A profile never changes
-models, tools, role authority, mandatory review, workflow routing, result caps,
-or budget behavior.
-
-To make `balanced` the default for every unmatched project:
-
-```json
-{
-  "version": 3,
-  "defaultProfile": "balanced"
-}
-```
-
-For one CLI run only, without changing the file:
+See the [v0.9.0 release notes](https://github.com/revazi/pi-tmux-orchestrator/releases/tag/v0.9.0) and
+[migration discussion archive](https://github.com/revazi/pi-tmux-orchestrator/issues/82).
+If migration is blocked, stop active 0.9 runs and roll back:
 
 ```bash
-pi-tmux-agents start \
-  --project /absolute/path/to/project \
-  --task "Describe the requested change" \
-  --profile balanced \
-  --dry-run
+pi remove npm:pi-tmux-orchestrator
+pi install npm:pi-tmux-orchestrator@0.8.1
 ```
 
-The `tmux_orchestrator` model tool exposes the same `profile` override. A normal
-`/or-start` uses the exact project mapping, then `defaultProfile`, then
-`thorough`.
+## Terminal CLI
 
-### 2. Configure several projects
-
-First obtain each existing project's canonical absolute path:
-
-```bash
-(cd ~/Work/storefront && pwd -P)
-(cd ~/Work/payments-api && pwd -P)
-(cd ~/Work/docs-site && pwd -P)
-```
-
-Put those paths in the single user-global configuration file—not in any of the
-projects:
-
-```json
-{
-  "version": 3,
-  "defaultProfile": "thorough",
-  "projects": [
-    {
-      "directory": "/Users/alice/Work/storefront",
-      "profile": "balanced",
-      "implementationFlow": "phased",
-      "specialists": ["playwright"],
-      "workspaceCapsule": false
-    },
-    {
-      "directory": "/Users/alice/Work/payments-api",
-      "profile": "thorough",
-      "roles": {
-        "reviewer": { "thinking": "xhigh" }
-      },
-      "implementationFlow": "phased",
-      "specialists": ["probe", "django"],
-      "workspaceCapsule": false
-    },
-    {
-      "directory": "/Users/alice/Work/docs-site",
-      "profile": "economy",
-      "implementationFlow": "single",
-      "specialists": [],
-      "workspaceCapsule": false
-    }
-  ]
-}
-```
-
-| Exact project | Effective defaults |
-|---|---|
-| `storefront` | `balanced`, phased plan/implementation, Playwright evaluation |
-| `payments-api` | `thorough`, reviewer `xhigh`, phased flow, probe and Django evaluation |
-| `docs-site` | `economy`, single flow, specialists explicitly disabled |
-| Any unmatched project | user-global `thorough`, packaged `single` flow, no specialists |
-
-Configured specialists still pass through deterministic activation gates; a
-listed specialist is not automatically forced to run. Explicit run options can
-override the matching project's profile, flow, specialists, or workspace setting
-for one run.
-
-Every listed directory must already exist and must exactly equal `pwd -P`.
-Matching has no globs, prefixes, implicit parent matches, repository-name
-matches, or symlink components. A mapping cannot bypass trust, add a writer,
-remove the reviewer, force a specialist, or provide prompts/skills.
-
-### 3. Define a custom profile
-
-A custom profile must map all five built-in roles exactly once:
-
-```json
-{
-  "version": 3,
-  "profiles": {
-    "review-heavy": {
-      "implementer": "medium",
-      "reviewer": "high",
-      "probe": "low",
-      "playwright": "medium",
-      "django": "medium"
-    }
-  },
-  "projects": [
-    {
-      "directory": "/absolute/canonical/path/to/project",
-      "profile": "review-heavy"
-    }
-  ]
-}
-```
-
-Names match `[a-z][a-z0-9-]{0,31}` and cannot replace packaged names. Version 3
-allows at most 16 custom profiles and 64 exact project mappings. Legacy version-1
-and version-2 files remain accepted.
-
-### 4. Override models only when needed
-
-Global `defaults`, global `roles`, project `defaults`, and project `roles` may
-set exact provider/model IDs returned by `/or-models`. For example, inside one
-project entry:
-
-```json
-{
-  "directory": "/absolute/canonical/path/to/project",
-  "defaults": {
-    "provider": "your-provider-id",
-    "model": "your-model-id"
-  },
-  "roles": {
-    "reviewer": {
-      "provider": "another-provider-id",
-      "model": "another-model-id",
-      "thinking": "xhigh"
-    }
-  }
-}
-```
-
-`defaults` applies to enabled roles and `roles` narrows an override. Credential
-and endpoint fields are rejected. Set `PI_TMUX_ORCHESTRATOR_CONFIG` to another
-absolute external path if needed. The effective configuration is shown before
-start and in dashboard doctor.
-
-Precedence, from strongest to fallback, is explicit run override → exact project
-role/default → user-global role/default → selected profile → packaged model
-fallback. Profile selection is explicit run → exact project → user-global
-default → `thorough`. See the [usage reference](references/usage.md#profiles-and-exact-project-policy)
-for the complete schema, validation, model-tool fields, and retained metadata.
-
-### Provider-usage budget configuration
-
-A separate strict user-global file, `~/.pi/agent/tmux-orchestrator-budgets.json`,
-defines versioned warning and hard thresholds without entering target
-repositories:
-
-```json
-{
-  "version": 1,
-  "enforcement": "warn-only",
-  "warning": {
-    "run": { "provider_calls": 50, "operational_tokens": 600000 },
-    "role": { "operational_tokens": 200000 },
-    "assignment": { "context_percent": 80 }
-  },
-  "hard": {
-    "run": { "cost_total": 25 },
-    "role": {},
-    "assignment": { "context_percent": 95 }
-  }
-}
-```
-
-Scopes are `run`, `role`, and `assignment`. Metrics are provider calls, input,
-output, cache read, cache write, optional reasoning, operational tokens,
-provider-reported cost, context tokens, and context percentage. Categories stay
-separate; `operational_tokens` is not billing. Unknown, credential, endpoint,
-non-finite, non-positive, oversized, duplicate, and warning-above-hard values
-are rejected. `null` removes an inherited threshold. The packaged migration
-default is warn-only with the existing 600,000 run and 200,000 role operational
-warnings and no hard thresholds.
-
-Set `PI_TMUX_ORCHESTRATOR_BUDGET_CONFIG` to an absolute external path. A budget
-file in the target project is rejected. Explicit `--budget-enforcement` and
-repeatable `--budget-override LEVEL.SCOPE.METRIC=VALUE` (or `=off`) values win
-for one run; the model tool exposes the same strict native `budgetOverrides`
-object. Dry-run JSON and Pi's start confirmation show the effective policy.
-The policy is retained as numeric/enum broker metadata, but every threshold is
-observational: neither `warn-only` nor the compatibility `hard` mode blocks a
-tool, interrupts a provider response, suppresses required review, or changes
-downstream assignment routing. Assignment `provider_calls`, `context_tokens`,
-and `context_percent` thresholds are projected into each worker bridge. The
-bridge counts provider turns from the accepted assignment boundary, emits one
-bounded warning in the next tool result, and records a higher-severity hard fact
-without enforcing it. Parallel tools and `orchestrator_report` remain available.
-Restart restores the assignment-local markers from the Pi session, while
-SQLite, status, the dashboard, and Supervisor output retain only bounded numeric
-facts. Operators use that visibility to decide whether to steer, request a
-report, restart, or stop the run; there is no live budget-resume command because
-budgets never pause routing.
-
-### Worker prompts and skill opt-in
-
-New TUI and RPC workers use the same lean custom system prompt instead of Pi's
-full general-purpose coding prompt plus repeated role guidance. The lean prompt
-keeps active-tool guidance, role authority, one-writer and safety rules, final
-report behavior, and context efficiency guidance. Pi still discovers and
-appends governing `AGENTS.md`/`CLAUDE.md` files; the orchestrator does not pass
-`--no-context-files`.
-
-Automatic worker skill discovery is disabled with `--no-skills`. Load a reviewed
-Markdown skill for one role only with repeatable
-`--worker-skill ROLE=/absolute/path/SKILL.md`, or the model tool's strict
-`workerSkills` role arrays. The dry-run and interactive confirmation show the
-exact paths. Each selected file is size-bounded, UTF-8 validated, and bound to a
-SHA-256 digest in private manifest metadata; launch or restart fails closed if
-it changes. Skills add instructions, not tools: reviewer and specialist Pi
-processes retain their enforced read/verification tool allowlist and cannot gain
-`edit` or `write` through a skill.
-
-The checked-in model-free Pi 0.84.1 fixture captures the actual built prompt
-options with a synthetic context file and skills. Its normalized reviewer prompt
-changes from 5,000 to 2,479 serialized characters (50.4%). This is a deterministic
-prompt-size proxy, not provider tokens, billing, cache efficiency, or a savings
-claim; provider metadata remains authoritative.
-
-### Experimental cold-assignment workspace capsule
-
-`--workspace-capsule` opts one run into a disabled-by-default discovery
-experiment. Repeat `--workspace-relevant-path PROJECT_RELATIVE_PATH` for at most
-16 existing parent-supplied paths; the Pi model tool uses `workspaceCapsule: true`
-and `workspaceRelevantPaths`. Native TUI and headless RPC workers receive
-the same broker-rendered baseline.
-
-The deterministic schema is capped at 8 KiB and contains only a SHA-256 identity
-for the canonical Git worktree root, initial Git HEAD plus a clean/dirty observation,
-project-relative governing instruction paths with SHA-256 hashes,
-existing names from a fixed 16-file top-level build/test-marker allowlist, and
-the bounded relevant paths. It never enumerates or serializes a complete repository
-tree and never includes instruction or source contents; Git may still inspect the
-worktree internally to produce the initial clean/dirty observation. The project must be the canonical
-Git worktree root with an existing HEAD. Absolute, escaping, missing, duplicate,
-non-normalized, oversized, unknown, and symlinked paths or fields fail closed.
-Instruction candidates follow Pi's per-directory precedence, but the capsule is
-only a hint: Pi context-file discovery remains enabled, and every worker must
-still discover and read governing `AGENTS.md`/`CLAUDE.md` plus referenced/scoped
-instructions through Pi/project mechanisms.
-
-Construction happens independently for dry-run and confirmed start. The broker
-strictly revalidates canonical root, Git HEAD, marker set, relevant paths, and
-instruction identities before initial delivery and before a live in-memory
-restart replay. Normal task edits may change the clean/dirty observation without
-invalidating the initial metadata, so late delivery and restart remain available.
-A changed HEAD, instruction, marker set, missing path, or new symlink rejects the
-capsule; a stale restart handover becomes `uncertain` rather than trusting old
-hints. The capsule exists only in the transient startup
-payload, broker memory, and worker baseline. It is deleted with the startup
-payload after initial routing and is absent from manifests, SQLite, status,
-dashboards, Supervisor API, registries, and project files. There is no cross-run
-cache; adding one would first require an explicit privacy/retention policy.
-Dry-run/confirmation may expose only bounded schema/count/byte/digest validation
-metadata, never path lists or bodies. Retained manifests remain v4-compatible.
-
-The capsule changes serialized startup context and could improve or invalidate a
-provider's cache prefix depending on provider serialization and cache policy.
-No provider cache behavior is inferred from local bytes. The checked two-fixture
-benchmark reports exactly 733 and 886 UTF-8 workspace-hint bytes added to the
-synthetic worker baselines; disabled runs add zero. It also reports conceptual
-worker discovery-operation proxies of 4→2 while separately reporting 39 and 53
-construction-operation proxies. Serialized worker discovery results, provider
-calls, tokens, cost, reviewer findings, checks, revisions, and correctness are
-all unavailable; the benchmark does not fabricate a full-tree baseline. These
-are model-free shape/operation proxies—not savings, billing, cache, provider-call,
-or correctness-equivalence evidence—so the experiment remains opt-in and
-supports no default change. Validate it with
-`python3 scripts/workspace-capsule-baseline.py --check`.
-
-### Implementer inspect/plan contract
-
-The shared TUI/RPC worker bridge accepts a second implementer report kind,
-`plan`, only for an active assignment retained as `plan`. During such an
-assignment it switches the implementer to active tools
-`read,bash,grep,find,ls,orchestrator_report`; `edit`, `write`, and other tools are
-removed and blocked. As with specialist read-only policy, retained `bash` is not
-an OS sandbox, so the assignment and prompt also prohibit modification. Restart
-restores the assignment kind and reapplies the same tool set.
-
-A plan requires a summary plus relevant paths, relevant symbols, intended
-changes, required checks, risks, and open questions. Each array has at most 12
-strings of at most 300 characters; summary is at most 1,000 characters and
-relevant paths must be relative. Plans cannot contain changed paths, executed
-checks, findings, limitations, approval, or a verdict. The bridge and broker
-both validate the shape, role, assignment-kind match, 32 KiB total report limit,
-and one-report-per-assignment rule.
-
-Accepted plan evidence is rendered into the existing latest-per-role rolling
-run-state capsule. SQLite retains only its report kind, summary length, zero
-change/check/finding counts, numeric provider usage when available, and other
-existing metadata—not plan bodies.
-
-Start with `--implementation-flow phased` (or model-tool
-`implementationFlow: "phased"`) for complex work. The broker starts a read-only
-`plan` assignment, accepts and delivers its bounded plan capsule, then creates a
-distinct same-round `implementation` assignment. That boundary prunes inspection
-assistant/tool turns before the first implementation provider request while
-keeping baseline, plan run state, direct steering, and new-assignment turns. Use
-`single`, the compatibility default, for simple work. Repair rounds always start
-directly as `implementation` with latest reviewer/specialist evidence rather
-than repeating inspection.
-
-The checked synthetic complex-task fixture records a 98.6% serialized-context
-proxy reduction at the first implementation request. Provider calls, token
-categories, cost, failed checks, and missed findings are unavailable, so this is
-not a provider-token, billing, call-savings, or quality-equivalence claim. Run
-`node scripts/phased-implementation-baseline.mjs --check` to verify the fixture.
-
-### Deterministic specialist activation
-
-Configured probe, Playwright, and Django roles use fixed versioned predicates;
-no classifier model request is made. Empty, malformed, unknown, or potentially
-high-risk evidence fails toward running the configured role:
-
-- probe runs for initial tasks containing integration, runtime, security,
-  database, migration, protocol, concurrency, transaction, API, auth, or
-  credential terms; it skips only clear documentation/typo tasks. On repair
-  rounds it skips only documentation-only changed paths.
-- Playwright runs for browser/frontend paths and every ambiguous non-documentation
-  path; it skips only documentation-only changed paths.
-- Django runs for framework markers such as settings, URLs, models, views,
-  middleware, migrations, templates, ASGI/WSGI, admin, apps, or `manage.py`; it
-  also runs for ambiguous paths and skips only documentation-only or clearly
-  frontend-only path sets.
-
-Use repeatable `--force-specialist probe|playwright|django`, or model-tool
-`forceSpecialists`, only when an enabled role must run regardless of a skip
-predicate. Forced activation always requires that role's real report before
-review; a skip cannot satisfy it. SQLite schema v7 stores only role, round,
-`run|skipped`, versioned rule ID, and forced boolean. Reviewer run state shows
-those decisions and whether activated evidence was reported. Synthetic browser
-or probe evidence remains non-production acceptance. The checked four-case
-assignment-count proxy selects 8 of 12 formerly unconditional assignments (4
-avoided), but provider usage and quality evidence remain unavailable, so it
-makes no call, token, cost, or equivalence claim. Validate it with
-`python3 scripts/specialist-activation-baseline.py --check`.
-
-### Worker result-volume policy
-
-Only orchestration workers apply an additional result policy before the next
-provider request. `read` defaults to and is capped at 400 requested lines with
-a 16 KiB/400-line emitted limit. `grep` defaults to and is capped at 40 matches,
-context is capped at two lines, and emitted search text is capped at 16 KiB/240
-lines. `bash` output is capped at 24 KiB/400 lines while preserving a bounded
-beginning, failure-diagnostic excerpt, and ending. When this lower bash cap is
-reached, the complete available output is written to a mode-`0600` temporary
-file unless Pi already supplied a full-output path.
-
-Every truncated result tells the worker how to request the next targeted read
-page, refine grep, or inspect a targeted full-output slice. Session-private
-custom entries record only assignment ID, tool enum, direction, booleans, and
-numeric source/emitted/input-cap facts. A following read page or refined grep is
-recorded as metadata without paths, patterns, commands, or result bodies. This
-policy is loaded by the same worker extension in TUI and RPC modes and does not
-change ordinary Pi sessions.
-
-The checked synthetic benchmark reports 144,491 before versus 89,733 after
-serialized UTF-8 provider-context bytes (37.9% reduction) and two additional
-provider calls for read/grep pagination across three scenarios. Run:
-
-```bash
-node scripts/result-volume-baseline.mjs --check
-```
-
-These are deterministic size/call proxies, not provider tokens, cost, quality,
-or production-wire acceptance.
-
-Natural-language requests are supported by the `tmux_orchestrator` tool. For
-example, users can ask Pi to “use my current model for every worker,” “use
-Anthropic model X with high thinking for the implementer,” or “use configured
-models.” Pi can call the metadata-only `models` action to resolve exact IDs; the
-same catalogue is available with `/or-models [query]`. The tool must not invent
-provider/model IDs. Explicit CLI equivalents remain available:
-
-```bash
-pi-tmux-agents start --task-file /tmp/task.md \
-  --implementer-provider anthropic \
-  --implementer-model claude-sonnet-4-6 \
-  --implementer-thinking high \
-  --reviewer-provider google \
-  --reviewer-model gemini-3.1-pro-preview \
-  --reviewer-thinking medium
-```
-
-When a session argument is omitted from `/or-send` or `/or-stop`, Pi opens a
-selector showing valid session/project pairs. Dashboard selection handles
-status/attach/watch and can confirm stop. Model-tool operations should continue
-to use an exact session whenever multiple runs exist.
-
-The `tmux_orchestrator` model tool provides bounded `doctor`, `list`, `status`,
-`watch`, `attach`, `start`, and `send` actions. Start requires interactive
-confirmation. The Pi session that invokes `start` is the parent supervisor; a
-run creates only the detached worker grid and does not start another parent Pi,
-parent window, or controller. New runs are watched automatically. `watch`
-subscribes that invoking Pi to lifecycle/final updates without changing the
-terminal. `attach` switches its existing tmux client into the worker grid and
-watches future transitions; interactive users can select the same action with
-Enter in `/or-dashboard`. It does not replay an existing initial actionable
-outcome as a new parent task. Use normal tmux pane keys to select a subagent and
-type directly into its native Pi editor. Press the tmux prefix followed by `L`
-to return to the same invoking Pi and original project context; the orchestration
-keeps running and can be reattached. Use explicit `watch` when this Pi should
-assess an existing actionable outcome.
-
-Native Pi TUI workers are the interactive default, preserving Pi's highlighting,
-tool rendering, and input field in every subagent pane. Plain RPC panes remain
-an explicit headless automation option only. The parent receives visible
-lifecycle/report-received progress and a triggered structured update when the
-broker reaches `ready`, `needs_attention`, or `uncertain`. Parent project trust
-is never inherited by child Pi sessions; child `--approve` needs separate
-confirmation. For natural-language starts, the parent can synthesize an optional
-structured `contextCapsule` from its existing conversation without another
-model call. The capsule carries only task-relevant current state, settled
-decisions, constraints, acceptance criteria, paths, evidence, open questions,
-and out-of-scope items—never the complete parent transcript.
-
-## Start from the terminal
-
-```bash
-cat > /tmp/pi-agent-task.md <<'TASK'
-Implement the requested change, add focused tests, run verification, and stop
-after independent review approval.
-TASK
-
-cat > /tmp/pi-agent-context.md <<'CONTEXT'
-### Current state
-A focused branch already contains the reviewed scaffolding.
-
-### Decisions already made
-- Preserve broker-v1 as the only workflow transport.
-
-### Acceptance criteria
-- Add focused regressions and preserve metadata-only durable state.
-CONTEXT
-
-pi-tmux-agents start \
-  --project "$PWD" \
-  --task-file /tmp/pi-agent-task.md \
-  --implementation-flow phased \
-  --context-capsule-file /tmp/pi-agent-context.md \
-  --worker-skill reviewer=/absolute/path/to/review-skill/SKILL.md \
-  --attach
-```
-
-The context capsule is limited to 12 KiB, transferred through a private file,
-and deleted after baseline delivery. Its body is excluded from SQLite, status,
-registries, dashboards, and the Supervisor API. The live broker retains the
-rendered per-role baseline only in memory so a confirmed worker handover can
-replay it; the worker Pi session retains every delivery in its complete JSONL
-history.
-
-Add specialists:
-
-```bash
-pi-tmux-agents start \
-  --project "$PWD" \
-  --task-file /tmp/pi-agent-task.md \
-  --with-probe --probe-task-file /tmp/pi-agent-probe.md \
-  --with-playwright --playwright-task-file /tmp/pi-agent-playwright.md \
-  --force-specialist playwright \
-  --with-django-expert --django-task-file /tmp/pi-agent-django.md
-```
-
-Use `--rpc-workers` only when plain headless RPC event panes are explicitly
-needed for automation. They render assistant progress plus bounded tool inputs
-and outputs, but they do not reproduce Pi's native interactive editor or visual
-presentation. Native TUI is the default and is the required presentation for
-full visual navigation and direct subagent input. Both presentations use the
-same broker and bridge; `--rpc-workers` is not a legacy coordination mode.
-
-Use `--approve-project` only after inspecting and trusting the target project.
-RPC workers otherwise apply Pi's saved/global trust behavior and cannot display
-startup trust dialogs.
-
-## Event-driven workflow
-
-1. Bridges connect and authenticate independently.
-2. Broker stores the task plus optional bounded parent context capsule in each Pi session without waking idle roles.
-3. The optional initial probe is triggered. In `single` flow the implementer
-   receives `implementation`; in `phased` flow it first receives read-only
-   `plan`, then the accepted plan capsule and a distinct same-round
-   `implementation` assignment.
-4. Each implementer report is submitted through `orchestrator_report`; the tool
-   terminates without an acknowledgement-only model turn. The phased boundary
-   prunes completed inspection assistant/tool turns before implementation.
-5. The initial probe and each round's configured specialists are either run or
-   skipped by their fixed predicate. Forced roles always run. The broker records
-   only bounded decision metadata and requires every activated report before
-   review.
-6. Broker replaces prior evidence deliveries with one bounded run-state capsule containing only the latest accepted report per role, then wakes reviewer exactly once. Updates for a role already working are coalesced until its next assignment.
-7. Each newly accepted assignment emits one metadata-only `context_boundary` event. That boundary changes the projection policy used on every provider request: the worker keeps the baseline, latest run state, assignment, direct messages, and all assistant/tool turns from the new assignment while pruning only prior-assignment assistant/tool turns.
-8. A confirmed role restart advances a broker generation, replays the in-memory baseline, and materializes the latest coalesced run state—including an update deferred during the active assignment—before recovering that assignment. A failed local respawn or interrupted replacement recovery is `uncertain`.
-9. `approved` marks the workflow ready without an acknowledgement-only worker
-   turn.
-10. An attached parent observer shows lifecycle and report-received progress,
-   then returns the latest structured role reports when the run is ready or
-   requires intervention.
-
-Idle workers end their turns. They do not sleep or poll. A parent with an
-attached observer also ends its turn and relies on broker updates instead of
-sleeping or repeatedly polling status/tmux. Non-terminal updates remain
-non-triggering while steering an already-active parent before its next model
-step; terminal updates may trigger parent reasoning. A worker settling without
-a report becomes `waiting`/needs attention rather than entering an unlimited
-reminder loop. Pi invokes the worker context-projection hook for every provider
-request, but its pruning policy changes only at a distinct assignment boundary.
-Repeated projections retain every assistant/tool turn from the current
-assignment, and Pi's durable worker session history remains intact. A deterministic two-round
-synthetic regression currently reduces serialized provider-visible message
-characters from 99,170 to 8,678 (91.2%) and enforces a minimum 50% reduction in
-CI. This is a reproducible character metric, not provider token acceptance; real
-token usage remains provider-reported and visible in the dashboard/Supervisor API.
-
-## Manage grids
+The Python CLI provides the complete operational surface:
 
 ```bash
 pi-tmux-agents list
 pi-tmux-agents status SESSION
 pi-tmux-agents attach SESSION
 pi-tmux-agents send SESSION --role implementer --message-file /tmp/message.txt
-pi-tmux-agents send SESSION --role reviewer --delivery follow-up \
-  --command-id 0123456789abcdef0123456789abcdef \
-  --message-file /tmp/review-message.txt
-pi-tmux-agents abort SESSION --role implementer
 pi-tmux-agents restart SESSION --role implementer --yes
 pi-tmux-agents stop SESSION --yes
 ```
 
-When the invoking Pi is already inside tmux, selecting a session in
-`/or-dashboard` and pressing Enter performs the exact client switch without
-replacing or stopping that Pi. Prefix
-then `L` detaches the client from the grid by returning it to the invoking Pi;
-it does not stop the workers. Attach and detach can be repeated while the run is
-live.
+Run `pi-tmux-agents --help` for all commands, JSON output, Supervisor API,
+controller, profile, model, specialist, and headless-worker options.
 
-Acknowledgement means acceptance, not completion. Matching role/action/delivery
-command IDs deduplicate; conflicting reuse is rejected. Confirmed restart
-respawns the worker process and reopens its exact Pi session ID, preserving the
-conversation and complete JSONL history. A failed respawn or crash in an
-unprovable delivery or replacement-handover window becomes `uncertain`; there is
-no exactly-once claim.
+## Safety
 
-## Supervisor API v2
+- The implementer is the only writer; reviewer and specialist roles are
+  read-only but are not OS sandboxes.
+- Project trust, start, restart, and stop retain explicit confirmation
+  boundaries.
+- Existing tmux sessions are never replaced and operations use exact targets.
+- Workflow, prompt, report, message, diff, log, provider, and credential bodies
+  stay out of durable/public orchestration metadata.
+- Provider usage and cost are shown only when Pi/provider metadata supplies
+  them; synthetic benchmarks are not billing or quality claims.
 
-```bash
-pi-tmux-agents --json supervisor capabilities
-pi-tmux-agents --json supervisor sessions
-pi-tmux-agents --json supervisor runs SESSION
-pi-tmux-agents --json supervisor snapshot SESSION --run RUN_ID
-pi-tmux-agents --json supervisor usage SESSION --run RUN_ID --limit 100
-pi-tmux-agents --json supervisor events SESSION --run RUN_ID \
-  --cursor implementer=0 --cursor reviewer=0 --limit 50
-pi-tmux-agents --json supervisor command SESSION --run RUN_ID \
-  --role reviewer --command-id COMMAND_ID
-```
+See [SECURITY.md](SECURITY.md) for the complete security model.
 
-Retained-state reads do not query tmux and never infer liveness from retained
-PIDs. Host runtime is reported as `not_observed`. Snapshot/status include role
-lifecycle, workflow round/state, actual provider usage totals when available,
-latest immutable assignment usage, and context pressure without workflow payload
-bodies. In Supervisor snapshots, the latest result is
-`roles[].runtime.state.latest_assignment_usage`; retained pre-upgrade reports
-keep its `usage` value unavailable. `supervisor usage` returns a bounded,
-tmux-independent summary grouped by run, role, round, and assignment kind. It
-keeps provider calls, input, cache read/write, output, optional reasoning, cost,
-and context pressure separate; `operational_tokens` is explicitly not billing.
-The live dashboard renders role tokens as cumulative/latest-assignment delta,
-and human `status` adds one bounded latest-assignment category line per role.
+## Documentation
 
-## Durable state and compatibility
-
-Run state is private and external to target repositories:
-
-```text
-~/.pi/agent/orchestrations/<session>/<run>/
-```
-
-Files are retained for manifests, authentication, complete Pi JSONL sessions,
-metadata-only SQLite, and a transient startup payload deleted after broker
-ingestion. Baselines, bounded latest-per-role evidence, and rolling run-state
-bodies needed for a confirmed handover remain only in live broker memory and Pi
-sessions. Attached-parent report bodies are likewise ephemeral in broker memory
-and become durable only in Pi sessions; none enter SQLite, status, journals,
-registries, or Supervisor API output. Newly started workers never create or poll
-task/handoff/review/specialist payload files or readiness markers.
-
-Retained `0.4.x` runs remain readable and operable through compatibility code.
-Retained manifest-v3/v4 broker runs remain readable. Current starts create
-manifest v5 with `coordination: "broker-v1"`, bounded execution-profile metadata,
-and external exact-project configuration provenance; there is no selectable
-legacy fallback.
-
-## Token policy
-
-The bridge sums actual Pi/provider-reported input, output, cache-read,
-cache-write, optional reasoning tokens, provider-call count, and cost across
-complete durable history. Each accepted assignment records the delta from its
-numeric session boundary, plus current and peak context occupancy when available,
-in the same SQLite transaction as its report metadata. Downstream routing starts
-only after that commit. Duplicate reports cannot replace the immutable usage
-result. Missing data and usage from older retained reports remain unavailable;
-the orchestrator does not invent estimates.
-
-Structural savings include no waiting turns, no polling, no copied diffs/logs,
-one reviewer wake after all evidence, no approval acknowledgement turn, and
-terminating report calls. Current soft role/run operational-token budgets warn
-before additional work. Assignment provider-call/context-pressure warnings are
-injected once at a tool boundary, and higher-severity threshold facts are
-retained as metadata. Budget thresholds are visibility only: they do not block
-parallel or sequential tools, pause downstream assignments, skip required
-review, or mark workflows ready. The operator decides whether to steer, request
-a report, restart, or stop.
-
-### Development token-efficiency baseline
-
-The repository keeps three model-free provider-context fixtures covering a
-simple assignment, a larger single assignment, and a multi-round boundary. The
-baseline records provider-call count, serialized provider-visible characters
-and UTF-8 bytes by call, plus tool-result characters by tool:
-
-```bash
-node scripts/token-efficiency-baseline.mjs --check
-```
-
-These measurements are deterministic context-size proxies, not provider tokens,
-billing, cache acceptance, or production-wire evidence. Intentional changes are
-reviewed before regenerating
-`tests/fixtures/token-efficiency-baseline.json` with `--write`.
-
-A separate bounded analyzer aggregates only public metadata from retained broker
-SQLite state. It does not read Pi session histories or task, report, prompt,
-message, diff, log, credential, or provider bodies:
-
-```bash
-python -m pi_tmux_orchestrator.token_efficiency \
-  --state-root ~/.pi/agent/orchestrations --max-runs 100
-```
-
-Its `operational_tokens` field is the sum of input, output, cache-read, and
-cache-write categories for comparison; it is not a billing unit. Cost is shown
-only when reported by the provider, and unavailable reasoning usage remains
-explicitly unavailable.
-
-## Persistent controller
-
-```bash
-pi-tmux-agents controller start
-pi-tmux-agents controller status
-pi-tmux-agents controller attach
-pi-tmux-agents controller stop --confirm
-```
-
-The optional controller uses stable Pi session ID
-`pi-tmux-orchestrator-controller-v1`, a private project-neutral workspace, and
-no `edit`/`write` tools. It exists only after an explicit `controller start`; a
-normal orchestration never creates it. It can serve as the parent Pi for
-cross-project runs; the invoking project Pi is the interactive parent otherwise.
-Every target project must be explicit. Duplicate or unmarked reserved tmux names
-are refused.
-
-## Safety model
-
-- One writer; independent read-only reviewers retain `bash` and are not an OS sandbox.
-- Exact tmux targets; existing sessions are never replaced.
-- Private canonical non-symlink state paths and strict schemas.
-- Owner-only local socket with per-role and control authentication.
-- Role-specific structured report ACLs and bounded frames/fields.
-- Metadata-only status, SQLite, journals, registries, and Supervisor API.
-- No Pi/provider credential access or copying.
-- No synthetic-as-production acceptance claims.
-- Explicit trust, restart, abort, and stop boundaries.
-- Failure ambiguity is `uncertain`, never blind replay.
-
-See [SECURITY.md](SECURITY.md) and [usage reference](references/usage.md).
-
-## JSON CLI
-
-Place `--json` before or after a public command for one schema-v1 envelope:
-
-```json
-{"schema_version":"1","command":"status","success":true,"data":{},"error":null}
-```
-
-The outer JSON envelope remains version 1; Supervisor API versioning is
-independent. Payload bodies are never returned.
-
-## Author and license
-
-Created and maintained by [Revaz Zakalashvili](https://github.com/revazi).
-Contact: [revaz.zakalashvili@gmail.com](mailto:revaz.zakalashvili@gmail.com).
-Licensed under the [MIT License](LICENSE.md).
+- [Complete operator and CLI usage](references/usage.md)
+- [Coordination protocol and state boundaries](references/protocol-v1.md)
+- [Dashboard design](references/dashboard-design.md)
+- [Pre-release artifact testing](references/prerelease-testing.md)
+- [Changelog](CHANGELOG.md)
 
 ## Development
 
@@ -1008,11 +227,8 @@ python -m pip install ruff==0.11.11
 scripts/test.sh
 ```
 
-Checks are model-free and isolate package/Pi/npm state from real authentication.
+The default test suite is model-free and isolates package, Pi, and npm state
+from real authentication.
 
-To stage and manually test the exact unreleased checkout without publishing or
-replacing the installed package, follow
-[`references/prerelease-testing.md`](references/prerelease-testing.md). The
-recommended flow builds a persistent package root with commit/tarball provenance,
-uses a disposable provider-free Pi home first, and keeps any real-auth/provider
-acceptance explicit and temporary through `--no-extensions --no-skills -e`.
+Created and maintained by [Revaz Zakalashvili](https://github.com/revazi).
+Licensed under the [MIT License](LICENSE.md).
