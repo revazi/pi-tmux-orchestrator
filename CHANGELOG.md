@@ -8,6 +8,8 @@ All notable changes to this project are documented here.
 
 ### Changed
 
+## 0.9.4 - 2026-09-01
+
 ### Fixed
 
 - Reopen a `ready` workflow as exactly one new implementation round when an authenticated operator sends follow-up guidance to the implementer, queueing the message before the assignment and requiring mandatory review again
