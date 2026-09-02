@@ -2932,6 +2932,117 @@ class BrokerObserverTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
             ],
         )
 
+    async def test_attention_send_targets_only_the_waiting_assignment_owner(
+        self,
+    ) -> None:
+        initialize_broker_run(self.coord, self.manifest, "task", {})
+        broker = Broker(self.coord, self.manifest)
+        broker.clients = {
+            role: Client(role, mock.Mock(), mock.Mock())
+            for role in ("implementer", "reviewer")
+        }
+        assignment_id = "3" * 32
+        with broker_store.connect_broker_database(self.coord) as database:
+            now = broker_store.utc_now()
+            database.execute(
+                "INSERT INTO assignments(id,role,round,kind,state,delivery_id,created_at,updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (
+                    assignment_id,
+                    "implementer",
+                    1,
+                    "implementation",
+                    "accepted",
+                    "4" * 32,
+                    now,
+                    now,
+                ),
+            )
+            database.execute(
+                "UPDATE roles SET active_assignment_id=?,state='waiting' "
+                "WHERE role='implementer'",
+                (assignment_id,),
+            )
+            broker_store.set_meta(database, "workflow_state", "needs_attention")
+        token = (self.coord / "control.token").read_text(encoding="ascii").strip()
+
+        def send_message(role: str, command_id: str) -> dict[str, Any]:
+            return {
+                "version": BROKER_PROTOCOL_VERSION,
+                "type": "control",
+                "token": token,
+                "id": command_id,
+                "action": "send",
+                "role": role,
+                "delivery": "steer",
+                "message": "Submit the active assignment report.",
+            }
+
+        with (
+            mock.patch.object(broker, "deliver", new=mock.AsyncMock()) as deliver,
+            mock.patch.object(broker, "send_raw", new=mock.AsyncMock()) as send_raw,
+            mock.patch.object(
+                broker, "broadcast_workflow", new=mock.AsyncMock()
+            ) as broadcast_workflow,
+        ):
+            await broker.handle_control(
+                mock.Mock(), mock.Mock(), send_message("reviewer", "5" * 32)
+            )
+            rejected = send_raw.await_args_list[-1].args[1]
+            self.assertFalse(rejected["success"])
+            self.assertEqual(rejected["status"], "conflict")
+            deliver.assert_not_awaited()
+            self.assertEqual(
+                broker_store.public_broker_snapshot(self.coord)["workflow"]["state"],
+                "needs_attention",
+            )
+
+            with broker_store.connect_broker_database(self.coord) as database:
+                database.execute(
+                    "UPDATE assignments SET state='completed' WHERE id=?",
+                    (assignment_id,),
+                )
+            await broker.handle_control(
+                mock.Mock(), mock.Mock(), send_message("implementer", "6" * 32)
+            )
+            stale = send_raw.await_args_list[-1].args[1]
+            self.assertFalse(stale["success"])
+            self.assertEqual(stale["status"], "conflict")
+            deliver.assert_not_awaited()
+
+            with broker_store.connect_broker_database(self.coord) as database:
+                database.execute(
+                    "UPDATE assignments SET state='accepted' WHERE id=?",
+                    (assignment_id,),
+                )
+            await broker.handle_control(
+                mock.Mock(), mock.Mock(), send_message("implementer", "7" * 32)
+            )
+            accepted = send_raw.await_args_list[-1].args[1]
+            self.assertTrue(accepted["success"])
+            self.assertEqual(accepted["status"], "accepted")
+            deliver.assert_awaited_once()
+            self.assertEqual(
+                broker_store.public_broker_snapshot(self.coord)["workflow"]["state"],
+                "needs_attention",
+            )
+            broadcast_workflow.assert_not_awaited()
+
+            with mock.patch.object(broker, "reply", new=mock.AsyncMock()):
+                await broker.handle_lifecycle(
+                    broker.clients["implementer"],
+                    {
+                        "state": "active",
+                        "usage": None,
+                        "id": "8" * 32,
+                    },
+                )
+            self.assertEqual(
+                broker_store.public_broker_snapshot(self.coord)["workflow"]["state"],
+                "active",
+            )
+            broadcast_workflow.assert_awaited_once_with("active", 1)
+
 
 class BrokerDashboardHookTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
     def test_signal_handlers_add_event_driven_resize_refresh_portably(self) -> None:

@@ -74,8 +74,10 @@ it is revalidated before delivery/replay and is never a trust or instruction-rea
 substitute. Provider-usage thresholds are observational:
 they expose bounded assignment-local provider-call/context-pressure warning and
 higher-severity facts but never block a tool, interrupt a response, or change
-workflow routing. Direct steering can ask for a report or other follow-up; the
-operator alone decides whether to steer, restart, or stop. There is no budget
+workflow routing. Direct steering can ask for a report or other follow-up. When
+a workflow needs attention, send only to a waiting role that owns the active
+assignment; the broker rejects idle or unassigned targets without masking the
+block. The operator alone decides whether to steer, restart, or stop. There is no budget
 resume command because budgets never pause work. Each role receives a bounded
 baseline. Later
 evidence is projected as one rolling latest-per-role run-state capsule; updates

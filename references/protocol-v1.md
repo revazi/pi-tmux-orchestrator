@@ -133,8 +133,12 @@ poll and must end the turn when there is no active assignment.
    the latest run state and message without triggering an unassigned turn,
    advances exactly one round, creates an `implementation` assignment, and
    requires normal specialist routing and mandatory review again. Retry with the
-   same command ID is idempotent. Other role messages and sends during an active
-   or `needs_attention` assignment retain normal steering semantics.
+   same command ID is idempotent. Other role messages during an active workflow
+   retain normal steering semantics. During `needs_attention`, only a waiting
+   role that still owns an active assignment accepts a triggered send; other
+   targets are rejected without changing workflow state or starting an
+   unassigned provider turn. The assigned worker's subsequent `active`
+   lifecycle transition resumes the workflow.
 
 Only the implementer has normal write tools. Other roles are read-only. When the
 broker creates an implementer `plan` assignment, the shared bridge temporarily

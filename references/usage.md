@@ -536,8 +536,11 @@ conservatively opens exactly one new implementation round: the broker queues the
 latest run state and operator message without an unassigned provider turn,
 creates the implementation assignment, and requires normal specialist routing
 and mandatory review again. Retry of the same command ID does not open another
-round. Messages to other roles and guidance for an existing active or
-`needs_attention` assignment retain their existing steering behavior.
+round. Messages during an active workflow retain normal steering behavior. When
+the workflow is `needs_attention`, a send must target a waiting role that still
+owns the active assignment; other role sends are rejected so they cannot mask
+the unresolved assignment or trigger an unassigned provider turn. The workflow
+returns to `active` only when that assigned worker reports lifecycle `active`.
 
 Use `--command-id` with a 32-character lowercase hexadecimal ID for retry-safe
 deduplication. Conflicting reuse is rejected. An interrupted unprovable delivery
@@ -817,8 +820,10 @@ using model turns. A transition in an unprovable window remains `uncertain`.
 
 Pi settled while an assignment remained open, usually because it did not call
 `orchestrator_report`. The broker marks the workflow `needs_attention` and an
-attached parent Pi receives an event-driven update. Send one focused reminder
-or restart the role; the broker does not run an unlimited reminder loop.
+attached parent Pi receives an event-driven update that identifies the waiting
+role. Send one focused reminder to that role or restart it; sends to idle roles
+without the blocking assignment are rejected. The broker does not run an
+unlimited reminder loop.
 
 ### Broker pane exited
 

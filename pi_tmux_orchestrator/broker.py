@@ -577,7 +577,6 @@ class Broker:
             raise OrchestrationError(
                 "Control message fields are invalid", "invalid_protocol"
             )
-        resumed_round: int | None = None
         repair_round: int | None = None
         uncertain_round: int | None = None
         restarted_client: Client | None = None
@@ -615,9 +614,14 @@ class Broker:
             command_count = database.execute(
                 "SELECT COUNT(*) AS count FROM control_commands"
             ).fetchone()["count"]
-            role_state = database.execute(
-                "SELECT state FROM roles WHERE role=?", (role,)
-            ).fetchone()["state"]
+            role_row = database.execute(
+                "SELECT roles.state,roles.active_assignment_id,"
+                "assignments.state AS assignment_state "
+                "FROM roles LEFT JOIN assignments "
+                "ON assignments.id=roles.active_assignment_id WHERE roles.role=?",
+                (role,),
+            ).fetchone()
+            role_state = role_row["state"]
             handover_failure_exception = action == "restart_failed" and role_state in {
                 "restarting",
                 "recovering",
@@ -638,10 +642,23 @@ class Broker:
                 action == "restart" and role not in self.worker_baselines
             ):
                 status = "uncertain"
+            elif (
+                action == "send"
+                and database.execute(
+                    "SELECT value FROM meta WHERE key='workflow_state'"
+                ).fetchone()["value"]
+                == "needs_attention"
+                and (
+                    role_state != "waiting"
+                    or role_row["active_assignment_id"] is None
+                    or role_row["assignment_state"] != "accepted"
+                )
+            ):
+                status = "conflict"
             else:
                 status = "accepted"
                 if action == "send":
-                    resumed_round, repair_round = await self._handle_operator_send(
+                    repair_round = await self._handle_operator_send(
                         database,
                         role,
                         body.strip(),
@@ -697,8 +714,6 @@ class Broker:
         if restarted_client is not None:
             restarted_client.writer.close()
         self.refresh_dashboard()
-        if resumed_round is not None:
-            await self.broadcast_workflow("active", resumed_round)
         if repair_round is not None:
             await self.broadcast_workflow("active", repair_round)
             await self.assign(
@@ -717,7 +732,7 @@ class Broker:
         role: str,
         body: str,
         command_id: str,
-    ) -> tuple[int | None, int | None]:
+    ) -> int | None:
         current_round = self.current_round(database)
         workflow_state = database.execute(
             "SELECT value FROM meta WHERE key='workflow_state'"
@@ -743,7 +758,7 @@ class Broker:
                 delivery_id=command_id,
                 status="active",
             )
-            return None, repair_round
+            return repair_round
         await self.deliver(
             role,
             "operator_message",
@@ -751,10 +766,7 @@ class Broker:
             body,
             trigger=True,
         )
-        if workflow_state == "needs_attention":
-            set_meta(database, "workflow_state", "active")
-            return current_round, None
-        return None, None
+        return None
 
     def current_round(self, database: Any) -> int:
         return int(
