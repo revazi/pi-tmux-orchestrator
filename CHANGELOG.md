@@ -8,6 +8,10 @@ All notable changes to this project are documented here.
 
 ### Changed
 
+### Fixed
+
+- Keep `needs_attention` bound to the waiting assignment owner: reject sends to idle roles without that assignment, resume only on the assigned worker's active lifecycle, and identify the blocking role in parent updates
+
 ## 0.9.4 - 2026-09-01
 
 ### Fixed

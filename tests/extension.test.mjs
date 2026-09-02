@@ -1830,6 +1830,7 @@ test("authenticated broker observer steers progress and returns structured final
     assert.equal(delivered.message.details.state, "ready");
     assert.match(delivered.message.content, /reviewer report \(round 2\)/);
     assert.match(delivered.message.content, /The implementation is ready/);
+    assert.match(delivered.message.content, /reviewer: waiting/);
     assert.deepEqual(delivered.options, { triggerTurn: true, deliverAs: "steer" });
     assert.equal(stopped, true);
     const progress = deliveredMessages.filter(({ message }) => message.details.event);
@@ -2009,6 +2010,25 @@ test("parent updates keep only the latest bounded report per role", () => {
   assert.doesNotMatch(update.content, /\"summary\": \"old\"/);
   assert.match(update.content, /\"summary\": \"new\"/);
   assert.match(update.content, /\"summary\": \"approved\"/);
+  assert.ok(update.content.length <= 192 * 1024);
+});
+
+test("parent attention updates identify the waiting assignment owner", () => {
+  const update = testHooks.parentUpdateContent(
+    "pi-test",
+    "needs_attention",
+    2,
+    [],
+    [
+      { role: "implementer", state: "idle" },
+      { role: "probe", state: "waiting" },
+      { role: "reviewer", state: "idle" },
+    ],
+  );
+  assert.match(update.content, /probe: waiting/);
+  assert.match(update.content, /Blocking worker assignment\(s\): probe/);
+  assert.match(update.content, /Send guidance only to a listed waiting role/);
+  assert.match(update.content, /Do not trigger an idle role or the reviewer/);
   assert.ok(update.content.length <= 192 * 1024);
 });
 
