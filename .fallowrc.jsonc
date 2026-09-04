@@ -1,0 +1,25 @@
+{
+  // The coverage reporter is a Node test-runner entry point, not a package export.
+  "entry": ["scripts/node-coverage-reporter.mjs"],
+  // These same-named hooks are intentionally module-scoped test adapters.
+  "ignoreExports": [
+    {
+      "file": "extensions/orchestrator-dashboard.js",
+      "exports": ["testHooks"]
+    },
+    {
+      "file": "extensions/orchestrator-worker.js",
+      "exports": ["testHooks"]
+    }
+  ],
+  // Dead-code analysis needs test import edges; only health excludes test files.
+  "production": {
+    "deadCode": false,
+    "health": true,
+    "dupes": false
+  },
+  // Health scoring covers shipped JavaScript; scripts and tests remain graph inputs.
+  "health": {
+    "ignore": ["scripts/**", "tests/**"]
+  }
+}

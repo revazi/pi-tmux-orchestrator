@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { access, chmod, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import net from "node:net";
 import { test } from "node:test";
 import extension, { testHooks } from "../extensions/tmux-orchestrator.js";
@@ -23,6 +24,7 @@ import { buildResultVolumeBaseline } from "../scripts/result-volume-baseline.mjs
 import { buildExecutionProfileBaseline } from "../scripts/execution-profile-baseline.mjs";
 import { buildPhasedImplementationBaseline } from "../scripts/phased-implementation-baseline.mjs";
 import { buildWorkerPromptBaselineIfAvailable } from "../scripts/worker-prompt-baseline.mjs";
+import { istanbulCoverage } from "../scripts/node-coverage-reporter.mjs";
 
 const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 
@@ -117,6 +119,35 @@ function context(overrides = {}) {
     ...overrides.context,
   };
 }
+
+test("coverage conversion merges repeated module instances into Istanbul function counts", () => {
+  const path = fileURLToPath(new URL("../extensions/orchestrator-parent-content.js", import.meta.url));
+  const coverage = istanbulCoverage({
+    files: [
+      {
+        path,
+        lines: [{ line: 1, count: 1 }],
+        functions: [{ name: "boundedText", line: 14, count: 2 }],
+        branches: [{ line: 17, count: 1 }],
+      },
+      {
+        path,
+        lines: [{ line: 1, count: 3 }],
+        functions: [
+          { name: "boundedText", line: 14, count: 4 },
+          { name: "reportText", line: 18, count: 1 },
+        ],
+        branches: [{ line: 17, count: 2 }],
+      },
+    ],
+  })[path];
+
+  assert.deepEqual(coverage.s, { 0: 4 });
+  assert.deepEqual(coverage.f, { 0: 6, 1: 1 });
+  assert.deepEqual(coverage.b, { 0: [3] });
+  assert.equal(coverage.fnMap[0].name, "boundedText");
+  assert.equal(coverage.fnMap[1].name, "reportText");
+});
 
 test("registers one bounded model tool and the exact short-only command surface without shortcuts", () => {
   const { tool, tools, commands, shortcuts, events } = harness(async () => ({ code: 0, stdout: "" }));

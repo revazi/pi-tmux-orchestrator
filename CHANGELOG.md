@@ -8,6 +8,7 @@ All notable changes to this project are documented here.
 
 ### Changed
 
+- Added measured JavaScript test coverage and an identity-based Fallow health regression gate without adding package dependencies
 - Split parent-observer framing/validation and bounded parent rendering from the socket/reconnection state machine without changing broker-v1 or parent-message behavior
 
 ### Fixed

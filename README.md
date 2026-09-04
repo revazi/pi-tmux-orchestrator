@@ -237,7 +237,25 @@ scripts/test.sh
 ```
 
 The default test suite is model-free and isolates package, Pi, and npm state
-from real authentication.
+from real authentication. It also generates ephemeral measured JavaScript test
+coverage. To retain that report locally and run the same pinned health gate as
+CI:
+
+```bash
+scripts/test-coverage.sh
+npx --yes fallow@3.22.0 health \
+  --coverage .coverage/coverage-final.json \
+  --baseline .fallow/health-baseline.json \
+  --baseline-mode identity \
+  --summary
+```
+
+The reporter converts Node's built-in test coverage event to Istanbul format.
+It is measured test execution evidence—not production runtime traffic—and
+Fallow reports how many JavaScript functions it matched before applying exact
+per-function CRAP scores. Unmatched functions remain explicit rather than being
+claimed as measured. Python tests remain authoritative regressions, but this
+repository does not claim measured Python coverage without a coverage tool.
 
 Created and maintained by [Revaz Zakalashvili](https://github.com/revazi).
 Licensed under the [MIT License](LICENSE.md).

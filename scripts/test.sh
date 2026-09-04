@@ -22,6 +22,7 @@ bash -n \
   "$ROOT/scripts/test.sh" \
   "$ROOT/scripts/ensure-tmux.sh" \
   "$ROOT/scripts/package-smoke.sh" \
+  "$ROOT/scripts/test-coverage.sh" \
   "$ROOT/scripts/pi-extension-smoke.sh" \
   "$ROOT/scripts/stage-prerelease.sh" \
   "$ROOT/scripts/run-prerelease-isolated.sh"
@@ -77,6 +78,7 @@ node --check "$ROOT/extensions/orchestrator-parent-protocol.js"
 node --check "$ROOT/extensions/orchestrator-worker.js"
 node --check "$ROOT/extensions/orchestrator-result-policy.js"
 node --check "$ROOT/scripts/baseline-fixture.mjs"
+node --check "$ROOT/scripts/node-coverage-reporter.mjs"
 node --check "$ROOT/scripts/token-efficiency-baseline.mjs"
 node --check "$ROOT/scripts/result-volume-baseline.mjs"
 node --check "$ROOT/scripts/execution-profile-baseline.mjs"
@@ -84,6 +86,7 @@ node --check "$ROOT/scripts/phased-implementation-baseline.mjs"
 node --check "$ROOT/scripts/worker-prompt-baseline.mjs"
 node --check "$ROOT/tests/fixtures/token-efficiency-fixtures.mjs"
 node --test "$ROOT/tests/extension.test.mjs"
+"$ROOT/scripts/test-coverage.sh" "$TEST_ROOT/coverage/coverage-final.json"
 node "$ROOT/scripts/token-efficiency-baseline.mjs" --check
 node "$ROOT/scripts/result-volume-baseline.mjs" --check
 node "$ROOT/scripts/execution-profile-baseline.mjs" --check

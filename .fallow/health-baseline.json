@@ -1,0 +1,35 @@
+{
+  "finding_counts": {
+    "extensions/orchestrator-worker.js": {
+      "complexity_moderate": {
+        "count": 2
+      }
+    },
+    "extensions/tmux-orchestrator.js": {
+      "complexity_moderate": {
+        "count": 1
+      }
+    }
+  },
+  "identity_finding_counts": {
+    "extensions/orchestrator-worker.js\u0000handle": {
+      "complexity_moderate": {
+        "count": 1
+      }
+    },
+    "extensions/orchestrator-worker.js\u0000totalUsage": {
+      "complexity_moderate": {
+        "count": 1
+      }
+    },
+    "extensions/tmux-orchestrator.js\u0000runStart": {
+      "complexity_moderate": {
+        "count": 1
+      }
+    }
+  },
+  "runtime_coverage_findings": [],
+  "target_keys": [
+    "extensions/orchestrator-result-policy.js:dead code"
+  ]
+}
