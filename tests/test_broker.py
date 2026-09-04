@@ -3129,8 +3129,9 @@ class PromptAndExtensionContractTests(unittest.TestCase):
         ]
         combined = "\n".join(path.read_text(encoding="utf-8") for path in production)
         self.assertNotIn("time.sleep(", combined)
-        bridge = (root / "extensions" / "orchestrator-worker.js").read_text(
-            encoding="utf-8"
+        bridge = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in sorted((root / "extensions").glob("orchestrator-worker*.js"))
         )
         self.assertIn("orchestrator_report", bridge)
         self.assertIn("terminate: true", bridge)

@@ -33,7 +33,11 @@ Provide a small, reusable, intentionally tmux-scoped Pi skill and modular standa
 - `extensions/orchestrator-parent.js`: parent-session observer runtime and reconnection state machine
 - `extensions/orchestrator-parent-content.js`: bounded parent progress/actionable rendering
 - `extensions/orchestrator-parent-protocol.js`: broker observer framing and strict wire validation
-- `extensions/orchestrator-worker.js`: shared TUI/RPC worker bridge, plan-mode tool policy, and assignment guardrails
+- `extensions/orchestrator-worker.js`: shared TUI/RPC worker runtime composition and Pi event bridge
+- `extensions/orchestrator-worker-context.js`: assignment restoration and provider-context pruning
+- `extensions/orchestrator-worker-protocol.js`: worker framing, identity, environment, and journal constants
+- `extensions/orchestrator-worker-reporting.js`: role report schemas, normalization, and plan-mode tool policy
+- `extensions/orchestrator-worker-usage.js`: usage deltas, assignment guardrails, and guardrail restoration
 - `extensions/orchestrator-result-policy.js`: orchestration-only worker input/result bounds and metadata
 - `bin/pi-tmux-agents`: thin executable launcher
 - `references/usage.md`: detailed operator guidance
