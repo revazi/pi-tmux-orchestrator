@@ -47,6 +47,10 @@ jobs:
     name: Measured coverage and Fallow regression gate
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      npm_config_audit: "false"
+      npm_config_fund: "false"
+      npm_config_update_notifier: "false"
 
     steps:
       - name: Check out repository
