@@ -24,6 +24,8 @@ EXPECTED_FILES=(
   extensions/orchestrator-update.js
   extensions/orchestrator-dashboard.js
   extensions/orchestrator-parent.js
+  extensions/orchestrator-parent-content.js
+  extensions/orchestrator-parent-protocol.js
   extensions/orchestrator-worker.js
   extensions/orchestrator-result-policy.js
   package.json

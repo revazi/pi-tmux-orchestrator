@@ -8,6 +8,8 @@ All notable changes to this project are documented here.
 
 ### Changed
 
+- Split parent-observer framing/validation and bounded parent rendering from the socket/reconnection state machine without changing broker-v1 or parent-message behavior
+
 ### Fixed
 
 ## 0.9.5 - 2026-09-02
