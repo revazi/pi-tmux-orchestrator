@@ -21,6 +21,7 @@ from pi_tmux_orchestrator.broker import (
     initialize_broker_run,
 )
 from pi_tmux_orchestrator.budgeting import packaged_budget_policy
+from pi_tmux_orchestrator.broker_control import BrokerControlSupport
 from pi_tmux_orchestrator.broker_observers import BrokerObserverSupport
 from pi_tmux_orchestrator.constants import (
     BROKER_COORDINATION,
@@ -2563,6 +2564,7 @@ class BrokerObserverTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
     async def test_restart_control_advances_broker_generation(self) -> None:
         initialize_broker_run(self.coord, self.manifest, "task", {})
         broker = Broker(self.coord, self.manifest)
+        self.assertIsInstance(broker, BrokerControlSupport)
         worker_writer = mock.Mock()
         broker.clients = {
             "implementer": Client("implementer", mock.Mock(), worker_writer)

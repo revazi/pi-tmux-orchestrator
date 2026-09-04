@@ -11,6 +11,7 @@ const pythonFiles = [
   "__main__.py",
   "broker.py",
   "broker_client.py",
+  "broker_control.py",
   "broker_observers.py",
   "broker_store.py",
   "budgeting.py",
