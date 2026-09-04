@@ -27,6 +27,10 @@ EXPECTED_FILES=(
   extensions/orchestrator-parent-content.js
   extensions/orchestrator-parent-protocol.js
   extensions/orchestrator-worker.js
+  extensions/orchestrator-worker-context.js
+  extensions/orchestrator-worker-protocol.js
+  extensions/orchestrator-worker-reporting.js
+  extensions/orchestrator-worker-usage.js
   extensions/orchestrator-result-policy.js
   package.json
   pi_tmux_orchestrator/__init__.py

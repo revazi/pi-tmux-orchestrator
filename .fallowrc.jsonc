@@ -1,6 +1,9 @@
 {
-  // The coverage reporter is a Node test-runner entry point, not a package export.
-  "entry": ["scripts/node-coverage-reporter.mjs"],
+  // These files are loaded explicitly by Node/Python launchers, not package exports.
+  "entry": [
+    "extensions/orchestrator-worker.js",
+    "scripts/node-coverage-reporter.mjs"
+  ],
   // These same-named hooks are intentionally module-scoped test adapters.
   "ignoreExports": [
     {

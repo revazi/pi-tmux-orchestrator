@@ -13,6 +13,14 @@ import {
 } from "../extensions/orchestrator-dashboard.js";
 import { updateTestHooks as updateHooks } from "../extensions/orchestrator-update.js";
 import { testHooks as workerHooks } from "../extensions/orchestrator-worker.js";
+import { filterWorkerContext as filterWorkerContextDirect } from "../extensions/orchestrator-worker-context.js";
+import {
+  deliveryOptions as deliveryOptionsDirect,
+  validWorkerEnvironment,
+  workerFrame,
+} from "../extensions/orchestrator-worker-protocol.js";
+import { normalizeReport as normalizeReportDirect } from "../extensions/orchestrator-worker-reporting.js";
+import { totalUsage as totalUsageDirect } from "../extensions/orchestrator-worker-usage.js";
 import {
   applyToolInputPolicy,
   applyToolResultPolicy,
@@ -531,6 +539,38 @@ test("startup update notices honor opt-out and skip orchestration worker session
     else process.env.PI_TMUX_ORCHESTRATOR_ROLE = originalRole;
     updateHooks.reset();
   }
+});
+
+test("worker facade preserves extracted context, protocol, reporting, and usage contracts", () => {
+  assert.equal(workerHooks.filterWorkerContext, filterWorkerContextDirect);
+  assert.equal(workerHooks.deliveryOptions, deliveryOptionsDirect);
+  assert.equal(workerHooks.totalUsage, totalUsageDirect);
+  const reportInput = { kind: "implementation", summary: "done" };
+  assert.deepEqual(
+    workerHooks.normalizeReport(reportInput, "implementation", "implementer"),
+    normalizeReportDirect(reportInput, "implementation", "implementer"),
+  );
+
+  const encoded = workerFrame({ type: "context", round: 2 });
+  assert.equal(encoded.readUInt32BE(0), encoded.length - 4);
+  assert.deepEqual(JSON.parse(encoded.subarray(4).toString("utf8")), {
+    type: "context",
+    round: 2,
+  });
+  assert.equal(validWorkerEnvironment({
+    role: "reviewer",
+    token: "a".repeat(32),
+    socketPath: "/tmp/orchestrator.sock",
+    generation: 1,
+    guardrailPolicy: {},
+  }), true);
+  assert.equal(validWorkerEnvironment({
+    role: "custom",
+    token: "a".repeat(32),
+    socketPath: "/tmp/orchestrator.sock",
+    generation: 1,
+    guardrailPolicy: {},
+  }), false);
 });
 
 test("worker report schemas expose only fields valid for each role", () => {
