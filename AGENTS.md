@@ -30,7 +30,9 @@ Provide a small, reusable, intentionally tmux-scoped Pi skill and modular standa
 - `extensions/orchestrator-models.js`: bounded model metadata and override adapter
 - `extensions/orchestrator-dashboard.js`: bounded cross-session Pi overlay and doctor projection
 - `extensions/orchestrator-update.js`: best-effort npm release notice
-- `extensions/orchestrator-parent.js`: parent-session observer bridge
+- `extensions/orchestrator-parent.js`: parent-session observer runtime and reconnection state machine
+- `extensions/orchestrator-parent-content.js`: bounded parent progress/actionable rendering
+- `extensions/orchestrator-parent-protocol.js`: broker observer framing and strict wire validation
 - `extensions/orchestrator-worker.js`: shared TUI/RPC worker bridge, plan-mode tool policy, and assignment guardrails
 - `extensions/orchestrator-result-policy.js`: orchestration-only worker input/result bounds and metadata
 - `bin/pi-tmux-agents`: thin executable launcher

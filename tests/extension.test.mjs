@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import net from "node:net";
 import { test } from "node:test";
 import extension, { testHooks } from "../extensions/tmux-orchestrator.js";
+import { consumeObserverFrames } from "../extensions/orchestrator-parent-protocol.js";
 import {
   OrchestrationDashboardOverlay,
   testHooks as dashboardHooks,
@@ -1923,6 +1924,28 @@ test("attach observation does not replay an already-actionable initial outcome",
   }
 });
 
+test("observer framing consumes partial and coalesced frames", () => {
+  const first = { version: 1, type: "workflow", session: "pi-test", state: "active", round: 1 };
+  const second = { version: 1, type: "lifecycle", session: "pi-test", role: "reviewer", state: "idle" };
+  const encoded = Buffer.concat([testHooks.brokerFrame(first), testHooks.brokerFrame(second)]);
+  const state = { buffer: Buffer.alloc(0) };
+  const values = [];
+
+  consumeObserverFrames(state, encoded.subarray(0, 3), (value) => values.push(value));
+  assert.deepEqual(values, []);
+  consumeObserverFrames(state, encoded.subarray(3), (value) => values.push(value));
+  assert.deepEqual(values, [first, second]);
+  assert.equal(state.buffer.length, 0);
+  assert.throws(
+    () => consumeObserverFrames(
+      { buffer: Buffer.alloc(0) },
+      Buffer.from([0, 0, 0, 0]),
+      () => {},
+    ),
+    /invalid_observer_frame_size/,
+  );
+});
+
 test("observer snapshots require bounded report replay metadata", () => {
   const value = {
     version: 1,
@@ -1997,6 +2020,15 @@ test("parent lifecycle progress is bounded and makes completion state legible", 
   assert.match(content, /reviewer is now waiting/);
   assert.match(content, /implementer: idle/);
   assert.ok(content.length <= 8 * 1024);
+
+  const unsupported = testHooks.parentProgressContent(
+    "pi-test",
+    "active",
+    3,
+    [],
+    { kind: "toString" },
+  );
+  assert.doesNotMatch(unsupported, /\[object Object\]/);
 });
 
 test("parent updates keep only the latest bounded report per role", () => {
