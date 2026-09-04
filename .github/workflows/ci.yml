@@ -43,6 +43,48 @@ jobs:
       - name: Run verification
         run: scripts/test.sh
 
+  maintainability:
+    name: Measured coverage and Fallow regression gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      npm_config_audit: "false"
+      npm_config_fund: "false"
+      npm_config_update_notifier: "false"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.19.0
+
+      - name: Generate measured JavaScript test coverage
+        run: scripts/test-coverage.sh
+
+      - name: Reject maintainability regressions
+        run: |
+          npx --yes fallow@3.22.0 dead-code --no-cache --fail-on-issues
+          npx --yes fallow@3.22.0 dupes --no-cache --fail-on-issues
+          npx --yes fallow@3.22.0 health --no-cache \
+            --coverage .coverage/coverage-final.json \
+            --baseline .fallow/health-baseline.json \
+            --baseline-mode identity \
+            --format json \
+            --output-file .coverage/fallow-health.json
+          node --input-type=module <<'NODE'
+          import { readFileSync } from "node:fs";
+          const { summary } = JSON.parse(readFileSync(".coverage/fallow-health.json", "utf8"));
+          if (summary.coverage_model !== "istanbul" || summary.istanbul_matched <= 0) {
+            throw new Error("Fallow did not consume measured Istanbul coverage");
+          }
+          console.log(
+            `Fallow coverage source: Istanbul (${summary.istanbul_matched}/${summary.istanbul_total} functions matched; unmatched functions remain explicit)`,
+          );
+          NODE
+
   package:
     name: Publish-ready package / Node ${{ matrix.node-version }}
     runs-on: ubuntu-latest

@@ -38,6 +38,8 @@ Provide a small, reusable, intentionally tmux-scoped Pi skill and modular standa
 - `bin/pi-tmux-agents`: thin executable launcher
 - `references/usage.md`: detailed operator guidance
 - `references/prerelease-testing.md`: staged local-package and manual acceptance workflow
+- `scripts/node-coverage-reporter.mjs`: dependency-free Node test coverage to Istanbul adapter
+- `.fallow/health-baseline.json`: identity-based measured-coverage complexity baseline
 - `install.sh`: global Pi skill installation
 - `tests/`: model-free regressions
 
@@ -61,6 +63,8 @@ Provide a small, reusable, intentionally tmux-scoped Pi skill and modular standa
 - Update README/reference docs when CLI behavior changes.
 - Add regression coverage for parser, prompts, state, grid, or relay changes.
 - Run `scripts/test.sh` before committing.
+- Keep generated coverage out of Git and distinguish test coverage from production runtime evidence.
+- Refresh the Fallow health baseline only to ratchet reviewed reductions; never absorb a new finding.
 - Do not publish packages or make the repository public without explicit approval.
 - Do not push secrets, generated Pi sessions, coordination state, or private task content.
 - Use squash merges for pull requests.
