@@ -16,6 +16,7 @@ Provide a small, reusable, intentionally tmux-scoped Pi skill and modular standa
 - `pi_tmux_orchestrator/profiles.py`: immutable packaged and strict custom execution-profile policy
 - `pi_tmux_orchestrator/budgeting.py`: strict user-global and per-run usage budget policy
 - `pi_tmux_orchestrator/broker.py`: single-writer workflow state machine, including explicit single/phased implementation routing
+- `pi_tmux_orchestrator/broker_observers.py`: read-only parent-observer authentication, replay, snapshots, and fan-out
 - `pi_tmux_orchestrator/broker_store.py`: private metadata-only SQLite control plane and retained implementation-flow/activation selections
 - `pi_tmux_orchestrator/specialist_activation.py`: fixed conservative specialist predicates and strict force policy
 - `pi_tmux_orchestrator/context_capsules.py`: bounded worker baseline and rolling run-state projections
