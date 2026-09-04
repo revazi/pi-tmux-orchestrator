@@ -21,6 +21,7 @@ from pi_tmux_orchestrator.broker import (
     initialize_broker_run,
 )
 from pi_tmux_orchestrator.budgeting import packaged_budget_policy
+from pi_tmux_orchestrator.broker_observers import BrokerObserverSupport
 from pi_tmux_orchestrator.constants import (
     BROKER_COORDINATION,
     BROKER_PROTOCOL_VERSION,
@@ -2642,6 +2643,7 @@ class BrokerObserverTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
     async def test_broken_observer_cannot_block_workflow_broadcast(self) -> None:
         initialize_broker_run(self.coord, self.manifest, "task", {})
         broker = Broker(self.coord, self.manifest)
+        self.assertIsInstance(broker, BrokerObserverSupport)
         writer = mock.Mock()
         observer = Observer(writer)
         broker.observers.add(observer)
