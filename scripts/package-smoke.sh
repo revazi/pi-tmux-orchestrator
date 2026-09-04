@@ -37,6 +37,7 @@ EXPECTED_FILES=(
   pi_tmux_orchestrator/__main__.py
   pi_tmux_orchestrator/broker.py
   pi_tmux_orchestrator/broker_client.py
+  pi_tmux_orchestrator/broker_control.py
   pi_tmux_orchestrator/broker_observers.py
   pi_tmux_orchestrator/broker_store.py
   pi_tmux_orchestrator/budgeting.py

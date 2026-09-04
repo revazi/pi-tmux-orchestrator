@@ -8,6 +8,7 @@ All notable changes to this project are documented here.
 
 ### Changed
 
+- Extracted authenticated idempotent operator send/abort/restart handling from the broker workflow module
 - Extracted read-only parent-observer authentication, replay, snapshots, and bounded fan-out from the broker workflow module
 - Split worker protocol, context restoration, reporting, usage, and guardrail policy from the shared Pi runtime composition boundary without changing broker-v1 or worker behavior
 - Added measured JavaScript test coverage and an identity-based Fallow health regression gate without adding package dependencies
