@@ -757,13 +757,25 @@ node scripts/token-efficiency-baseline.mjs --check
 It measures serialized provider-visible characters/UTF-8 bytes by synthetic
 provider call and tool-result characters by tool across simple, medium, and
 multi-round fixtures. These values are reproducible proxies only. The retained
-usage analyzer reads public broker metadata without reading Pi histories or any
-workflow/provider body:
+usage analyzer reads body-free broker metadata without reading Pi histories or
+any task, report, prompt, diff, log, or provider body:
 
 ```bash
 python -m pi_tmux_orchestrator.token_efficiency \
   --state-root ~/.pi/agent/orchestrations --max-runs 100
 ```
+
+Analyzer schema 2 preserves cumulative token/cost aggregates and adds available
+provider-call distributions, implementation-flow and run-round counts, complete
+assignment state/role/kind counts, repair and specialist assignment counts, and
+accepted-assignment provider-call/peak-context distributions by role, kind, and
+initial/repair stage. Legacy missing usage and specialist-activation metadata,
+per-run assignment-page truncation, and scan issues remain explicit. Specialist
+activation counts use complete SQL aggregates rather than a retained row page;
+malformed categorical metadata is counted as an issue and is not emitted.
+Percentiles are nearest-rank values over available retained measurements. These
+results are an optimization baseline, not evidence that a context action saves
+provider usage or authorization to alter worker context, routing, or review behavior.
 
 ## Pre-release extension acceptance
 
