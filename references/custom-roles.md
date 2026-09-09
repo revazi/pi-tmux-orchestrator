@@ -116,7 +116,8 @@ custom worker records. Each custom record has a canonical `custom_role` definiti
 and the exact `read,grep,find,ls` tool policy. It still requires the built-in
 implementer and reviewer. Manifest v1–v5 remains supported, and ordinary starts
 still write v5. No new public start selection is exposed in this slice. Broker
-initialization and recovery explicitly reject custom worker sets until routing lands.
+initialization and recovery explicitly reject custom worker sets until the remaining
+control/presentation integration and lifecycle acceptance land.
 
 Retained reads validate bounded metadata without opening the registry/resources;
 a deleted or changed source does not make retained metadata unreadable. This is
@@ -144,6 +145,41 @@ prevents discovered extensions from replacing a supposedly read-only built-in to
 The actual-Pi RPC smoke covers snapshot skill discovery after source mutation,
 fixed tools despite skill `allowed-tools` claims, and disabled global/project
 extension discovery. It does not exercise full custom broker lifecycle acceptance.
+
+## Gated broker workflow (partial #60)
+
+The internal broker workflow now derives an identity-to-contract map from a fully
+validated retained manifest, never from a worker frame or current environment.
+Retained contract reads do not imply current resource validity: launch/restart
+verification above is still mandatory. Inbound hello/report validation and outgoing
+and restored assignment kinds use that binding. Custom identities cannot select a
+contract, impersonate another authenticated identity, authorize operator control with
+a worker token, or submit writer/reviewer reports.
+
+At the tested workflow boundary, every explicitly selected custom specialist gets
+one assignment after each implementation report, not after a phased plan. All
+selected custom reports for that round are required before assigning the built-in
+reviewer. Specialist verdicts are evidence for that independent reviewer, never final
+acceptance. No custom skip predicate, profile mapping, or deterministic activation
+policy is introduced; those remain #61. Fan-out is bounded by the eight-role registry
+limit. Run-state capsules reserve bounded space for every selected identity without
+dropping independent reviewer evidence; reuse hints remain non-authorizing.
+
+Custom report acceptance uses the existing single SQLite transaction for assignment
+completion, report metadata, and cumulative/assignment usage. Replayed accepted
+reports neither account twice nor reroute, including after in-memory evidence loss.
+Routing failures become uncertain rather than ready. Recovery rejects an assignment
+kind inconsistent with the retained contract before sending or mutating handover
+state. Synthetic regressions cover handler authentication, stale generations,
+rollback, bounded projections, all three contracts, eight-role fan-out, and repeated
+review rounds. SQLite/public snapshot tests exclude private report/resource bodies.
+
+**This is not public start or full lifecycle support.** Both temporary custom-role
+rejection gates remain. The tests use the lower workflow/storage boundary and
+synthetic streams, not custom tmux/TUI/RPC runs. Public selection, remaining bounded
+control/observer/dashboard adapters, and custom partial-start/disconnect/restart
+TUI/RPC and actual-Pi acceptance must land before removing the gates. No provider
+savings or full lifecycle acceptance is established by these tests.
 
 ## Filesystem trust boundary
 

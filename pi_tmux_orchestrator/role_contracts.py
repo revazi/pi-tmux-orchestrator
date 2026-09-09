@@ -26,6 +26,20 @@ def validate_custom_contracts(value: object) -> dict[str, str]:
     return dict(value)
 
 
+def validate_assignment_kind(
+    role: str, kind: str, *, custom_contracts: object = None
+) -> None:
+    contract = resolve_role_contract(role, custom_contracts)
+    allowed = {
+        "implementer": {"plan", "implementation"},
+        "reviewer": {"review"},
+    }.get(contract, {contract})
+    if not isinstance(kind, str) or kind not in allowed:
+        raise OrchestrationError(
+            "Assignment kind is not permitted for this role", "forbidden"
+        )
+
+
 def resolve_role_contract(role: object, custom_contracts: object = None) -> str:
     """Bindings must come from trusted run metadata, never a worker frame."""
     contracts = validate_custom_contracts(custom_contracts)

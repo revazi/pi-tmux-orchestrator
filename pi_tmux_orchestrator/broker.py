@@ -39,10 +39,12 @@ from .constants import (
 )
 from .context_capsules import render_worker_baseline
 from .continuation import repair_limit_reached
+from .custom_role_resources import retained_custom_contracts
 from .dashboard import BrokerDashboard
 from .models import OrchestrationError
 from .output import bounded_message
 from .protocol import encode_frame, validate_client_message
+from .role_contracts import validate_assignment_kind
 from .specialist_activation import decide_initial_probe
 from .storage import load_manifest, secure_write
 from .workspace_capsules import validate_workspace_capsule
@@ -61,11 +63,12 @@ class Broker(BrokerControlSupport, BrokerObserverSupport, BrokerWorkflowSupport)
     def __init__(self, coord: Path, manifest: dict[str, Any]) -> None:
         from .constants import KNOWN_ROLES
 
-        # Resource-bound workers are not workflow-enabled until custom routing lands.
+        # Keep starts gated until custom control/presentation and lifecycle acceptance land.
         if set(manifest["roles"]) - KNOWN_ROLES:
             raise OrchestrationError("Custom role broker routing is not enabled yet")
         self.coord = coord
         self.manifest = manifest
+        self.custom_contracts = retained_custom_contracts(manifest, coord)
         self.paths = broker_paths(coord)
         self.clients: dict[str, Client] = {}
         self.observers: set[Observer] = set()
@@ -85,6 +88,7 @@ class Broker(BrokerControlSupport, BrokerObserverSupport, BrokerWorkflowSupport)
         self.evidence_reuse = EvidenceReuse(
             Path(manifest["project"]),
             {role for role, mode in overrides.items() if mode == "retain"},
+            custom_contracts=self.custom_contracts,
         )
         self.workspace_capsule = self.task_bodies.get("workspace_capsule")
         self.dashboard = BrokerDashboard(manifest)
@@ -249,7 +253,7 @@ class Broker(BrokerControlSupport, BrokerObserverSupport, BrokerWorkflowSupport)
             raise OrchestrationError(
                 "Broker frame is not valid JSON", "invalid_protocol"
             ) from error
-        return validate_client_message(value)
+        return validate_client_message(value, custom_contracts=self.custom_contracts)
 
     async def send(self, client: Client, value: dict[str, Any]) -> None:
         async with client.send_lock:
@@ -291,7 +295,9 @@ class Broker(BrokerControlSupport, BrokerObserverSupport, BrokerWorkflowSupport)
             if raw_hello.get("type") == "observe":
                 await self.handle_observer(reader, writer, raw_hello)
                 return
-            hello = validate_client_message(raw_hello)
+            hello = validate_client_message(
+                raw_hello, custom_contracts=self.custom_contracts
+            )
             if hello["type"] != "hello":
                 raise OrchestrationError(
                     "First broker frame must be hello", "invalid_protocol"
@@ -511,6 +517,10 @@ class Broker(BrokerControlSupport, BrokerObserverSupport, BrokerWorkflowSupport)
                 (client.role,),
             ).fetchone()
             current_round = self.current_round(database)
+        if assignment is not None:
+            validate_assignment_kind(
+                client.role, assignment["kind"], custom_contracts=self.custom_contracts
+            )
         if assignment is not None and assignment["state"] in {
             "delivering",
             "uncertain",
@@ -685,6 +695,14 @@ class Broker(BrokerControlSupport, BrokerObserverSupport, BrokerWorkflowSupport)
                 "concise plan report with relevant paths/symbols, intended changes, "
                 "required checks, risks, and open questions as your final action."
             )
+        if role in self.custom_contracts:
+            instructions[role] = (
+                "Inspect the current worktree read-only using only the fixed read/search tools. "
+                "Do not execute shell or browser checks or modify files. Report unperformed "
+                "checks as limitations; submit a concise "
+                f"{self.custom_contracts[role]} report as your final action. "
+                "Your evidence is advisory and never replaces independent built-in review."
+            )
         return (
             f"# Active assignment\n\nRound: {round_number}\n\n{instructions[role]}\n\n"
             "Do not wait, sleep, or poll after reporting; the tool ends this assignment."
@@ -693,6 +711,7 @@ class Broker(BrokerControlSupport, BrokerObserverSupport, BrokerWorkflowSupport)
     async def assign(
         self, role: str, kind: str, round_number: int, content: str
     ) -> None:
+        validate_assignment_kind(role, kind, custom_contracts=self.custom_contracts)
         if role not in self.clients:
             return
         await self._flush_pending_run_state(role, round_number)
