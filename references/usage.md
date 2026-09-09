@@ -218,7 +218,7 @@ because thresholds never pause work. A worker restart restores warning/hard
 markers from its exact Pi session and cannot silently reset the assignment
 provider-call count.
 
-### Repair-round continuation limit (CLI opt-in)
+### Repair-round continuation limit (opt-in)
 
 `start --max-repair-rounds N` caps additional implementation rounds across the
 whole run. Omission disables the cap; `0` permits the initial implementation and
@@ -256,9 +256,15 @@ continuation without the retained in-process worker baseline fails closed rather
 than reconstructing private report bodies from metadata. Inspect status/recovery
 before deciding whether to stop and start a newly authorized run.
 
-These controls are initially exposed through the terminal CLI, not the Pi start
-form/model-tool schema. They do not alter installed defaults or authorize an
-agent to approve its own continuation.
+The Pi `/or-start` form also accepts the cap as a decimal integer: blank disables
+it, and Escape cancels the start. This input is independent of the project-default
+override selection. Model-tool starts accept optional integer `maxRepairRounds`
+(not a string or null). Both paths forward the same cap through CLI preview and
+launch; the start confirmation shows the CLI-resolved policy.
+
+Continuation approval remains terminal-CLI-only; there is no model-tool action
+or slash command to approve it. These controls do not alter installed defaults
+or authorize an agent to approve its own continuation.
 
 ### `start`
 
