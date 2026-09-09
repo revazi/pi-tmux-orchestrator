@@ -74,6 +74,7 @@ from .rpc import (
 )
 from .supervisor_api import rpc_event_page, resolve_supervisor_target
 from .specialist_activation import validate_forced_specialists
+from .continuation import repair_policy
 from .storage import (
     absolute_path,
     canonical_state_root,
@@ -443,6 +444,7 @@ def start_command(args: argparse.Namespace) -> CommandResult:
     )
     for role in roles:
         configs[role]["skills"] = worker_skills[role]
+    continuation_policy = repair_policy(getattr(args, "max_repair_rounds", None))
     configured_budget = load_budget_config(project=project)
     budget_policy = effective_budget_policy(
         configured_budget,
@@ -490,6 +492,7 @@ def start_command(args: argparse.Namespace) -> CommandResult:
             "polling": False,
         },
         "budget_policy": budget_policy,
+        "continuation_policy": continuation_policy,
         "execution_profile": public_execution_profile(execution_profile),
         "project_config": project_config_metadata,
         "orchestration_config": orchestration_config_metadata,
@@ -536,6 +539,9 @@ def start_command(args: argparse.Namespace) -> CommandResult:
     human_print("  monitor: broker/status")
     human_print(f"Worker transport: {transport}")
     human_print(f"Implementation flow: {implementation_flow}")
+    human_print(
+        f"Repair-round continuation cap: {continuation_policy['max_repair_rounds'] if continuation_policy['max_repair_rounds'] is not None else 'disabled'}"
+    )
     human_print(
         "Forced specialists: "
         + (", ".join(forced_specialists) if forced_specialists else "none")
@@ -637,6 +643,7 @@ def start_command(args: argparse.Namespace) -> CommandResult:
             budget_policy=budget_policy,
             implementation_flow=implementation_flow,
             forced_specialists=forced_specialists,
+            max_repair_rounds=continuation_policy["max_repair_rounds"],
         )
         create_tmux_grid(session, project, coord, roles, manifest)
         secure_write(coord / "startup-state", "RUNNING\n")
@@ -913,6 +920,17 @@ def status_command(args: argparse.Namespace) -> CommandResult:
             f"forced={','.join(workflow.get('forced_specialists', [])) or 'none'} "
             f"tokens={usage['total_tokens']}{total_warning}"
         )
+        continuation = workflow.get("continuation", {})
+        if continuation.get("max_repair_rounds") is not None:
+            human_print(
+                f"  repair rounds: {continuation['repair_rounds_admitted']}/{continuation['max_repair_rounds']}"
+            )
+        if continuation.get("pending_repair_round") is not None:
+            human_print(
+                f"  Paused: repair_round_limit before round {continuation['pending_repair_round']}; "
+                f"incomplete, not approved. To authorize exactly one more round: "
+                f"pi-tmux-agents continue {session} --yes --command-id <32-hex-id>"
+            )
         for activation in broker_snapshot.get("specialist_activations", []):
             human_print(
                 f"  activation {activation['role']}: {activation['decision']} "
@@ -1148,6 +1166,36 @@ def send_command(args: argparse.Namespace) -> CommandResult:
             "event_sequence": (
                 acknowledgement.get("event_sequence") if acknowledgement else None
             ),
+        }
+    )
+
+
+def continue_command(args: argparse.Namespace) -> CommandResult:
+    if not args.yes:
+        raise OrchestrationError(
+            "continue authorizes one additional repair round; pass --yes"
+        )
+    session, coord, manifest = control_target(args)
+    if manifest.get("version", 0) < 3:
+        raise OrchestrationError("continue requires a brokered orchestration")
+    acknowledgement = broker_control_request(
+        coord,
+        "implementer",
+        "continue",
+        command_id=args.command_id,
+    )
+    human_print(
+        f"One-round continuation acknowledged by {session}; not workflow completion"
+    )
+    return CommandResult(
+        data={
+            "session": session,
+            "run_id": coord.name,
+            "role": "implementer",
+            "acknowledged": True,
+            "command_id": acknowledgement["id"],
+            "command_status": acknowledgement["status"],
+            "duplicate": acknowledgement["duplicate"],
         }
     )
 

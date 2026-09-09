@@ -90,6 +90,12 @@ def supervisor_capabilities() -> dict[str, Any]:
                 "command": "abort",
                 "exact_run_option": "--run",
             },
+            "continue": {
+                "command": "continue",
+                "confirmation": "--yes",
+                "idempotency_key": "--command-id",
+                "scope": "one-additional-repair-round",
+            },
         },
         "event_cursor": {
             "scope": "role",

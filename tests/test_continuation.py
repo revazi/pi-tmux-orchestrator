@@ -6,11 +6,97 @@ import asyncio
 import unittest
 from unittest import mock
 
-from pi_tmux_orchestrator import broker_store
+from pi_tmux_orchestrator import broker_store, commands
 from pi_tmux_orchestrator.broker import Broker, Client, initialize_broker_run
-from pi_tmux_orchestrator.continuation import continuation_status
+from pi_tmux_orchestrator.cli import build_parser
+from pi_tmux_orchestrator.continuation import (
+    MAX_REPAIR_ROUNDS,
+    continuation_status,
+    repair_policy,
+    retained_repair_policy,
+)
 from pi_tmux_orchestrator.models import OrchestrationError
 from test_broker import BrokerFixture
+
+
+class RepairPolicyTests(BrokerFixture):
+    def test_strict_opt_in_limits_and_cli_confirmation(self):
+        self.enterContext(mock.patch("pi_tmux_orchestrator.runtime.JSON_MODE", True))
+        for value in (None, 0, 2, MAX_REPAIR_ROUNDS):
+            self.assertEqual(repair_policy(value)["max_repair_rounds"], value)
+        for value in (True, False, -1, 1.5, "2", {}, MAX_REPAIR_ROUNDS + 1):
+            with self.subTest(value=value), self.assertRaises(OrchestrationError):
+                repair_policy(value)
+        parser = build_parser()
+        for value in ("-1", "1.5", "true", str(MAX_REPAIR_ROUNDS + 1)):
+            with self.subTest(value=value), self.assertRaises(OrchestrationError):
+                parser.parse_args(["start", "--max-repair-rounds", value])
+        self.assertIsNone(parser.parse_args(["start"]).max_repair_rounds)
+        self.assertEqual(
+            parser.parse_args(["start", "--max-repair-rounds", "0"]).max_repair_rounds,
+            0,
+        )
+        with self.assertRaises(OrchestrationError):
+            parser.parse_args(["continue", "pi-test", "--yes"])
+        args = parser.parse_args(["continue", "pi-test", "--command-id", "a" * 32])
+        with mock.patch.object(commands, "control_target") as target:
+            with self.assertRaisesRegex(OrchestrationError, "pass --yes"):
+                commands.continue_command(args)
+            target.assert_not_called()
+
+    def test_legacy_disabled_and_forward_migration_does_not_reset_counts(self):
+        initialize_broker_run(self.coord, self.manifest, "synthetic", {})
+        with broker_store.connect_broker_database(self.coord) as database:
+            database.execute("DELETE FROM meta WHERE key='continuation_policy'")
+            broker_store.set_meta(database, "schema_version", "8")
+            self.assertIsNone(retained_repair_policy(database)["max_repair_rounds"])
+        broker_store.prepare_broker_database(self.coord)
+        with broker_store.connect_broker_database(
+            self.coord, readonly=True
+        ) as database:
+            self.assertEqual(
+                database.execute(
+                    "SELECT value FROM meta WHERE key='schema_version'"
+                ).fetchone()[0],
+                "9",
+            )
+            self.assertEqual(retained_repair_policy(database), repair_policy(None))
+        for policy in (
+            "invalid",
+            '{"version":2,"max_repair_rounds":1}',
+            '{"version":true,"max_repair_rounds":1}',
+            '{"version":1,"max_repair_rounds":false}',
+            '{"version":1,"max_repair_rounds":1,"body":"private"}',
+            '{"version":1,"max_repair_rounds":1,"max_repair_rounds":null}',
+            " " * 257,
+        ):
+            with self.subTest(policy=policy):
+                with broker_store.connect_broker_database(self.coord) as database:
+                    broker_store.set_meta(database, "continuation_policy", policy)
+                with self.assertRaises(OrchestrationError):
+                    broker_store.prepare_broker_database(self.coord)
+
+    def test_continue_cli_uses_fixed_authenticated_action_and_exact_key(self):
+        args = build_parser().parse_args(
+            ["continue", "pi-broker-test", "--yes", "--command-id", "a" * 32]
+        )
+        response = {"id": "a" * 32, "status": "accepted", "duplicate": True}
+        with (
+            mock.patch.object(
+                commands,
+                "control_target",
+                return_value=(self.manifest["session"], self.coord, self.manifest),
+            ),
+            mock.patch.object(
+                commands, "broker_control_request", return_value=response
+            ) as request,
+        ):
+            result = commands.continue_command(args)
+        request.assert_called_once_with(
+            self.coord, "implementer", "continue", command_id="a" * 32
+        )
+        self.assertTrue(result.data["duplicate"])
+        self.assertNotIn("ready", result.data)
 
 
 class RepairAdmissionTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):

@@ -117,6 +117,12 @@ observational budgets, explicitly reviewed worker skills, and the experimental
 workspace capsule. Use `/or-start`, natural language, the model tool, or the
 terminal CLI; explicit run options take precedence.
 
+For a CLI-only opt-in repair cap, use `start --max-repair-rounds N` (`0` pauses
+before the first repair). The run remains incomplete at the cap; explicit
+`continue SESSION --yes --command-id <32-hex-id>` authorizes one additional round.
+This does not limit an active assignment or change observational budgets.
+See [continuation semantics](references/usage.md#repair-round-continuation-limit-cli-opt-in).
+
 Reusable defaults are user-global, never project-local:
 
 ```text

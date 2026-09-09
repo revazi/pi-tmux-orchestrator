@@ -19,6 +19,7 @@ from .constants import (
 )
 from .broker import broker_command
 from .budgeting import BUDGET_ENFORCEMENT, parse_budget_override
+from .continuation import validate_repair_limit
 from .controller import (
     controller_attach_command,
     controller_start_command,
@@ -28,6 +29,7 @@ from .controller import (
 from .commands import (
     abort_command,
     attach_command,
+    continue_command,
     doctor_command,
     events_command,
     list_command,
@@ -121,6 +123,13 @@ def budget_override(
     try:
         return parse_budget_override(value)
     except OrchestrationError as error:
+        raise argparse.ArgumentTypeError(str(error)) from error
+
+
+def repair_limit(value: str) -> int:
+    try:
+        return validate_repair_limit(int(value))
+    except (ValueError, OrchestrationError) as error:
         raise argparse.ArgumentTypeError(str(error)) from error
 
 
@@ -243,6 +252,11 @@ def build_parser() -> argparse.ArgumentParser:
         choices=IMPLEMENTATION_FLOWS,
         default=None,
         help="override the project/global compatibility flow for this run",
+    )
+    start.add_argument(
+        "--max-repair-rounds",
+        type=repair_limit,
+        help="opt in to a run-wide cap on additional implementation rounds; 0 pauses before any repair",
     )
     start.add_argument(
         "--profile",
@@ -445,6 +459,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
     send.set_defaults(handler=send_command)
 
+    continuation = subparsers.add_parser(
+        "continue",
+        help="explicitly authorize one additional paused repair round",
+    )
+    continuation.add_argument("session")
+    continuation.add_argument(
+        "--yes", action="store_true", help="approve exactly one additional repair round"
+    )
+    continuation.add_argument(
+        "--command-id",
+        required=True,
+        type=rpc_command_id,
+        help="idempotency key; reuse the same key when retrying this approval",
+    )
+    continuation.set_defaults(handler=continue_command)
+
     abort = subparsers.add_parser("abort", help="abort one active RPC worker operation")
     abort.add_argument("session")
     abort.add_argument(
@@ -527,6 +557,7 @@ def requested_command(argv: list[str]) -> str:
         "controller",
         "supervisor",
         "abort",
+        "continue",
         "list",
         "status",
         "events",
