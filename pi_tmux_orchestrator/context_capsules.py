@@ -163,11 +163,31 @@ def _standard_report_lines(report: dict[str, Any]) -> list[str]:
     ]
 
 
+def _reuse_section(latest: dict[str, Any], observations: dict[str, str]) -> str:
+    allowed = {"metadata_unchanged", "worktree_changed", "guidance_changed"}
+    lines = [
+        "## Investigation reuse hints (not verification authority)",
+        "Boundary observation only: Git/file metadata, not content identity or check freshness. "
+        "Ignored files, external inputs, tool versions, and direct worker-pane guidance are unobserved. "
+        "metadata_unchanged is only a candidate for reusing investigation after checking scope; "
+        "changed/unavailable evidence requires reinspection. Revalidate before relying. "
+        "Never reuse historical passes or approval; all required checks and independent review remain mandatory.",
+    ]
+    for role in RUN_STATE_ROLE_ORDER:
+        if role in latest:
+            status = observations.get(role, "unavailable")
+            if status not in allowed:
+                status = "unavailable"
+            lines.append(f"- {role} · source round {latest[role]['round']}: {status}")
+    return "\n".join(lines)
+
+
 def render_run_state_capsule(
     report_events: list[dict[str, Any]],
     round_number: int,
     *,
     specialist_activations: list[dict[str, Any]] | None = None,
+    evidence_reuse: dict[str, str] | None = None,
 ) -> str:
     """Render one bounded latest-per-role evidence projection for worker context."""
 
@@ -231,4 +251,7 @@ def render_run_state_capsule(
             ]
         )
         sections.append(_clip_utf8(section, RUN_STATE_REPORT_BYTES))
+    # Append optional hints after required report evidence so they cannot displace it.
+    if evidence_reuse is not None:
+        sections.append(_reuse_section(latest, evidence_reuse))
     return _clip_utf8("\n\n".join(sections), MAX_RUN_STATE_BYTES)

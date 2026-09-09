@@ -128,7 +128,10 @@ See [continuation semantics](references/usage.md#repair-round-continuation-limit
 For related worker investigation, CLI `start --worker-context reviewer=retain`
 opts that role into retaining prior assignment history. Other roles keep default
 pruning; mandatory review and run limits are unchanged. Retention can increase
-context cost. See [context policy](references/usage.md#worker-context-retention-cli-opt-in).
+context cost. Retained roles receive bounded worktree-metadata reuse hints—not
+proof of current checks or permission to reuse approval. See
+[context policy](references/usage.md#worker-context-retention-cli-opt-in) and
+[reuse limitations](references/usage.md#bounded-investigation-reuse-hints).
 
 Reusable defaults are user-global, never project-local:
 

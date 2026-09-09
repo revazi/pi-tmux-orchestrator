@@ -300,6 +300,7 @@ class BrokerControlSupport:
         body: str,
         command_id: str,
     ) -> int | None:
+        self.evidence_reuse.invalidate_guidance()
         current_round = self.current_round(database)
         workflow_state = database.execute(
             "SELECT value FROM meta WHERE key='workflow_state'"

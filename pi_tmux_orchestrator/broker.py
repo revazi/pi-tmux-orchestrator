@@ -72,6 +72,15 @@ class Broker(BrokerControlSupport, BrokerObserverSupport, BrokerWorkflowSupport)
         self.server: asyncio.AbstractServer | None = None
         self.stopping = asyncio.Event()
         self.task_bodies = self._load_startup_payload()
+        from .evidence_reuse import EvidenceReuse
+        from .worker_context import retained_context_policy
+
+        with connect_broker_database(self.coord, readonly=True) as database:
+            overrides = retained_context_policy(database)["overrides"]
+        self.evidence_reuse = EvidenceReuse(
+            Path(manifest["project"]),
+            {role for role, mode in overrides.items() if mode == "retain"},
+        )
         self.workspace_capsule = self.task_bodies.get("workspace_capsule")
         self.dashboard = BrokerDashboard(manifest)
         self.dashboard_active = False

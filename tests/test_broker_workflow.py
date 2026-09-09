@@ -13,6 +13,8 @@ from pi_tmux_orchestrator.broker import Broker, initialize_broker_run
 from pi_tmux_orchestrator.broker_observers import MAX_OBSERVER_REPORTS
 from pi_tmux_orchestrator.broker_workflow import BrokerWorkflowSupport
 from pi_tmux_orchestrator.models import OrchestrationError
+from pi_tmux_orchestrator.evidence_reuse import EvidenceReuse
+from pathlib import Path
 from pi_tmux_orchestrator.protocol import validate_report
 from test_broker import BrokerFixture, assignment_usage_snapshot
 
@@ -26,6 +28,7 @@ class WorkflowHarness(BrokerWorkflowSupport):
         self.clients = {role: SimpleNamespace(role=role) for role in manifest["roles"]}
         self.recent_reports = []
         self.latest_reports = {}
+        self.evidence_reuse = EvidenceReuse(Path(manifest["project"]), set())
         self.role_run_state = {}
         self.pending_run_state = {}
         self.reply = mock.AsyncMock()

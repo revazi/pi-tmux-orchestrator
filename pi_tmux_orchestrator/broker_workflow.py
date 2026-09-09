@@ -26,6 +26,7 @@ from .specialist_activation import decide_specialist
 
 if TYPE_CHECKING:
     from .broker import Client
+    from .evidence_reuse import EvidenceReuse
 
 
 class BrokerWorkflowSupport:
@@ -43,6 +44,7 @@ class BrokerWorkflowSupport:
     latest_reports: dict[str, dict[str, Any]]
     role_run_state: dict[str, str]
     pending_run_state: dict[str, int]
+    evidence_reuse: EvidenceReuse
 
     def _valid_usage(
         self,
@@ -255,11 +257,14 @@ class BrokerWorkflowSupport:
         current = self.latest_reports.get(role)
         if current is None or report_event["round"] >= current["round"]:
             self.latest_reports[role] = report_event
+            self.evidence_reuse.remember(role)
         self.recent_reports.append(report_event)
         if len(self.recent_reports) > MAX_OBSERVER_REPORTS:
             del self.recent_reports[: len(self.recent_reports) - MAX_OBSERVER_REPORTS]
 
-    def _run_state_capsule(self, round_number: int) -> str:
+    def _run_state_capsule(
+        self, round_number: int, recipient: str | None = None
+    ) -> str:
         with connect_broker_database(self.coord, readonly=True) as database:
             activations = public_specialist_activations(
                 database, round_number=round_number
@@ -268,6 +273,11 @@ class BrokerWorkflowSupport:
             list(self.latest_reports.values()),
             round_number,
             specialist_activations=activations,
+            evidence_reuse=(
+                self.evidence_reuse.snapshot()
+                if recipient in self.evidence_reuse.retained_roles
+                else None
+            ),
         )
 
     def _role_has_active_assignment(self, role: str) -> bool:
@@ -280,13 +290,16 @@ class BrokerWorkflowSupport:
     def _materialize_pending_run_state(
         self, role: str, round_number: int
     ) -> str | None:
-        if role in self.pending_run_state:
+        if role in self.pending_run_state or role in self.evidence_reuse.retained_roles:
             self.pending_run_state.pop(role, None)
-            self.role_run_state[role] = self._run_state_capsule(round_number)
+            self.role_run_state[role] = self._run_state_capsule(round_number, role)
         return self.role_run_state.get(role)
 
     async def _flush_pending_run_state(self, role: str, round_number: int) -> None:
-        if role not in self.pending_run_state:
+        if (
+            role not in self.pending_run_state
+            and role not in self.evidence_reuse.retained_roles
+        ):
             return
         content = self._materialize_pending_run_state(role, round_number)
         if content is not None:
@@ -299,8 +312,10 @@ class BrokerWorkflowSupport:
         for recipient in dict.fromkeys(roles):
             if recipient not in self.clients:
                 continue
-            if recipient in self.pending_run_state or self._role_has_active_assignment(
-                recipient
+            if (
+                recipient in self.evidence_reuse.retained_roles
+                or recipient in self.pending_run_state
+                or self._role_has_active_assignment(recipient)
             ):
                 self.pending_run_state[recipient] = round_number
                 continue
