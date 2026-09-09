@@ -79,7 +79,8 @@ class BrokerObserverSupport:
             "version": BROKER_PROTOCOL_VERSION,
             "type": "snapshot",
             "session": self.manifest["session"],
-            "state": state,
+            # Routing is durable effect intent, not a new observer wire state.
+            "state": "active" if state == "routing" else state,
             "round": round_number,
             "roles": roles,
             "report_count": report_count,

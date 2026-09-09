@@ -13,6 +13,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+from .continuation import continuation_status, repair_policy, retained_repair_policy
 from .budgeting import (
     BUDGET_INTEGER_METRICS,
     packaged_budget_policy,
@@ -35,7 +36,7 @@ from .specialist_activation import (
 )
 from .storage import ensure_private_directory, validate_coordination_directory
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 _ACTIVATION_RULE_PATTERN = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
 
 
@@ -104,6 +105,7 @@ def initialize_broker_database(
     budget_policy: dict[str, Any] | None = None,
     implementation_flow: str = DEFAULT_IMPLEMENTATION_FLOW,
     forced_specialists: tuple[str, ...] | list[str] = (),
+    max_repair_rounds: int | None = None,
 ) -> None:
     selected_policy = (
         packaged_budget_policy() if budget_policy is None else budget_policy
@@ -118,6 +120,7 @@ def initialize_broker_database(
             else:
                 selected_policy["warning"][scope]["operational_tokens"] = threshold
     policy = validate_budget_config(selected_policy)
+    continuation_policy = repair_policy(max_repair_rounds)
     selected_flow = validate_implementation_flow(implementation_flow)
     selected_forced = validate_forced_specialists(
         forced_specialists, set(manifest["roles"])
@@ -243,6 +246,9 @@ def initialize_broker_database(
             "soft_total_tokens": str(soft_total_tokens),
             "budget_policy": json.dumps(policy, separators=(",", ":"), sort_keys=True),
             "implementation_flow": selected_flow,
+            "continuation_policy": json.dumps(
+                continuation_policy, separators=(",", ":")
+            ),
             "forced_specialists": json.dumps(selected_forced, separators=(",", ":")),
             "created_at": now,
             "updated_at": now,
@@ -344,8 +350,15 @@ def prepare_broker_database(coord: Path) -> None:
                         f"ALTER TABLE roles ADD COLUMN {column} {declaration}"
                     )
             version = 8
+        if version == 8:
+            database.execute(
+                "INSERT OR IGNORE INTO meta(key,value) VALUES ('continuation_policy',?)",
+                (json.dumps(repair_policy(None), separators=(",", ":")),),
+            )
+            version = 9
         if version != SCHEMA_VERSION:
             raise OrchestrationError("Broker database schema is unsupported")
+        retained_repair_policy(database)
         database.execute(
             "UPDATE meta SET value=? WHERE key='schema_version'", (str(version),)
         )
@@ -674,6 +687,7 @@ def public_broker_snapshot(coord: Path) -> dict[str, Any]:
         return {
             "workflow": {
                 "state": meta.get("workflow_state", "unknown"),
+                "continuation": continuation_status(database),
                 "round": current_round,
                 "implementation_flow": validate_implementation_flow(
                     meta.get("implementation_flow", DEFAULT_IMPLEMENTATION_FLOW)

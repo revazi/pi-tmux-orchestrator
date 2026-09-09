@@ -350,6 +350,29 @@ sequential or parallel tools, pauses downstream assignments, or changes review
 routing. Direct operator steering remains available, and no budget override is
 needed because budget policy never stops work.
 
+A separately selected version-1 `continuation_policy` may cap additional
+implementation rounds. The broker checks the count of distinct implementer
+implementation rounds after round 1 in the same transaction that creates an
+assignment. At the cap it instead records `pending_repair_round`, emits
+`continuation_paused`, and broadcasts the existing `needs_attention` state.
+No new worker/observer frame is introduced. Status exposes the metadata-only
+policy, count, pending round, and reason. Legacy absence means disabled.
+Broker schema 9 adds this enforcement contract; older live brokers reject the
+new schema instead of silently ignoring a retained cap. Forward migration from
+schema 8 installs a disabled policy without resetting assignment counts.
+
+Authenticated control action `continue` uses the existing control envelope with
+role `implementer`, null message/delivery, and an operator-provided command ID.
+Only a safely paused run with no active assignments can accept it. It authorizes
+one additional repair round, persists the updated cap and command identity, and
+marks routing intent before side effects. During this transient intent, observer
+snapshots project `active` using the existing wire vocabulary; a broker restart
+converts interrupted routing to `uncertain` before serving observers.
+Duplicates never extend authorization
+or replay work. Interruption leaves uncertain routing/delivery, not approval.
+This action is distinct from observational budget settings and cannot satisfy
+reviewer acceptance. Public CLI wiring follows separately; callers must explicitly authorize this action.
+
 A deterministic synthetic two-round regression separately measures serialized
 provider-visible message characters across the assignment projection. CI
 requires at least a 50% reduction and currently observes 99,170 before versus
