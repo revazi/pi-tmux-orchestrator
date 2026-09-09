@@ -53,14 +53,21 @@ function isCompletedProviderMessage(item, index, boundary) {
 
 function keepWorkerContextMessage(item, index, selection) {
   const details = orchestrationDetails(item);
+  if (selection.mode === "retain" && details?.kind === "assignment") return true;
   const key = contextKey(details);
   if (key) return selection.latest.get(key) === index;
   if (details) return true;
-  return !isCompletedProviderMessage(item, index, selection.assignmentBoundary);
+  return selection.mode === "retain"
+    || !isCompletedProviderMessage(item, index, selection.assignmentBoundary);
 }
 
-export function filterWorkerContext(messages) {
-  const selection = contextSelection(messages);
+export function validateWorkerContextMode(mode = "prune") {
+  if (mode !== "prune" && mode !== "retain") throw new Error("invalid_worker_context_mode");
+  return mode;
+}
+
+export function filterWorkerContext(messages, mode = "prune") {
+  const selection = { ...contextSelection(messages), mode: validateWorkerContextMode(mode) };
   return messages.filter((item, index) => keepWorkerContextMessage(item, index, selection));
 }
 

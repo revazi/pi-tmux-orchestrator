@@ -1080,6 +1080,7 @@ def initialize_broker_run(
     implementation_flow: str = DEFAULT_IMPLEMENTATION_FLOW,
     forced_specialists: tuple[str, ...] | list[str] = (),
     max_repair_rounds: int | None = None,
+    worker_context_overrides: dict[str, str] | None = None,
     soft_role_tokens: int | None = None,
     soft_total_tokens: int | None = None,
 ) -> None:
@@ -1112,6 +1113,7 @@ def initialize_broker_run(
         implementation_flow=implementation_flow,
         forced_specialists=forced_specialists,
         max_repair_rounds=max_repair_rounds,
+        worker_context_overrides=worker_context_overrides,
     )
     startup_payload: dict[str, Any] = {
         "task": task,

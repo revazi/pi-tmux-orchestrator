@@ -17,6 +17,7 @@ import {
   assignmentUsageBaseline,
   filterWorkerContext,
   restoreWorkerState,
+  validateWorkerContextMode,
 } from "./orchestrator-worker-context.js";
 import {
   acceptedReportResult,
@@ -56,6 +57,7 @@ const GENERATION = Number(process.env.PI_TMUX_ORCHESTRATOR_GENERATION);
 const message = createWorkerMessage(ROLE, TOKEN);
 
 export default function orchestratorWorker(pi) {
+  const contextMode = validateWorkerContextMode(process.env.PI_TMUX_ORCHESTRATOR_CONTEXT_MODE);
   const guardrailPolicy = parseGuardrailPolicy(
     process.env.PI_TMUX_ORCHESTRATOR_GUARDRAILS,
   );
@@ -456,7 +458,7 @@ export default function orchestratorWorker(pi) {
     connect();
   });
   pi.on("context", (event) => ({
-    messages: filterWorkerContext(event.messages),
+    messages: filterWorkerContext(event.messages, contextMode),
   }));
   pi.on("tool_call", onToolCall);
   pi.on("tool_result", onToolResult);

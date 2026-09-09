@@ -68,6 +68,7 @@ EXPECTED_FILES=(
   pi_tmux_orchestrator/tmux.py
   pi_tmux_orchestrator/token_efficiency.py
   pi_tmux_orchestrator/worker_resources.py
+  pi_tmux_orchestrator/worker_context.py
   pi_tmux_orchestrator/workspace_capsules.py
   references/usage.md
   references/prerelease-testing.md

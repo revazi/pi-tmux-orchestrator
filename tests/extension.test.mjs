@@ -603,6 +603,7 @@ test("worker installs the report compatibility shim before Pi validates tool arg
     "PI_TMUX_ORCHESTRATOR_SOCKET",
     "PI_TMUX_ORCHESTRATOR_GENERATION",
     "PI_TMUX_ORCHESTRATOR_GUARDRAILS",
+    "PI_TMUX_ORCHESTRATOR_CONTEXT_MODE",
   ];
   const previous = Object.fromEntries(names.map((name) => [name, process.env[name]]));
   Object.assign(process.env, {
@@ -618,13 +619,27 @@ test("worker installs the report compatibility shim before Pi validates tool arg
     const loaded = await import(
       `../extensions/orchestrator-worker.js?report-shim=${Date.now()}`
     );
-    const tools = [];
-    loaded.default({
-      registerTool: (tool) => tools.push(tool),
-      on() {},
-    });
-    const reportTool = tools.find((tool) => tool.name === "orchestrator_report");
-    assert.equal(reportTool.prepareArguments, loaded.testHooks.prepareReportArguments);
+    for (const mode of [undefined, "prune", "retain"]) {
+      if (mode === undefined) delete process.env.PI_TMUX_ORCHESTRATOR_CONTEXT_MODE;
+      else process.env.PI_TMUX_ORCHESTRATOR_CONTEXT_MODE = mode;
+      const tools = [];
+      const events = new Map();
+      loaded.default({
+        registerTool: (tool) => tools.push(tool),
+        on: (name, callback) => events.set(name, callback),
+      });
+      const reportTool = tools.find((tool) => tool.name === "orchestrator_report");
+      assert.equal(reportTool.prepareArguments, loaded.testHooks.prepareReportArguments);
+      const messages = completedAssignmentHistory();
+      messages.push(workerMessage({ kind: "assignment", assignment_id: "b".repeat(32), round: 2 }, "repair"));
+      // Every provider request uses the retained launch selection, not ambient changes.
+      process.env.PI_TMUX_ORCHESTRATOR_CONTEXT_MODE = "invalid";
+      for (let request = 0; request < 2; request += 1) {
+        const result = await events.get("context")({ messages });
+        assert.deepEqual(result.messages, workerHooks.filterWorkerContext(messages, mode));
+      }
+    }
+    assert.throws(() => loaded.default({}), /invalid_worker_context_mode/);
   } finally {
     for (const name of names) {
       if (previous[name] === undefined) delete process.env[name];
@@ -1123,7 +1138,7 @@ test("completed assignment pruning cuts synthetic two-round provider context by 
   ];
   const serializedCharacters = (items) => JSON.stringify(items).length;
   const originalLength = messages.length;
-  const filtered = workerHooks.filterWorkerContext(messages, { id: "b".repeat(32) });
+  const filtered = workerHooks.filterWorkerContext(messages);
   const before = serializedCharacters(messages);
   const after = serializedCharacters(filtered);
   const reduction = 1 - (after / before);
@@ -1234,6 +1249,50 @@ test("completed turns are pruned only at the next distinct assignment boundary",
   assert.equal(visible.some((item) => item.content === "second assignment"), true);
   assert.equal(visible.some((item) => item.content?.[0]?.text === "second assignment turn"), true);
   assert.equal(messages.length, 13);
+});
+
+test("explicit retain keeps prior assignments and tool pairs but replaces rolling capsules", () => {
+  const messages = completedAssignmentHistory();
+  const toolCall = { role: "assistant", content: [{ type: "toolCall", id: "read-1", name: "read", arguments: { path: "file.py" } }] };
+  const toolResult = { role: "toolResult", toolCallId: "read-1", content: [{ type: "text", text: "prior investigation, not current approval" }] };
+  messages.push(
+    toolCall, toolResult,
+    workerMessage({ kind: "context", delivery_kind: "operator_message" }, "queued guidance"),
+    { role: "user", content: "direct guidance" },
+    workerMessage({ kind: "context", delivery_kind: "run_state", round: 1 }, "old capsule"),
+    workerMessage({ kind: "context", delivery_kind: "baseline", round: 2 }, "restored baseline"),
+    workerMessage({ kind: "context", delivery_kind: "run_state", round: 2 }, "unresolved reviewer finding"),
+    workerMessage({ kind: "assignment", assignment_id: "b".repeat(32), round: 2 }, "repair assignment"),
+    { role: "assistant", content: "active investigation" },
+  );
+  const original = JSON.stringify(messages);
+  const retained = workerHooks.filterWorkerContext(messages, "retain");
+  for (const item of messages) {
+    assert.equal(retained.includes(item), !["bounded baseline", "old capsule"].includes(item.content));
+  }
+  assert.ok(retained.includes(toolCall));
+  assert.ok(retained.includes(toolResult));
+  assert.deepEqual(workerHooks.filterWorkerContext(retained, "retain"), retained);
+  assert.deepEqual(workerHooks.filterWorkerContext(JSON.parse(original), "retain"), retained);
+  const pruned = workerHooks.filterWorkerContext(messages, "prune");
+  assert.equal(pruned.includes(toolCall), false);
+  assert.equal(pruned.includes(toolResult), false);
+  assert.deepEqual(workerHooks.filterWorkerContext(messages), pruned);
+  assert.equal(JSON.stringify(messages), original);
+});
+
+test("context selection rejects unsupported modes and preserves unknown messages", () => {
+  const messages = [
+    { role: "user", content: "instructions before an assignment" },
+    { role: "assistant", content: "no known boundary" },
+    { role: "custom", customType: "other-extension", content: "required evidence" },
+  ];
+  for (const mode of [undefined, "prune", "retain"]) {
+    assert.deepEqual(workerHooks.filterWorkerContext(messages, mode), messages);
+  }
+  for (const mode of [null, "", "auto", "compact", "fresh", true, 1, {}]) {
+    assert.throws(() => workerHooks.filterWorkerContext(messages, mode), /invalid_worker_context_mode/);
+  }
 });
 
 test("token-efficiency fixtures expose first-assignment growth and boundary reduction", async () => {

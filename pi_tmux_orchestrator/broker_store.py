@@ -36,7 +36,9 @@ from .specialist_activation import (
 )
 from .storage import ensure_private_directory, validate_coordination_directory
 
-SCHEMA_VERSION = 9
+from .worker_context import context_policy, retained_context_policy
+
+SCHEMA_VERSION = 10
 _ACTIVATION_RULE_PATTERN = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
 
 
@@ -106,6 +108,7 @@ def initialize_broker_database(
     implementation_flow: str = DEFAULT_IMPLEMENTATION_FLOW,
     forced_specialists: tuple[str, ...] | list[str] = (),
     max_repair_rounds: int | None = None,
+    worker_context_overrides: dict[str, str] | None = None,
 ) -> None:
     selected_policy = (
         packaged_budget_policy() if budget_policy is None else budget_policy
@@ -121,6 +124,10 @@ def initialize_broker_database(
                 selected_policy["warning"][scope]["operational_tokens"] = threshold
     policy = validate_budget_config(selected_policy)
     continuation_policy = repair_policy(max_repair_rounds)
+    selected_context = context_policy(
+        {} if worker_context_overrides is None else worker_context_overrides,
+        set(manifest["roles"]),
+    )
     selected_flow = validate_implementation_flow(implementation_flow)
     selected_forced = validate_forced_specialists(
         forced_specialists, set(manifest["roles"])
@@ -249,6 +256,9 @@ def initialize_broker_database(
             "continuation_policy": json.dumps(
                 continuation_policy, separators=(",", ":")
             ),
+            "worker_context_policy": json.dumps(
+                selected_context, separators=(",", ":")
+            ),
             "forced_specialists": json.dumps(selected_forced, separators=(",", ":")),
             "created_at": now,
             "updated_at": now,
@@ -356,9 +366,16 @@ def prepare_broker_database(coord: Path) -> None:
                 (json.dumps(repair_policy(None), separators=(",", ":")),),
             )
             version = 9
+        if version == 9:
+            database.execute(
+                "INSERT OR IGNORE INTO meta(key,value) VALUES ('worker_context_policy',?)",
+                (json.dumps(context_policy({}, set()), separators=(",", ":")),),
+            )
+            version = 10
         if version != SCHEMA_VERSION:
             raise OrchestrationError("Broker database schema is unsupported")
         retained_repair_policy(database)
+        retained_context_policy(database)
         database.execute(
             "UPDATE meta SET value=? WHERE key='schema_version'", (str(version),)
         )
@@ -512,6 +529,18 @@ def retained_budget_policy(database: sqlite3.Connection) -> dict[str, Any]:
 def worker_guardrail_policy(coord: Path) -> dict[str, Any]:
     with connect_broker_database(coord, readonly=True) as database:
         return worker_assignment_guardrail_policy(retained_budget_policy(database))
+
+
+def worker_context_mode(coord: Path, role: str) -> str:
+    """Resolve the retained role policy for either worker transport or restart."""
+
+    with connect_broker_database(coord, readonly=True) as database:
+        if (
+            database.execute("SELECT 1 FROM roles WHERE role=?", (role,)).fetchone()
+            is None
+        ):
+            raise OrchestrationError("Worker context role is unavailable")
+        return retained_context_policy(database)["overrides"].get(role, "prune")
 
 
 def broker_role_generation(coord: Path, role: str) -> int:
@@ -688,6 +717,7 @@ def public_broker_snapshot(coord: Path) -> dict[str, Any]:
             "workflow": {
                 "state": meta.get("workflow_state", "unknown"),
                 "continuation": continuation_status(database),
+                "worker_context_policy": retained_context_policy(database),
                 "round": current_round,
                 "implementation_flow": validate_implementation_flow(
                     meta.get("implementation_flow", DEFAULT_IMPLEMENTATION_FLOW)

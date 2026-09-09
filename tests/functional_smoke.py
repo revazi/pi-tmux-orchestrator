@@ -215,6 +215,8 @@ def main() -> int:
         "import json, os, sys, time\n"
         "mode='rpc' if '--mode' in sys.argv else 'tui'\n"
         "role=os.environ.get('PI_TMUX_ORCHESTRATOR_ROLE','unknown')\n"
+        "if role != 'unknown':\n"
+        "    assert os.environ.get('PI_TMUX_ORCHESTRATOR_CONTEXT_MODE') == ('retain' if role == 'reviewer' else 'prune')\n"
         "argv_dir=os.environ.get('SMOKE_PI_ARGV_DIR')\n"
         "if argv_dir:\n"
         "    with open(os.path.join(argv_dir, f'{mode}-{role}.json'), 'w', encoding='utf-8') as handle:\n"
@@ -283,6 +285,7 @@ def main() -> int:
         session=session,
         implementation_flow="phased",
         max_repair_rounds=1,
+        worker_context=[("reviewer", "retain")],
         with_probe=True,
         probe_task="Synthetic probe evidence.",
         probe_task_file=None,
