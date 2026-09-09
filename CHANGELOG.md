@@ -7,7 +7,8 @@ All notable changes to this project are documented here.
 ### Added
 
 - Added a strict read-only repair continuation policy and metadata contract, independently tested without broker routing or CLI activation
-- Added a CLI-only opt-in run-wide repair-round cap and explicit idempotent one-round continuation approval; paused runs remain incomplete, counters survive worker restarts, and observational budgets retain their existing behavior
+- Added an opt-in run-wide repair-round cap and explicit idempotent terminal-CLI one-round continuation approval; paused runs remain incomplete, counters survive worker restarts, and observational budgets retain their existing behavior
+- Exposed the repair cap through the Pi start form and optional model-tool `maxRepairRounds`, with strict validation and CLI-resolved start confirmation; continuation approval remains operator-only
 
 ### Changed
 

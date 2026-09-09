@@ -116,7 +116,7 @@ function context(overrides = {}) {
       },
       input: async (title, placeholder) => {
         calls.inputs.push({ title, placeholder });
-        return inputs ? inputs.shift() : overrides.input;
+        return inputs ? inputs.shift() : (overrides.input ?? "");
       },
       custom: async () => {
         if (overrides.customError) throw overrides.customError;
@@ -166,6 +166,10 @@ test("registers one bounded model tool and the exact short-only command surface 
   assert.equal(tool.parameters.properties.action.enum.includes("stop"), false);
   assert.equal(tool.parameters.properties.profile.pattern, "^[a-z][a-z0-9-]{0,31}$");
   assert.deepEqual(tool.parameters.properties.implementationFlow.enum, ["single", "phased"]);
+  assert.equal(tool.parameters.properties.maxRepairRounds.type, "integer");
+  assert.equal(tool.parameters.properties.maxRepairRounds.minimum, 0);
+  assert.equal(tool.parameters.properties.maxRepairRounds.maximum, 1_000_000);
+  assert.equal(tool.parameters.required.includes("maxRepairRounds"), false);
   assert.equal(tool.parameters.properties.workspaceCapsule.type, "boolean");
   assert.equal(tool.parameters.properties.workspaceRelevantPaths.maxItems, 16);
   assert.equal(tool.parameters.properties.workspaceRelevantPaths.uniqueItems, true);
@@ -2541,6 +2545,86 @@ test("start previews CLI policy, keeps private text out of argv, and cleans mode
   for (const path of paths) await assert.rejects(access(path));
 });
 
+test("start repair cap validates native numbers and forwards zero through preview and launch", async () => {
+  const argvs = [];
+  const { tool } = harness(async (_command, args) => {
+    argvs.push(args);
+    const index = args.indexOf("--max-repair-rounds");
+    return {
+      code: 0,
+      stdout: JSON.stringify(success("start", {
+        roles: [],
+        dry_run: args.includes("--dry-run"),
+        continuation_policy: { version: 1, max_repair_rounds: index < 0 ? null : Number(args[index + 1]) },
+      })),
+    };
+  });
+  for (const maxRepairRounds of [undefined, 0, 3, 1_000_000]) {
+    argvs.length = 0;
+    const ctx = context({ confirmations: [true] });
+    await tool.execute("cap", { action: "start", task: "synthetic", maxRepairRounds }, undefined, undefined, ctx);
+    assert.equal(argvs.length, 2);
+    assert.ok(argvs[0].includes("--dry-run"));
+    assert.equal(argvs[1].includes("--dry-run"), false);
+    for (const args of argvs) {
+      const index = args.indexOf("--max-repair-rounds");
+      if (maxRepairRounds === undefined) assert.equal(index, -1);
+      else assert.equal(args[index + 1], String(maxRepairRounds));
+    }
+    assert.equal(ctx.calls.confirmations.length, 1);
+    assert.match(ctx.calls.confirmations[0].message, new RegExp(
+      `Repair-round continuation cap: ${maxRepairRounds === undefined ? "disabled" : `${maxRepairRounds} additional implementation rounds`}`,
+    ));
+    if (maxRepairRounds !== undefined) {
+      assert.match(ctx.calls.confirmations[0].message, /pauses incomplete.*not an active-assignment token budget/);
+    }
+  }
+  argvs.length = 0;
+  for (const maxRepairRounds of [null, false, true, "0", "", -1, 0.5, 1_000_001, NaN, Infinity, [], {}]) {
+    const ctx = context({ confirmations: [true] });
+    await assert.rejects(
+      tool.execute("cap", { action: "start", task: "synthetic", maxRepairRounds }, undefined, undefined, ctx),
+      /maxRepairRounds must be an integer/,
+    );
+    assert.equal(ctx.calls.confirmations.length, 0);
+  }
+  assert.equal(argvs.length, 0);
+});
+
+test("slash repair cap supports blank, zero, cancellation, and fail-closed invalid input", async () => {
+  const argvs = [];
+  const { commands } = harness(async (_command, args) => {
+    argvs.push(args);
+    return { code: 0, stdout: JSON.stringify(success("start", { roles: [], dry_run: args.includes("--dry-run") })) };
+  });
+  for (const [input, expected] of [["", undefined], ["  ", undefined], ["0", 0], [" 2 ", 2], ["1000000", 1_000_000]]) {
+    argvs.length = 0;
+    const ctx = context({ inputs: [input], confirmations: [false, true] });
+    await commands.get("or-start").handler("synthetic", ctx);
+    assert.equal(argvs.length, 2);
+    for (const args of argvs) {
+      const index = args.indexOf("--max-repair-rounds");
+      if (expected === undefined) assert.equal(index, -1);
+      else assert.equal(args[index + 1], String(expected));
+    }
+    assert.match(ctx.calls.inputs[0].title, /blank disables; 0 pauses/);
+    assert.match(ctx.calls.confirmations.at(-1).message, /Repair-round continuation cap: unavailable/);
+  }
+  argvs.length = 0;
+  for (const input of [undefined, null, "-1", "1.5", "1e2", "0x10", "+1", "1000001", "10000000", "NaN", "--yes"]) {
+    const ctx = context({ inputs: [input], confirmations: [false, true] });
+    await commands.get("or-start").handler("synthetic", ctx);
+    assert.equal(argvs.length, 0);
+    assert.equal(ctx.calls.confirmations.length, 1);
+    if (input == null) assert.equal(ctx.calls.notifications.length, 0);
+    else assert.equal(ctx.calls.notifications.at(-1).message, "Unable to start orchestration");
+  }
+  const declined = context({ inputs: ["0"], confirmations: [false, false] });
+  await commands.get("or-start").handler("synthetic", declined);
+  assert.equal(argvs.length, 1);
+  assert.ok(argvs[0].includes("--dry-run"));
+});
+
 test("slash start can inherit exact-project orchestration defaults", async () => {
   let calls = 0;
   const { commands } = harness(async (_command, args) => {
@@ -2606,7 +2690,7 @@ test("controller mode requires and collects an explicit target project", async (
     assert.equal(calls, 0);
 
     const ctx = context({
-      input: process.cwd(),
+      inputs: [process.cwd(), ""],
       confirmations: [true, false, false, false, false, false, true],
     });
     await commands.get("or-start").handler("synthetic", ctx);
