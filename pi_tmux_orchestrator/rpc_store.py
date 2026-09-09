@@ -34,6 +34,7 @@ from .constants import (
     RPC_TOKEN_PATTERN,
 )
 from .models import OrchestrationError
+from .role_registry import valid_custom_role_id
 from .storage import (
     absolute_path,
     atomic_secure_write,
@@ -53,7 +54,9 @@ def rpc_role_paths(
     create: bool,
 ) -> dict[str, Path]:
     coord = validate_coordination_directory(coord)
-    if role not in KNOWN_ROLES:
+    if not isinstance(role, str) or (
+        role not in KNOWN_ROLES and not valid_custom_role_id(role)
+    ):
         raise OrchestrationError(f"Unknown RPC role: {role}")
     root = coord / ".rpc" / role
     if create:

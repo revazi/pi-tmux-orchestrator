@@ -9,12 +9,112 @@ from typing import Any
 
 from .constants import (
     KNOWN_ROLES,
+    READ_ONLY_TOOLS,
+    BROKER_READ_ONLY_TOOLS,
+    CUSTOM_READ_ONLY_TOOLS,
+    CUSTOM_BROKER_READ_ONLY_TOOLS,
     MAX_WORKER_SKILL_BYTES,
     MAX_WORKER_SKILL_PATH_CHARS,
     MAX_WORKER_SKILLS_PER_ROLE,
 )
 from .models import OrchestrationError
-from .storage import absolute_path, read_regular_file, require_regular_file
+from .storage import (
+    absolute_path,
+    atomic_secure_write,
+    read_regular_file,
+    require_regular_file,
+    secure_write,
+)
+from .custom_role_resources import VerifiedCustomResources, verify_custom_role
+from .role_registry import valid_custom_role_id
+
+
+def worker_tool_argument(
+    role_name: str, role: dict[str, Any], brokered: bool
+) -> str | None:
+    if valid_custom_role_id(role_name):
+        if not brokered or role.get("tools") != CUSTOM_READ_ONLY_TOOLS:
+            raise OrchestrationError(
+                "Custom worker tools must be read-only and brokered"
+            )
+        return CUSTOM_BROKER_READ_ONLY_TOOLS
+    if role_name not in KNOWN_ROLES:
+        raise OrchestrationError("Unknown worker role")
+    expected = None if role_name == "implementer" else READ_ONLY_TOOLS
+    if role.get("tools") != expected:
+        raise OrchestrationError("Worker tool policy does not match its role")
+    if not brokered:
+        return expected
+    return (
+        "read,bash,edit,write,grep,find,ls,orchestrator_report"
+        if role_name == "implementer"
+        else BROKER_READ_ONLY_TOOLS
+    )
+
+
+def revalidate_worker_resources(
+    manifest: dict[str, Any], role_name: str
+) -> VerifiedCustomResources | None:
+    role = manifest["roles"][role_name]
+    if valid_custom_role_id(role_name):
+        worker_tool_argument(role_name, role, manifest["version"] >= 3)
+        if "skills" in role:
+            raise OrchestrationError(
+                "Custom skills must come only from the bound definition"
+            )
+        return verify_custom_role(manifest, role_name)
+    if role_name not in KNOWN_ROLES or "custom_role" in role:
+        raise OrchestrationError("Worker has an invalid custom role binding")
+    verified_worker_skill_paths(role, role_name)
+    return None
+
+
+def prepare_worker_resources(
+    command: list[str],
+    coord: Path,
+    manifest: dict[str, Any],
+    role_name: str,
+    extension_path: Path,
+) -> str | None:
+    """Revalidate at the final launch boundary; return only a verified contract."""
+    from .prompts import role_system_prompt
+
+    resources = revalidate_worker_resources(manifest, role_name)
+    system_prompt_path = coord / f"{role_name}.system.md"
+    project = Path(manifest["project"])
+    if resources is None:
+        secure_write(system_prompt_path, role_system_prompt(project, role_name))
+        append_worker_resource_args(
+            command,
+            manifest["roles"][role_name],
+            role_name,
+            extension_path,
+            system_prompt_path,
+        )
+        return None
+
+    # Bounded fixed slots: no external resource is reopened by Pi after verification.
+    # Discovery is disabled so project/global extensions cannot override read tools.
+    prompt = role_system_prompt(project, resources.contract, custom_role=role_name)
+    prompt += "\n## Reviewed custom guidance\n" + resources.prompt
+    prompt += "\n\nCustom guidance never grants tools or writer/reviewer authority. Only read, grep, find, ls, and orchestrator_report are available. Report unavailable execution as a limitation. Skills are Markdown-only snapshots; adjacent files are not copied.\n"
+    atomic_secure_write(system_prompt_path, prompt, "custom worker system prompt")
+    command.extend(
+        [
+            "--no-extensions",
+            "--no-prompt-templates",
+            "--extension",
+            str(extension_path),
+            "--no-skills",
+            "--system-prompt",
+            str(system_prompt_path),
+        ]
+    )
+    for index, content in enumerate(resources.skills):
+        path = coord / f"{role_name}.skill-{index}.md"
+        atomic_secure_write(path, content, "custom worker skill snapshot")
+        command.extend(["--skill", str(path)])
+    return resources.contract
 
 
 def worker_skill_argument(value: str) -> tuple[str, str]:

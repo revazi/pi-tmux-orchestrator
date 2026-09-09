@@ -29,6 +29,7 @@ Provide a small, reusable, intentionally tmux-scoped Pi skill and modular standa
 - `pi_tmux_orchestrator/worker_resources.py`: strict digest-bound per-role skill opt-ins and shared launch policy
 - `pi_tmux_orchestrator/role_registry.py`: strict validation-only user-global custom specialist registry
 - `pi_tmux_orchestrator/role_contracts.py`: explicit trusted custom identity-to-specialist contract validation
+- `pi_tmux_orchestrator/custom_role_resources.py`: pinned metadata bindings and fresh digest-verified custom bootstrap inputs
 - `pi_tmux_orchestrator/registry_resources.py`: bounded descriptor-relative reads of user-owned global registry resources
 - `pi_tmux_orchestrator/dashboard.py`: adaptive metadata-only broker pane presentation
 - `pi_tmux_orchestrator/supervisor_api.py`: versioned durable-state read boundary

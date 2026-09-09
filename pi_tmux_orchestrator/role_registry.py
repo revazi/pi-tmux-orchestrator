@@ -129,7 +129,12 @@ def _verify_resource(resource: dict[str, str], limit: int, project: Path) -> Non
 
 
 def load_registry(project: Path, explicit: str | None = None) -> dict[str, Any]:
-    project = project.resolve(strict=True)
+    try:
+        project = project.resolve(strict=True)
+    except (OSError, RuntimeError) as error:
+        raise OrchestrationError(
+            "Registry validation project is unavailable"
+        ) from error
     if not project.is_dir():
         raise OrchestrationError("Registry validation requires a project directory")
     path = registry_path(project, explicit)

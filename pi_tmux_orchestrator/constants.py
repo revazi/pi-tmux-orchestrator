@@ -45,6 +45,8 @@ DEFAULT_MODELS = {
 }
 READ_ONLY_TOOLS = "read,bash,grep,find,ls"
 BROKER_READ_ONLY_TOOLS = f"{READ_ONLY_TOOLS},orchestrator_report"
+CUSTOM_READ_ONLY_TOOLS = "read,grep,find,ls"
+CUSTOM_BROKER_READ_ONLY_TOOLS = f"{CUSTOM_READ_ONLY_TOOLS},orchestrator_report"
 MAX_TASK_BYTES = 64 * 1024
 MAX_CONTEXT_CAPSULE_BYTES = 12 * 1024
 MAX_RUN_STATE_BYTES = 16 * 1024
@@ -101,6 +103,7 @@ MANIFEST_V5_FIELDS = MANIFEST_V4_FIELDS | {
     "project_config",
     "orchestration_config",
 }
+MANIFEST_V6_FIELDS = MANIFEST_V5_FIELDS | {"custom_role_registry"}
 ROLE_FIELDS = frozenset(
     {"provider", "model", "thinking", "tools", "pane_id", "prompt_path", "session_dir"}
 )
@@ -108,6 +111,7 @@ ROLE_V3_FIELDS = frozenset(
     {"provider", "model", "thinking", "tools", "pane_id", "session_dir", "session_id"}
 )
 ROLE_V3_RESOURCE_FIELDS = ROLE_V3_FIELDS | {"skills"}
+ROLE_CUSTOM_FIELDS = ROLE_V3_FIELDS | {"custom_role"}
 PANE_ID_PATTERN = re.compile(r"%[0-9]+")
 RPC_STATE_FIELDS = frozenset(
     {

@@ -62,6 +62,10 @@ def public_role(
             "default" if config.get("tools") is None else "workflow-read-only-with-bash"
         ),
     }
+    from .role_registry import valid_custom_role_id
+
+    if valid_custom_role_id(role):
+        value["tool_policy"] = "custom-read-only-no-shell"
     if config.get("pane_id") is not None:
         value["pane_id"] = config["pane_id"]
     return value

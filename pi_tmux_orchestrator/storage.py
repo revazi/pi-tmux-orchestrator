@@ -21,11 +21,14 @@ from .constants import (
     BROKER_COORDINATION,
     BROKER_PROTOCOL_VERSION,
     KNOWN_ROLES,
+    CUSTOM_READ_ONLY_TOOLS,
+    ROLE_CUSTOM_FIELDS,
     MANIFEST_FIELDS,
     MANIFEST_V1_FIELDS,
     MANIFEST_V3_FIELDS,
     MANIFEST_V4_FIELDS,
     MANIFEST_V5_FIELDS,
+    MANIFEST_V6_FIELDS,
     MAX_CONTROLLER_STATE_BYTES,
     MAX_MANIFEST_BYTES,
     PANE_ID_PATTERN,
@@ -39,6 +42,7 @@ from .constants import (
     WINDOW,
 )
 from .configuration import (
+    unique_json_object,
     validate_manifest_orchestration_config,
     validate_manifest_project_config,
 )
@@ -300,7 +304,7 @@ def validate_manifest(
     if not isinstance(value, dict):
         raise OrchestrationError("Orchestration manifest must be a JSON object")
     version = value.get("version")
-    if type(version) is not int or version not in {1, 2, 3, 4, 5}:
+    if type(version) is not int or version not in {1, 2, 3, 4, 5, 6}:
         raise OrchestrationError("Unsupported orchestration manifest version")
     expected_fields = {
         1: MANIFEST_V1_FIELDS,
@@ -308,6 +312,7 @@ def validate_manifest(
         3: MANIFEST_V3_FIELDS,
         4: MANIFEST_V4_FIELDS,
         5: MANIFEST_V5_FIELDS,
+        6: MANIFEST_V6_FIELDS,
     }[version]
     if set(value) != expected_fields:
         raise OrchestrationError(
@@ -385,8 +390,13 @@ def validate_manifest(
     roles = value["roles"]
     if not isinstance(roles, dict):
         raise OrchestrationError("Manifest roles must be an object")
+    from .custom_role_resources import retained_custom_definitions
+
+    if any(not isinstance(role, dict) for role in roles.values()):
+        raise OrchestrationError("Manifest role records must be objects")
+    custom = retained_custom_definitions(value)
     if not {"implementer", "reviewer"}.issubset(roles) or not set(roles).issubset(
-        KNOWN_ROLES
+        KNOWN_ROLES | set(custom)
     ):
         raise OrchestrationError("Manifest roles contain missing or unknown role names")
 
@@ -399,6 +409,8 @@ def validate_manifest(
             expected_role_fields = (
                 ROLE_V3_RESOURCE_FIELDS if "skills" in role else ROLE_V3_FIELDS
             )
+        if role_name in custom:
+            expected_role_fields = ROLE_CUSTOM_FIELDS
         if set(role) != expected_role_fields:
             raise OrchestrationError(f"Manifest role {role_name} has invalid fields")
         for field in ("provider", "model"):
@@ -418,6 +430,8 @@ def validate_manifest(
                 f"Manifest role {role_name} has invalid thinking level"
             )
         expected_tools = None if role_name == "implementer" else READ_ONLY_TOOLS
+        if role_name in custom:
+            expected_tools = CUSTOM_READ_ONLY_TOOLS
         if role["tools"] != expected_tools:
             raise OrchestrationError(
                 f"Manifest role {role_name} has invalid tool configuration"
@@ -467,6 +481,11 @@ def validate_manifest(
                 raise OrchestrationError(
                     f"Manifest role {role_name} session path is not canonical"
                 )
+    if (
+        len((json.dumps(value, indent=2, sort_keys=True) + "\n").encode("utf-8"))
+        > MAX_MANIFEST_BYTES
+    ):
+        raise OrchestrationError("Orchestration manifest exceeds the safety limit")
     return value
 
 
@@ -567,11 +586,13 @@ def load_manifest(
         content = read_regular_file(
             manifest_path, "orchestration manifest", MAX_MANIFEST_BYTES
         )
-        value = json.loads(content)
+        value = json.loads(
+            content.decode("utf-8"), object_pairs_hook=unique_json_object
+        )
     except UnicodeDecodeError as error:
         raise OrchestrationError("Orchestration manifest is not valid UTF-8") from error
-    except json.JSONDecodeError as error:
-        raise OrchestrationError("Orchestration manifest is not valid JSON") from error
+    except (ValueError, RecursionError) as error:
+        raise OrchestrationError("Orchestration manifest is not strict JSON") from error
     return validate_manifest(value, coord, expected_session=expected_session)
 
 

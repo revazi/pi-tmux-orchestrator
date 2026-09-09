@@ -41,7 +41,6 @@ from .configuration import (
 from .constants import (
     BROKER_COORDINATION,
     BROKER_PROTOCOL_VERSION,
-    BROKER_READ_ONLY_TOOLS,
     DEFAULT_IMPLEMENTATION_FLOW,
     DEFAULT_MODELS,
     MAX_CONTEXT_CAPSULE_BYTES,
@@ -59,7 +58,6 @@ from .profiles import (
     resolve_execution_profile,
     retained_execution_profile,
 )
-from .prompts import role_system_prompt
 from .rpc import (
     load_rpc_events,
     load_rpc_registry,
@@ -105,7 +103,12 @@ from .tmux import (
     validate_model,
     validate_session_name,
 )
-from .worker_resources import append_worker_resource_args, resolve_worker_skills
+from .worker_resources import (
+    prepare_worker_resources,
+    revalidate_worker_resources,
+    resolve_worker_skills,
+    worker_tool_argument,
+)
 from .worker_context import resolve_context_policy
 from .workspace_capsules import (
     canonical_project_root,
@@ -1282,6 +1285,7 @@ def restart_command(args: argparse.Namespace) -> CommandResult:
             f"Role {args.role!r} is not in {session}; available: {available}"
         )
     role = manifest["roles"][args.role]
+    revalidate_worker_resources(manifest, args.role)
     if args.provider:
         role["provider"] = args.provider
     if args.model:
@@ -1589,27 +1593,16 @@ def run_agent_command(args: argparse.Namespace) -> int:
     )
     if manifest["approve_project"]:
         command.append("--approve")
-    if role.get("tools"):
-        tools = (
-            BROKER_READ_ONLY_TOOLS if manifest.get("version", 0) >= 3 else role["tools"]
-        )
+    tools = worker_tool_argument(args.role, role, manifest.get("version", 0) >= 3)
+    if tools:
         command.extend(["--tools", tools])
-    elif manifest.get("version", 0) >= 3:
-        command.extend(
-            ["--tools", "read,bash,edit,write,grep,find,ls,orchestrator_report"]
-        )
+    specialist_contract = None
     if manifest.get("version", 0) >= 3:
         token_path = coord / f"{args.role}.token"
         require_regular_file(token_path, "worker broker token", nonempty=True)
         token = token_path.read_text(encoding="utf-8").strip()
-        system_prompt_path = coord / f"{args.role}.system.md"
-        secure_write(system_prompt_path, role_system_prompt(Path(project), args.role))
-        append_worker_resource_args(
-            command,
-            role,
-            args.role,
-            runtime.WORKER_EXTENSION_PATH,
-            system_prompt_path,
+        specialist_contract = prepare_worker_resources(
+            command, coord, manifest, args.role, runtime.WORKER_EXTENSION_PATH
         )
     else:
         command.extend(
@@ -1622,6 +1615,8 @@ def run_agent_command(args: argparse.Namespace) -> int:
     environment.pop("PI_TMUX_CONTROLLER", None)
     environment.pop("PI_TMUX_CONTROLLER_HOME", None)
     environment.pop("PI_TMUX_ORCHESTRATOR_SPECIALIST_CONTRACT", None)
+    if specialist_contract is not None:
+        environment["PI_TMUX_ORCHESTRATOR_SPECIALIST_CONTRACT"] = specialist_contract
     environment["PI_SKIP_VERSION_CHECK"] = "1"
     environment["PI_TELEMETRY"] = "0"
     if manifest.get("version", 0) >= 3:

@@ -259,7 +259,11 @@ caller. Peers cannot add a contract field or self-register through broker-v1.
 Custom reports normalize using the selected built-in read-only specialist schema,
 while retaining the original custom identity on the wire. No custom binding may
 map to implementer or reviewer authority. With no explicit map, custom roles are
-rejected exactly as before. Live broker/manifest wiring remains pending under #60.
+rejected exactly as before. Manifest v6 adds bounded custom definition metadata
+and a pinned registry path, with metadata-only retained reads and fresh verification
+at bootstrap/restart. Existing v1–v5 manifests remain supported; ordinary starts
+still write v5. Live broker routing is explicitly gated until the remaining #60
+work lands. See [custom role bootstrap](custom-roles.md).
 
 ## Delivery and recovery
 

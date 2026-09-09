@@ -12,7 +12,14 @@ bounded commands and checks, and edit/write only when those tools are active. To
 descriptions define their arguments. Be concise and show file paths clearly."""
 
 
-def role_system_prompt(project: Path, role: str) -> str:
+def role_system_prompt(
+    project: Path, role: str, *, custom_role: str | None = None
+) -> str:
+    if custom_role is not None:
+        from .role_contracts import resolve_role_contract
+
+        # A custom identity can only bind a read-only specialist, never an authority role.
+        resolve_role_contract(custom_role, {custom_role: role})
     access = (
         "You are the sole worker allowed to modify tracked project files."
         if role == "implementer"
@@ -34,7 +41,7 @@ def role_system_prompt(project: Path, role: str) -> str:
     )
     return f"""{WORKER_PROMPT_PREFIX}
 
-Role: `{role}`
+Role: `{custom_role or role}`
 Project: `{project}`
 
 {access}

@@ -13,7 +13,6 @@ from typing import Any
 
 from .broker_store import worker_guardrail_policy, worker_context_mode
 from .constants import (
-    BROKER_READ_ONLY_TOOLS,
     MAX_JSON_ITEMS,
     MAX_RPC_COMMANDS,
     MAX_RPC_PROMPT_BYTES,
@@ -41,7 +40,7 @@ from .rpc_store import (
 )
 from .storage import ensure_private_directory, read_regular_file
 from .tmux import command_path
-from .worker_resources import append_worker_resource_args
+from .worker_resources import prepare_worker_resources, worker_tool_argument
 
 
 MAX_RPC_DISPLAY_CHARS = 64 * 1024
@@ -132,39 +131,27 @@ def run_rpc_agent(
     )
     if manifest["approve_project"]:
         command.append("--approve")
-    if role.get("tools"):
-        command.extend(
-            ["--tools", BROKER_READ_ONLY_TOOLS if brokered else role["tools"]]
-        )
-    elif brokered:
-        command.extend(
-            ["--tools", "read,bash,edit,write,grep,find,ls,orchestrator_report"]
-        )
+    tools = worker_tool_argument(role_name, role, brokered)
+    if tools:
+        command.extend(["--tools", tools])
+    specialist_contract = None
     if brokered:
         from . import runtime
         from .broker_store import broker_paths
-        from .prompts import role_system_prompt
-        from .storage import require_regular_file, secure_write
+        from .storage import require_regular_file
 
         token_path = coord / f"{role_name}.token"
         require_regular_file(token_path, "worker broker token", nonempty=True)
         token = token_path.read_text(encoding="utf-8").strip()
-        system_prompt_path = coord / f"{role_name}.system.md"
-        secure_write(
-            system_prompt_path,
-            role_system_prompt(Path(manifest["project"]), role_name),
-        )
-        append_worker_resource_args(
-            command,
-            role,
-            role_name,
-            runtime.WORKER_EXTENSION_PATH,
-            system_prompt_path,
+        specialist_contract = prepare_worker_resources(
+            command, coord, manifest, role_name, runtime.WORKER_EXTENSION_PATH
         )
     environment = os.environ.copy()
     environment.pop("PI_TMUX_CONTROLLER", None)
     environment.pop("PI_TMUX_CONTROLLER_HOME", None)
     environment.pop("PI_TMUX_ORCHESTRATOR_SPECIALIST_CONTRACT", None)
+    if specialist_contract is not None:
+        environment["PI_TMUX_ORCHESTRATOR_SPECIALIST_CONTRACT"] = specialist_contract
     environment["PI_SKIP_VERSION_CHECK"] = "1"
     environment["PI_TELEMETRY"] = "0"
     if brokered:
