@@ -61,7 +61,7 @@ function keepWorkerContextMessage(item, index, selection) {
     || !isCompletedProviderMessage(item, index, selection.assignmentBoundary);
 }
 
-function validateWorkerContextMode(mode = "prune") {
+export function validateWorkerContextMode(mode = "prune") {
   if (mode !== "prune" && mode !== "retain") throw new Error("invalid_worker_context_mode");
   return mode;
 }

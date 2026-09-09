@@ -603,6 +603,7 @@ test("worker installs the report compatibility shim before Pi validates tool arg
     "PI_TMUX_ORCHESTRATOR_SOCKET",
     "PI_TMUX_ORCHESTRATOR_GENERATION",
     "PI_TMUX_ORCHESTRATOR_GUARDRAILS",
+    "PI_TMUX_ORCHESTRATOR_CONTEXT_MODE",
   ];
   const previous = Object.fromEntries(names.map((name) => [name, process.env[name]]));
   Object.assign(process.env, {
@@ -618,13 +619,27 @@ test("worker installs the report compatibility shim before Pi validates tool arg
     const loaded = await import(
       `../extensions/orchestrator-worker.js?report-shim=${Date.now()}`
     );
-    const tools = [];
-    loaded.default({
-      registerTool: (tool) => tools.push(tool),
-      on() {},
-    });
-    const reportTool = tools.find((tool) => tool.name === "orchestrator_report");
-    assert.equal(reportTool.prepareArguments, loaded.testHooks.prepareReportArguments);
+    for (const mode of [undefined, "prune", "retain"]) {
+      if (mode === undefined) delete process.env.PI_TMUX_ORCHESTRATOR_CONTEXT_MODE;
+      else process.env.PI_TMUX_ORCHESTRATOR_CONTEXT_MODE = mode;
+      const tools = [];
+      const events = new Map();
+      loaded.default({
+        registerTool: (tool) => tools.push(tool),
+        on: (name, callback) => events.set(name, callback),
+      });
+      const reportTool = tools.find((tool) => tool.name === "orchestrator_report");
+      assert.equal(reportTool.prepareArguments, loaded.testHooks.prepareReportArguments);
+      const messages = completedAssignmentHistory();
+      messages.push(workerMessage({ kind: "assignment", assignment_id: "b".repeat(32), round: 2 }, "repair"));
+      // Every provider request uses the retained launch selection, not ambient changes.
+      process.env.PI_TMUX_ORCHESTRATOR_CONTEXT_MODE = "invalid";
+      for (let request = 0; request < 2; request += 1) {
+        const result = await events.get("context")({ messages });
+        assert.deepEqual(result.messages, workerHooks.filterWorkerContext(messages, mode));
+      }
+    }
+    assert.throws(() => loaded.default({}), /invalid_worker_context_mode/);
   } finally {
     for (const name of names) {
       if (previous[name] === undefined) delete process.env[name];

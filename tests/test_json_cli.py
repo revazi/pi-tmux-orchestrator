@@ -215,6 +215,8 @@ class JsonMainTests(unittest.TestCase):
                     "phased",
                     "--max-repair-rounds",
                     "2",
+                    "--worker-context",
+                    "reviewer=retain",
                     "--context-capsule",
                     context_canary,
                     "--workspace-capsule",
@@ -267,6 +269,10 @@ class JsonMainTests(unittest.TestCase):
         self.assertEqual(data["implementation_flow"], "phased")
         self.assertEqual(
             data["continuation_policy"], {"version": 1, "max_repair_rounds": 2}
+        )
+        self.assertEqual(
+            data["worker_context_policy"],
+            {"version": 1, "overrides": {"reviewer": "retain"}},
         )
         self.assertEqual(data["forced_specialists"], ["playwright"])
         self.assertEqual(
@@ -912,7 +918,11 @@ class JsonMainTests(unittest.TestCase):
             "roles": {},
         }
         broker_snapshot = {
-            "workflow": {"state": "ready", "round": 2},
+            "workflow": {
+                "state": "ready",
+                "round": 2,
+                "worker_context_policy": {"version": 1, "overrides": {}},
+            },
             "usage": {
                 "total_tokens": 0,
                 "soft_total_budget_exceeded": False,

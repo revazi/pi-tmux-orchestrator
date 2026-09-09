@@ -55,11 +55,19 @@ from .supervisor_commands import (
 )
 from .specialist_activation import SPECIALIST_ROLES
 from .worker_resources import worker_skill_argument
+from .worker_context import worker_context_argument
 
 
 def worker_skill(value: str) -> tuple[str, str]:
     try:
         return worker_skill_argument(value)
+    except OrchestrationError as error:
+        raise argparse.ArgumentTypeError(str(error)) from error
+
+
+def worker_context(value: str) -> tuple[str, str]:
+    try:
+        return worker_context_argument(value)
     except OrchestrationError as error:
         raise argparse.ArgumentTypeError(str(error)) from error
 
@@ -252,6 +260,13 @@ def build_parser() -> argparse.ArgumentParser:
         choices=IMPLEMENTATION_FLOWS,
         default=None,
         help="override the project/global compatibility flow for this run",
+    )
+    start.add_argument(
+        "--worker-context",
+        type=worker_context,
+        action="append",
+        metavar="ROLE=MODE",
+        help="Per-run provider context: ROLE=retain or ROLE=prune (default prune); repeat for different enabled roles",
     )
     start.add_argument(
         "--max-repair-rounds",

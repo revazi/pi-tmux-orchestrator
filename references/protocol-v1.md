@@ -254,6 +254,13 @@ sleep, or poll after reporting.
 
 ## Delivery and recovery
 
+Broker schema 10 retains `worker_context_policy` as version 1 plus explicit
+per-role `overrides` (`retain` or `prune`). Omitted roles use default `prune`.
+Both worker launchers resolve this metadata before starting Pi; ambient environment
+cannot override it. Missing policy in schema 10 fails closed, while older schemas
+fall back to pruning. No broker-v1 wire fields, review boundaries, session identity,
+or usage counters change. Historical approval is never reused as current approval.
+
 Delivery IDs, assignment IDs, report IDs, and command IDs are 32-character
 lowercase hexadecimal values.
 
@@ -262,9 +269,10 @@ lowercase hexadecimal values.
   prompt, report, message, provider, diff, or log body.
 - Pi invokes the bridge's context-projection hook for every provider request.
   Every projection within one active assignment retains all of that assignment's
-  assistant/tool turns; completed turns leave provider context only when the next
-  distinct assignment boundary changes the pruning policy.
-- At that boundary, the bridge projects the latest baseline, latest delivered
+  assistant/tool turns. Default `prune` removes completed turns at the next distinct
+  assignment boundary; explicit per-role `retain` preserves prior assignments and
+  all their assistant/tool exchanges. Both modes replace superseded capsules.
+- With default `prune`, the bridge projects the latest baseline, latest delivered
   run-state capsule, new assignment, direct user/operator messages, and new
   assignment turns. Replaying the same assignment during confirmed handover is
   not a new pruning boundary.

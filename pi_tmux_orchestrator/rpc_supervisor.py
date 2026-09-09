@@ -11,7 +11,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from .broker_store import worker_guardrail_policy
+from .broker_store import worker_guardrail_policy, worker_context_mode
 from .constants import (
     BROKER_READ_ONLY_TOOLS,
     MAX_JSON_ITEMS,
@@ -168,6 +168,9 @@ def run_rpc_agent(
     environment["PI_TELEMETRY"] = "0"
     if brokered:
         guardrails = worker_guardrail_policy(coord)
+        environment["PI_TMUX_ORCHESTRATOR_CONTEXT_MODE"] = worker_context_mode(
+            coord, role_name
+        )
         environment["PI_TMUX_ORCHESTRATOR_ROLE"] = role_name
         environment["PI_TMUX_ORCHESTRATOR_TOKEN"] = token
         environment["PI_TMUX_ORCHESTRATOR_SOCKET"] = str(broker_paths(coord)["socket"])

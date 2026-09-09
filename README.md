@@ -125,6 +125,11 @@ The run remains incomplete at the cap; explicit terminal CLI
 This does not limit an active assignment or change observational budgets.
 See [continuation semantics](references/usage.md#repair-round-continuation-limit-opt-in).
 
+For related worker investigation, CLI `start --worker-context reviewer=retain`
+opts that role into retaining prior assignment history. Other roles keep default
+pruning; mandatory review and run limits are unchanged. Retention can increase
+context cost. See [context policy](references/usage.md#worker-context-retention-cli-opt-in).
+
 Reusable defaults are user-global, never project-local:
 
 ```text

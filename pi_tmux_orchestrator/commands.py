@@ -26,6 +26,7 @@ from .broker_store import (
     broker_role_generation,
     public_broker_snapshot,
     worker_guardrail_policy,
+    worker_context_mode,
 )
 from .configuration import (
     effective_model_config,
@@ -105,6 +106,7 @@ from .tmux import (
     validate_session_name,
 )
 from .worker_resources import append_worker_resource_args, resolve_worker_skills
+from .worker_context import resolve_context_policy
 from .workspace_capsules import (
     canonical_project_root,
     construct_workspace_capsule,
@@ -445,6 +447,9 @@ def start_command(args: argparse.Namespace) -> CommandResult:
     for role in roles:
         configs[role]["skills"] = worker_skills[role]
     continuation_policy = repair_policy(getattr(args, "max_repair_rounds", None))
+    context_policy = resolve_context_policy(
+        getattr(args, "worker_context", None), set(roles)
+    )
     configured_budget = load_budget_config(project=project)
     budget_policy = effective_budget_policy(
         configured_budget,
@@ -493,6 +498,7 @@ def start_command(args: argparse.Namespace) -> CommandResult:
         },
         "budget_policy": budget_policy,
         "continuation_policy": continuation_policy,
+        "worker_context_policy": context_policy,
         "execution_profile": public_execution_profile(execution_profile),
         "project_config": project_config_metadata,
         "orchestration_config": orchestration_config_metadata,
@@ -539,6 +545,10 @@ def start_command(args: argparse.Namespace) -> CommandResult:
     human_print("  monitor: broker/status")
     human_print(f"Worker transport: {transport}")
     human_print(f"Implementation flow: {implementation_flow}")
+    for role in roles:
+        selection = context_policy["overrides"].get(role, "prune")
+        source = "per-run" if role in context_policy["overrides"] else "default"
+        human_print(f"Worker context: {role}={selection} (source={source})")
     human_print(
         f"Repair-round continuation cap: {continuation_policy['max_repair_rounds'] if continuation_policy['max_repair_rounds'] is not None else 'disabled'}"
     )
@@ -644,6 +654,7 @@ def start_command(args: argparse.Namespace) -> CommandResult:
             implementation_flow=implementation_flow,
             forced_specialists=forced_specialists,
             max_repair_rounds=continuation_policy["max_repair_rounds"],
+            worker_context_overrides=context_policy["overrides"],
         )
         create_tmux_grid(session, project, coord, roles, manifest)
         secure_write(coord / "startup-state", "RUNNING\n")
@@ -919,6 +930,10 @@ def status_command(args: argparse.Namespace) -> CommandResult:
             f"flow={workflow.get('implementation_flow', DEFAULT_IMPLEMENTATION_FLOW)} "
             f"forced={','.join(workflow.get('forced_specialists', [])) or 'none'} "
             f"tokens={usage['total_tokens']}{total_warning}"
+        )
+        context_overrides = workflow["worker_context_policy"]["overrides"]
+        human_print(
+            f"  worker context: default=prune; overrides={json.dumps(context_overrides, sort_keys=True)}"
         )
         continuation = workflow.get("continuation", {})
         if continuation.get("max_repair_rounds") is not None:
@@ -1610,6 +1625,9 @@ def run_agent_command(args: argparse.Namespace) -> int:
     environment["PI_TELEMETRY"] = "0"
     if manifest.get("version", 0) >= 3:
         guardrails = worker_guardrail_policy(coord)
+        environment["PI_TMUX_ORCHESTRATOR_CONTEXT_MODE"] = worker_context_mode(
+            coord, args.role
+        )
         environment["PI_TMUX_ORCHESTRATOR_ROLE"] = args.role
         environment["PI_TMUX_ORCHESTRATOR_TOKEN"] = token
         environment["PI_TMUX_ORCHESTRATOR_SOCKET"] = str(broker_paths(coord)["socket"])
