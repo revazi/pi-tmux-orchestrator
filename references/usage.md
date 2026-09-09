@@ -684,6 +684,10 @@ materializes the latest coalesced run-state capsule, including evidence deferred
 while the role was active, before recovering an accepted active assignment. A
 local respawn failure, replacement disconnect, broker interruption, or
 unprovable assignment remains `uncertain`; it is not blindly replayed.
+Explicit worker resources are revalidated before changing the manifest, preparing
+handover, or killing a worker; bootstrap verifies again before process launch.
+A changed or unavailable reviewed resource therefore leaves the existing worker
+untouched during restart preflight.
 
 ### `stop SESSION --yes`
 

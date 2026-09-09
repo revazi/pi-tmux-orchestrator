@@ -6,6 +6,8 @@ All notable changes to this project are documented here.
 
 ### Added
 
+- Added manifest-v6 custom role/resource bindings and shared fail-closed worker bootstrap: pinned registry revalidation, private verified Markdown snapshots, fixed read-only launch tools, and disabled automatic extension discovery; public custom starts and broker routing remain pending
+
 - Added the first custom-role worker contract boundary: explicit trusted identity/schema mappings, shared bridge report/assignment validation, and fixed read-only tool filtering plus call-time guards; custom-role manifest/launch/routing integration remains pending
 
 - Added a version-1 user-global custom-specialist registry and read-only `role-registry` CLI validation, with bounded names/contracts/resources, reviewed SHA-256 digests, and strict filesystem ownership/path checks; custom-role launching remains unavailable

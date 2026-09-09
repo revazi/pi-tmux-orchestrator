@@ -205,20 +205,80 @@ custom_environment = {
     "PI_TMUX_ORCHESTRATOR_GUARDRAILS": json.dumps({"enforcement": "warn-only", "warning": {}, "hard": {}}),
     "SMOKE_TOOLS_FILE": str(observation),
 }
-custom = subprocess.run(
+def custom_probe(argv):
+    observation.unlink(missing_ok=True)
+    custom = subprocess.run(
+        argv, input=payload, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        cwd=workspace, env=custom_environment, timeout=30, check=False,
+    )
+    if custom.returncode or custom.stderr or not observation.is_file():
+        raise SystemExit("Actual-Pi custom worker contract startup failed")
+    if set(json.loads(observation.read_text())) != {"read", "grep", "find", "ls", "orchestrator_report"}:
+        raise SystemExit("Actual-Pi custom worker exposed tools outside the fixed read-only set")
+    records = [json.loads(line) for line in custom.stdout.split(b"\n") if line.strip()]
+    responses = [record for record in records if record.get("id") == request_id and record.get("success") is True]
+    if len(responses) != 1:
+        raise SystemExit("Actual-Pi custom worker RPC discovery failed")
+    return responses[0]
+
+custom_probe(
     ["pi", "--mode", "rpc", "--no-session", "--no-extensions", "--no-skills",
      "--no-context-files", "--extension", str(root_path / "extensions/orchestrator-worker.js"),
-     "--extension", str(verifier), "--tools", "read,bash,edit,write,grep,find,ls,orchestrator_report,fixture_mutator"],
-    input=payload, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-    cwd=workspace, env=custom_environment, timeout=30, check=False,
+     "--extension", str(verifier), "--tools", "read,bash,edit,write,grep,find,ls,orchestrator_report,fixture_mutator"]
 )
-if custom.returncode or custom.stderr or not observation.is_file():
-    raise SystemExit("Actual-Pi custom worker contract startup failed")
-if set(json.loads(observation.read_text())) != {"read", "grep", "find", "ls", "orchestrator_report"}:
-    raise SystemExit("Actual-Pi custom worker exposed tools outside the fixed read-only set")
-custom_records = [json.loads(line) for line in custom.stdout.splitlines() if line.strip()]
-if not any(record.get("id") == request_id and record.get("success") is True for record in custom_records):
-    raise SystemExit("Actual-Pi custom worker RPC discovery failed")
+
+# Use the installed Python resource-preparation path, not hand-authored resource
+# flags. No broker is running: this checks bootstrap, not workflow acceptance.
+import hashlib
+sys.path.insert(0, str(root_path))
+from pi_tmux_orchestrator.custom_role_resources import select_custom_roles
+from pi_tmux_orchestrator.worker_resources import prepare_worker_resources
+
+source = Path(home).resolve() / "custom-source"
+source.mkdir(mode=0o700)
+coord = Path(home).resolve() / "custom-coord"
+coord.mkdir(mode=0o700)
+
+def resource(name, content):
+    path = source / name
+    path.write_text(content, encoding="utf-8")
+    path.chmod(0o600)
+    return {"path": str(path), "sha256": hashlib.sha256(content.encode()).hexdigest()}
+
+definition = {
+    "id": "custom-smoke", "contract": "probe",
+    "prompt": resource("prompt.md", "Inspect read-only; no writer or reviewer authority.\n"),
+    "skills": [resource("skill.md", "---\nname: custom-smoke-skill\ndescription: Synthetic read-only fixture.\nallowed-tools: write edit bash\n---\nOnly inspect; no executable attachments.\n")],
+}
+registry = source / "roles.json"
+registry.write_text(json.dumps({"version": 1, "roles": [definition]}))
+registry.chmod(0o600)
+selection = select_custom_roles(Path(workspace).resolve(), ["custom-smoke"], str(registry))
+manifest = {
+    "version": 6, "project": str(Path(workspace).resolve()),
+    "custom_role_registry": selection["registry_path"],
+    "roles": {"custom-smoke": {"tools": "read,grep,find,ls", "custom_role": selection["roles"]["custom-smoke"]}},
+}
+resource_args = []
+contract = prepare_worker_resources(resource_args, coord, manifest, "custom-smoke", root_path / "extensions/orchestrator-worker.js")
+custom_environment["PI_TMUX_ORCHESTRATOR_SPECIALIST_CONTRACT"] = contract
+# Mutate the external files after preparation. Pi must still load the reviewed
+# snapshot skill, rather than reopening the mutable external resource.
+Path(definition["prompt"]["path"]).write_text("UNREVIEWED")
+Path(definition["skills"][0]["path"]).write_text("UNREVIEWED")
+marker = Path(workspace) / "unexpected-extension-execution"
+custom_environment["SMOKE_UNEXPECTED_EXTENSION_FILE"] = str(marker)
+for directory in (Path(pi_home) / "extensions", Path(workspace) / ".pi" / "extensions"):
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "unsafe.mjs").write_text('import {writeFileSync} from "node:fs"; export default function(){writeFileSync(process.env.SMOKE_UNEXPECTED_EXTENSION_FILE,"unexpected");}\n')
+response = custom_probe(
+    ["pi", "--mode", "rpc", "--no-session", "--approve", "--no-context-files",
+     "--tools", "read,grep,find,ls,orchestrator_report", *resource_args, "--extension", str(verifier)]
+)
+if marker.exists():
+    raise SystemExit("Custom worker loaded an unapproved discovered extension")
+if "skill:custom-smoke-skill" not in {item["name"] for item in response.get("data", {}).get("commands", [])}:
+    raise SystemExit("Custom worker did not load the reviewed snapshot skill")
 PY
 
-printf '%s\n' 'Isolated Pi local-package install + RPC discovery and custom-worker read-only tool-scope smoke passed (no prompt, provider request, or real home/auth access; not full custom-role orchestration acceptance).'
+printf '%s\n' 'Isolated Pi local-package install + RPC discovery, custom-worker read-only tool scope, and verified-resource bootstrap smoke passed (no prompt, provider request, or real home/auth access; not full custom-role orchestration acceptance).'

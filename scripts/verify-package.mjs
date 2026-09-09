@@ -45,6 +45,7 @@ const pythonFiles = [
   "registry_resources.py",
   "role_registry.py",
   "role_contracts.py",
+  "custom_role_resources.py",
   "worker_context.py",
   "evidence_reuse.py",
   "workspace_capsules.py",

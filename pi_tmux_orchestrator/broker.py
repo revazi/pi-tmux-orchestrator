@@ -59,6 +59,11 @@ class Client:
 
 class Broker(BrokerControlSupport, BrokerObserverSupport, BrokerWorkflowSupport):
     def __init__(self, coord: Path, manifest: dict[str, Any]) -> None:
+        from .constants import KNOWN_ROLES
+
+        # Resource-bound workers are not workflow-enabled until custom routing lands.
+        if set(manifest["roles"]) - KNOWN_ROLES:
+            raise OrchestrationError("Custom role broker routing is not enabled yet")
         self.coord = coord
         self.manifest = manifest
         self.paths = broker_paths(coord)
@@ -1094,7 +1099,10 @@ def initialize_broker_run(
     soft_total_tokens: int | None = None,
 ) -> None:
     from .broker_store import initialize_broker_database
+    from .constants import KNOWN_ROLES
 
+    if set(manifest["roles"]) - KNOWN_ROLES:
+        raise OrchestrationError("Custom role broker routing is not enabled yet")
     tokens = {role: secrets.token_hex(16) for role in manifest["roles"]}
     control_token = secrets.token_hex(16)
     policy = validate_budget_config(

@@ -86,13 +86,14 @@ Limits and fields:
 The protocol validators now accept custom identities only when explicitly given
 a bounded trusted identity-to-contract map. A worker frame cannot register a role
 or choose its own contract. Without that map, custom messages and reports remain
-rejected. Public starts and retained manifest handling are not wired to custom
-roles yet; this is not end-to-end launch support.
+rejected. Public starts and live broker routing are not wired to custom roles
+yet; this is not end-to-end launch support.
 
 The shared worker bridge supports an internal, launch-bound
 `PI_TMUX_ORCHESTRATOR_SPECIALIST_CONTRACT` (`probe`, `playwright`, or `django`).
 A valid `custom-*` identity requires that binding; built-in identities reject it.
-Existing launchers strip ambient values. It is not a user-facing launch workaround.
+Both launchers strip ambient values and set the contract only after fresh
+resource verification. It is not a user-facing launch workaround.
 
 Custom workers retain their custom identity in reports. Only the bound specialist
 report kind is permitted, including after assignment restoration. They cannot
@@ -105,7 +106,44 @@ no shell-based verification is available to custom workers in this slice.
 Model-free bridge tests cover assignments, reports, restoration rejection, and
 write-tool denial. The isolated actual-Pi smoke checks RPC startup and the active
 tool set without prompts/provider calls. Full custom-role tmux/TUI/RPC orchestration,
-resource-bound launch/restart, routing, usage, and recovery acceptance remain #60.
+routing, usage, and recovery acceptance remain #60.
+
+## Resource-bound bootstrap and retained metadata (partial #60)
+
+Manifest v6 can retain a pinned `custom_role_registry` path and at most eight
+custom worker records. Each custom record has a canonical `custom_role` definition
+(`id`, `contract`, `prompt`, `skills`) instead of independently overridable skills,
+and the exact `read,grep,find,ls` tool policy. It still requires the built-in
+implementer and reviewer. Manifest v1–v5 remains supported, and ordinary starts
+still write v5. No new public start selection is exposed in this slice. Broker
+initialization and recovery explicitly reject custom worker sets until routing lands.
+
+Retained reads validate bounded metadata without opening the registry/resources;
+a deleted or changed source does not make retained metadata unreadable. This is
+not evidence that resources are still valid. Launch and restart preflight reopen
+the pinned registry, compare every selected definition exactly, and verify current
+resource bytes and digests. A changed contract, identity, path, skill list, missing
+file, unsafe permission, link, or changed digest fails closed. New environment or
+global registry defaults cannot redirect an existing binding. Restart preflight
+runs before manifest mutation, broker handover, or killing the worker; actual
+bootstrap verifies again rather than trusting preflight results.
+
+Both presentations consume owner-only, fixed-slot snapshots of freshly verified
+Markdown, not mutable external paths reopened later by Pi. There is one generated
+system prompt and at most four skill snapshots per custom role in the private
+coordination directory; repeated launches replace those slots atomically. These
+are private worker bootstrap inputs, not broker task/report handoffs. Resource
+bodies never enter manifests, SQLite, public status, or Supervisor projections.
+Only the selected Markdown is copied: neighboring files, executable attachments,
+and relative-path dependencies are not copied or implicitly authorized.
+
+Custom bootstrap disables automatic extension, skill, and prompt-template discovery.
+Only the trusted worker extension and verified snapshot skills are explicitly loaded;
+project instructions and the separate child trust boundary remain enabled. This
+prevents discovered extensions from replacing a supposedly read-only built-in tool.
+The actual-Pi RPC smoke covers snapshot skill discovery after source mutation,
+fixed tools despite skill `allowed-tools` claims, and disabled global/project
+extension discovery. It does not exercise full custom broker lifecycle acceptance.
 
 ## Filesystem trust boundary
 
@@ -120,7 +158,9 @@ rejects directory identities matching the target project (including case aliases
 checks file metadata before and after bounded reads, rejects FIFOs/devices,
 invalid UTF-8, excess size, and detected concurrent changes, and closes all
 handles. Use private directories and mode-`0600` files for private guidance.
-No registry or resource body is written to coordination state or status output.
+Registry validation copies no bodies. Worker bootstrap creates only the bounded
+private launch snapshots described above; status and retained control metadata
+remain body-free.
 
 The built-in implementer remains the only writer and the built-in reviewer
 remains mandatory. Registering a specialist does not enable it or satisfy review.
