@@ -42,6 +42,8 @@ const pythonFiles = [
   "tmux.py",
   "token_efficiency.py",
   "worker_resources.py",
+  "registry_resources.py",
+  "role_registry.py",
   "worker_context.py",
   "evidence_reuse.py",
   "workspace_capsules.py",
@@ -74,6 +76,7 @@ const expectedFiles = [
   "references/prerelease-testing.md",
   "references/protocol-v1.md",
   "references/dashboard-design.md",
+  "references/custom-roles.md",
   ...pythonFiles,
 ];
 const declaredFiles = [
@@ -103,6 +106,7 @@ const declaredFiles = [
   "references/prerelease-testing.md",
   "references/protocol-v1.md",
   "references/dashboard-design.md",
+  "references/custom-roles.md",
   "bin/pi-tmux-agents",
   "pi_tmux_orchestrator/*.py",
 ];
@@ -243,6 +247,7 @@ const packagedDocs = [
   "references/prerelease-testing.md",
   "references/protocol-v1.md",
   "references/dashboard-design.md",
+  "references/custom-roles.md",
 ];
 const unrelatedRoadmap = /\b(?:Pi Deck|Herdr|future architecture|neutral core|multiplexer-neutral|terminal-neutral|terminal-independent|terminal-client|process-host)\b/i;
 for (const path of packagedDocs) {

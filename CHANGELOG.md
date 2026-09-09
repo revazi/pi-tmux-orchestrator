@@ -6,6 +6,8 @@ All notable changes to this project are documented here.
 
 ### Added
 
+- Added a version-1 user-global custom-specialist registry and read-only `role-registry` CLI validation, with bounded names/contracts/resources, reviewed SHA-256 digests, and strict filesystem ownership/path checks; custom-role launching remains unavailable
+
 - Exposed retain/prune controls in the Pi start form and native `workerContext` tool parameter, with bounded input, explicit cancellation, CLI-resolved confirmation, and fail-closed preview matching
 
 - Added bounded metadata-only investigation-reuse hints for explicitly retained worker context, refreshed at assignment/handover boundaries and invalidated by observed worktree or broker-mediated guidance changes; no historical check/approval reuse or default-policy change

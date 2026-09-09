@@ -66,6 +66,7 @@
     "references/prerelease-testing.md",
     "references/protocol-v1.md",
     "references/dashboard-design.md",
+    "references/custom-roles.md",
     "bin/pi-tmux-agents",
     "pi_tmux_orchestrator/*.py"
   ],

@@ -55,6 +55,7 @@ from .supervisor_commands import (
 )
 from .specialist_activation import SPECIALIST_ROLES
 from .worker_resources import worker_skill_argument
+from .role_registry import role_registry_command
 from .worker_context import worker_context_argument
 
 
@@ -545,6 +546,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     doctor.set_defaults(handler=doctor_command)
 
+    registry = subparsers.add_parser(
+        "role-registry",
+        help="validate user-global custom specialist definitions without launching workers",
+    )
+    registry.add_argument("--project", default=os.getcwd())
+    registry.add_argument(
+        "--registry",
+        help="explicit user-global registry path; must exist outside the project",
+    )
+    registry.set_defaults(handler=role_registry_command)
+
     return parser
 
 
@@ -569,6 +581,7 @@ def parse_internal_command(argv: list[str]) -> argparse.Namespace | None:
 def requested_command(argv: list[str]) -> str:
     public_commands = {
         "doctor",
+        "role-registry",
         "controller",
         "supervisor",
         "abort",

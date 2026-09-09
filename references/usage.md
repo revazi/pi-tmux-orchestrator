@@ -698,6 +698,14 @@ and configured model availability without a provider request. This bounded
 metadata appears in the dashboard only after the user presses `d`. The CLI
 project defaults to the current directory.
 
+### `role-registry [--project PATH] [--registry PATH]`
+
+Read-only validation of user-global custom specialist definitions and reviewed
+prompt/skill digests. Supports the standard `--json` envelope and returns metadata
+only. A missing default registry means no custom roles; explicitly selected files
+must exist. Custom-role launch/activation is not yet supported, and built-in starts
+are unchanged. See [the complete schema and filesystem policy](custom-roles.md).
+
 ### `supervisor ...`
 
 Supervisor API v2 reads retained state without tmux runtime observation:
