@@ -53,6 +53,7 @@ for path in (
     Path("$ROOT/tests/test_json_cli.py"),
     Path("$ROOT/tests/test_supervisor_api.py"),
     Path("$ROOT/tests/test_broker.py"),
+    Path("$ROOT/tests/test_broker_workflow.py"),
     Path("$ROOT/tests/test_dashboard.py"),
     Path("$ROOT/tests/test_rpc_rendering.py"),
     Path("$ROOT/tests/test_specialist_activation.py"),
