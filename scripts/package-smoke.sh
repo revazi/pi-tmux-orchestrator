@@ -168,6 +168,11 @@ if package.get("version") != "0.9.5" or package.get("dependencies"):
     raise SystemExit("installed package owns a dependency tree")
 PY
 
+env -i PATH="$PATH" HOME="$TEMP/install" \
+  python3 "$PACKAGE/bin/pi-tmux-agents" start --help > "$TEMP/start-help.txt"
+grep -q -- '--custom-role ID PROVIDER MODEL THINKING' "$TEMP/start-help.txt"
+grep -q -- '--role-registry' "$TEMP/start-help.txt"
+
 "$ROOT/scripts/pi-extension-smoke.sh" "$PACKAGE"
 
 mkdir -p "$TEMP/publish-home" "$TEMP/publish-cache" "$TEMP/publish-tmp"

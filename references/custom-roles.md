@@ -1,10 +1,10 @@
 # Custom specialist registry
 
 The version-1 registry defines bounded, user-owned **read-only specialists**.
-This registry implementation is validation-only: custom roles cannot yet be
-selected, launched, or activated. Built-in start, model, profile, report, and
-worker policies are unchanged. Broker/worker integration is tracked in #60 and
-profile/activation integration in #61.
+The registry command is validation-only. Explicit custom selections can now be
+previewed through CLI `start --dry-run`, but cannot yet be launched or activated.
+Built-in start, model, profile, report, and worker policies are unchanged.
+Broker/worker integration is tracked in #60 and profile/activation integration in #61.
 
 ## Validate without starting workers
 
@@ -27,6 +27,50 @@ Validation is local and read-only: no tmux, Pi, provider, model resolution, hook
 or role startup is invoked. JSON returns bounded definition metadata and
 `launch_supported: false`, never prompt/skill bodies. Failed validation emits no
 partial definitions. The command does not install or approve anything.
+
+## Preview an explicit selection (partial #60)
+
+After reviewing and registering the exact Markdown resources:
+
+```sh
+pi-tmux-agents --json start --project /absolute/target/project \
+  --task 'Inspect the requested change without editing.' \
+  --custom-role custom-security EXACT_PROVIDER EXACT_MODEL off \
+  --role-registry /absolute/user-owned/roles.json \
+  --dry-run --skip-model-check
+```
+
+Replace `EXACT_PROVIDER` and `EXACT_MODEL` with available exact identifiers. Each
+repeatable `--custom-role` consumes **four** values: ID, provider, model, thinking.
+All are required, with at most eight unique registered IDs. Provider/model strings
+are bounded to 256 printable, non-whitespace characters and cannot start with `-`;
+thinking uses the existing supported levels. No model/profile/project default is
+inherited for custom roles, including defaults for their specialist contract.
+`--role-registry` requires a selection and uses the same precedence and filesystem
+policy as registry validation. Omission of `--custom-role` never reads the registry.
+
+TUI and `--rpc-workers` previews use the same bindings and fixed read-only policy,
+and always retain the built-in implementer and reviewer. Custom skills come only
+from the verified registry definition; `--worker-skill`, `--worker-context`, and
+`--force-specialist` do not gain custom mappings. Profile mappings and deterministic
+custom activation remain #61. This is a CLI preview, not a new Pi start-tool field.
+
+Every preview rereads the registry/resources and verifies their digests. Successful
+JSON includes bounded identities, explicit models, report contracts, fixed tool
+policy, and registry-bound skill counts, not resource paths, digests, or bodies.
+`custom_role_selection.launch_supported` is **false** and its
+`resource_verification: checked_at_selection` is only a point-in-time observation;
+ordinary public role metadata remains `resource_verification: not_checked`, never
+claiming retained launch authorization. Nothing is persisted or launched. The
+normal CLI dependency/session checks still run; without `--skip-model-check`, Pi
+model-catalog discovery also runs. Skipping that check does not prove availability,
+and discovered custom-provider extensions may be unavailable to discovery-disabled
+custom workers. The orchestrator does not submit an inference prompt during a preview.
+
+Without `--dry-run`, any custom selection fails with `custom_start_not_enabled`
+before dependency checks, resource reads, state creation, or tmux mutation. Both
+lower broker gates also remain. These planning regressions are not connected
+TUI/RPC/actual-Pi lifecycle acceptance; #60 stays open.
 
 ## Definition format
 
@@ -115,9 +159,9 @@ custom worker records. Each custom record has a canonical `custom_role` definiti
 (`id`, `contract`, `prompt`, `skills`) instead of independently overridable skills,
 and the exact `read,grep,find,ls` tool policy. It still requires the built-in
 implementer and reviewer. Manifest v1–v5 remains supported, and ordinary starts
-still write v5. No new public start selection is exposed in this slice. Broker
-initialization and recovery explicitly reject custom worker sets until the remaining
-public selection and lifecycle acceptance land.
+still write v5. Public selection is currently preview-only and writes no manifest.
+Broker initialization and recovery explicitly reject custom worker sets until
+connected lifecycle acceptance and live-start integration land.
 
 Retained reads validate bounded metadata without opening the registry/resources;
 a deleted or changed source does not make retained metadata unreadable. This is
@@ -176,7 +220,7 @@ review rounds. SQLite/public snapshot tests exclude private report/resource bodi
 
 **This is not public start or full lifecycle support.** Both temporary custom-role
 rejection gates remain. The tests use the lower workflow/storage boundary and
-synthetic streams, not custom tmux/TUI/RPC runs. Public selection and custom
+synthetic streams, not custom tmux/TUI/RPC runs. Live public starts and custom
 partial-start/disconnect/restart TUI/RPC and actual-Pi acceptance must land before
 removing the gates. No provider
 savings or full lifecycle acceptance is established by these tests.
