@@ -619,6 +619,9 @@ Lists live tmux sessions marked as Pi Tmux Orchestrator grids. The Pi dashboard
 uses this projection directly. Omitting `[SESSION]` from `/or-send` or `/or-stop`
 opens a selector populated from the same metadata-only list. Each option shows
 the exact session and project; invalid orchestration metadata is excluded.
+`/or-send` then reads that exact run's status and offers only its enabled roles,
+including retained custom identities. Missing/invalid role metadata fails closed;
+it does not fall back to the global role registry or offer disabled specialists.
 
 ### `status [SESSION]`
 
@@ -655,6 +658,14 @@ Sends one operator message through the authenticated broker bridge. `steer` and
 `follow-up` delivery are supported. A successful response acknowledges
 acceptance; completion is observed through lifecycle/events.
 
+Control/event parsers accept canonical custom identities, but require exact target
+manifest membership. This does not enable public custom starts, which remain gated
+pending #60 lifecycle acceptance. Custom roles retain read-only specialist authority;
+messages cannot grant writer tools, reviewer acceptance, or continuation approval.
+Retained status/Supervisor custom role records include the specialist contract and
+`resource_verification: not_checked`, without reopening resource files or exposing
+resource paths/bodies. See [custom role surfaces](custom-roles.md).
+
 If the workflow is already `ready`, an accepted implementer message
 conservatively opens exactly one new implementation round: the broker queues the
 latest run state and operator message without an unassigned provider turn,
@@ -687,7 +698,9 @@ unprovable assignment remains `uncertain`; it is not blindly replayed.
 Explicit worker resources are revalidated before changing the manifest, preparing
 handover, or killing a worker; bootstrap verifies again before process launch.
 A changed or unavailable reviewed resource therefore leaves the existing worker
-untouched during restart preflight.
+untouched during restart preflight. The broker also independently revalidates a
+custom role's resources and retained contract before incrementing its generation;
+operator authentication alone cannot bypass that check.
 
 ### `stop SESSION --yes`
 

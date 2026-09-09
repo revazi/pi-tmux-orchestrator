@@ -7,8 +7,8 @@ const RESERVED_SUFFIXES = new Set([
 ]);
 const CUSTOM_READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls", "orchestrator_report"]);
 
-function validCustomRoleId(role) {
-  return typeof role === "string" && role.length <= 32
+export function validCustomRoleId(role) {
+  return typeof role === "string" && role.length <= 32 && role.trim() === role
     && /^custom-[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/.test(role)
     && !RESERVED_SUFFIXES.has(role.slice(7));
 }

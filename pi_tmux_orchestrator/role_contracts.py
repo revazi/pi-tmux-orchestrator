@@ -7,6 +7,13 @@ from .models import OrchestrationError
 from .role_registry import CONTRACTS, MAX_CUSTOM_ROLES, valid_custom_role_id
 
 
+def valid_role_identity(value: object) -> bool:
+    """Syntax only; target-manifest membership and authentication remain mandatory."""
+    return isinstance(value, str) and (
+        value in KNOWN_ROLES or valid_custom_role_id(value)
+    )
+
+
 def validate_custom_contracts(value: object) -> dict[str, str]:
     if value is None:
         return {}

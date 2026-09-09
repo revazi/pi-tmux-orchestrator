@@ -12,6 +12,8 @@ from .broker_store import connect_broker_database, record_event, set_meta, utc_n
 from .constants import BROKER_PROTOCOL_VERSION, MAX_RPC_COMMANDS, RPC_TOKEN_PATTERN
 from .models import OrchestrationError
 from .continuation import approved_repair_extension
+from .role_registry import valid_custom_role_id
+from .worker_resources import revalidate_worker_resources
 
 
 class BrokerControlSupport:
@@ -19,6 +21,7 @@ class BrokerControlSupport:
 
     coord: Path
     manifest: dict[str, Any]
+    custom_contracts: dict[str, str]
     clients: dict[str, Any]
     worker_baselines: dict[str, str]
 
@@ -54,6 +57,7 @@ class BrokerControlSupport:
             or not RPC_TOKEN_PATTERN.fullmatch(command_id)
             or not isinstance(token, str)
             or not RPC_TOKEN_PATTERN.fullmatch(token)
+            or not isinstance(role, str)
             or role not in self.manifest["roles"]
             or action not in {"send", "abort", "restart", "restart_failed", "continue"}
             or (action == "continue" and role != "implementer")
@@ -185,6 +189,15 @@ class BrokerControlSupport:
                         },
                     )
                 else:
+                    if valid_custom_role_id(role):
+                        verified = revalidate_worker_resources(self.manifest, role)
+                        if (
+                            verified is None
+                            or verified.contract != self.custom_contracts.get(role)
+                        ):
+                            raise OrchestrationError(
+                                "Custom restart contract is not bound"
+                            )
                     restarted_client = self.clients[role]
                     database.execute(
                         "UPDATE roles SET generation=generation+1,state='restarting',"

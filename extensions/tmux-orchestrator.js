@@ -12,6 +12,7 @@ import {
   validateObserverFrame,
 } from "./orchestrator-parent.js";
 import { contextCapsuleParameters, renderContextCapsule } from "./orchestrator-context.js";
+import { controlRoleParameters, publicRoleContracts, validControlRole } from "./orchestrator-role-metadata.js";
 import {
   appendBudgetArgs,
   budgetConfirmation,
@@ -71,11 +72,7 @@ const parameters = {
       description: "Packaged or strict user-global execution profile for start",
     },
     session: { type: "string", description: "Exact orchestration session for status, watch, attach, or send" },
-    role: {
-      type: "string",
-      enum: ROLES,
-      description: "Target role for send",
-    },
+    role: controlRoleParameters,
     task: { type: "string", maxLength: 65536, description: "Self-contained start objective; transferred through a private file" },
     contextCapsule: contextCapsuleParameters,
     workspaceCapsule: {
@@ -520,6 +517,7 @@ async function runSend(pi, input, signal) {
   if (!input.session || !input.role || !input.message || !String(input.message).trim()) {
     throw new Error("send_requires_session_role_message");
   }
+  if (!validControlRole(input.role)) throw new Error("invalid_send_role");
   return withPrivateFiles({ message: input.message }, (paths) =>
     runCli(
       pi,
@@ -717,6 +715,17 @@ async function requestedSession(pi, args, ctx) {
   return index >= 0 ? sessions[index].session : undefined;
 }
 
+async function requestedRole(pi, session, ctx) {
+  const envelope = await runCli(pi, "status", [session], ctx.signal);
+  if (!envelope.success) {
+    notifyEnvelope(ctx, envelope);
+    return undefined;
+  }
+  const roles = [...publicRoleContracts(envelope.data?.roles).keys()];
+  const selected = await ctx.ui.select("Target role", roles);
+  return roles.includes(selected) ? selected : undefined;
+}
+
 function createCommandHandlers(pi, superviseStart = () => {}) {
   const models = async (args, ctx) => {
     notifyEnvelope(ctx, modelCatalogEnvelope(ctx, args));
@@ -796,15 +805,16 @@ function createCommandHandlers(pi, superviseStart = () => {}) {
   const send = async (args, ctx) => {
     if (!requireInteractiveTui(ctx, "or-send")) return;
     let session;
+    let role;
     try {
       session = await requestedSession(pi, args, ctx);
+      if (!session) return;
+      role = await requestedRole(pi, session, ctx);
     } catch {
       notifyCommandFailure(ctx, "send");
       return;
     }
-    if (!session) return;
-    const role = await ctx.ui.select("Target role", [...ROLES]);
-    if (!ROLES.includes(role)) return;
+    if (!role) return;
     const message = await ctx.ui.editor(`Message to ${session}/${role}`, "");
     if (!message?.trim()) return;
     try {

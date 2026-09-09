@@ -1,6 +1,8 @@
+import { normalizeReport } from "./orchestrator-worker-reporting.js";
+
 const MAX_BROKER_FRAME_BYTES = 256 * 1024;
 export const BROKER_PROTOCOL_VERSION = 1;
-const ROLES = ["implementer", "reviewer", "probe", "playwright", "django"];
+const LEGACY_ROLES = new Map(["implementer", "reviewer", "probe", "playwright", "django"].map((role) => [role, role]));
 const WORKFLOW_STATES = new Set([
   "starting",
   "connecting",
@@ -10,7 +12,7 @@ const WORKFLOW_STATES = new Set([
   "ready",
   "uncertain",
 ]);
-const WORKER_STATES = new Set(["disconnected", "idle", "active", "waiting", "uncertain"]);
+const WORKER_STATES = new Set(["disconnected", "idle", "active", "waiting", "uncertain", "restarting", "recovering"]);
 
 function exactKeys(value, keys) {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -41,16 +43,17 @@ function validateResponse(value, requestId) {
   );
 }
 
-function validSnapshotRole(item) {
+function validSnapshotRole(item, roles) {
   return exactKeys(item, ["role", "state"])
-    && ROLES.includes(item.role)
+    && roles.has(item.role)
     && WORKER_STATES.has(item.state);
 }
 
-function validSnapshotRoles(roles) {
-  return Array.isArray(roles)
-    && roles.length <= ROLES.length
-    && roles.every(validSnapshotRole);
+function validSnapshotRoles(items, roles) {
+  return Array.isArray(items)
+    && items.length <= roles.size
+    && items.every((item) => validSnapshotRole(item, roles))
+    && new Set(items.map((item) => item.role)).size === items.length;
 }
 
 function validSnapshotRoundAndReplay(value) {
@@ -63,7 +66,7 @@ function validSnapshotRoundAndReplay(value) {
   ].every(Boolean);
 }
 
-function validateSnapshot(value) {
+function validateSnapshot(value, roles) {
   invalidUnless(
     [
       exactKeys(value, [
@@ -72,7 +75,7 @@ function validateSnapshot(value) {
       ]),
       WORKFLOW_STATES.has(value.state),
       validSnapshotRoundAndReplay(value),
-      validSnapshotRoles(value.roles),
+      validSnapshotRoles(value.roles, roles),
     ].every(Boolean),
     "invalid_observer_snapshot",
   );
@@ -88,10 +91,10 @@ function validateWorkflow(value) {
   );
 }
 
-function validateLifecycle(value) {
+function validateLifecycle(value, roles) {
   invalidUnless(
     exactKeys(value, ["version", "type", "session", "role", "state"])
-      && ROLES.includes(value.role)
+      && roles.has(value.role)
       && WORKER_STATES.has(value.state),
     "invalid_observer_lifecycle",
   );
@@ -163,8 +166,8 @@ function validReportIdentity(value) {
     && /^[a-f0-9]{32}$/.test(value.assignment_id);
 }
 
-function validReportRoleAndRound(value) {
-  return ROLES.includes(value.role)
+function validReportRoleAndRound(value, roles) {
+  return roles.has(value.role)
     && Number.isInteger(value.round)
     && value.round > 0;
 }
@@ -176,7 +179,7 @@ function validReportBody(value, encodedReport) {
     && encodedReport.length <= 32 * 1024;
 }
 
-function validateReport(value) {
+function validateReport(value, roles) {
   const encodedReport = Buffer.from(JSON.stringify(value.report ?? null), "utf8");
   const legacyKeys = [
     "version", "type", "session", "id", "assignment_id", "role", "round", "report",
@@ -186,11 +189,13 @@ function validateReport(value) {
       validReportKeys(value, legacyKeys),
       value.usage === undefined || validReportUsage(value.usage),
       validReportIdentity(value),
-      validReportRoleAndRound(value),
+      validReportRoleAndRound(value, roles),
       validReportBody(value, encodedReport),
     ].every(Boolean),
     "invalid_observer_report",
   );
+  const contract = roles.get(value.role);
+  if (value.role !== contract) normalizeReport(value.report, contract, contract);
 }
 
 const FRAME_VALIDATORS = new Map([
@@ -200,7 +205,7 @@ const FRAME_VALIDATORS = new Map([
   ["report", validateReport],
 ]);
 
-export function validateObserverFrame(value, session, requestId) {
+export function validateObserverFrame(value, session, requestId, roles = LEGACY_ROLES) {
   invalidUnless(
     value && value.version === BROKER_PROTOCOL_VERSION && typeof value.type === "string",
     "invalid_observer_frame",
@@ -212,7 +217,7 @@ export function validateObserverFrame(value, session, requestId) {
   invalidUnless(value.session === session, "observer_session_mismatch");
   const validator = FRAME_VALIDATORS.get(value.type);
   invalidUnless(Boolean(validator), "unsupported_observer_frame");
-  validator(value);
+  validator(value, roles);
   return value;
 }
 

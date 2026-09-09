@@ -31,6 +31,7 @@ EXPECTED_FILES=(
   extensions/orchestrator-worker-context.js
   extensions/orchestrator-worker-protocol.js
   extensions/orchestrator-worker-roles.js
+  extensions/orchestrator-role-metadata.js
   extensions/orchestrator-worker-reporting.js
   extensions/orchestrator-worker-usage.js
   extensions/orchestrator-result-policy.js

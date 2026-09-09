@@ -7,6 +7,7 @@ import net from "node:net";
 import { test } from "node:test";
 import extension, { testHooks } from "../extensions/tmux-orchestrator.js";
 import { consumeObserverFrames } from "../extensions/orchestrator-parent-protocol.js";
+import { publicRoleContracts, validControlRole } from "../extensions/orchestrator-role-metadata.js";
 import {
   OrchestrationDashboardOverlay,
   testHooks as dashboardHooks,
@@ -1994,6 +1995,8 @@ test("authenticated broker observer steers progress and returns structured final
   const socketPath = join(directory, "broker.sock");
   await writeFile(join(directory, "control.token"), `${token}\n`, { mode: 0o600 });
   const session = "pi-parent-observer-test";
+  const custom = customSurfaceRoles(1).at(-1);
+  const retainedRoles = [{ name: "implementer" }, { name: "reviewer" }, custom];
   const reportId = "b".repeat(32);
   const assignmentId = "c".repeat(32);
   let server;
@@ -2016,9 +2019,15 @@ test("authenticated broker observer steers progress and returns structured final
           roles: [
             { role: "implementer", state: "idle" },
             { role: "reviewer", state: "active" },
+            { role: custom.name, state: "recovering" },
           ],
           report_count: 0,
           report_replay_complete: true,
+        }));
+        socket.write(testHooks.brokerFrame({
+          version: 1, type: "report", session, role: custom.name, round: 2,
+          id: "d".repeat(32), assignment_id: "e".repeat(32),
+          report: { kind: "probe", summary: "Read-only custom evidence, not approval." },
         }));
         socket.write(testHooks.brokerFrame({
           version: 1,
@@ -2073,6 +2082,7 @@ test("authenticated broker observer steers progress and returns structured final
         {
           data: {
             session,
+            roles: retainedRoles,
             paths: { coordination: directory, observer_socket: socketPath },
           },
         },
@@ -2090,13 +2100,15 @@ test("authenticated broker observer steers progress and returns structured final
     assert.deepEqual(delivered.options, { triggerTurn: true, deliverAs: "steer" });
     assert.equal(stopped, true);
     const progress = deliveredMessages.filter(({ message }) => message.details.event);
-    assert.deepEqual(progress.map(({ message }) => message.details.event), ["attached", "lifecycle", "report"]);
+    assert.deepEqual(progress.map(({ message }) => message.details.event), ["attached", "report", "lifecycle", "report"]);
+    assert.match(delivered.message.content, /custom-security-0 report/);
     assert.ok(progress.every(({ options }) => (
       options.triggerTurn === false && options.deliverAs === "steer"
     )));
     assert.match(progress[0].message.content, /Parent supervision attached/);
-    assert.match(progress[1].message.content, /reviewer is now waiting/);
-    assert.doesNotMatch(progress[2].message.content, /The implementation is ready/);
+    assert.match(progress[1].message.content, /custom-security-0 submitted/);
+    assert.match(progress[2].message.content, /reviewer is now waiting/);
+    assert.doesNotMatch(progress[3].message.content, /The implementation is ready/);
   } finally {
     await new Promise((resolve) => server?.close(resolve) ?? resolve());
     await rm(directory, { recursive: true, force: true });
@@ -2199,6 +2211,100 @@ test("observer framing consumes partial and coalesced frames", () => {
     ),
     /invalid_observer_frame_size/,
   );
+});
+
+function customSurfaceRoles(count = 8) {
+  return [
+    ...["implementer", "reviewer", "probe", "playwright", "django"].map((name) => ({ name })),
+    ...Array.from({ length: count }, (_, index) => ({
+      name: `custom-security-${index}`,
+      specialist_contract: ["probe", "playwright", "django"][index % 3],
+      tool_policy: "custom-read-only-no-shell",
+      resource_verification: "not_checked",
+    })),
+  ];
+}
+
+test("public custom metadata and control identities are bounded and cannot confer authority", async () => {
+  const fixture = JSON.parse(await readFile(new URL("fixtures/custom-role-contracts.json", import.meta.url), "utf8"));
+  for (const role of fixture.valid_ids) assert.equal(validControlRole(role), true);
+  for (const role of fixture.invalid_ids.filter((role) => !["implementer", "reviewer"].includes(role))) {
+    assert.equal(validControlRole(role), false);
+  }
+  const values = customSurfaceRoles();
+  const contracts = publicRoleContracts(values);
+  assert.equal(contracts.size, 13);
+  assert.equal(contracts.get("custom-security-1"), "playwright");
+  values[5].specialist_contract = "reviewer";
+  assert.equal(contracts.get("custom-security-0"), "probe");
+  const custom = customSurfaceRoles(1).at(-1);
+  const required = [{ name: "implementer" }, { name: "reviewer" }];
+  for (const invalid of [
+    undefined, null, {}, [], customSurfaceRoles(9),
+    [custom], [...required, custom, custom],
+    [...required, ...customSurfaceRoles(9).slice(5)],
+    [...required, { ...custom, specialist_contract: "reviewer" }],
+    [...required, { ...custom, specialist_contract: undefined }],
+    [...required, { ...custom, tool_policy: "default" }],
+    [...required, { name: "custom-reviewer", specialist_contract: "probe" }],
+    [{ name: "implementer", specialist_contract: "probe" }, { name: "reviewer" }],
+  ]) assert.throws(() => publicRoleContracts(invalid));
+});
+
+test("observer custom frames require retained selection and matching read-only contracts", () => {
+  const selected = publicRoleContracts(customSurfaceRoles());
+  const session = "pi-custom-test";
+  const requestId = "a".repeat(32);
+  const validate = (frame) => testHooks.validateObserverFrame(frame, session, requestId, selected);
+  const snapshot = {
+    version: 1, type: "snapshot", session, state: "active", round: 1,
+    roles: [...selected.keys()].map((role) => ({ role, state: "recovering" })),
+    report_count: 0, report_replay_complete: true,
+  };
+  assert.equal(validate(snapshot), snapshot);
+  assert.throws(() => testHooks.validateObserverFrame(snapshot, session, requestId));
+  for (const roles of [
+    [...snapshot.roles, snapshot.roles[0]],
+    [snapshot.roles[0], snapshot.roles[0]],
+    [{ role: "custom-unselected", state: "idle" }],
+    [{ role: "custom-security-0", state: "idle", contract: "reviewer" }],
+  ]) assert.throws(() => validate({ ...snapshot, roles }));
+  for (const [role, contract] of [...selected].filter(([role]) => role.startsWith("custom-"))) {
+    const report = {
+      version: 1, type: "report", session, role, round: 1,
+      id: "b".repeat(32), assignment_id: "c".repeat(32),
+      report: { kind: contract, summary: "advisory evidence", verdict: { probe: null, playwright: "fail", django: "issues_found" }[contract] },
+    };
+    assert.equal(validate(report), report);
+    for (const changes of [
+      { kind: "review", verdict: "approved" }, { kind: "implementation" },
+      { kind: "plan" }, { changed_paths: ["source.py"] },
+      { verdict: "approved" }, { prompt: "not authority" },
+    ]) assert.throws(() => validate({ ...report, report: { ...report.report, ...changes } }));
+    for (const state of ["restarting", "recovering", "disconnected", "uncertain"]) {
+      validate({ version: 1, type: "lifecycle", session, role, state });
+    }
+    assert.throws(() => validate({ ...report, role: "custom-unselected" }));
+  }
+  // A snapshot never expands the pinned selection, even if its syntax is valid.
+  assert.throws(() => testHooks.validateObserverFrame(snapshot, session, requestId, publicRoleContracts(customSurfaceRoles(1))));
+});
+
+test("parent report bounds never let custom fan-out displace writer and reviewer evidence", () => {
+  const roles = customSurfaceRoles();
+  const events = roles.map(({ name }) => ({
+    role: name, round: 1,
+    report: { summary: "x".repeat(2000), findings: Array.from({ length: 50 }, () => ({ severity: "high", summary: "x".repeat(500) })) },
+  }));
+  const update = testHooks.parentUpdateContent("pi-test", "ready", 1, events);
+  assert.ok(update.content.length <= 192 * 1024);
+  assert.match(update.content, /## implementer report/);
+  assert.match(update.content, /## reviewer report/);
+  assert.ok(update.omitted > 0);
+  assert.match(update.content, /omitted from this parent update/);
+  const progress = testHooks.parentProgressContent("pi-test", "active", 1, roles.map(({ name }) => ({ role: name, state: "recovering" })), { kind: "attached" });
+  assert.ok(progress.length <= 8 * 1024);
+  for (const role of roles) assert.ok(progress.includes(role.name));
 });
 
 test("observer snapshots require bounded report replay metadata", () => {
@@ -3200,8 +3306,10 @@ test("interactive send cancels safely at TUI, session, role, or message boundari
   let execCalls = 0;
   const { commands } = harness(async (_command, args) => {
     execCalls += 1;
-    assert.equal(args[2], "list");
-    return { code: 0, stdout: JSON.stringify(success("list", { sessions: [] })) };
+    const action = args[2];
+    assert.ok(["list", "status"].includes(action));
+    const data = action === "list" ? { sessions: [] } : { roles: [{ name: "implementer" }, { name: "reviewer" }] };
+    return { code: 0, stdout: JSON.stringify(success(action, data)) };
   });
   await commands.get("or-send").handler(
     "pi-test",
@@ -3213,7 +3321,7 @@ test("interactive send cancels safely at TUI, session, role, or message boundari
     "pi-test",
     context({ selection: "reviewer", editor: "   " }),
   );
-  assert.equal(execCalls, 1);
+  assert.equal(execCalls, 3);
 });
 
 test("interactive send selects an exact session/role and redacts the private file payload", async () => {
@@ -3229,6 +3337,11 @@ test("interactive send selects an exact session/role and redacts the private fil
         })),
       };
     }
+    if (args[2] === "status") {
+      return { code: 0, stdout: JSON.stringify(success("status", {
+        roles: [{ name: "implementer" }, { name: "reviewer" }],
+      })) };
+    }
     path = args[args.indexOf("--message-file") + 1];
     assert.equal((await stat(path)).mode & 0o777, 0o600);
     assert.equal(await readFile(path, "utf8"), canary);
@@ -3243,16 +3356,46 @@ test("interactive send selects an exact session/role and redacts the private fil
   });
   await commands.get("or-send").handler("", ctx);
   assert.deepEqual(ctx.calls.selections[0].options, ["pi-test · /tmp/project"]);
-  assert.deepEqual(ctx.calls.selections[1].options, ["implementer", "reviewer", "probe", "playwright", "django"]);
+  assert.deepEqual(ctx.calls.selections[1].options, ["implementer", "reviewer"]);
   assert.equal(ctx.calls.notifications.at(-1).message, "Sent to pi-test/reviewer");
   assert.equal(JSON.stringify(ctx.calls).includes(canary), false);
   await assert.rejects(access(path));
+});
+
+test("interactive custom send lists only retained selections and rejects invalid metadata before messages", async () => {
+  const custom = customSurfaceRoles(1).at(-1);
+  const roles = [{ name: "implementer" }, { name: "reviewer" }, custom];
+  const actions = [];
+  const { commands, tool } = harness(async (_command, args) => {
+    actions.push(args[2]);
+    if (args[2] === "status") return { code: 0, stdout: JSON.stringify(success("status", { roles })) };
+    assert.equal(args[args.indexOf("--role") + 1], custom.name);
+    return { code: 0, stdout: JSON.stringify(success("send", { session: "pi-test", role: custom.name, acknowledged: true })) };
+  });
+  const ctx = context({ selection: custom.name, editor: "PRIVATE_CUSTOM_MESSAGE" });
+  await commands.get("or-send").handler("pi-test", ctx);
+  assert.deepEqual(ctx.calls.selections[0].options, roles.map(({ name }) => name));
+  assert.deepEqual(actions, ["status", "send"]);
+  assert.doesNotMatch(JSON.stringify(ctx.calls), /PRIVATE_CUSTOM_MESSAGE/);
+  await assert.rejects(tool.execute("call", { action: "send", session: "pi-test", role: "custom-reviewer", message: "private" }, undefined, undefined, context()), /invalid_send_role/);
+  assert.deepEqual(actions, ["status", "send"]);
+  roles[2] = { ...custom, specialist_contract: "reviewer" };
+  const invalid = context({ selection: custom.name, editor: "PRIVATE_MUST_NOT_SEND" });
+  await commands.get("or-send").handler("pi-test", invalid);
+  assert.deepEqual(actions, ["status", "send", "status"]);
+  assert.equal(invalid.calls.selections.length, 0);
+  assert.equal(invalid.calls.notifications.at(-1).message, "Unable to send orchestration message");
 });
 
 test("interactive send cleans private files and bounds errors when delegation fails", async () => {
   const message = "PRIVATE_FAILED_SLASH_MESSAGE_d231";
   let path;
   const { commands } = harness(async (_command, args) => {
+    if (args[2] === "status") {
+      return { code: 0, stdout: JSON.stringify(success("status", {
+        roles: [{ name: "implementer" }, { name: "reviewer" }],
+      })) };
+    }
     path = args[args.indexOf("--message-file") + 1];
     assert.equal(await readFile(path, "utf8"), message);
     throw new Error(`${message}:${"x".repeat(20_000)}`);

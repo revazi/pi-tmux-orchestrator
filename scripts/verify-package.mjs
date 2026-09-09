@@ -80,6 +80,7 @@ const expectedFiles = [
   "references/dashboard-design.md",
   "references/custom-roles.md",
   "extensions/orchestrator-worker-roles.js",
+  "extensions/orchestrator-role-metadata.js",
   ...pythonFiles,
 ];
 const declaredFiles = [
@@ -112,6 +113,7 @@ const declaredFiles = [
   "references/custom-roles.md",
   "bin/pi-tmux-agents",
   "extensions/orchestrator-worker-roles.js",
+  "extensions/orchestrator-role-metadata.js",
   "pi_tmux_orchestrator/*.py",
 ];
 const expectedManifest = {
