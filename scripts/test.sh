@@ -57,6 +57,7 @@ for path in (
     Path("$ROOT/tests/test_continuation.py"),
     Path("$ROOT/tests/test_continuation_policy.py"),
     Path("$ROOT/tests/test_worker_context.py"),
+    Path("$ROOT/tests/test_evidence_reuse.py"),
     Path("$ROOT/tests/test_dashboard.py"),
     Path("$ROOT/tests/test_rpc_rendering.py"),
     Path("$ROOT/tests/test_specialist_activation.py"),

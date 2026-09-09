@@ -43,6 +43,7 @@ const pythonFiles = [
   "token_efficiency.py",
   "worker_resources.py",
   "worker_context.py",
+  "evidence_reuse.py",
   "workspace_capsules.py",
 ].map((name) => `pi_tmux_orchestrator/${name}`);
 const expectedFiles = [

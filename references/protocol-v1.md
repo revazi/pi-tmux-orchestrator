@@ -261,6 +261,13 @@ cannot override it. Missing policy in schema 10 fails closed, while older schema
 fall back to pruning. No broker-v1 wire fields, review boundaries, session identity,
 or usage counters change. Historical approval is never reused as current approval.
 
+Retained roles also receive bounded investigation-reuse hints inside the existing
+run-state body, not new broker-v1 wire fields. Receipts remain in memory only and
+compare Git/file metadata at report acceptance and assignment/handover delivery.
+Broker-mediated operator guidance invalidates earlier receipts. Missing, changed,
+or unobservable inputs require reinspection; unchanged metadata is not content
+identity or verification authority. Default-prune runs perform no such observations.
+
 Delivery IDs, assignment IDs, report IDs, and command IDs are 32-character
 lowercase hexadecimal values.
 

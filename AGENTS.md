@@ -24,6 +24,7 @@ Provide a small, reusable, intentionally tmux-scoped Pi skill and modular standa
 - `pi_tmux_orchestrator/specialist_activation.py`: fixed conservative specialist predicates and strict force policy
 - `pi_tmux_orchestrator/context_capsules.py`: bounded worker baseline and rolling run-state projections
 - `pi_tmux_orchestrator/worker_context.py`: strict retained per-role provider-context projection policy
+- `pi_tmux_orchestrator/evidence_reuse.py`: bounded body-free worktree observations and non-authorizing investigation-reuse hints
 - `pi_tmux_orchestrator/workspace_capsules.py`: strict ephemeral cold-assignment workspace discovery experiment
 - `pi_tmux_orchestrator/worker_resources.py`: strict digest-bound per-role skill opt-ins and shared launch policy
 - `pi_tmux_orchestrator/dashboard.py`: adaptive metadata-only broker pane presentation
