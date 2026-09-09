@@ -1123,7 +1123,7 @@ test("completed assignment pruning cuts synthetic two-round provider context by 
   ];
   const serializedCharacters = (items) => JSON.stringify(items).length;
   const originalLength = messages.length;
-  const filtered = workerHooks.filterWorkerContext(messages, { id: "b".repeat(32) });
+  const filtered = workerHooks.filterWorkerContext(messages);
   const before = serializedCharacters(messages);
   const after = serializedCharacters(filtered);
   const reduction = 1 - (after / before);
@@ -1234,6 +1234,50 @@ test("completed turns are pruned only at the next distinct assignment boundary",
   assert.equal(visible.some((item) => item.content === "second assignment"), true);
   assert.equal(visible.some((item) => item.content?.[0]?.text === "second assignment turn"), true);
   assert.equal(messages.length, 13);
+});
+
+test("explicit retain keeps prior assignments and tool pairs but replaces rolling capsules", () => {
+  const messages = completedAssignmentHistory();
+  const toolCall = { role: "assistant", content: [{ type: "toolCall", id: "read-1", name: "read", arguments: { path: "file.py" } }] };
+  const toolResult = { role: "toolResult", toolCallId: "read-1", content: [{ type: "text", text: "prior investigation, not current approval" }] };
+  messages.push(
+    toolCall, toolResult,
+    workerMessage({ kind: "context", delivery_kind: "operator_message" }, "queued guidance"),
+    { role: "user", content: "direct guidance" },
+    workerMessage({ kind: "context", delivery_kind: "run_state", round: 1 }, "old capsule"),
+    workerMessage({ kind: "context", delivery_kind: "baseline", round: 2 }, "restored baseline"),
+    workerMessage({ kind: "context", delivery_kind: "run_state", round: 2 }, "unresolved reviewer finding"),
+    workerMessage({ kind: "assignment", assignment_id: "b".repeat(32), round: 2 }, "repair assignment"),
+    { role: "assistant", content: "active investigation" },
+  );
+  const original = JSON.stringify(messages);
+  const retained = workerHooks.filterWorkerContext(messages, "retain");
+  for (const item of messages) {
+    assert.equal(retained.includes(item), !["bounded baseline", "old capsule"].includes(item.content));
+  }
+  assert.ok(retained.includes(toolCall));
+  assert.ok(retained.includes(toolResult));
+  assert.deepEqual(workerHooks.filterWorkerContext(retained, "retain"), retained);
+  assert.deepEqual(workerHooks.filterWorkerContext(JSON.parse(original), "retain"), retained);
+  const pruned = workerHooks.filterWorkerContext(messages, "prune");
+  assert.equal(pruned.includes(toolCall), false);
+  assert.equal(pruned.includes(toolResult), false);
+  assert.deepEqual(workerHooks.filterWorkerContext(messages), pruned);
+  assert.equal(JSON.stringify(messages), original);
+});
+
+test("context selection rejects unsupported modes and preserves unknown messages", () => {
+  const messages = [
+    { role: "user", content: "instructions before an assignment" },
+    { role: "assistant", content: "no known boundary" },
+    { role: "custom", customType: "other-extension", content: "required evidence" },
+  ];
+  for (const mode of [undefined, "prune", "retain"]) {
+    assert.deepEqual(workerHooks.filterWorkerContext(messages, mode), messages);
+  }
+  for (const mode of [null, "", "auto", "compact", "fresh", true, 1, {}]) {
+    assert.throws(() => workerHooks.filterWorkerContext(messages, mode), /invalid_worker_context_mode/);
+  }
 });
 
 test("token-efficiency fixtures expose first-assignment growth and boundary reduction", async () => {
