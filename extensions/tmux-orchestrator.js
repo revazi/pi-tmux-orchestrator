@@ -33,6 +33,14 @@ import {
   scheduleOrchestratorUpdateNotice,
 } from "./orchestrator-update.js";
 import { showOrchestrationDashboard } from "./orchestrator-dashboard.js";
+import {
+  appendWorkerContextArgs,
+  selectWorkerContext,
+  validateWorkerContext,
+  validateWorkerContextPreview,
+  workerContextConfirmation,
+  workerContextParameters,
+} from "./orchestrator-context-policy.js";
 
 const CLI_PATH = fileURLToPath(new URL("../bin/pi-tmux-agents", import.meta.url));
 const MAX_VISIBLE_CHARS = 12_000;
@@ -110,6 +118,7 @@ const parameters = {
       properties: Object.fromEntries(MODEL_ROLES.map((role) => [role, modelOverrideParameters])),
     },
     budgetOverrides: budgetOverrideParameters,
+    workerContext: workerContextParameters,
     workerSkills: {
       type: "object",
       additionalProperties: false,
@@ -244,6 +253,14 @@ async function selectRepairLimit(ctx) {
   return { maxRepairRounds };
 }
 
+async function selectStartControls(ctx) {
+  const repairLimit = await selectRepairLimit(ctx);
+  if (repairLimit === null) return null;
+  const workerContext = await selectWorkerContext(ctx);
+  if (workerContext === null) return null;
+  return { ...repairLimit, workerContext };
+}
+
 function repairLimitConfirmation(data) {
   const policy = data?.continuation_policy;
   if (policy?.version !== 1 || policy.max_repair_rounds === undefined) return "unavailable";
@@ -293,6 +310,7 @@ function buildStartArgs(
   appendModelArgs(args, input);
   appendBudgetArgs(args, input);
   appendRepairLimitArgs(args, input);
+  appendWorkerContextArgs(args, input.workerContext);
   for (const role of ROLES) {
     for (const path of input.workerSkills?.[role] || []) {
       args.push("--worker-skill", `${role}=${path}`);
@@ -356,6 +374,7 @@ function startConfirmation(preview) {
     `Roles/models (CLI policy):\n${roles}`,
     `Effective provider-usage budget policy:\n${budgetConfirmation(data.budget_policy)}`,
     `Repair-round continuation cap: ${repairLimitConfirmation(data)}`,
+    `Worker provider context (CLI policy): ${workerContextConfirmation(data)}`,
     `Worker skills (automatic discovery disabled):\n${Object.entries(data.worker_resources?.skills || {}).map(([role, paths]) => `${role}: ${paths.length ? paths.join(", ") : "none"}`).join("\n")}`,
     `External state: ${data.paths?.state_root}`,
     `Parent context capsule: ${data.context_capsule?.present ? `${data.context_capsule.chars} characters` : "not supplied"}`,
@@ -437,6 +456,7 @@ async function runStart(pi, input, signal, ctx) {
   if (input.djangoTask && input.withDjangoExpert === false) throw new Error("django_task_requires_role");
   validateWorkspaceCapsuleSelection(input);
   validateRepairLimit(input.maxRepairRounds);
+  validateWorkerContext(input.workerContext);
   if (isControllerMode() && !String(input.project || "").trim()) {
     throw new Error("controller_start_requires_explicit_project");
   }
@@ -457,6 +477,7 @@ async function runStart(pi, input, signal, ctx) {
   return withPrivateFiles(startFileValues(startInput), async (paths) => {
     const preview = await runCli(pi, "start", buildStartArgs(startInput, project, paths, { dryRun: true }), signal);
     if (!preview.success) return preview;
+    validateWorkerContextPreview(preview.data, startInput.workerContext);
     const confirmed = await ctx.ui.confirm("Start tmux orchestration?", startConfirmation(preview));
     if (!confirmed) throw new Error("start_confirmation_declined");
     const skipModelCheck = previewModelsAreAvailable(ctx, preview.data?.roles);
@@ -748,15 +769,15 @@ function createCommandHandlers(pi, superviseStart = () => {}) {
       );
     }
     try {
-      const repairLimit = await selectRepairLimit(ctx);
-      if (repairLimit === null) return;
+      const startControls = await selectStartControls(ctx);
+      if (startControls === null) return;
       const envelope = await runStart(
         pi,
         {
           task,
           project,
           ...runOverrides,
-          ...repairLimit,
+          ...startControls,
           rpcWorkers,
           approveProject,
         },
@@ -880,10 +901,10 @@ export default function tmuxOrchestratorExtension(pi) {
   pi.registerTool({
     name: "tmux_orchestrator",
     label: "Tmux Orchestrator",
-    description: "Supervise bounded doctor, available-model discovery, list, status, watch, attach, start, or send actions through the Pi runtime and bundled Python tmux orchestrator. Start resolves strict user-global exact-project defaults for profile/models, single or phased flow, enabled specialists, and the workspace capsule; explicit per-run values win. It may also select deterministic or forced specialist activation, this parent Pi's current model, exact user-requested per-role provider/model/thinking overrides, strict per-run budget overrides, and an opt-in additional repair-round cap. The invoking Pi remains the parent; normal starts create no separate parent Pi or controller. Watch subscribes this Pi to lifecycle and final-report updates. Attach watches future transitions and switches its existing tmux client into native Pi worker panes without replaying an already-actionable initial outcome as a new parent task; prefix then L returns without stopping workers or changing this Pi's project context. New runs are watched automatically. Start always requires interactive confirmation.",
+    description: "Supervise bounded doctor, available-model discovery, list, status, watch, attach, start, or send actions through the Pi runtime and bundled Python tmux orchestrator. Start resolves strict user-global exact-project defaults for profile/models, single or phased flow, enabled specialists, and the workspace capsule; explicit per-run values win. It may also select deterministic or forced specialist activation, this parent Pi's current model, exact user-requested per-role provider/model/thinking overrides, strict per-run budget overrides, an opt-in additional repair-round cap, and explicit per-role retain/prune worker context. The invoking Pi remains the parent; normal starts create no separate parent Pi or controller. Watch subscribes this Pi to lifecycle and final-report updates. Attach watches future transitions and switches its existing tmux client into native Pi worker panes without replaying an already-actionable initial outcome as a new parent task; prefix then L returns without stopping workers or changing this Pi's project context. New runs are watched automatically. Start always requires interactive confirmation.",
     promptSnippet: "Inspect or operate local Pi tmux orchestrations through the authoritative Python CLI",
     promptGuidelines: [
-      "Use tmux_orchestrator instead of rebuilding tmux orchestration state; before a start, synthesize a bounded contextCapsule from the current conversation when prior decisions or work matter; include only task-relevant state, constraints, acceptance criteria, paths, evidence, and open questions, never the full transcript. Enable workspaceCapsule only for an explicit cold-assignment experiment and supply only bounded existing project-relative workspaceRelevantPaths, never a repository tree; it supplements discovery and never replaces reading governing instructions. Do not claim workspace-capsule savings or correctness without authoritative provider and review evidence. Use implementationFlow=phased for complex work that benefits from read-only discovery before editing; use single for simple work or compatibility, without an extra classifier model call. Configured specialists use conservative deterministic activation gates; pass forceSpecialists only when the user explicitly requires those enabled roles to run regardless of a skip predicate. After starting or explicitly watching a run, ensure the invoking Pi is watching it for lifecycle and final reports. Once watching, end the turn and rely on broker updates: never run sleep commands or repeatedly poll status/tmux while waiting for a watched orchestration. Attaching to an existing run watches future transitions but does not replay an already-actionable initial outcome into the current Pi; returning with tmux prefix then L does not change the current Pi's project context. Honor an explicit economy, balanced, thorough, or user-configured profile request through profile. Honor explicit user model/provider/thinking requests through useParentModel or modelOverrides; those overrides win over profile values. Use the models action to resolve available exact identifiers when needed; never invent a provider/model identifier or read provider credentials. Omitted overrides use the exact canonical project mapping, then the user's global orchestrator model configuration, selected/default profile, and packaged defaults. Honor explicit per-run budget requests through budgetOverrides; omitted values use the strict user-global budget policy and packaged warn-only defaults, and never infer hard thresholds. Honor explicit repair-round cap requests through maxRepairRounds; omission disables the cap and 0 pauses before the first repair. This is separate from observational budgets and does not cap active-assignment tokens. Continuation approval remains operator-only through the confirmed terminal CLI; never approve your own continuation. Worker skill discovery is disabled; pass workerSkills only for exact Markdown paths the user explicitly reviewed, never infer skills. When the user asks to enter, navigate, or directly steer the live workers, use attach rather than watch; attach requires the invoking Pi to be inside tmux. Prefer native Pi TUI workers and use rpcWorkers only after an explicit request for headless panes. The invoking Pi remains responsible for interpreting reports and deciding follow-up. When a workflow needs attention, send only to a waiting role that owns the active assignment; never trigger an idle role or reviewer without a broker assignment. Never create file handoffs, poll coordination state, claim parent project trust applies to child Pi sessions, or equate command acknowledgement with task completion.",
+      "Use tmux_orchestrator instead of rebuilding tmux orchestration state; before a start, synthesize a bounded contextCapsule from the current conversation when prior decisions or work matter; include only task-relevant state, constraints, acceptance criteria, paths, evidence, and open questions, never the full transcript. Enable workspaceCapsule only for an explicit cold-assignment experiment and supply only bounded existing project-relative workspaceRelevantPaths, never a repository tree; it supplements discovery and never replaces reading governing instructions. Do not claim workspace-capsule savings or correctness without authoritative provider and review evidence. Use implementationFlow=phased for complex work that benefits from read-only discovery before editing; use single for simple work or compatibility, without an extra classifier model call. Configured specialists use conservative deterministic activation gates; pass forceSpecialists only when the user explicitly requires those enabled roles to run regardless of a skip predicate. After starting or explicitly watching a run, ensure the invoking Pi is watching it for lifecycle and final reports. Once watching, end the turn and rely on broker updates: never run sleep commands or repeatedly poll status/tmux while waiting for a watched orchestration. Attaching to an existing run watches future transitions but does not replay an already-actionable initial outcome into the current Pi; returning with tmux prefix then L does not change the current Pi's project context. Honor an explicit economy, balanced, thorough, or user-configured profile request through profile. Honor explicit user model/provider/thinking requests through useParentModel or modelOverrides; those overrides win over profile values. Use the models action to resolve available exact identifiers when needed; never invent a provider/model identifier or read provider credentials. Omitted overrides use the exact canonical project mapping, then the user's global orchestrator model configuration, selected/default profile, and packaged defaults. Honor explicit per-run budget requests through budgetOverrides; omitted values use the strict user-global budget policy and packaged warn-only defaults, and never infer hard thresholds. Honor explicit repair-round cap requests through maxRepairRounds; omission disables the cap and 0 pauses before the first repair. This is separate from observational budgets and does not cap active-assignment tokens. Continuation approval remains operator-only through the confirmed terminal CLI; never approve your own continuation. Honor explicit retain/prune requests through workerContext for enabled roles; omitted roles keep prune. Retention may increase cost, reuse hints are advisory metadata observations, and historical checks or approval never replace required verification and review. Do not infer retention, switch live policies, or request unsupported compact/fresh modes. Worker skill discovery is disabled; pass workerSkills only for exact Markdown paths the user explicitly reviewed, never infer skills. When the user asks to enter, navigate, or directly steer the live workers, use attach rather than watch; attach requires the invoking Pi to be inside tmux. Prefer native Pi TUI workers and use rpcWorkers only after an explicit request for headless panes. The invoking Pi remains responsible for interpreting reports and deciding follow-up. When a workflow needs attention, send only to a waiting role that owns the active assignment; never trigger an idle role or reviewer without a broker assignment. Never create file handoffs, poll coordination state, claim parent project trust applies to child Pi sessions, or equate command acknowledgement with task completion.",
     ],
     parameters,
     execute(_toolCallId, input, signal, _onUpdate, ctx) {
