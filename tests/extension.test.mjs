@@ -170,6 +170,11 @@ test("registers one bounded model tool and the exact short-only command surface 
   assert.equal(tool.parameters.properties.maxRepairRounds.minimum, 0);
   assert.equal(tool.parameters.properties.maxRepairRounds.maximum, 1_000_000);
   assert.equal(tool.parameters.required.includes("maxRepairRounds"), false);
+  assert.equal(tool.parameters.properties.workerContext.additionalProperties, false);
+  assert.deepEqual(Object.keys(tool.parameters.properties.workerContext.properties), ["implementer", "reviewer", "probe", "playwright", "django"]);
+  for (const schema of Object.values(tool.parameters.properties.workerContext.properties)) {
+    assert.deepEqual(schema.enum, ["prune", "retain"]);
+  }
   assert.equal(tool.parameters.properties.workspaceCapsule.type, "boolean");
   assert.equal(tool.parameters.properties.workspaceRelevantPaths.maxItems, 16);
   assert.equal(tool.parameters.properties.workspaceRelevantPaths.uniqueItems, true);
@@ -2658,7 +2663,7 @@ test("slash repair cap supports blank, zero, cancellation, and fail-closed inval
   });
   for (const [input, expected] of [["", undefined], ["  ", undefined], ["0", 0], [" 2 ", 2], ["1000000", 1_000_000]]) {
     argvs.length = 0;
-    const ctx = context({ inputs: [input], confirmations: [false, true] });
+    const ctx = context({ inputs: [input, ""], confirmations: [false, true] });
     await commands.get("or-start").handler("synthetic", ctx);
     assert.equal(argvs.length, 2);
     for (const args of argvs) {
@@ -2678,7 +2683,96 @@ test("slash repair cap supports blank, zero, cancellation, and fail-closed inval
     if (input == null) assert.equal(ctx.calls.notifications.length, 0);
     else assert.equal(ctx.calls.notifications.at(-1).message, "Unable to start orchestration");
   }
-  const declined = context({ inputs: ["0"], confirmations: [false, false] });
+  const declined = context({ inputs: ["0", ""], confirmations: [false, false] });
+  await commands.get("or-start").handler("synthetic", declined);
+  assert.equal(argvs.length, 1);
+  assert.ok(argvs[0].includes("--dry-run"));
+});
+
+function contextPolicyPreview(args) {
+  const overrides = Object.fromEntries(args.flatMap((value, index) => (
+    value === "--worker-context" ? [args[index + 1].split("=")] : []
+  )));
+  return {
+    roles: [{ name: "implementer" }, { name: "reviewer" }],
+    dry_run: args.includes("--dry-run"),
+    worker_context_policy: { version: 1, overrides },
+  };
+}
+
+test("worker context tool overrides survive preview and launch with resolved confirmation", async () => {
+  const argvs = [];
+  const { tool } = harness(async (_command, args) => {
+    argvs.push(args);
+    return { code: 0, stdout: JSON.stringify(success("start", contextPolicyPreview(args))) };
+  });
+  for (const workerContext of [undefined, {}, { reviewer: "retain", implementer: "prune" }]) {
+    argvs.length = 0;
+    const ctx = context({ confirmations: [true] });
+    await tool.execute("context", { action: "start", task: "synthetic", workerContext }, undefined, undefined, ctx);
+    assert.equal(argvs.length, 2);
+    for (const args of argvs) {
+      assert.deepEqual(contextPolicyPreview(args).worker_context_policy.overrides, workerContext || {});
+    }
+    assert.match(ctx.calls.confirmations[0].message, /Worker provider context \(CLI policy\): default=prune/);
+    assert.match(ctx.calls.confirmations[0].message, /not proof of check freshness.*independent review remain mandatory/);
+    if (workerContext?.reviewer) assert.match(ctx.calls.confirmations[0].message, /reviewer=retain, implementer=prune/);
+  }
+  argvs.length = 0;
+  for (const workerContext of [null, true, "reviewer=retain", [], { all: "retain" }, { reviewer: "compact" }, { reviewer: "fresh" }, { reviewer: "auto" }, { reviewer: null }, { reviewer: false }]) {
+    await assert.rejects(
+      tool.execute("context", { action: "start", task: "synthetic", workerContext }, undefined, undefined, context()),
+      /invalid_worker_context/,
+    );
+  }
+  assert.equal(argvs.length, 0);
+});
+
+test("explicit context choices fail closed on missing, mismatched, disabled, or invalid preview policy", async () => {
+  for (const data of [
+    { roles: [{ name: "reviewer" }] },
+    { roles: [{ name: "reviewer" }], worker_context_policy: { version: 1, overrides: { reviewer: "prune" } } },
+    { roles: [], worker_context_policy: { version: 1, overrides: { reviewer: "retain" } } },
+    { worker_context_policy: { version: 2, overrides: {} } },
+    { worker_context_policy: null },
+    { worker_context_policy: { version: 1 } },
+  ]) {
+    let calls = 0;
+    const { tool } = harness(async () => {
+      calls += 1;
+      return { code: 0, stdout: JSON.stringify(success("start", data)) };
+    });
+    const ctx = context({ confirmations: [true] });
+    await assert.rejects(tool.execute("context", {
+      action: "start", task: "synthetic", workerContext: { reviewer: "retain" },
+    }, undefined, undefined, ctx), /worker_context_preview/);
+    assert.equal(calls, 1);
+    assert.equal(ctx.calls.confirmations.length, 0);
+  }
+});
+
+test("slash context input parses bounded selections and cancels or rejects before execution", async () => {
+  const argvs = [];
+  const { commands } = harness(async (_command, args) => {
+    argvs.push(args);
+    return { code: 0, stdout: JSON.stringify(success("start", contextPolicyPreview(args))) };
+  });
+  for (const [input, expected] of [["", {}], ["  ", {}], [" reviewer = retain, implementer = prune ", { reviewer: "retain", implementer: "prune" }]]) {
+    argvs.length = 0;
+    const ctx = context({ inputs: ["", input], confirmations: [false, true] });
+    await commands.get("or-start").handler("synthetic", ctx);
+    assert.equal(argvs.length, 2);
+    assert.deepEqual(contextPolicyPreview(argvs[1]).worker_context_policy.overrides, expected);
+  }
+  argvs.length = 0;
+  for (const input of [undefined, null, "reviewer=retain,reviewer=prune", "reviewer=retain,", "reviewer=retain=prune", "all=retain", "reviewer=fresh", "__proto__=retain", "x".repeat(257)]) {
+    const ctx = context({ inputs: ["", input], confirmations: [false, true] });
+    await commands.get("or-start").handler("synthetic", ctx);
+    assert.equal(argvs.length, 0);
+    if (input == null) assert.equal(ctx.calls.notifications.length, 0);
+    else assert.equal(ctx.calls.notifications.at(-1).message, "Unable to start orchestration");
+  }
+  const declined = context({ inputs: ["", "reviewer=retain"], confirmations: [false, false] });
   await commands.get("or-start").handler("synthetic", declined);
   assert.equal(argvs.length, 1);
   assert.ok(argvs[0].includes("--dry-run"));
@@ -2749,7 +2843,7 @@ test("controller mode requires and collects an explicit target project", async (
     assert.equal(calls, 0);
 
     const ctx = context({
-      inputs: [process.cwd(), ""],
+      inputs: [process.cwd(), "", ""],
       confirmations: [true, false, false, false, false, false, true],
     });
     await commands.get("or-start").handler("synthetic", ctx);

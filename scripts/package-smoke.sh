@@ -19,6 +19,7 @@ EXPECTED_FILES=(
   bin/pi-tmux-agents
   extensions/tmux-orchestrator.js
   extensions/orchestrator-context.js
+  extensions/orchestrator-context-policy.js
   extensions/orchestrator-budgets.js
   extensions/orchestrator-models.js
   extensions/orchestrator-update.js

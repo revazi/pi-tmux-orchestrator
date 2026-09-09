@@ -74,6 +74,7 @@ python3 -m unittest discover -s "$ROOT/tests" -p 'test_*.py' -v
 printf '%s\n' '==> Extension syntax and unit tests'
 node --check "$ROOT/extensions/tmux-orchestrator.js"
 node --check "$ROOT/extensions/orchestrator-context.js"
+node --check "$ROOT/extensions/orchestrator-context-policy.js"
 node --check "$ROOT/extensions/orchestrator-budgets.js"
 node --check "$ROOT/extensions/orchestrator-models.js"
 node --check "$ROOT/extensions/orchestrator-dashboard.js"

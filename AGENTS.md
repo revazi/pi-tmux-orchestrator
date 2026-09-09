@@ -32,6 +32,7 @@ Provide a small, reusable, intentionally tmux-scoped Pi skill and modular standa
 - `pi_tmux_orchestrator/supervisor_commands.py`: thin CLI adapters for the supervisor API
 - `extensions/tmux-orchestrator.js`: Pi control surface
 - `extensions/orchestrator-context.js`: structured parent context-capsule schema and renderer
+- `extensions/orchestrator-context-policy.js`: bounded Pi retain/prune start inputs and CLI-resolved confirmation
 - `extensions/orchestrator-budgets.js`: bounded native budget override adapter
 - `extensions/orchestrator-models.js`: bounded model metadata and override adapter
 - `extensions/orchestrator-dashboard.js`: bounded cross-session Pi overlay and doctor projection

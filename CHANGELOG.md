@@ -6,9 +6,11 @@ All notable changes to this project are documented here.
 
 ### Added
 
+- Exposed retain/prune controls in the Pi start form and native `workerContext` tool parameter, with bounded input, explicit cancellation, CLI-resolved confirmation, and fail-closed preview matching
+
 - Added bounded metadata-only investigation-reuse hints for explicitly retained worker context, refreshed at assignment/handover boundaries and invalidated by observed worktree or broker-mediated guidance changes; no historical check/approval reuse or default-policy change
 
-- Added CLI-only per-role `--worker-context ROLE=retain|prune` with metadata-only schema-10 retention, strict validation, legacy prune fallback, and shared TUI/RPC projection on every provider request; review authority and cumulative limits remain unchanged
+- Added per-role `--worker-context ROLE=retain|prune` with metadata-only schema-10 retention, strict validation, legacy prune fallback, and shared TUI/RPC projection on every provider request; review authority and cumulative limits remain unchanged
 
 - Added a strict read-only repair continuation policy and metadata contract, independently tested without broker routing or CLI activation
 - Added an opt-in run-wide repair-round cap and explicit idempotent terminal-CLI one-round continuation approval; paused runs remain incomplete, counters survive worker restarts, and observational budgets retain their existing behavior
