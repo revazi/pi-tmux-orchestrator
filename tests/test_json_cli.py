@@ -56,6 +56,7 @@ class JsonMainTests(unittest.TestCase):
         parser = ORCHESTRATOR.build_parser()
         cases = {
             "doctor": ["doctor"],
+            "role-registry": ["role-registry"],
             "controller": ["controller", "status"],
             "supervisor": ["supervisor", "capabilities"],
             "list": ["list"],

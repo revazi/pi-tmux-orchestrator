@@ -134,6 +134,11 @@ proof of current checks or permission to reuse approval. See
 [context policy](references/usage.md#worker-context-retention-opt-in) and
 [reuse limitations](references/usage.md#bounded-investigation-reuse-hints).
 
+Validate future custom-specialist definitions with
+`pi-tmux-agents role-registry --project /absolute/project`. This checks strict
+user-global definitions and reviewed resource digests; it does **not** launch
+custom roles. See the [registry trust boundary](references/custom-roles.md).
+
 Reusable defaults are user-global, never project-local:
 
 ```text

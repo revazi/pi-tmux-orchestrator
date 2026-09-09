@@ -69,6 +69,8 @@ EXPECTED_FILES=(
   pi_tmux_orchestrator/tmux.py
   pi_tmux_orchestrator/token_efficiency.py
   pi_tmux_orchestrator/worker_resources.py
+  pi_tmux_orchestrator/registry_resources.py
+  pi_tmux_orchestrator/role_registry.py
   pi_tmux_orchestrator/worker_context.py
   pi_tmux_orchestrator/evidence_reuse.py
   pi_tmux_orchestrator/workspace_capsules.py
@@ -76,6 +78,7 @@ EXPECTED_FILES=(
   references/prerelease-testing.md
   references/protocol-v1.md
   references/dashboard-design.md
+  references/custom-roles.md
 )
 
 mkdir -p "$TEMP/npm-home" "$TEMP/npm-cache" "$TEMP/npm-tmp"
