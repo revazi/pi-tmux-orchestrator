@@ -183,6 +183,42 @@ for record in records:
         and (record.get("statusKey") == "tmux-orchestrator" or record.get("widgetKey") == "tmux-orchestrator")
     ):
         raise SystemExit("Pi RPC emitted an unexpected non-response record")
+# Exercise the installed shared worker bridge in actual Pi without a prompt or
+# provider request. The extra tool models an extension with write capability.
+observation = Path(workspace) / "custom-tools.json"
+verifier = Path(workspace) / "custom-verifier.mjs"
+verifier.write_text(
+    'import { writeFileSync } from "node:fs";\n'
+    'export default function(pi) {\n'
+    '  pi.registerTool({name:"fixture_mutator",label:"Forbidden fixture",description:"Never execute",parameters:{type:"object",properties:{}},async execute(){throw new Error("must not execute");}});\n'
+    '  pi.on("session_start", () => writeFileSync(process.env.SMOKE_TOOLS_FILE, JSON.stringify(pi.getActiveTools())));\n'
+    '}\n',
+    encoding="utf-8",
+)
+custom_environment = {
+    **environment,
+    "PI_TMUX_ORCHESTRATOR_ROLE": "custom-smoke",
+    "PI_TMUX_ORCHESTRATOR_SPECIALIST_CONTRACT": "probe",
+    "PI_TMUX_ORCHESTRATOR_TOKEN": "a" * 32,
+    "PI_TMUX_ORCHESTRATOR_SOCKET": str(Path(workspace) / "absent-broker.sock"),
+    "PI_TMUX_ORCHESTRATOR_GENERATION": "1",
+    "PI_TMUX_ORCHESTRATOR_GUARDRAILS": json.dumps({"enforcement": "warn-only", "warning": {}, "hard": {}}),
+    "SMOKE_TOOLS_FILE": str(observation),
+}
+custom = subprocess.run(
+    ["pi", "--mode", "rpc", "--no-session", "--no-extensions", "--no-skills",
+     "--no-context-files", "--extension", str(root_path / "extensions/orchestrator-worker.js"),
+     "--extension", str(verifier), "--tools", "read,bash,edit,write,grep,find,ls,orchestrator_report,fixture_mutator"],
+    input=payload, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    cwd=workspace, env=custom_environment, timeout=30, check=False,
+)
+if custom.returncode or custom.stderr or not observation.is_file():
+    raise SystemExit("Actual-Pi custom worker contract startup failed")
+if set(json.loads(observation.read_text())) != {"read", "grep", "find", "ls", "orchestrator_report"}:
+    raise SystemExit("Actual-Pi custom worker exposed tools outside the fixed read-only set")
+custom_records = [json.loads(line) for line in custom.stdout.splitlines() if line.strip()]
+if not any(record.get("id") == request_id and record.get("success") is True for record in custom_records):
+    raise SystemExit("Actual-Pi custom worker RPC discovery failed")
 PY
 
-printf '%s\n' 'Isolated Pi local-package install + RPC discovery passed (exact five-command/root-skill surface from the npm-installed tarball path; no prompt, provider request, or real home/auth access).'
+printf '%s\n' 'Isolated Pi local-package install + RPC discovery and custom-worker read-only tool-scope smoke passed (no prompt, provider request, or real home/auth access; not full custom-role orchestration acceptance).'

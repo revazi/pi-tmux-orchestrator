@@ -81,6 +81,32 @@ Limits and fields:
   report schemas, extensions, activation rights, and authority fields are rejected.
   Prompt/skill text cannot grant tools or replace required independent review.
 
+## Worker contract boundary (partial #60 implementation)
+
+The protocol validators now accept custom identities only when explicitly given
+a bounded trusted identity-to-contract map. A worker frame cannot register a role
+or choose its own contract. Without that map, custom messages and reports remain
+rejected. Public starts and retained manifest handling are not wired to custom
+roles yet; this is not end-to-end launch support.
+
+The shared worker bridge supports an internal, launch-bound
+`PI_TMUX_ORCHESTRATOR_SPECIALIST_CONTRACT` (`probe`, `playwright`, or `django`).
+A valid `custom-*` identity requires that binding; built-in identities reject it.
+Existing launchers strip ambient values. It is not a user-facing launch workaround.
+
+Custom workers retain their custom identity in reports. Only the bound specialist
+report kind is permitted, including after assignment restoration. They cannot
+submit implementation/plan/reviewer reports, changed paths, or final approval.
+Their fixed tool set is `read,grep,find,ls,orchestrator_report`: shell, edit/write,
+browser execution, and unapproved extension tools are filtered at activation and
+blocked again at tool-call time. This is a tool-policy boundary, not an OS sandbox;
+no shell-based verification is available to custom workers in this slice.
+
+Model-free bridge tests cover assignments, reports, restoration rejection, and
+write-tool denial. The isolated actual-Pi smoke checks RPC startup and the active
+tool set without prompts/provider calls. Full custom-role tmux/TUI/RPC orchestration,
+resource-bound launch/restart, routing, usage, and recovery acceptance remain #60.
+
 ## Filesystem trust boundary
 
 The registry and every resource must be outside the canonical target project,

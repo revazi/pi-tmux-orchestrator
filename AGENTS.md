@@ -28,6 +28,7 @@ Provide a small, reusable, intentionally tmux-scoped Pi skill and modular standa
 - `pi_tmux_orchestrator/workspace_capsules.py`: strict ephemeral cold-assignment workspace discovery experiment
 - `pi_tmux_orchestrator/worker_resources.py`: strict digest-bound per-role skill opt-ins and shared launch policy
 - `pi_tmux_orchestrator/role_registry.py`: strict validation-only user-global custom specialist registry
+- `pi_tmux_orchestrator/role_contracts.py`: explicit trusted custom identity-to-specialist contract validation
 - `pi_tmux_orchestrator/registry_resources.py`: bounded descriptor-relative reads of user-owned global registry resources
 - `pi_tmux_orchestrator/dashboard.py`: adaptive metadata-only broker pane presentation
 - `pi_tmux_orchestrator/supervisor_api.py`: versioned durable-state read boundary
@@ -45,6 +46,7 @@ Provide a small, reusable, intentionally tmux-scoped Pi skill and modular standa
 - `extensions/orchestrator-worker.js`: shared TUI/RPC worker runtime composition and Pi event bridge
 - `extensions/orchestrator-worker-context.js`: assignment restoration and provider-context pruning
 - `extensions/orchestrator-worker-protocol.js`: worker framing, identity, environment, and journal constants
+- `extensions/orchestrator-worker-roles.js`: custom worker contract binding and fixed read-only tool guard
 - `extensions/orchestrator-worker-reporting.js`: role report schemas, normalization, and plan-mode tool policy
 - `extensions/orchestrator-worker-usage.js`: usage deltas, assignment guardrails, and guardrail restoration
 - `extensions/orchestrator-result-policy.js`: orchestration-only worker input/result bounds and metadata

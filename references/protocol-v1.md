@@ -252,6 +252,15 @@ Valid report/verdict combinations:
 The tool returns `terminate: true`; the agent must not emit another response,
 sleep, or poll after reporting.
 
+## Custom specialist contract boundary (not yet launch-enabled)
+
+Protocol validators accept a bounded custom role map only from their trusted
+caller. Peers cannot add a contract field or self-register through broker-v1.
+Custom reports normalize using the selected built-in read-only specialist schema,
+while retaining the original custom identity on the wire. No custom binding may
+map to implementer or reviewer authority. With no explicit map, custom roles are
+rejected exactly as before. Live broker/manifest wiring remains pending under #60.
+
 ## Delivery and recovery
 
 Broker schema 10 retains `worker_context_policy` as version 1 plus explicit

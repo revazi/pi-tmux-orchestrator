@@ -9,6 +9,7 @@ import {
   MAX_WORKER_FRAME_BYTES as MAX_FRAME_BYTES,
   RESULT_VOLUME_ENTRY,
   validWorkerEnvironment,
+  validDeliveryEnvelope,
   workerFrame,
   WORKER_MESSAGE_TYPE as MESSAGE_TYPE,
   WORKER_PROTOCOL_VERSION as VERSION,
@@ -49,6 +50,12 @@ import {
   applyToolResultPolicy,
   immediateFollowupObservation,
 } from "./orchestrator-result-policy.js";
+import {
+  assertCustomAssignment,
+  customRoleTools,
+  customToolDecision,
+  workerRoleContract,
+} from "./orchestrator-worker-roles.js";
 
 const ROLE = process.env.PI_TMUX_ORCHESTRATOR_ROLE;
 const TOKEN = process.env.PI_TMUX_ORCHESTRATOR_TOKEN;
@@ -57,6 +64,8 @@ const GENERATION = Number(process.env.PI_TMUX_ORCHESTRATOR_GENERATION);
 const message = createWorkerMessage(ROLE, TOKEN);
 
 export default function orchestratorWorker(pi) {
+  const specialistContract = process.env.PI_TMUX_ORCHESTRATOR_SPECIALIST_CONTRACT;
+  const reportRole = workerRoleContract(ROLE, specialistContract);
   const contextMode = validateWorkerContextMode(process.env.PI_TMUX_ORCHESTRATOR_CONTEXT_MODE);
   const guardrailPolicy = parseGuardrailPolicy(
     process.env.PI_TMUX_ORCHESTRATOR_GUARDRAILS,
@@ -67,6 +76,7 @@ export default function orchestratorWorker(pi) {
     socketPath: SOCKET_PATH,
     generation: GENERATION,
     guardrailPolicy,
+    specialistContract,
   })) throw new Error("Pi Tmux Orchestrator worker environment is invalid");
 
   let socket;
@@ -87,11 +97,12 @@ export default function orchestratorWorker(pi) {
   let lastProgressPhase;
 
   function applyActiveToolPolicy() {
-    pi.setActiveTools(assignmentToolNames(normalTools, ROLE, activeAssignment?.kind));
+    pi.setActiveTools(customRoleTools(ROLE, assignmentToolNames(normalTools, ROLE, activeAssignment?.kind)));
   }
 
   function restore(ctx) {
     const restored = restoreWorkerState(ctx.sessionManager.getEntries());
+    if (restored.activeAssignment) assertCustomAssignment(ROLE, reportRole, restored.activeAssignment.kind);
     delivered.clear();
     for (const deliveryId of restored.delivered) delivered.add(deliveryId);
     assignmentIds.clear();
@@ -181,20 +192,7 @@ export default function orchestratorWorker(pi) {
   }
 
   function acceptDelivery(value) {
-    if (
-      typeof value.id !== "string" ||
-      !/^[a-f0-9]{32}$/.test(value.id) ||
-      typeof value.content !== "string" ||
-      !value.content.trim() ||
-      value.content.length > 32_768 ||
-      !Number.isInteger(value.round) ||
-      value.round <= 0 ||
-      typeof value.trigger !== "boolean" ||
-      (value.type === "assignment" &&
-        (typeof value.assignment_id !== "string" ||
-          !/^[a-f0-9]{32}$/.test(value.assignment_id) ||
-          typeof value.kind !== "string"))
-    ) {
+    if (!validDeliveryEnvelope(value)) {
       socket.destroy(new Error("invalid_broker_delivery"));
       return;
     }
@@ -204,6 +202,7 @@ export default function orchestratorWorker(pi) {
       return;
     }
     const isAssignment = value.type === "assignment";
+    if (isAssignment) assertCustomAssignment(ROLE, reportRole, value.kind);
     const details = {
       delivery_id: value.id,
       kind: isAssignment ? "assignment" : "context",
@@ -337,11 +336,11 @@ export default function orchestratorWorker(pi) {
       "Report concise summaries, paths, checks, findings, risks, and limitations; never copy diffs, logs, prompts, credentials, provider bodies, or private payloads.",
       "After reporting, end the turn. Never wait, sleep, or poll for coordination work.",
     ],
-    parameters: reportParameters(ROLE),
+    parameters: reportParameters(reportRole),
     prepareArguments: prepareReportArguments,
     async execute(_toolCallId, input, _signal, _onUpdate, ctx) {
       if (!activeAssignment) throw new Error("no_active_orchestration_assignment");
-      const report = normalizeReport(input, activeAssignment.kind, ROLE);
+      const report = normalizeReport(input, activeAssignment.kind, reportRole);
       const assignment = activeAssignment;
       const usage = reportUsage(ctx, assignment.usageBaseline);
       const response = await brokerRequest(message("report", {
@@ -383,6 +382,8 @@ export default function orchestratorWorker(pi) {
   }
 
   function onToolCall(event, ctx) {
+    const customDecision = customToolDecision(ROLE, event.toolName);
+    if (customDecision) return customDecision;
     recordImmediateFollowup(event);
     progress(
       event.toolName === "orchestrator_report" ? "reporting" : "tool",

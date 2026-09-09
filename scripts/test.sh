@@ -59,6 +59,7 @@ for path in (
     Path("$ROOT/tests/test_worker_context.py"),
     Path("$ROOT/tests/test_evidence_reuse.py"),
     Path("$ROOT/tests/test_role_registry.py"),
+    Path("$ROOT/tests/test_custom_role_contracts.py"),
     Path("$ROOT/tests/test_dashboard.py"),
     Path("$ROOT/tests/test_rpc_rendering.py"),
     Path("$ROOT/tests/test_specialist_activation.py"),
@@ -85,6 +86,7 @@ node --check "$ROOT/extensions/orchestrator-parent-protocol.js"
 node --check "$ROOT/extensions/orchestrator-worker.js"
 node --check "$ROOT/extensions/orchestrator-worker-context.js"
 node --check "$ROOT/extensions/orchestrator-worker-protocol.js"
+node --check "$ROOT/extensions/orchestrator-worker-roles.js"
 node --check "$ROOT/extensions/orchestrator-worker-reporting.js"
 node --check "$ROOT/extensions/orchestrator-worker-usage.js"
 node --check "$ROOT/extensions/orchestrator-result-policy.js"

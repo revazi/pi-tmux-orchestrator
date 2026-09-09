@@ -1621,6 +1621,7 @@ def run_agent_command(args: argparse.Namespace) -> int:
     environment = os.environ.copy()
     environment.pop("PI_TMUX_CONTROLLER", None)
     environment.pop("PI_TMUX_CONTROLLER_HOME", None)
+    environment.pop("PI_TMUX_ORCHESTRATOR_SPECIALIST_CONTRACT", None)
     environment["PI_SKIP_VERSION_CHECK"] = "1"
     environment["PI_TELEMETRY"] = "0"
     if manifest.get("version", 0) >= 3:

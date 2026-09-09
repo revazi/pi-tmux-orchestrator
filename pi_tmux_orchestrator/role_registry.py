@@ -43,6 +43,15 @@ RESERVED_SUFFIXES = KNOWN_ROLES | {
 }
 
 
+def valid_custom_role_id(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) <= 32
+        and re.fullmatch(r"custom-[a-z][a-z0-9]*(?:-[a-z0-9]+)*", value) is not None
+        and value.removeprefix("custom-") not in RESERVED_SUFFIXES
+    )
+
+
 def registry_path(project: Path, explicit: str | None = None) -> Path:
     value = explicit if explicit is not None else os.environ.get(REGISTRY_ENV)
     if value is None:
@@ -75,12 +84,7 @@ def _role_definition(value: object, project: Path) -> dict[str, Any]:
     ):
         raise OrchestrationError("Custom role definition has invalid fields")
     identifier = value["id"]
-    if (
-        not isinstance(identifier, str)
-        or len(identifier) > 32
-        or not re.fullmatch(r"custom-[a-z][a-z0-9]*(?:-[a-z0-9]+)*", identifier)
-        or identifier.removeprefix("custom-") in RESERVED_SUFFIXES
-    ):
+    if not valid_custom_role_id(identifier):
         raise OrchestrationError("Custom role ID is invalid or reserved")
     contract = value["contract"]
     if not isinstance(contract, str) or contract not in CONTRACTS:

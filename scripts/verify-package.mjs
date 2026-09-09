@@ -44,6 +44,7 @@ const pythonFiles = [
   "worker_resources.py",
   "registry_resources.py",
   "role_registry.py",
+  "role_contracts.py",
   "worker_context.py",
   "evidence_reuse.py",
   "workspace_capsules.py",
@@ -77,6 +78,7 @@ const expectedFiles = [
   "references/protocol-v1.md",
   "references/dashboard-design.md",
   "references/custom-roles.md",
+  "extensions/orchestrator-worker-roles.js",
   ...pythonFiles,
 ];
 const declaredFiles = [
@@ -108,6 +110,7 @@ const declaredFiles = [
   "references/dashboard-design.md",
   "references/custom-roles.md",
   "bin/pi-tmux-agents",
+  "extensions/orchestrator-worker-roles.js",
   "pi_tmux_orchestrator/*.py",
 ];
 const expectedManifest = {

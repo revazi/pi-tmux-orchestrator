@@ -9,7 +9,6 @@ from typing import Any
 
 from .constants import (
     BROKER_PROTOCOL_VERSION,
-    KNOWN_ROLES,
     MAX_BROKER_FRAME_BYTES,
     MAX_PLAN_REPORT_ITEM_CHARS,
     MAX_PLAN_REPORT_ITEMS,
@@ -22,6 +21,7 @@ from .constants import (
     WORKER_ACTIVITY_PHASES,
 )
 from .models import OrchestrationError
+from .role_contracts import resolve_role_contract
 
 REPORT_KINDS = frozenset(
     {"plan", "implementation", "review", "probe", "playwright", "django"}
@@ -200,7 +200,10 @@ def _validate_plan_report(value: dict[str, Any], role: str) -> dict[str, Any]:
     return report
 
 
-def validate_report(value: object, role: str) -> dict[str, Any]:
+def validate_report(
+    value: object, role: str, *, custom_contracts: object = None
+) -> dict[str, Any]:
+    role = resolve_role_contract(role, custom_contracts)
     if not isinstance(value, dict):
         raise OrchestrationError("Report must be an object", "invalid_protocol")
     if not {"kind", "summary"}.issubset(value):
@@ -374,7 +377,9 @@ def _validate_guardrail_message(value: dict[str, Any]) -> None:
         raise OrchestrationError("Guardrail values are invalid", "invalid_protocol")
 
 
-def validate_client_message(value: object) -> dict[str, Any]:
+def validate_client_message(
+    value: object, *, custom_contracts: object = None
+) -> dict[str, Any]:
     if not isinstance(value, dict) or value.get("version") != BROKER_PROTOCOL_VERSION:
         raise OrchestrationError(
             "Unsupported broker protocol version", "invalid_protocol"
@@ -402,9 +407,7 @@ def validate_client_message(value: object) -> dict[str, Any]:
         raise OrchestrationError(
             "Broker message has missing or unknown fields", "invalid_protocol"
         )
-    role = value.get("role")
-    if role not in KNOWN_ROLES:
-        raise OrchestrationError("Broker role is invalid", "invalid_protocol")
+    resolve_role_contract(value.get("role"), custom_contracts)
     token = value.get("token")
     message_id = value.get("id")
     if not isinstance(token, str) or not RPC_TOKEN_PATTERN.fullmatch(token):
