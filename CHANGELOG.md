@@ -8,6 +8,7 @@ All notable changes to this project are documented here.
 
 ### Changed
 
+- Extracted report acceptance, bounded run-state projection, and specialist/reviewer routing into a broker workflow support boundary without changing usage accounting, review authority, or recovery behavior
 - Extended the development-only retained usage analyzer with provider-call distributions, workflow rounds and assignment shape, specialist activation counts, and accepted-assignment call/context distributions while preserving body-free metadata access and explicit legacy availability
 - Extracted authenticated idempotent operator send/abort/restart handling from the broker workflow module
 - Extracted read-only parent-observer authentication, replay, snapshots, and bounded fan-out from the broker workflow module
