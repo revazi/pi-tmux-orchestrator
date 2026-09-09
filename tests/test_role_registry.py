@@ -230,7 +230,9 @@ class RoleRegistryTests(unittest.TestCase):
             with self.assertRaisesRegex(
                 OrchestrationError, "changed during validation"
             ):
-                read_global_resource(Path(self.prompt["path"]), 1024)
+                read_global_resource(
+                    Path(self.prompt["path"]), 1024, project=self.project
+                )
 
     def test_resource_tampering_or_missing_resource_fails_on_every_load(self):
         self.save()
@@ -274,10 +276,30 @@ class RoleRegistryTests(unittest.TestCase):
         fifo = self.root / "fifo.md"
         os.mkfifo(fifo)
         with self.assertRaises(OrchestrationError):
-            read_global_resource(fifo, 1024)
+            read_global_resource(fifo, 1024, project=self.project)
         Path(self.prompt["path"]).write_bytes(b"\xff")
         with self.assertRaises(OrchestrationError):
             load_registry(self.project, str(self.registry))
+
+    def test_descriptor_identity_blocks_project_aliases(self):
+        # The reader rejects the actual directory identity independently of the
+        # lexical path filter (including case aliases and bind mounts).
+        for project in (self.root, Path("/")):
+            with self.assertRaisesRegex(
+                OrchestrationError, "aliases the target project"
+            ):
+                read_global_resource(Path(self.prompt["path"]), 1024, project=project)
+        missing = self.root / "missing-project"
+        with self.assertRaisesRegex(OrchestrationError, "project is unavailable"):
+            read_global_resource(
+                self.root / "absent.json", 1024, project=missing, missing_ok=True
+            )
+        alias = self.project.with_name("PROJECT")
+        if alias.exists() and alias.samefile(self.project):
+            local = self.project / "registry.json"
+            local.write_text(json.dumps(self.definition))
+            with self.assertRaises(OrchestrationError):
+                load_registry(self.project, str(alias / local.name))
 
     def test_untrusted_directory_and_foreign_owner_are_rejected(self):
         self.save()

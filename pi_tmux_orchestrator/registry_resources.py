@@ -39,18 +39,34 @@ def _safe_directory(metadata: os.stat_result) -> bool:
     return not writable or bool(root_sticky)
 
 
-def _open_resource(path: Path) -> int:
+def _check_directory(descriptor: int, blocked: os.stat_result) -> None:
+    directory = os.fstat(descriptor)
+    if (directory.st_dev, directory.st_ino) == (blocked.st_dev, blocked.st_ino):
+        raise OrchestrationError(
+            "Registry resource directory aliases the target project"
+        )
+    if not _safe_directory(directory):
+        raise OrchestrationError(
+            "Registry resource directory ownership or permissions are unsafe"
+        )
+
+
+def _open_resource(path: Path, project: Path) -> int:
+    try:
+        blocked = project.stat()
+    except OSError as error:
+        raise OrchestrationError(
+            "Registry validation project is unavailable"
+        ) from error
     flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW
     parent = os.open("/", flags | os.O_DIRECTORY)
     try:
+        _check_directory(parent, blocked)
         for component in path.parts[1:-1]:
             child = os.open(component, flags | os.O_DIRECTORY, dir_fd=parent)
             os.close(parent)
             parent = child
-            if not _safe_directory(os.fstat(parent)):
-                raise OrchestrationError(
-                    "Registry resource directory ownership or permissions are unsafe"
-                )
+            _check_directory(parent, blocked)
         return os.open(path.name, flags | os.O_NONBLOCK, dir_fd=parent)
     finally:
         os.close(parent)
@@ -67,11 +83,11 @@ def _file_identity(value: os.stat_result) -> tuple[int, ...]:
 
 
 def read_global_resource(
-    path: Path, limit: int, *, missing_ok: bool = False
+    path: Path, limit: int, *, project: Path, missing_ok: bool = False
 ) -> bytes | None:
     descriptor = None
     try:
-        descriptor = _open_resource(path)
+        descriptor = _open_resource(path, project)
         before = os.fstat(descriptor)
         if (
             not stat.S_ISREG(before.st_mode)

@@ -90,6 +90,7 @@ Ancestor directories must be owned by the current user or root and not writable
 by group/others, except root-owned sticky directories such as `/tmp`.
 
 The reader walks directories through file descriptors with no-follow flags,
+rejects directory identities matching the target project (including case aliases),
 checks file metadata before and after bounded reads, rejects FIFOs/devices,
 invalid UTF-8, excess size, and detected concurrent changes, and closes all
 handles. Use private directories and mode-`0600` files for private guidance.

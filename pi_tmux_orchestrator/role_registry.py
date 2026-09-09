@@ -116,8 +116,8 @@ def validate_registry(value: object, project: Path) -> dict[str, Any]:
     return {"version": 1, "roles": roles}
 
 
-def _verify_resource(resource: dict[str, str], limit: int) -> None:
-    content = read_global_resource(Path(resource["path"]), limit)
+def _verify_resource(resource: dict[str, str], limit: int, project: Path) -> None:
+    content = read_global_resource(Path(resource["path"]), limit, project=project)
     if hashlib.sha256(content).hexdigest() != resource["sha256"]:
         raise OrchestrationError(
             "Custom role resource no longer matches its reviewed digest"
@@ -132,6 +132,7 @@ def load_registry(project: Path, explicit: str | None = None) -> dict[str, Any]:
     raw = read_global_resource(
         path,
         MAX_REGISTRY_BYTES,
+        project=project,
         missing_ok=explicit is None and REGISTRY_ENV not in os.environ,
     )
     if raw is None:
@@ -148,9 +149,9 @@ def load_registry(project: Path, explicit: str | None = None) -> dict[str, Any]:
         registry = validate_registry(value, project)
         # Validate the entire schema before accessing any referenced resource.
         for role in registry["roles"]:
-            _verify_resource(role["prompt"], MAX_PROMPT_BYTES)
+            _verify_resource(role["prompt"], MAX_PROMPT_BYTES, project)
             for skill in role["skills"]:
-                _verify_resource(skill, MAX_SKILL_BYTES)
+                _verify_resource(skill, MAX_SKILL_BYTES, project)
     return {
         **registry,
         "configured": raw is not None,
@@ -162,7 +163,7 @@ def load_registry(project: Path, explicit: str | None = None) -> dict[str, Any]:
 def role_registry_command(args: Any) -> CommandResult:
     try:
         project = Path(args.project).expanduser().resolve(strict=True)
-    except OSError as error:
+    except (OSError, RuntimeError) as error:
         raise OrchestrationError(
             "Registry validation project is unavailable"
         ) from error
