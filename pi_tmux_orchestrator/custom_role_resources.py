@@ -7,6 +7,7 @@ import hashlib
 from pathlib import Path
 from typing import Any
 
+from .constants import CUSTOM_READ_ONLY_TOOLS, THINKING_LEVELS
 from .models import OrchestrationError
 from .registry_resources import global_resource_path, read_global_resource
 from .role_registry import (
@@ -60,6 +61,57 @@ def select_custom_roles(
         "registry_path": loaded["registry_path"],
         "roles": {name: definitions[name] for name in names},
     }
+
+
+def select_custom_start(
+    project: Path, selections: list[list[str]], registry: str | None = None
+) -> dict[str, Any]:
+    """Resolve explicit models and verified bindings, never profile/model defaults."""
+    if not isinstance(selections, list) or len(selections) > MAX_CUSTOM_ROLES:
+        raise OrchestrationError(
+            "Custom start selection is invalid", "invalid_arguments"
+        )
+    names = []
+    configs = {}
+    for selection in selections:
+        if (
+            not isinstance(selection, list)
+            or len(selection) != 4
+            or not valid_custom_role_id(selection[0])
+            or any(
+                not isinstance(value, str)
+                or not value
+                or len(value) > 256
+                or value.startswith("-")
+                or any(
+                    character.isspace() or not character.isprintable()
+                    for character in value
+                )
+                for value in selection[1:3]
+            )
+            or not isinstance(selection[3], str)
+            or selection[3] not in THINKING_LEVELS
+        ):
+            raise OrchestrationError(
+                "Custom start selection is invalid", "invalid_arguments"
+            )
+        name, provider, model, thinking = selection
+        names.append(name)
+        configs[name] = {
+            "provider": provider,
+            "model": model,
+            "thinking": thinking,
+            "tools": CUSTOM_READ_ONLY_TOOLS,
+            "pane_id": None,
+        }
+    if registry is not None and not names:
+        raise OrchestrationError(
+            "--role-registry requires --custom-role", "invalid_arguments"
+        )
+    selected = select_custom_roles(project, names, registry)
+    for name, definition in selected["roles"].items():
+        configs[name]["custom_role"] = definition
+    return {"registry_path": selected["registry_path"], "roles": configs}
 
 
 def retained_custom_definitions(manifest: dict[str, Any]) -> dict[str, Any]:

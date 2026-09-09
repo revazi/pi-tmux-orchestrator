@@ -715,6 +715,19 @@ and configured model availability without a provider request. This bounded
 metadata appears in the dashboard only after the user presses `d`. The CLI
 project defaults to the current directory.
 
+### Custom selection preview
+
+`start --dry-run --custom-role ID PROVIDER MODEL THINKING` previews one explicitly
+registered specialist; repeat at most eight times with unique IDs. All four values
+are required, with no custom model/profile inheritance. Optional `--role-registry
+PATH` selects the user-owned registry; no selection means no registry lookup.
+Both TUI and `--rpc-workers` previews preserve the implementer/reviewer and expose
+only bounded custom metadata and skill counts. `--skip-model-check` skips catalog
+discovery, not resource verification. No files, workers, or inference requests are
+created. Live custom starts fail before mutation with `custom_start_not_enabled`;
+the two broker gates remain pending connected lifecycle acceptance. See
+[selection syntax and limitations](custom-roles.md#preview-an-explicit-selection-partial-60).
+
 ### `role-registry [--project PATH] [--registry PATH]`
 
 Read-only validation of user-global custom specialist definitions and reviewed

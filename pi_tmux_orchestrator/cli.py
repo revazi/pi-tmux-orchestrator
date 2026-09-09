@@ -265,6 +265,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
     start.add_argument("--session")
     start.add_argument(
+        "--custom-role",
+        action="append",
+        nargs=4,
+        default=[],
+        metavar=("ID", "PROVIDER", "MODEL", "THINKING"),
+        help="preview one registered read-only specialist with explicit model settings; repeatable, requires --dry-run",
+    )
+    start.add_argument(
+        "--role-registry",
+        help="absolute user-owned registry path for explicit --custom-role selections",
+    )
+    start.add_argument(
         "--implementation-flow",
         choices=IMPLEMENTATION_FLOWS,
         default=None,

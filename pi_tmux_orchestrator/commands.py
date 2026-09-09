@@ -51,6 +51,7 @@ from .constants import (
     WINDOW,
 )
 from .context_capsules import render_worker_baseline
+from .custom_role_resources import select_custom_start
 from .models import CommandResult, OrchestrationError
 from .output import bounded_message, human_print, public_role
 from .profiles import (
@@ -272,12 +273,21 @@ def start_command(args: argparse.Namespace) -> CommandResult:
             "start --attach is interactive-only and cannot be used with --json",
             "interactive_only",
         )
-    command_path("pi")
-    command_path("tmux")
+    custom_selections = getattr(args, "custom_role", [])
+    if custom_selections and not args.dry_run:
+        raise OrchestrationError(
+            "Custom roles currently require --dry-run; lifecycle launch acceptance is pending",
+            "custom_start_not_enabled",
+        )
     project_input = Path(args.project).expanduser()
     project = project_input.resolve()
     if not project.is_dir():
         raise OrchestrationError(f"Project directory does not exist: {project}")
+    custom_selection = select_custom_start(
+        project, custom_selections, getattr(args, "role_registry", None)
+    )
+    command_path("pi")
+    command_path("tmux")
     configured_models = load_model_config(project=project)
     matched_project = project_model_config(configured_models, project)
     workspace_requested = getattr(args, "workspace_capsule", None)
@@ -449,6 +459,8 @@ def start_command(args: argparse.Namespace) -> CommandResult:
     )
     for role in roles:
         configs[role]["skills"] = worker_skills[role]
+    configs.update(custom_selection["roles"])
+    roles.extend(custom_selection["roles"])
     continuation_policy = repair_policy(getattr(args, "max_repair_rounds", None))
     context_policy = resolve_context_policy(
         getattr(args, "worker_context", None), set(roles)
@@ -508,7 +520,8 @@ def start_command(args: argparse.Namespace) -> CommandResult:
         "worker_resources": {
             "skill_discovery": False,
             "skills": {
-                role: [skill["path"] for skill in worker_skills[role]] for role in roles
+                role: [skill["path"] for skill in skills]
+                for role, skills in worker_skills.items()
             },
         },
         "trust": {
@@ -536,6 +549,20 @@ def start_command(args: argparse.Namespace) -> CommandResult:
         },
         "workspace_capsule": workspace_capsule_metadata(workspace_capsule),
     }
+    if custom_selection["roles"]:
+        data["custom_role_selection"] = {
+            "launch_supported": False,
+            "resource_verification": "checked_at_selection",
+            "models": "explicit-only",
+            "skills": {
+                role: {
+                    "source": "registry-bound",
+                    "count": len(config["custom_role"]["skills"]),
+                }
+                for role, config in custom_selection["roles"].items()
+            },
+        }
+        human_print("Custom selection preview only; live starts remain disabled.")
     human_print(f"Project: {project}")
     human_print(f"Session: {session}")
     human_print("Roles:")
@@ -573,9 +600,13 @@ def start_command(args: argparse.Namespace) -> CommandResult:
         )
     )
     human_print("Worker skill discovery: disabled")
-    for role in roles:
-        paths = [skill["path"] for skill in worker_skills[role]]
+    for role, skills in worker_skills.items():
+        paths = [skill["path"] for skill in skills]
         human_print(f"  {role} skills: {', '.join(paths) if paths else 'none'}")
+    for role, config in custom_selection["roles"].items():
+        human_print(
+            f"  {role} skills: registry-bound ({len(config['custom_role']['skills'])})"
+        )
     human_print(f"Budget policy mode: {budget_policy['enforcement']} (observational)")
     for level in ("warning", "hard"):
         for scope in ("run", "role", "assignment"):

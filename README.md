@@ -140,8 +140,10 @@ user-global definitions and reviewed resource digests; it does **not** launch
 custom roles. The shared bootstrap now verifies pinned v6 role/resource bindings
 and isolates read-only resources. Internal custom contract/routing/accounting checks
 and bounded control/presentation adapters are covered by model-free regressions.
-Public starts and live lifecycle support remain gated pending full custom TUI/RPC
-acceptance. Retained custom status exposes contracts, not resource bodies or claims
+Explicit CLI selection can be previewed with
+`start --dry-run --custom-role ID PROVIDER MODEL THINKING` (repeatable, at most eight).
+Every custom model setting is required; no profile or built-in model inheritance
+applies. Live custom starts remain gated pending full custom TUI/RPC acceptance. Retained custom status exposes contracts, not resource bodies or claims
 of current resource validity.
 See the [registry, bootstrap, and workflow trust boundaries](references/custom-roles.md).
 
