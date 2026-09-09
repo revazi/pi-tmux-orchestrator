@@ -1001,6 +1001,7 @@ class ControllerTests(unittest.TestCase):
                 {
                     "PI_TMUX_CONTROLLER": "1",
                     "PI_TMUX_CONTROLLER_HOME": "/private/controller",
+                    "PI_TMUX_ORCHESTRATOR_SPECIALIST_CONTRACT": "probe",
                 },
             ),
             mock.patch.object(ORCHESTRATOR, "load_manifest", return_value=manifest),
@@ -1014,6 +1015,7 @@ class ControllerTests(unittest.TestCase):
         environment = execvpe.call_args.args[2]
         self.assertNotIn("PI_TMUX_CONTROLLER", environment)
         self.assertNotIn("PI_TMUX_CONTROLLER_HOME", environment)
+        self.assertNotIn("PI_TMUX_ORCHESTRATOR_SPECIALIST_CONTRACT", environment)
         self.assertEqual(environment["PI_TELEMETRY"], "0")
 
     def test_controller_launch_failure_kills_only_its_exact_partial_session(

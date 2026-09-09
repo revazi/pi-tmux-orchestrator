@@ -582,6 +582,122 @@ test("worker facade preserves extracted context, protocol, reporting, and usage 
   }), false);
 });
 
+test("worker delivery envelopes reject malformed assignment and context metadata", async () => {
+  const { validDeliveryEnvelope } = await import("../extensions/orchestrator-worker-protocol.js");
+  const assignment = { type: "assignment", id: "a".repeat(32), assignment_id: "b".repeat(32), content: "synthetic", round: 1, trigger: true, kind: "probe" };
+  assert.equal(validDeliveryEnvelope(assignment), true);
+  assert.equal(validDeliveryEnvelope({ ...assignment, type: "context", assignment_id: undefined, kind: undefined }), true);
+  for (const patch of [{ id: 1 }, { id: "bad" }, { content: null }, { content: " " }, { content: "x".repeat(32_769) }, { round: 0 }, { round: 1.5 }, { trigger: 1 }, { assignment_id: 1 }, { assignment_id: "bad" }, { kind: null }, { type: "unknown" }]) {
+    assert.equal(validDeliveryEnvelope({ ...assignment, ...patch }), false);
+  }
+  assert.equal(validDeliveryEnvelope(null), false);
+});
+
+test("custom worker identities have explicit read-only contracts matching the broker fixture", async () => {
+  const { workerRoleContract, customRoleTools, customToolDecision, assertCustomAssignment } = await import("../extensions/orchestrator-worker-roles.js");
+  const fixture = JSON.parse(await readFile(new URL("fixtures/custom-role-contracts.json", import.meta.url), "utf8"));
+  for (const role of fixture.valid_ids) assert.equal(workerRoleContract(role, "probe"), "probe");
+  for (const role of fixture.invalid_ids) assert.throws(() => workerRoleContract(role, "probe"), /invalid_worker_role_contract/);
+  for (const contract of [undefined, null, "", "implementer", "reviewer", "auto"]) {
+    assert.throws(() => workerRoleContract("custom-security", contract), /invalid_worker_role_contract/);
+  }
+  assert.equal(workerRoleContract("reviewer"), "reviewer");
+  assert.throws(() => workerRoleContract("reviewer", "probe"), /invalid_worker_role_contract/);
+  for (const value of fixture.cases) {
+    const contract = workerRoleContract(value.role, value.contract);
+    assert.deepEqual(workerHooks.reportParameters(contract).properties.kind.enum, [value.contract]);
+    assert.equal(workerHooks.reportParameters(contract).properties.changed_paths, undefined);
+    assert.deepEqual(customRoleTools(value.role, [...fixture.allowed_tools, ...fixture.forbidden_tools]), fixture.allowed_tools);
+    for (const name of fixture.forbidden_tools) assert.equal(customToolDecision(value.role, name).block, true);
+    for (const name of fixture.allowed_tools) assert.equal(customToolDecision(value.role, name), undefined);
+    assertCustomAssignment(value.role, contract, contract);
+    for (const kind of ["plan", "implementation", "review"]) {
+      assert.throws(() => assertCustomAssignment(value.role, contract, kind), /invalid_custom_assignment_contract/);
+      assert.throws(() => workerHooks.normalizeReport({ kind, summary: "forbidden", verdict: "approved" }, kind, contract));
+    }
+    assert.throws(() => workerHooks.normalizeReport({ ...value.report, verdict: "approved" }, contract, contract));
+    assert.throws(() => workerHooks.normalizeReport({ ...value.report, changed_paths: ["src/file.py"] }, contract, contract));
+  }
+  assert.deepEqual(customRoleTools("implementer", ["edit", "write", "bash"]), ["edit", "write", "bash"]);
+  assert.equal(customToolDecision("implementer", "write"), undefined);
+  assert.equal(validWorkerEnvironment({ role: "custom-security", specialistContract: "probe", token: "a".repeat(32), socketPath: "/tmp/synthetic.sock", generation: 1, guardrailPolicy: {} }), true);
+  assert.equal(validWorkerEnvironment({ role: "custom-security", token: "a".repeat(32), socketPath: "/tmp/synthetic.sock", generation: 1, guardrailPolicy: {} }), false);
+});
+
+test("shared custom worker runtime blocks mutators, enforces assignment kind, and preserves report identity", async () => {
+  const fixture = JSON.parse(await readFile(new URL("fixtures/custom-role-contracts.json", import.meta.url), "utf8"));
+  const env = {
+    PI_TMUX_ORCHESTRATOR_ROLE: "custom-security", PI_TMUX_ORCHESTRATOR_SPECIALIST_CONTRACT: "probe",
+    PI_TMUX_ORCHESTRATOR_TOKEN: "a".repeat(32), PI_TMUX_ORCHESTRATOR_SOCKET: "/tmp/synthetic-custom.sock",
+    PI_TMUX_ORCHESTRATOR_GENERATION: "1", PI_TMUX_ORCHESTRATOR_CONTEXT_MODE: "prune",
+    PI_TMUX_ORCHESTRATOR_GUARDRAILS: JSON.stringify({ enforcement: "warn-only", warning: {}, hard: {} }),
+  };
+  const previous = Object.fromEntries(Object.keys(env).map((key) => [key, process.env[key]]));
+  const originalConnect = net.createConnection;
+  try {
+    for (const value of fixture.cases) {
+      Object.assign(process.env, env, { PI_TMUX_ORCHESTRATOR_ROLE: value.role, PI_TMUX_ORCHESTRATOR_SPECIALIST_CONTRACT: value.contract });
+      const socketEvents = new Map();
+      const wire = [];
+      const socket = {
+        writable: true, destroyed: false,
+        on(name, handler) { socketEvents.set(name, handler); return this; },
+        write(frame) {
+          const request = JSON.parse(frame.subarray(4).toString("utf8"));
+          wire.push(request);
+          socketEvents.get("data")(workerFrame({ version: 1, type: "response", id: request.id, success: true }));
+        },
+        destroy() { this.destroyed = true; },
+      };
+      net.createConnection = () => socket;
+      const events = new Map();
+      const entries = [];
+      const delivered = [];
+      let reportTool;
+      let activeTools;
+      const loaded = await import(`../extensions/orchestrator-worker.js?custom=${value.role}-${Date.now()}`);
+      loaded.default({
+        registerTool: (tool) => { reportTool = tool; },
+        on: (name, handler) => events.set(name, handler),
+        getActiveTools: () => [...fixture.allowed_tools, ...fixture.forbidden_tools],
+        setActiveTools: (names) => { activeTools = names; },
+        appendEntry: (customType, data) => entries.push({ type: "custom", customType, data }),
+        sendMessage: (message) => delivered.push(message),
+      });
+      const ctx = { sessionManager: { getEntries: () => entries }, getContextUsage: () => undefined, isIdle: () => true };
+      try {
+        events.get("session_start")({}, ctx);
+        assert.deepEqual(activeTools, fixture.allowed_tools);
+        for (const toolName of fixture.forbidden_tools) assert.equal(events.get("tool_call")({ toolName }, ctx).block, true);
+        socketEvents.get("data")(workerFrame({ version: 1, type: "assignment", id: "b".repeat(32), assignment_id: "c".repeat(32), kind: value.contract, round: 1, content: "synthetic", trigger: true }));
+        assert.equal(delivered.length, 1);
+        const result = await reportTool.execute("report", value.report, undefined, undefined, ctx);
+        assert.equal(result.terminate, true);
+        assert.equal(result.details.role, value.role);
+        const report = wire.find((item) => item.type === "report");
+        assert.equal(report.role, value.role);
+        assert.equal(report.assignment_id, "c".repeat(32));
+        assert.equal(report.report.kind, value.contract);
+        assert.deepEqual(report.report.changed_paths, []);
+        assert.deepEqual(activeTools, fixture.allowed_tools);
+        socketEvents.get("data")(workerFrame({ version: 1, type: "assignment", id: "d".repeat(32), assignment_id: "e".repeat(32), kind: "review", round: 2, content: "forbidden", trigger: true }));
+        assert.equal(socket.destroyed, true);
+        assert.equal(delivered.length, 1);
+        entries.push({ type: "custom", customType: "pi-tmux-orchestrator-delivery-v1", data: { kind: "assignment", assignment_id: "e".repeat(32), assignment_kind: "implementation", round: 2 } });
+        assert.throws(() => events.get("session_start")({}, ctx), /invalid_custom_assignment_contract/);
+      } finally {
+        events.get("session_shutdown")();
+      }
+    }
+  } finally {
+    net.createConnection = originalConnect;
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+});
+
 test("worker report schemas expose only fields valid for each role", () => {
   const implementer = workerHooks.reportParameters("implementer");
   assert.deepEqual(implementer.properties.kind.enum, ["plan", "implementation"]);

@@ -30,6 +30,7 @@ EXPECTED_FILES=(
   extensions/orchestrator-worker.js
   extensions/orchestrator-worker-context.js
   extensions/orchestrator-worker-protocol.js
+  extensions/orchestrator-worker-roles.js
   extensions/orchestrator-worker-reporting.js
   extensions/orchestrator-worker-usage.js
   extensions/orchestrator-result-policy.js
@@ -71,6 +72,7 @@ EXPECTED_FILES=(
   pi_tmux_orchestrator/worker_resources.py
   pi_tmux_orchestrator/registry_resources.py
   pi_tmux_orchestrator/role_registry.py
+  pi_tmux_orchestrator/role_contracts.py
   pi_tmux_orchestrator/worker_context.py
   pi_tmux_orchestrator/evidence_reuse.py
   pi_tmux_orchestrator/workspace_capsules.py

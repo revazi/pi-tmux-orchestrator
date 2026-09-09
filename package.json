@@ -68,6 +68,7 @@
     "references/dashboard-design.md",
     "references/custom-roles.md",
     "bin/pi-tmux-agents",
+    "extensions/orchestrator-worker-roles.js",
     "pi_tmux_orchestrator/*.py"
   ],
   "pi": {
