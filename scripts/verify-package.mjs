@@ -21,6 +21,7 @@ const pythonFiles = [
   "configuration.py",
   "constants.py",
   "context_capsules.py",
+  "continuation.py",
   "controller.py",
   "dashboard.py",
   "models.py",
