@@ -263,7 +263,14 @@ rejected exactly as before. Manifest v6 adds bounded custom definition metadata
 and a pinned registry path, with metadata-only retained reads and fresh verification
 at bootstrap/restart. Existing v1–v5 manifests remain supported; ordinary starts
 still write v5. Live broker routing is explicitly gated until the remaining #60
-work lands. See [custom role bootstrap](custom-roles.md).
+work lands. The parent observer receives selected identities/contracts only from
+the authoritative CLI public role projection (`specialist_contract` for custom
+roles), never from snapshot/report fields. Missing legacy metadata keeps validation
+built-in-only. Duplicate snapshot roles are rejected, and restart/handover states
+remain explicit. Custom observer reports must match the bound read-only contract;
+parent report bounds prioritize built-in writer/reviewer evidence. The direct
+broker restart path also revalidates custom resources before generation mutation.
+See [custom role bootstrap and surfaces](custom-roles.md).
 
 ## Delivery and recovery
 

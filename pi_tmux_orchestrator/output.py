@@ -66,6 +66,9 @@ def public_role(
 
     if valid_custom_role_id(role):
         value["tool_policy"] = "custom-read-only-no-shell"
+        value["specialist_contract"] = config["custom_role"]["contract"]
+        # Retained reads never reopen live resources or imply launch authorization.
+        value["resource_verification"] = "not_checked"
     if config.get("pane_id") is not None:
         value["pane_id"] = config["pane_id"]
     return value

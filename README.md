@@ -139,8 +139,10 @@ Validate future custom-specialist definitions with
 user-global definitions and reviewed resource digests; it does **not** launch
 custom roles. The shared bootstrap now verifies pinned v6 role/resource bindings
 and isolates read-only resources. Internal custom contract/routing/accounting checks
-are covered at the synthetic workflow boundary; public starts and live lifecycle
-support remain gated pending control/presentation integration and TUI/RPC acceptance.
+and bounded control/presentation adapters are covered by model-free regressions.
+Public starts and live lifecycle support remain gated pending full custom TUI/RPC
+acceptance. Retained custom status exposes contracts, not resource bodies or claims
+of current resource validity.
 See the [registry, bootstrap, and workflow trust boundaries](references/custom-roles.md).
 
 Reusable defaults are user-global, never project-local:

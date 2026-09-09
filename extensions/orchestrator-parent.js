@@ -2,6 +2,7 @@ import { lstat, readFile } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import net from "node:net";
+import { publicRoleContracts } from "./orchestrator-role-metadata.js";
 import {
   BROKER_PROTOCOL_VERSION,
   brokerFrame,
@@ -62,11 +63,12 @@ async function readObserverIdentity(envelope) {
   const socketPath = envelope.data?.paths?.observer_socket;
   const session = envelope.data?.session;
   invalidUnless(validObserverPaths(coordination, socketPath, session), "observer_paths_unavailable");
+  const roles = envelope.data.roles === undefined ? undefined : publicRoleContracts(envelope.data.roles);
   const tokenPath = join(coordination, "control.token");
   invalidUnless(safeTokenMetadata(await lstat(tokenPath)), "observer_token_unsafe");
   const token = (await readFile(tokenPath, "ascii")).trim();
   invalidUnless(/^[a-f0-9]{32}$/.test(token), "observer_token_invalid");
-  return { session, socketPath, token };
+  return { session, socketPath, token, roles };
 }
 
 export async function attachParentObserver(pi, envelope, observer, onStop, options = {}) {
@@ -292,7 +294,7 @@ export async function attachParentObserver(pi, envelope, observer, onStop, optio
 
   function acceptFrame(rawValue, requestId, connection) {
     if (observer.closed) return;
-    const value = validateObserverFrame(rawValue, identity.session, requestId);
+    const value = validateObserverFrame(rawValue, identity.session, requestId, identity.roles);
     if (value.type === "response") return acceptResponse(connection);
     invalidUnless(connection.acknowledged, "observer_event_before_response");
     frameHandlers.get(value.type)(value);

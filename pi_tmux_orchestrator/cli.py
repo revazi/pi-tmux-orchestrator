@@ -56,6 +56,7 @@ from .supervisor_commands import (
 from .specialist_activation import SPECIALIST_ROLES
 from .worker_resources import worker_skill_argument
 from .role_registry import role_registry_command
+from .role_contracts import valid_role_identity
 from .worker_context import worker_context_argument
 
 
@@ -150,12 +151,19 @@ def rpc_command_id(value: str) -> str:
     return value
 
 
+def control_role(value: str) -> str:
+    if not valid_role_identity(value):
+        raise argparse.ArgumentTypeError(
+            "role must be a built-in or canonical custom identity"
+        )
+    return value
+
+
 def supervisor_cursor(value: str) -> tuple[str, int]:
     role, separator, sequence = value.partition("=")
-    roles = {"implementer", "reviewer", "probe", "playwright", "django"}
-    if separator != "=" or role not in roles or not sequence:
+    if separator != "=" or not valid_role_identity(role) or not sequence:
         raise argparse.ArgumentTypeError(
-            "supervisor cursor must use ROLE=SEQUENCE for a known role"
+            "supervisor cursor must use ROLE=SEQUENCE for a valid role identity"
         )
     return role, rpc_event_cursor(sequence)
 
@@ -397,8 +405,8 @@ def build_parser() -> argparse.ArgumentParser:
     supervisor_events.add_argument(
         "--role",
         action="append",
-        choices=("implementer", "reviewer", "probe", "playwright", "django"),
-        help="enabled role to include; repeat for multiple roles",
+        type=control_role,
+        help="enabled built-in or custom role to include; repeat for multiple roles",
     )
     supervisor_events.add_argument(
         "--cursor",
@@ -414,11 +422,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     supervisor_command.add_argument("session")
     supervisor_command.add_argument("--run", help="exact retained coordination run ID")
-    supervisor_command.add_argument(
-        "--role",
-        required=True,
-        choices=("implementer", "reviewer", "probe", "playwright", "django"),
-    )
+    supervisor_command.add_argument("--role", required=True, type=control_role)
     supervisor_command.add_argument("--command-id", required=True, type=rpc_command_id)
     supervisor_command.set_defaults(handler=supervisor_command_command)
 
@@ -434,11 +438,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="read durable metadata-only RPC supervisor events",
     )
     events.add_argument("session")
-    events.add_argument(
-        "--role",
-        required=True,
-        choices=("implementer", "reviewer", "probe", "playwright", "django"),
-    )
+    events.add_argument("--role", required=True, type=control_role)
     events.add_argument("--run", help="exact retained coordination run ID")
     events.add_argument("--after", type=rpc_event_cursor, default=0)
     events.add_argument("--limit", type=rpc_event_limit, default=50)
@@ -454,11 +454,7 @@ def build_parser() -> argparse.ArgumentParser:
         "send", help="send a steer/follow-up message to a role"
     )
     send.add_argument("session")
-    send.add_argument(
-        "--role",
-        required=True,
-        choices=("implementer", "reviewer", "probe", "playwright", "django"),
-    )
+    send.add_argument("--role", required=True, type=control_role)
     send.add_argument("--message")
     send.add_argument("--message-file")
     send.add_argument("--run", help="exact retained RPC coordination run ID")
@@ -493,11 +489,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     abort = subparsers.add_parser("abort", help="abort one active RPC worker operation")
     abort.add_argument("session")
-    abort.add_argument(
-        "--role",
-        required=True,
-        choices=("implementer", "reviewer", "probe", "playwright", "django"),
-    )
+    abort.add_argument("--role", required=True, type=control_role)
     abort.add_argument(
         "--command-id",
         type=rpc_command_id,
@@ -515,11 +507,7 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     restart.add_argument("session")
-    restart.add_argument(
-        "--role",
-        required=True,
-        choices=("implementer", "reviewer", "probe", "playwright", "django"),
-    )
+    restart.add_argument("--role", required=True, type=control_role)
     restart.add_argument("--provider")
     restart.add_argument("--model")
     restart.add_argument("--thinking", choices=THINKING_LEVELS)

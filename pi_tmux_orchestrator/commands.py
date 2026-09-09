@@ -981,6 +981,12 @@ def status_command(args: argparse.Namespace) -> CommandResult:
         for path, metadata in files:
             human_print(f"  {path.name}: {metadata.st_size} bytes")
     role_values = status_roles(coord, manifest)
+    for role_value in role_values:
+        if "specialist_contract" in role_value:
+            human_print(
+                f"  {role_value['name']}: contract={role_value['specialist_contract']} "
+                "tools=custom-read-only-no-shell resources=not_checked"
+            )
     if manifest_transport(manifest) == RPC_TRANSPORT:
         human_print("RPC workers:")
         for role_value in role_values:

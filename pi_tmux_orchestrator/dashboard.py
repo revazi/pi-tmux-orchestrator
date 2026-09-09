@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from .broker_store import public_broker_events, public_broker_snapshot
+from .role_registry import valid_custom_role_id
 
 MAX_DASHBOARD_EVENTS = 8
 
@@ -704,6 +705,7 @@ def _narrow_layout(
             [
                 Span(f"{marker} ", "success" if connected else "error"),
                 Span(name),
+                Span(" [read-only]" if valid_custom_role_id(name) else "", "muted"),
                 Span("  "),
                 Span(
                     _live_state(role, unicode=unicode),
@@ -767,6 +769,10 @@ def render_dashboard(
     safe_width = max(1, width - 1)
     safe_height = max(1, height)
     layout = layout_for(width, height)
+    if any(valid_custom_role_id(role) for role in manifest.get("roles", {})):
+        # Stacked rows preserve long custom identities rather than colliding in
+        # the fixed 11-column built-in table. Short panes show an omission count.
+        layout = "narrow"
     if layout == "full":
         lines = _full_layout(
             manifest,

@@ -2,13 +2,22 @@ const MAX_PARENT_REPORT_CHARS = 192 * 1024;
 const MAX_PARENT_PROGRESS_CHARS = 8 * 1024;
 export const PARENT_MESSAGE_TYPE = "pi-tmux-orchestrator-parent-v1";
 
+function reportPriority(event) {
+  if (event.role === "implementer") return 0;
+  if (event.role === "reviewer") return 1;
+  return 2;
+}
+
 function latestReports(events) {
   const byRole = new Map();
   for (const event of events) {
     const existing = byRole.get(event.role);
     if (!existing || event.round >= existing.round) byRole.set(event.role, event);
   }
-  return [...byRole.values()].sort((left, right) => left.role.localeCompare(right.role));
+  // Mandatory writer/reviewer evidence must not be displaced by custom fan-out.
+  return [...byRole.values()].sort((left, right) => (
+    reportPriority(left) - reportPriority(right) || left.role.localeCompare(right.role)
+  ));
 }
 
 function parentStateText(state) {

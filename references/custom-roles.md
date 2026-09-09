@@ -117,7 +117,7 @@ and the exact `read,grep,find,ls` tool policy. It still requires the built-in
 implementer and reviewer. Manifest v1–v5 remains supported, and ordinary starts
 still write v5. No new public start selection is exposed in this slice. Broker
 initialization and recovery explicitly reject custom worker sets until the remaining
-control/presentation integration and lifecycle acceptance land.
+public selection and lifecycle acceptance land.
 
 Retained reads validate bounded metadata without opening the registry/resources;
 a deleted or changed source does not make retained metadata unreadable. This is
@@ -176,10 +176,50 @@ review rounds. SQLite/public snapshot tests exclude private report/resource bodi
 
 **This is not public start or full lifecycle support.** Both temporary custom-role
 rejection gates remain. The tests use the lower workflow/storage boundary and
-synthetic streams, not custom tmux/TUI/RPC runs. Public selection, remaining bounded
-control/observer/dashboard adapters, and custom partial-start/disconnect/restart
-TUI/RPC and actual-Pi acceptance must land before removing the gates. No provider
+synthetic streams, not custom tmux/TUI/RPC runs. Public selection and custom
+partial-start/disconnect/restart TUI/RPC and actual-Pi acceptance must land before
+removing the gates. No provider
 savings or full lifecycle acceptance is established by these tests.
+
+## Retained control and presentation surfaces (partial #60)
+
+Control parsers (`send`, `abort`, `restart`, `events`, and Supervisor event/command
+reads) accept canonical custom identities, but syntax does not enable a role:
+the exact target manifest must contain it. Restart still requires `--yes`. The
+broker independently revalidates custom resources and its bound contract before
+changing generation or handing over a worker; CLI preflight and bootstrap checks
+remain in place. An accepted command retry acknowledges the existing command,
+not permission to launch again with revoked resources. Failure notifications can
+still mark a revoked-resource handover uncertain.
+
+`/or-send` obtains its bounded role picker from the exact run's status projection,
+not the built-in catalog or current global registry. The model tool accepts the
+same bounded identity syntax; the CLI remains authoritative for membership.
+No custom model/profile/skill/start override fields are added by these adapters.
+
+Custom public role records expose only `specialist_contract`, the fixed
+`custom-read-only-no-shell` tool policy, and `resource_verification: not_checked`
+in addition to ordinary role metadata. Status and Supervisor reads never reopen
+resources or claim current validity. Supervisor runtime liveness remains
+`not-observed`. Resource paths/digests and prompt/skill/report bodies are not added
+to these surfaces. The broker pane uses stacked rows for long custom identities,
+a read-only badge, and an omission count in short panes rather than colliding
+11-column names. At most thirteen worker identities are represented.
+
+The parent observer pins its selected identities/contracts from the CLI status or
+start projection before connecting. Snapshots and reports cannot register roles
+or replace that binding. Custom reports must match the specialist contract and
+cannot contain changed paths or writer/reviewer verdicts. Duplicate snapshot
+identities fail closed; `restarting` and `recovering` remain distinct states.
+Legacy envelopes without role metadata remain built-in-only. Parent updates stay
+bounded (192 × 1024 JavaScript string units for reports, 8 × 1024 for progress); writer and
+independent reviewer evidence is ordered before specialist fan-out so custom
+reports cannot displace it. Oversized omitted reports are reported honestly.
+
+Tests exercise retained reads with deleted resources, authenticated control with
+real SQLite and fake transport, and custom observer events over a local synthetic
+Unix-socket peer. These establish adapter behavior, not full custom worker
+TUI/RPC lifecycle acceptance. Both start gates remain; #60 stays open.
 
 ## Filesystem trust boundary
 

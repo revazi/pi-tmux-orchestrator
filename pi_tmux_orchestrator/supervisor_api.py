@@ -24,6 +24,7 @@ from .constants import (
 )
 from .configuration import retained_orchestration_config, retained_project_config
 from .models import OrchestrationError
+from .role_contracts import valid_role_identity
 from .output import bounded_message, public_role
 from .profiles import retained_execution_profile
 from .rpc_store import (
@@ -755,7 +756,7 @@ def supervisor_cursor_arguments(
 ) -> dict[str, int]:
     cursors: dict[str, int] = {}
     for role, sequence in values or []:
-        if role not in {"implementer", "reviewer", "probe", "playwright", "django"}:
+        if not valid_role_identity(role):
             raise OrchestrationError(
                 "Supervisor cursor role is invalid", "invalid_arguments"
             )
