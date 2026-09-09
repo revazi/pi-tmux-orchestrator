@@ -7,6 +7,7 @@ from typing import Any
 
 from .constants import MAX_RUN_STATE_BYTES, MAX_WORKER_DELIVERY_CHARS
 from .models import OrchestrationError
+from .role_contracts import validate_custom_contracts
 from .workspace_capsules import render_workspace_capsule
 
 RUN_STATE_ROLE_ORDER = ("implementer", "probe", "playwright", "django", "reviewer")
@@ -163,7 +164,9 @@ def _standard_report_lines(report: dict[str, Any]) -> list[str]:
     ]
 
 
-def _reuse_section(latest: dict[str, Any], observations: dict[str, str]) -> str:
+def _reuse_section(
+    latest: dict[str, Any], observations: dict[str, str], role_order: tuple[str, ...]
+) -> str:
     allowed = {"metadata_unchanged", "worktree_changed", "guidance_changed"}
     lines = [
         "## Investigation reuse hints (not verification authority)",
@@ -173,7 +176,7 @@ def _reuse_section(latest: dict[str, Any], observations: dict[str, str]) -> str:
         "changed/unavailable evidence requires reinspection. Revalidate before relying. "
         "Never reuse historical passes or approval; all required checks and independent review remain mandatory.",
     ]
-    for role in RUN_STATE_ROLE_ORDER:
+    for role in role_order:
         if role in latest:
             status = observations.get(role, "unavailable")
             if status not in allowed:
@@ -188,16 +191,19 @@ def render_run_state_capsule(
     *,
     specialist_activations: list[dict[str, Any]] | None = None,
     evidence_reuse: dict[str, str] | None = None,
+    custom_contracts: object = None,
 ) -> str:
     """Render one bounded latest-per-role evidence projection for worker context."""
 
+    contracts = validate_custom_contracts(custom_contracts)
+    role_order = (*RUN_STATE_ROLE_ORDER, *sorted(contracts))
     latest: dict[str, dict[str, Any]] = {}
     for event in report_events:
         role = event.get("role")
         report = event.get("report")
         event_round = event.get("round")
         if (
-            role in RUN_STATE_ROLE_ORDER
+            role in role_order
             and isinstance(report, dict)
             and isinstance(event_round, int)
             and event_round > 0
@@ -233,7 +239,14 @@ def render_run_state_capsule(
             )
         sections.append(_clip_utf8("\n".join(activation_lines), 2_000))
 
-    for role in RUN_STATE_ROLE_ORDER:
+    # Reserve space for every selected identity, including independent review.
+    # With no custom roles, preserve the existing built-in projection exactly.
+    report_bytes = (
+        min(RUN_STATE_REPORT_BYTES, (MAX_RUN_STATE_BYTES - 4_000) // len(role_order))
+        if contracts
+        else RUN_STATE_REPORT_BYTES
+    )
+    for role in role_order:
         event = latest.get(role)
         if event is None:
             continue
@@ -246,12 +259,12 @@ def render_run_state_capsule(
         section = "\n".join(
             [
                 f"## {role} · round {event['round']} · {report.get('kind', 'unknown')}",
-                f"Summary: {_clip_utf8(report.get('summary', ''), 1_000)}",
+                f"Summary: {_clip_utf8(report.get('summary', ''), min(1_000, report_bytes // 3) if contracts else 1_000)}",
                 *details,
             ]
         )
-        sections.append(_clip_utf8(section, RUN_STATE_REPORT_BYTES))
+        sections.append(_clip_utf8(section, report_bytes))
     # Append optional hints after required report evidence so they cannot displace it.
     if evidence_reuse is not None:
-        sections.append(_reuse_section(latest, evidence_reuse))
+        sections.append(_reuse_section(latest, evidence_reuse, role_order))
     return _clip_utf8("\n\n".join(sections), MAX_RUN_STATE_BYTES)

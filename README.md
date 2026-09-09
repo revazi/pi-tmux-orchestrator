@@ -138,8 +138,10 @@ Validate future custom-specialist definitions with
 `pi-tmux-agents role-registry --project /absolute/project`. This checks strict
 user-global definitions and reviewed resource digests; it does **not** launch
 custom roles. The shared bootstrap now verifies pinned v6 role/resource bindings
-and isolates read-only resources; live custom broker routing remains pending.
-See the [registry and bootstrap trust boundaries](references/custom-roles.md).
+and isolates read-only resources. Internal custom contract/routing/accounting checks
+are covered at the synthetic workflow boundary; public starts and live lifecycle
+support remain gated pending control/presentation integration and TUI/RPC acceptance.
+See the [registry, bootstrap, and workflow trust boundaries](references/custom-roles.md).
 
 Reusable defaults are user-global, never project-local:
 

@@ -94,6 +94,21 @@ def retained_custom_definitions(manifest: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def retained_custom_contracts(manifest: dict[str, Any], coord: Path) -> dict[str, str]:
+    """Derive broker authority only from a fully validated retained manifest.
+
+    This metadata read deliberately does not reopen resources. Launch/restart
+    must still perform fresh resource verification; worker frames are never inputs.
+    """
+    from .storage import validate_manifest
+
+    validated = validate_manifest(manifest, coord)
+    return {
+        name: definition["contract"]
+        for name, definition in retained_custom_definitions(validated).items()
+    }
+
+
 def _verified_text(resource: dict[str, str], limit: int, project: Path) -> str:
     content = read_global_resource(Path(resource["path"]), limit, project=project)
     if content is None or hashlib.sha256(content).hexdigest() != resource["sha256"]:

@@ -39,6 +39,7 @@ class BrokerWorkflowSupport:
 
     coord: Path
     manifest: dict[str, Any]
+    custom_contracts: dict[str, str]
     clients: dict[str, Client]
     recent_reports: list[dict[str, Any]]
     latest_reports: dict[str, dict[str, Any]]
@@ -116,7 +117,9 @@ class BrokerWorkflowSupport:
         )
 
     async def handle_report(self, client: Client, message: dict[str, Any]) -> None:
-        report = validate_report(message["report"], client.role)
+        report = validate_report(
+            message["report"], client.role, custom_contracts=self.custom_contracts
+        )
         report_usage = message.get("usage")
         if report_usage is not None and not self._valid_report_usage(report_usage):
             raise OrchestrationError(
@@ -273,6 +276,7 @@ class BrokerWorkflowSupport:
             list(self.latest_reports.values()),
             round_number,
             specialist_activations=activations,
+            custom_contracts=self.custom_contracts,
             evidence_reuse=(
                 self.evidence_reuse.snapshot()
                 if recipient in self.evidence_reuse.retained_roles
@@ -331,7 +335,7 @@ class BrokerWorkflowSupport:
     async def route_report(
         self, role: str, round_number: int, report: dict[str, Any]
     ) -> None:
-        if role == "probe":
+        if role == "probe" or role in self.custom_contracts:
             await self._deliver_run_state(("implementer", "reviewer"), round_number)
             await self.maybe_assign_reviewer(round_number)
             return
@@ -379,11 +383,14 @@ class BrokerWorkflowSupport:
                     )
                     if decision["decision"] == "run":
                         activated.append(specialist)
+            # Explicit selection requires one custom report per implementation round.
+            # Custom deterministic activation/profile policy remains outside this workflow.
+            activated.extend(self.custom_contracts)
             await self._deliver_run_state(tuple(["reviewer", *activated]), round_number)
             for specialist in activated:
                 await self.assign(
                     specialist,
-                    specialist,
+                    self.custom_contracts.get(specialist, specialist),
                     round_number,
                     self._assignment(specialist, round_number),
                 )
@@ -432,10 +439,9 @@ class BrokerWorkflowSupport:
                 (round_number,),
             ).fetchone()
             completed = {
-                row["role"]
+                row["role"]: row["kind"]
                 for row in database.execute(
-                    "SELECT role FROM reports WHERE round=? "
-                    "AND role IN ('probe','playwright','django')",
+                    "SELECT role,kind FROM reports WHERE round=?",
                     (round_number,),
                 )
             }
@@ -460,6 +466,10 @@ class BrokerWorkflowSupport:
         if (
             implementation is not None
             and specialists_ready
+            and all(
+                completed.get(role) == contract
+                for role, contract in self.custom_contracts.items()
+            )
             and reviewer_assignment is None
         ):
             await self.assign(

@@ -11,6 +11,7 @@ import time
 from pathlib import Path, PurePosixPath
 
 from .constants import KNOWN_ROLES
+from .role_contracts import validate_custom_contracts
 
 MAX_INVENTORY_BYTES = 256 * 1024
 MAX_WORKTREE_FILES = 4096
@@ -150,8 +151,15 @@ def worktree_stamp(root: Path) -> str | None:
 class EvidenceReuse:
     """At most one private receipt per configured role; no report bodies stored."""
 
-    def __init__(self, project: Path, retained_roles: set[str]) -> None:
-        if retained_roles - KNOWN_ROLES:
+    def __init__(
+        self,
+        project: Path,
+        retained_roles: set[str],
+        *,
+        custom_contracts: object = None,
+    ) -> None:
+        self.roles = KNOWN_ROLES | validate_custom_contracts(custom_contracts).keys()
+        if retained_roles - self.roles:
             raise ValueError("unknown_retained_role")
         self.project = project
         self.retained_roles = frozenset(retained_roles)
@@ -159,7 +167,7 @@ class EvidenceReuse:
         self.receipts: dict[str, tuple[str | None, int]] = {}
 
     def remember(self, role: str) -> None:
-        if role not in KNOWN_ROLES:
+        if role not in self.roles:
             raise ValueError("unknown_evidence_role")
         if self.retained_roles:
             self.receipts[role] = (

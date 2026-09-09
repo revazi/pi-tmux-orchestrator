@@ -15,6 +15,7 @@ from pi_tmux_orchestrator.broker import Broker, initialize_broker_run
 from pi_tmux_orchestrator.configuration import public_project_config
 from pi_tmux_orchestrator.constants import CUSTOM_READ_ONLY_TOOLS, MAX_MANIFEST_BYTES
 from pi_tmux_orchestrator.custom_role_resources import (
+    retained_custom_contracts,
     retained_custom_definitions,
     select_custom_roles,
     verify_custom_role,
@@ -26,7 +27,7 @@ from pi_tmux_orchestrator.worker_resources import prepare_worker_resources
 from test_broker import BrokerFixture
 
 
-class CustomRoleResourceTests(BrokerFixture):
+class CustomRoleResourceFixture(BrokerFixture):
     def setUp(self):
         super().setUp()
         self.root = Path(self.temporary.name).resolve()
@@ -85,6 +86,29 @@ class CustomRoleResourceTests(BrokerFixture):
             json.dumps({"version": 1, "roles": [self.definition]}), encoding="utf-8"
         )
         self.registry.chmod(0o600)
+
+
+class CustomRoleResourceTests(CustomRoleResourceFixture):
+    def test_contract_map_is_detached_validated_metadata_not_live_resources(self):
+        self.registry.unlink()
+        Path(self.prompt["path"]).unlink()
+        contracts = retained_custom_contracts(self.manifest, self.coord)
+        self.assertEqual(contracts, {self.name: "probe"})
+        self.manifest["roles"][self.name]["custom_role"]["contract"] = "reviewer"
+        self.assertEqual(contracts, {self.name: "probe"})
+        with self.assertRaises(OrchestrationError):
+            retained_custom_contracts(self.manifest, self.coord)
+        for change in ("writer_tools", "no_reviewer", "unknown_role"):
+            invalid = copy.deepcopy(self.legacy)
+            if change == "writer_tools":
+                invalid["roles"]["reviewer"]["tools"] = None
+            elif change == "no_reviewer":
+                del invalid["roles"]["reviewer"]
+            else:
+                invalid["roles"]["intruder"] = invalid["roles"]["reviewer"]
+            with self.subTest(change=change), self.assertRaises(OrchestrationError):
+                retained_custom_contracts(invalid, self.coord)
+        self.assertEqual(retained_custom_contracts(self.legacy, self.coord), {})
 
     def test_selection_is_explicit_bounded_unique_and_body_free(self):
         for names in (
