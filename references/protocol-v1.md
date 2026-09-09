@@ -350,7 +350,7 @@ sequential or parallel tools, pauses downstream assignments, or changes review
 routing. Direct operator steering remains available, and no budget override is
 needed because budget policy never stops work.
 
-A separately selected version-1 `continuation_policy` may cap additional
+A separate CLI-selected version-1 `continuation_policy` may cap additional
 implementation rounds. The broker checks the count of distinct implementer
 implementation rounds after round 1 in the same transaction that creates an
 assignment. At the cap it instead records `pending_repair_round`, emits
@@ -371,7 +371,7 @@ converts interrupted routing to `uncertain` before serving observers.
 Duplicates never extend authorization
 or replay work. Interruption leaves uncertain routing/delivery, not approval.
 This action is distinct from observational budget settings and cannot satisfy
-reviewer acceptance. Public CLI wiring follows separately; callers must explicitly authorize this action.
+reviewer acceptance. Its CLI requires explicit `--yes` and `--command-id`.
 
 A deterministic synthetic two-round regression separately measures serialized
 provider-visible message characters across the assignment projection. CI

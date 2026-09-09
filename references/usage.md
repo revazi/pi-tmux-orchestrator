@@ -218,6 +218,48 @@ because thresholds never pause work. A worker restart restores warning/hard
 markers from its exact Pi session and cannot silently reset the assignment
 provider-call count.
 
+### Repair-round continuation limit (CLI opt-in)
+
+`start --max-repair-rounds N` caps additional implementation rounds across the
+whole run. Omission disables the cap; `0` permits the initial implementation and
+mandatory review but pauses before the first repair. A round counts when its
+implementation assignment is created, including uncertain/failed delivery.
+Phased plan/implementation within round 1 counts as the initial work; specialist
+and review assignments are not repairs. Post-ready operator follow-ups also count
+as additional implementation rounds. Counts never reset on worker restart.
+
+This is separate from observational warning/hard budgets. It does not bound an
+in-flight assignment, provider calls, tool calls, or exact token expenditure.
+The supported range 0–1000000 is a validation bound, not a recommended allowance.
+No numerical execution limit is enabled by default.
+
+At the cap the broker retains `pending_repair_round`, emits
+`continuation_paused`, and enters `needs_attention` without starting the repair.
+The result is incomplete, not approved. `status` and Supervisor snapshots expose
+`workflow.continuation`; the dashboard labels the repair limit. Parent observers
+receive the existing attention event; inspect status for the specific reason.
+Ordinary `send` cannot resume this idle, unassigned worker.
+
+To explicitly authorize **one** additional repair round:
+
+```sh
+pi-tmux-agents continue SESSION --yes --command-id YOUR_32_LOWERCASE_HEX_ID
+```
+
+Choose a new idempotency key for each new approval; reuse the exact key on retries.
+The broker persists approval and command identity before assignment delivery.
+Duplicate approvals do not extend the cap again. The existing run-wide count is
+preserved and the cap increases by one; required independent review still follows.
+Acknowledgement is not completion. A crash during delivery becomes uncertain and
+must not be blindly replayed. Whole-broker restart loses in-memory evidence;
+continuation without the retained in-process worker baseline fails closed rather
+than reconstructing private report bodies from metadata. Inspect status/recovery
+before deciding whether to stop and start a newly authorized run.
+
+These controls are initially exposed through the terminal CLI, not the Pi start
+form/model-tool schema. They do not alter installed defaults or authorize an
+agent to approve its own continuation.
+
 ### `start`
 
 Creates a detached tmux grid with an implementer, reviewer, broker/status

@@ -109,6 +109,20 @@ class DashboardFixture(unittest.TestCase):
 
 
 class DashboardRenderingTests(DashboardFixture):
+    def test_repair_limit_is_visibly_incomplete(self) -> None:
+        snapshot = copy.deepcopy(self.snapshot)
+        snapshot["workflow"].update(
+            {
+                "state": "needs_attention",
+                "continuation": {"pause_reason": "repair_round_limit"},
+            }
+        )
+        rendered = render_dashboard(
+            self.manifest, snapshot, self.events, width=180, height=30, color=False
+        )
+        self.assertIn("REPAIR LIMIT · INCOMPLETE", rendered)
+        self.assertIn("NEEDS_ATTENTION", rendered)
+
     def test_full_layout_has_deliberate_visual_hierarchy_and_role_metadata(
         self,
     ) -> None:

@@ -282,6 +282,7 @@ def main() -> int:
         context_capsule_file=None,
         session=session,
         implementation_flow="phased",
+        max_repair_rounds=1,
         with_probe=True,
         probe_task="Synthetic probe evidence.",
         probe_task_file=None,
@@ -782,6 +783,61 @@ def main() -> int:
         ):
             raise AssertionError("post-ready repair command was not idempotent")
 
+        # Model-free ready boundary again: a second follow-up must hit the
+        # cap through the live broker, then require one idempotent CLI approval.
+        with ORCHESTRATOR.connect_broker_database(coord) as database:
+            database.execute("UPDATE assignments SET state='completed'")
+            database.execute("UPDATE roles SET active_assignment_id=NULL,state='idle'")
+            ORCHESTRATOR.set_meta(database, "workflow_state", "ready")
+        ORCHESTRATOR.send_command(
+            argparse.Namespace(
+                session=session,
+                run=None,
+                role="implementer",
+                message="Synthetic capped follow-up.",
+                message_file=None,
+                delivery="follow-up",
+                command_id="e" * 32,
+            )
+        )
+        for _ in range(2):
+            if receive(clients["implementer"])["type"] != "context":
+                raise AssertionError(
+                    "capped repair unexpectedly triggered an assignment"
+                )
+        deadline = time.time() + 5
+        while time.time() < deadline:
+            paused = ORCHESTRATOR.public_broker_snapshot(coord)["workflow"]
+            if paused["state"] == "needs_attention":
+                break
+            time.sleep(0.02)
+        if (
+            paused["state"] != "needs_attention"
+            or paused["continuation"]["pending_repair_round"] != 3
+            or paused["continuation"]["repair_rounds_admitted"] != 1
+        ):
+            raise AssertionError("live broker did not enforce the run-wide repair cap")
+        approval_args = argparse.Namespace(
+            session=session, yes=True, command_id="f" * 32
+        )
+        ORCHESTRATOR.continue_command(approval_args)
+        continued = receive(clients["implementer"])
+        if continued.get("type") != "assignment" or continued.get("round") != 3:
+            raise AssertionError(
+                "explicit continuation did not assign the pending repair"
+            )
+        retry = ORCHESTRATOR.continue_command(approval_args)
+        continued_state = ORCHESTRATOR.public_broker_snapshot(coord)["workflow"]
+        if (
+            not retry.data["duplicate"]
+            or continued_state["continuation"]["max_repair_rounds"] != 2
+            or continued_state["continuation"]["repair_rounds_admitted"] != 2
+            or continued_state["state"] != "active"
+        ):
+            raise AssertionError(
+                "live continuation approval reset or duplicated the allowance"
+            )
+
         for stream in clients.values():
             stream.close()
         ORCHESTRATOR.stop_command(argparse.Namespace(session=session, yes=True))
@@ -792,6 +848,7 @@ def main() -> int:
         tui_arguments = argparse.Namespace(**vars(arguments))
         tui_arguments.session = tui_session
         tui_arguments.rpc_workers = False
+        tui_arguments.max_repair_rounds = None
         tui_arguments.with_probe = False
         tui_arguments.probe_task = None
         tui_arguments.with_playwright = False
@@ -856,7 +913,8 @@ def main() -> int:
         print("OK live worker progress refreshed the broker dashboard without handoff")
         print("OK broker send/abort acknowledgement and idempotent retry")
         print(
-            "OK post-ready implementer guidance opened one review-required repair round"
+            "OK post-ready implementer guidance opened one review-required repair round; "
+            "repair cap paused and explicit idempotent continuation admitted one more"
         )
         print("OK metadata-only status and Supervisor API v2 retained reads")
         print("OK exact tmux targeting preserved prefix collision")

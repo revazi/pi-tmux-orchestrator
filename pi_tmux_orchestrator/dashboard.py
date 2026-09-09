@@ -360,6 +360,11 @@ def _header_lines(
         Span("   ROUND ", "muted"),
         Span(round_text, "heading"),
     ]
+    continuation = snapshot.get("workflow", {}).get("continuation", {})
+    if continuation.get("pause_reason") == "repair_round_limit":
+        state_line.extend(
+            [Span("   ", "normal"), Span("REPAIR LIMIT · INCOMPLETE", "warning")]
+        )
     usage = snapshot.get("usage", {})
     if usage.get("soft_total_budget_exceeded") is True:
         state_line.extend([Span("   ", "normal"), Span("SOFT RUN BUDGET", "warning")])

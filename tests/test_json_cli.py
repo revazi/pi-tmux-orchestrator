@@ -213,6 +213,8 @@ class JsonMainTests(unittest.TestCase):
                     "economy",
                     "--implementation-flow",
                     "phased",
+                    "--max-repair-rounds",
+                    "2",
                     "--context-capsule",
                     context_canary,
                     "--workspace-capsule",
@@ -263,6 +265,9 @@ class JsonMainTests(unittest.TestCase):
         self.assertNotIn("pi_tmux_orchestrator/broker.py", raw)
         self.assertEqual(data["transport"], "rpc")
         self.assertEqual(data["implementation_flow"], "phased")
+        self.assertEqual(
+            data["continuation_policy"], {"version": 1, "max_repair_rounds": 2}
+        )
         self.assertEqual(data["forced_specialists"], ["playwright"])
         self.assertEqual(
             data["execution_profile"],
