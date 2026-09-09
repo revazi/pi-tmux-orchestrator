@@ -15,6 +15,7 @@ Provide a small, reusable, intentionally tmux-scoped Pi skill and modular standa
 - `pi_tmux_orchestrator/configuration.py`: strict user-global worker model policy
 - `pi_tmux_orchestrator/profiles.py`: immutable packaged and strict custom execution-profile policy
 - `pi_tmux_orchestrator/budgeting.py`: strict user-global and per-run usage budget policy
+- `pi_tmux_orchestrator/continuation.py`: opt-in run-wide repair admission and explicit one-round approval policy
 - `pi_tmux_orchestrator/broker.py`: single-writer runtime, worker transport, delivery, and lifecycle/recovery
 - `pi_tmux_orchestrator/broker_workflow.py`: report acceptance, bounded run-state projection, and single/phased specialist/reviewer routing
 - `pi_tmux_orchestrator/broker_control.py`: authenticated idempotent operator send/abort/restart handling

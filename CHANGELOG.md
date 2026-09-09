@@ -6,6 +6,8 @@ All notable changes to this project are documented here.
 
 ### Added
 
+- Added a strict read-only repair continuation policy and metadata contract, independently tested without broker routing or CLI activation
+
 ### Changed
 
 - Extracted report acceptance, bounded run-state projection, and specialist/reviewer routing into a broker workflow support boundary without changing usage accounting, review authority, or recovery behavior
