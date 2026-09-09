@@ -6,6 +6,7 @@ All notable changes to this project are documented here.
 
 ### Added
 
+- Added broker-enforced repair-round admission, persisted continuation intent, and idempotent one-round approval without activating a default limit; public CLI wiring follows separately
 - Added a strict read-only repair continuation policy and metadata contract, independently tested without broker routing or CLI activation
 
 ### Changed

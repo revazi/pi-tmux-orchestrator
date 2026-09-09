@@ -38,6 +38,7 @@ from .constants import (
     MAX_CONTEXT_CAPSULE_BYTES,
 )
 from .context_capsules import render_worker_baseline
+from .continuation import repair_limit_reached
 from .dashboard import BrokerDashboard
 from .models import OrchestrationError
 from .output import bounded_message
@@ -685,34 +686,63 @@ class Broker(BrokerControlSupport, BrokerObserverSupport, BrokerWorkflowSupport)
         delivery_id = secrets.token_hex(16)
         now = utc_now()
         with connect_broker_database(self.coord) as database:
-            database.execute(
-                "INSERT INTO assignments(id,role,round,kind,state,delivery_id,created_at,updated_at) "
-                "VALUES (?,?,?,?,?,?,?,?)",
-                (
-                    assignment_id,
-                    role,
-                    round_number,
-                    kind,
-                    "delivering",
-                    delivery_id,
-                    now,
-                    now,
-                ),
-            )
-            database.execute(
-                "UPDATE roles SET active_assignment_id=?,state='active',activity=NULL,"
-                "activity_at=NULL,updated_at=? WHERE role=?",
-                (assignment_id, now, role),
-            )
-            record_event(
-                database,
-                "assignment_created",
-                role=role,
-                round_number=round_number,
-                assignment_id=assignment_id,
-                delivery_id=delivery_id,
-                status="delivering",
-            )
+            paused = repair_limit_reached(database, role, kind, round_number)
+            if paused:
+                set_meta(database, "workflow_state", "needs_attention")
+                database.execute(
+                    "INSERT INTO meta(key,value) VALUES ('pending_repair_round',?) "
+                    "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                    (str(round_number),),
+                )
+                record_event(
+                    database,
+                    "continuation_paused",
+                    role=role,
+                    round_number=round_number,
+                    status="repair_round_limit",
+                )
+            else:
+                database.execute(
+                    "INSERT INTO assignments(id,role,round,kind,state,delivery_id,created_at,updated_at) "
+                    "VALUES (?,?,?,?,?,?,?,?)",
+                    (
+                        assignment_id,
+                        role,
+                        round_number,
+                        kind,
+                        "delivering",
+                        delivery_id,
+                        now,
+                        now,
+                    ),
+                )
+                database.execute(
+                    "UPDATE roles SET active_assignment_id=?,state='active',activity=NULL,"
+                    "activity_at=NULL,updated_at=? WHERE role=?",
+                    (assignment_id, now, role),
+                )
+                if (
+                    role == "implementer"
+                    and kind == "implementation"
+                    and round_number > 1
+                ):
+                    cleared = database.execute(
+                        "DELETE FROM meta WHERE key='pending_repair_round'"
+                    )
+                    if cleared.rowcount:
+                        set_meta(database, "workflow_state", "active")
+                record_event(
+                    database,
+                    "assignment_created",
+                    role=role,
+                    round_number=round_number,
+                    assignment_id=assignment_id,
+                    delivery_id=delivery_id,
+                    status="delivering",
+                )
+        if paused:
+            await self.broadcast_workflow("needs_attention", round_number)
+            return
         await self.send(
             self.clients[role],
             {
@@ -1049,6 +1079,7 @@ def initialize_broker_run(
     budget_policy: dict[str, Any] | None = None,
     implementation_flow: str = DEFAULT_IMPLEMENTATION_FLOW,
     forced_specialists: tuple[str, ...] | list[str] = (),
+    max_repair_rounds: int | None = None,
     soft_role_tokens: int | None = None,
     soft_total_tokens: int | None = None,
 ) -> None:
@@ -1080,6 +1111,7 @@ def initialize_broker_run(
         budget_policy=policy,
         implementation_flow=implementation_flow,
         forced_specialists=forced_specialists,
+        max_repair_rounds=max_repair_rounds,
     )
     startup_payload: dict[str, Any] = {
         "task": task,

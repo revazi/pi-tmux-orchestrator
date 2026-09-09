@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import secrets
 from pathlib import Path
 from typing import Any
@@ -10,6 +11,7 @@ from typing import Any
 from .broker_store import connect_broker_database, record_event, set_meta, utc_now
 from .constants import BROKER_PROTOCOL_VERSION, MAX_RPC_COMMANDS, RPC_TOKEN_PATTERN
 from .models import OrchestrationError
+from .continuation import approved_repair_extension
 
 
 class BrokerControlSupport:
@@ -53,7 +55,8 @@ class BrokerControlSupport:
             or not isinstance(token, str)
             or not RPC_TOKEN_PATTERN.fullmatch(token)
             or role not in self.manifest["roles"]
-            or action not in {"send", "abort", "restart", "restart_failed"}
+            or action not in {"send", "abort", "restart", "restart_failed", "continue"}
+            or (action == "continue" and role != "implementer")
             or delivery not in {None, "steer", "follow-up"}
             or (action == "send" and (not isinstance(body, str) or not body.strip()))
             or (action != "send" and (body is not None or delivery is not None))
@@ -123,9 +126,33 @@ class BrokerControlSupport:
                 else:
                     status = "conflict"
             elif role not in self.clients or (
-                action == "restart" and role not in self.worker_baselines
+                action in {"restart", "continue"} and role not in self.worker_baselines
             ):
                 status = "uncertain"
+            elif action == "continue":
+                try:
+                    repair_round, policy = approved_repair_extension(database)
+                except OrchestrationError as error:
+                    if error.code != "conflict":
+                        raise
+                    status = "conflict"
+                else:
+                    status = "accepted"
+                    set_meta(
+                        database,
+                        "continuation_policy",
+                        json.dumps(policy, separators=(",", ":")),
+                    )
+                    # A crash after approval must not silently replay the new assignment.
+                    set_meta(database, "workflow_state", "routing")
+                    record_event(
+                        database,
+                        "continuation_approved",
+                        role=role,
+                        round_number=repair_round,
+                        delivery_id=command_id,
+                        status="one_repair_round",
+                    )
             elif (
                 action == "send"
                 and database.execute(
@@ -184,17 +211,18 @@ class BrokerControlSupport:
                 status=status,
                 delivery_id=command_id,
             )
-        await self.send_raw(
-            writer,
-            {
-                "version": BROKER_PROTOCOL_VERSION,
-                "type": "response",
-                "id": command_id,
-                "success": status == "accepted",
-                "status": status,
-                "duplicate": False,
-            },
-        )
+        response = {
+            "version": BROKER_PROTOCOL_VERSION,
+            "type": "response",
+            "id": command_id,
+            "success": status == "accepted",
+            "status": status,
+            "duplicate": False,
+        }
+        if action == "continue" and repair_round is not None:
+            await self._finish_repair_continuation(writer, response, repair_round)
+            return
+        await self.send_raw(writer, response)
         if restarted_client is not None:
             restarted_client.writer.close()
         self.refresh_dashboard()
@@ -209,6 +237,61 @@ class BrokerControlSupport:
             self.refresh_dashboard()
         if uncertain_round is not None:
             await self.broadcast_workflow("uncertain", uncertain_round)
+
+    async def _finish_repair_continuation(
+        self,
+        writer: asyncio.StreamWriter,
+        response: dict[str, Any],
+        round_number: int,
+    ) -> None:
+        try:
+            await self.assign(
+                "implementer",
+                "implementation",
+                round_number,
+                self._assignment("implementer", round_number),
+            )
+            with connect_broker_database(self.coord, readonly=True) as database:
+                pending = database.execute(
+                    "SELECT value FROM meta WHERE key='pending_repair_round'"
+                ).fetchone()
+                assignment = database.execute(
+                    "SELECT 1 FROM assignments WHERE role='implementer' "
+                    "AND kind='implementation' AND round=?",
+                    (round_number,),
+                ).fetchone()
+                state = database.execute(
+                    "SELECT value FROM meta WHERE key='workflow_state'"
+                ).fetchone()[0]
+                current_round = self.current_round(database)
+            if (
+                pending is not None and int(pending["value"]) == round_number
+            ) or assignment is None:
+                raise OrchestrationError(
+                    "Approved repair was not assigned", "broker_uncertain"
+                )
+            # A worker may already have reported while its delivery drained.
+            # Do not overwrite a newer attention/ready/uncertain observer state.
+            await self.broadcast_workflow(state, current_round)
+            await self.send_raw(writer, response)
+        except (Exception, asyncio.CancelledError) as error:
+            with connect_broker_database(self.coord) as database:
+                set_meta(database, "workflow_state", "uncertain")
+                record_event(
+                    database,
+                    "continuation_uncertain",
+                    role="implementer",
+                    round_number=round_number,
+                    status="uncertain",
+                )
+            await self.broadcast_workflow("uncertain", round_number)
+            if isinstance(error, asyncio.CancelledError):
+                raise
+            raise OrchestrationError(
+                "Repair continuation became uncertain", "broker_uncertain"
+            ) from error
+        finally:
+            self.refresh_dashboard()
 
     async def _handle_operator_send(
         self,
