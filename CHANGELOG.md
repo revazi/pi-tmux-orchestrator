@@ -6,7 +6,7 @@ All notable changes to this project are documented here.
 
 ### Added
 
-- Added a gated internal manifest-v6 custom start projection and model-free real-tmux TUI/RPC launcher smoke covering verified snapshots, fixed tools, brokered mandatory review, authenticated restart, and revoked-resource rejection; public live starts and connected actual-Pi lifecycle acceptance remain pending
+- Added a gated internal manifest-v6 custom start projection and model-free real-tmux TUI/RPC launcher smoke that loads the real worker extension, covering verified snapshots, extension-enforced fixed tools, brokered mandatory review, authenticated restart, and revoked-resource rejection; public live starts and connected actual-Pi lifecycle acceptance remain pending
 
 - Added manifest-v6 custom role/resource bindings and shared fail-closed worker bootstrap: pinned registry revalidation, private verified Markdown snapshots, fixed read-only launch tools, and disabled automatic extension discovery; public custom starts and broker routing remain pending
 

@@ -264,13 +264,16 @@ cannot make a live custom start available by itself.
 
 `tests/custom_worker_tmux_smoke.py` constructs that internal v6 projection and
 runs real tmux panes through the production `_run-agent` entry point in both TUI
-and RPC modes. It deliberately substitutes a bounded model-free `pi` process that
-speaks broker-v1; the real broker, SQLite store, TUI launcher, RPC supervisor,
+and RPC modes. A bounded model-free Pi host loads the real JavaScript worker
+extension and supplies only its documented registration/event surface; the
+extension owns broker-v1 framing, delivery acknowledgement, assignment state,
+and report submission. The real broker, SQLite store, TUI launcher, RPC supervisor,
 tmux respawn, resource verification, snapshot creation, and mandatory workflow
 routing remain active. It verifies:
 
-- Exact launch-bound identity/contract, fixed no-shell tools, disabled automatic
-  extension/prompt/skill discovery, and one explicit trusted extension/skill.
+- Exact launch-bound identity/contract, extension-enforced active no-shell tools,
+  disabled automatic extension/prompt/skill discovery, and one explicit trusted
+  extension/skill.
 - Private system-prompt and skill snapshots for both presentations without task,
   report, prompt, or skill bodies entering SQLite.
 - Implementation-to-custom-to-independent-review routing through terminal approval.
@@ -278,14 +281,13 @@ routing remain active. It verifies:
   TUI/RPC process; resource revocation rejects restart without replacing or
   disconnecting the healthy worker.
 
-This is **not actual Pi or provider evidence**: the synthetic executable does not
-load the JavaScript worker extension or issue model requests. Existing isolated
-actual-Pi smoke establishes bootstrap/tool discovery only, not complete brokered
-report/restart behavior. Full custom partial-start/launch rollback, worker and
-broker-process disconnect/recovery under real extension framing, stale-generation
-and uncertain-handover behavior in real tmux, and connected actual-Pi lifecycle
-evidence remain outstanding before removing either lower gate. #60 remains open;
-#61 stays separate.
+This is **not actual Pi or provider evidence**: the synthetic host loads the real
+extension but does not implement Pi's full runtime or issue model requests. Existing
+isolated actual-Pi smoke establishes bootstrap/tool discovery only, not complete
+brokered report/restart behavior. Full custom partial-start/launch rollback,
+broker-process recovery, stale-generation and uncertain-handover behavior in real
+tmux, and connected actual-Pi lifecycle evidence remain outstanding before
+removing either lower gate. #60 remains open; #61 stays separate.
 
 ## Retained control and presentation surfaces (partial #60)
 
