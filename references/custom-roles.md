@@ -69,8 +69,9 @@ custom workers. The orchestrator does not submit an inference prompt during a pr
 
 Without `--dry-run`, any custom selection fails with `custom_start_not_enabled`
 before dependency checks, resource reads, state creation, or tmux mutation. Both
-lower broker gates also remain. These planning regressions are not connected
-TUI/RPC/actual-Pi lifecycle acceptance; #60 stays open.
+lower broker gates also remain. These planning regressions do not themselves
+establish the connected lifecycle evidence documented below; #60 stays open
+until the gates are reviewed separately.
 
 ## Definition format
 
@@ -149,8 +150,9 @@ no shell-based verification is available to custom workers in this slice.
 
 Model-free bridge tests cover assignments, reports, restoration rejection, and
 write-tool denial. The isolated actual-Pi smoke checks RPC startup and the active
-tool set without prompts/provider calls. Full custom-role tmux/TUI/RPC orchestration,
-routing, usage, and recovery acceptance remain #60.
+tool set without prompts/provider calls. Connected actual-Pi startup and recovery
+coverage is documented below; complete report generation remains outside the
+provider-free boundary.
 
 ## Resource-bound bootstrap and retained metadata (partial #60)
 
@@ -188,7 +190,8 @@ project instructions and the separate child trust boundary remain enabled. This
 prevents discovered extensions from replacing a supposedly read-only built-in tool.
 The actual-Pi RPC smoke covers snapshot skill discovery after source mutation,
 fixed tools despite skill `allowed-tools` claims, and disabled global/project
-extension discovery. It does not exercise full custom broker lifecycle acceptance.
+extension discovery. The separate staged-package lifecycle smoke below connects
+actual Pi to the broker without submitting an inference prompt.
 
 ## Gated broker workflow (partial #60)
 
@@ -308,12 +311,42 @@ cannot erase `recovering` or durable `uncertain`, and an accepted assignment
 acknowledgement restores an otherwise idle/disconnected reconnect to `active`.
 Only the assignment acknowledgement completes a prepared handover.
 
-This is **not actual Pi or provider evidence**: the synthetic host loads the real
-extension but does not implement Pi's full runtime or issue model requests. Existing
-isolated actual-Pi smoke establishes bootstrap/tool discovery only, not complete
-brokered report/restart behavior. Connected actual-Pi lifecycle evidence remains
-outstanding before removing either lower gate. #60 remains open; #61 stays
-separate.
+This boundary is **not actual Pi or provider evidence**: the synthetic host loads
+the real extension but does not implement Pi's full runtime or issue model
+requests. The distinct actual-Pi boundary below now covers connected startup and
+recovery, but intentionally does not claim a generated report or provider behavior.
+#60 remains open for separately reviewed gate removal; #61 stays separate.
+
+## Connected actual-Pi boundary (provider-free #136)
+
+`tests/actual_pi_custom_lifecycle.py` runs the actual installed Pi executable for
+the custom worker in real tmux TUI and RPC panes while the built-in workers remain
+bounded model-free peers. It is invoked against the exact locally staged npm
+package from `scripts/test.sh`, not an installed global package. The process uses
+disposable HOME, XDG, npm, Pi, state, session, and tmux directories under an
+`env -i` allowlist. A literal non-secret local model entry permits idle startup;
+a loopback request sentinel and Pi offline mode require zero provider requests.
+No operator auth or package settings are read or changed.
+
+For both presentations the smoke requires the staged worker extension to
+authenticate the exact custom identity/contract, consume the freshly verified
+prompt and skill snapshots, retain the fixed
+`read,grep,find,ls,orchestrator_report` tool argument, and disable automatic
+extension, prompt-template, and skill discovery. A deliberately discovered
+extension must not execute. It then confirms a generation-advancing worker
+restart, old-process exit, unchanged live worker on resource-revoked restart,
+broker-process disconnect/reconnect without replacing Pi, metadata-only SQLite,
+zero provider usage, and exact tmux/process/socket cleanup. The RPC supervisor
+must additionally complete an actual Pi `get_state` exchange.
+
+This is actual-Pi **startup, bridge, and recovery** evidence, not a complete report
+round: assigning work with `triggerTurn` would require model inference. No model
+prompt is sent and `orchestrator_report` is not synthesized through a fake
+provider. Any provider-backed report/quality acceptance remains a separately
+authorized step. The existing connected model-free boundaries continue to cover
+report normalization, routing, mandatory independent review, stale generations,
+and uncertain handovers. Public and lower custom live-start gates remain intact
+until #137 reviews their removal.
 
 ## Retained control and presentation surfaces (partial #60)
 

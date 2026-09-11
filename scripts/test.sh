@@ -51,6 +51,7 @@ for path in (
     Path("$ROOT/tests/test_hardening.py"),
     Path("$ROOT/tests/functional_smoke.py"),
     Path("$ROOT/tests/custom_worker_tmux_smoke.py"),
+    Path("$ROOT/tests/actual_pi_custom_lifecycle.py"),
     Path("$ROOT/tests/gated_custom_broker.py"),
     Path("$ROOT/tests/test_json_cli.py"),
     Path("$ROOT/tests/test_supervisor_api.py"),
@@ -141,6 +142,9 @@ package_root = path.parent / value["package_root"]
 if not (package_root / "extensions" / "tmux-orchestrator.js").is_file():
     raise SystemExit("pre-release stage omitted the installed extension")
 PY
+printf '%s\n' '==> Provider-free staged-package actual-Pi custom lifecycle smoke'
+python3 "$ROOT/tests/actual_pi_custom_lifecycle.py" \
+  "$PRERELEASE_STAGE/package-host/node_modules/pi-tmux-orchestrator"
 printf '\nlocal tamper probe\n' >> \
   "$PRERELEASE_STAGE/package-host/node_modules/pi-tmux-orchestrator/README.md"
 if "$ROOT/scripts/run-prerelease-isolated.sh" \
