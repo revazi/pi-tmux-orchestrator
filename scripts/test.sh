@@ -62,6 +62,7 @@ for path in (
     Path("$ROOT/tests/test_custom_role_contracts.py"),
     Path("$ROOT/tests/test_custom_role_resources.py"),
     Path("$ROOT/tests/test_custom_broker_workflow.py"),
+    Path("$ROOT/tests/test_custom_broker_lifecycle.py"),
     Path("$ROOT/tests/test_custom_role_surfaces.py"),
     Path("$ROOT/tests/test_custom_start.py"),
     Path("$ROOT/tests/test_dashboard.py"),
