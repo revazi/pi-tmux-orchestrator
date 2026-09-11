@@ -6,6 +6,7 @@ import copy
 import json
 import os
 from pathlib import Path
+import socket
 from unittest import mock
 
 from pi_tmux_orchestrator import commands, runtime
@@ -73,6 +74,126 @@ class CustomStartTests(CustomRoleResourceFixture):
         self.grid.assert_not_called()
         self.initialize.assert_not_called()
         self.assertFalse((runtime.STATE_ROOT / "pi-custom-preview").exists())
+
+    def internal_selection(self):
+        return select_custom_start(self.project, [self.spec], str(self.registry))
+
+    def test_internal_live_start_waits_for_custom_admission_before_running(self):
+        selected = self.internal_selection()
+        with (
+            mock.patch.object(commands, "select_custom_start", return_value=selected),
+            mock.patch.object(commands, "wait_for_custom_startup") as wait,
+        ):
+            code, envelope, raw, stderr = self.run_start(custom=False, dry_run=False)
+        self.assertEqual((code, stderr), (0, ""), raw)
+        self.initialize.assert_called_once()
+        self.grid.assert_called_once()
+        wait.assert_called_once()
+        coord = Path(envelope["data"]["paths"]["coordination"])
+        self.assertEqual((coord / "startup-state").read_text(), "RUNNING\n")
+        self.assertEqual(wait.call_args.args[3]["version"], 6)
+
+    def test_internal_custom_failure_before_grid_is_retained_and_body_free(self):
+        selected = self.internal_selection()
+        self.initialize.side_effect = OrchestrationError("PRIVATE_FAILURE_CANARY")
+        with (
+            mock.patch.object(commands, "select_custom_start", return_value=selected),
+            mock.patch.object(commands, "tmux") as tmux,
+            mock.patch.object(commands, "wait_for_custom_startup") as wait,
+        ):
+            code, envelope, raw, stderr = self.run_start(custom=False, dry_run=False)
+        self.assertEqual((code, stderr), (2, ""), raw)
+        self.grid.assert_not_called()
+        wait.assert_not_called()
+        tmux.assert_called_once_with(
+            ["kill-session", "-t", "=pi-custom-preview"],
+            check=False,
+            capture=True,
+        )
+        runs = list((runtime.STATE_ROOT / "pi-custom-preview").iterdir())
+        self.assertEqual(len(runs), 1)
+        self.assertEqual((runs[0] / "startup-state").read_text(), "FAILED\n")
+        retained = "\n".join(
+            path.read_text(errors="replace")
+            for path in runs[0].rglob("*")
+            if path.is_file()
+        )
+        self.assertNotIn("PRIVATE_FAILURE_CANARY", retained)
+
+    def test_custom_admission_bounds_one_and_eight_role_fanout(self):
+        for custom_count in (1, 8):
+            with self.subTest(custom_count=custom_count):
+                coord = runtime.STATE_ROOT / f"health-{custom_count}" / "run-1"
+                coord.mkdir(mode=0o700, parents=True)
+                role_names = ["implementer", "reviewer"] + [
+                    f"custom-specialist-{index}" for index in range(custom_count)
+                ]
+                manifest = {
+                    "version": 6,
+                    "transport": "rpc" if custom_count == 8 else "tui",
+                    "monitor_pane_id": "%99",
+                    "roles": {
+                        role: {"pane_id": f"%{index}"}
+                        for index, role in enumerate(role_names)
+                    },
+                }
+                socket_path = commands.broker_paths(coord)["socket"]
+                socket_path.parent.mkdir(parents=True, exist_ok=True)
+                server = socket.socket(socket.AF_UNIX)
+                server.bind(str(socket_path))
+                try:
+                    pane = mock.Mock(returncode=0, stdout="0\n")
+                    snapshot = {
+                        "workflow": {"state": "active"},
+                        "roles": [
+                            {"role": role, "connected": True} for role in role_names
+                        ],
+                    }
+                    with (
+                        mock.patch.object(commands, "tmux", return_value=pane),
+                        mock.patch.object(
+                            commands, "public_broker_snapshot", return_value=snapshot
+                        ),
+                        mock.patch.object(commands, "CUSTOM_STARTUP_STABLE_SECONDS", 0),
+                    ):
+                        commands.wait_for_custom_startup(
+                            "pi-custom-health",
+                            coord,
+                            role_names,
+                            manifest,
+                            timeout=0.5,
+                        )
+                finally:
+                    server.close()
+                    socket_path.unlink(missing_ok=True)
+
+    def test_internal_custom_admission_failure_rolls_back_exact_session(self):
+        selected = self.internal_selection()
+        with (
+            mock.patch.object(commands, "select_custom_start", return_value=selected),
+            mock.patch.object(commands, "tmux") as tmux,
+            mock.patch.object(
+                commands,
+                "wait_for_custom_startup",
+                side_effect=OrchestrationError("worker unavailable", "startup_failed"),
+            ),
+        ):
+            code, envelope, raw, stderr = self.run_start(custom=False, dry_run=False)
+        self.assertEqual((code, stderr), (2, ""), raw)
+        self.grid.assert_called_once()
+        self.assertEqual(
+            tmux.call_args_list,
+            [
+                mock.call(
+                    ["kill-session", "-t", "=pi-custom-preview"],
+                    check=False,
+                    capture=True,
+                )
+            ],
+        )
+        runs = list((runtime.STATE_ROOT / "pi-custom-preview").iterdir())
+        self.assertEqual((runs[0] / "startup-state").read_text(), "FAILED\n")
+        self.assertFalse(envelope["success"])
 
     def test_both_transport_previews_preserve_authority_and_exclude_resources(self):
         before = sorted(self.root.rglob("*"))

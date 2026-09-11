@@ -328,9 +328,17 @@ def respawn_broker(manifest: dict[str, object], coord: Path, wrapper: Path) -> N
 
 
 async def run_transport(
-    root: Path, transport: str, *, interrupted: bool = False
+    root: Path,
+    transport: str,
+    *,
+    interrupted: bool = False,
+    startup_failure: bool = False,
 ) -> None:
-    scenario = "uncertain" if interrupted else "accepted"
+    scenario = (
+        "startup-failure"
+        if startup_failure
+        else ("uncertain" if interrupted else "accepted")
+    )
     session = f"pi-custom-{transport}-{scenario}-{os.getpid()}"
     project = ensure_private_directory(root / f"project-{transport}-{scenario}")
     policy = ensure_private_directory(root / f"policy-{transport}-{scenario}")
@@ -455,8 +463,72 @@ async def run_transport(
     )
     wrapper.chmod(0o700)
     runtime.SCRIPT_PATH = wrapper
+    collision_session = f"{session}-keep" if startup_failure else None
     try:
+        if collision_session is not None:
+            subprocess.run(
+                ["tmux", "new-session", "-d", "-s", collision_session, "sleep 60"],
+                check=True,
+                text=True,
+                capture_output=True,
+            )
+        secure_write(coord / "startup-state", "STARTING\n")
+        if startup_failure:
+            Path(prompt["path"]).write_text("REVOKED BEFORE LAUNCH\n", encoding="utf-8")
         commands.create_tmux_grid(session, project, coord, roles, manifest)
+        if startup_failure:
+            try:
+                await asyncio.to_thread(
+                    commands.wait_for_custom_startup,
+                    session,
+                    coord,
+                    roles,
+                    manifest,
+                    timeout=2,
+                )
+            except OrchestrationError as error:
+                if error.code != "startup_failed":
+                    raise
+            else:
+                raise AssertionError("revoked custom startup passed admission")
+            await asyncio.to_thread(commands.rollback_partial_start, session, coord)
+            secure_write(coord / "startup-state", "FAILED\n")
+            await wait_for(
+                lambda: (
+                    not commands.session_exists(session)
+                    and not broker_store.broker_paths(coord)["socket"].exists()
+                    and broker_recovery_state(coord)[1] == 0
+                ),
+                f"failed custom {transport} startup left runtime state",
+            )
+            if (
+                collision_session is None
+                or not commands.session_exists(collision_session)
+                or (coord / "startup-state").read_text() != "FAILED\n"
+            ):
+                raise AssertionError(
+                    "failed custom startup affected its prefix collision or retained state"
+                )
+            with broker_store.connect_broker_database(coord, readonly=True) as database:
+                dump = "\n".join(database.iterdump())
+            for canary in (
+                "SYNTHETIC CUSTOM TMUX SMOKE",
+                "PRIVATE_CUSTOM_PROMPT_CANARY",
+                "PRIVATE_CUSTOM_SKILL_CANARY",
+            ):
+                if canary in dump:
+                    raise AssertionError(
+                        "failed custom startup retained a private body"
+                    )
+            print(f"OK failed custom {transport.upper()} startup rolled back exactly")
+            return
+        await asyncio.to_thread(
+            commands.wait_for_custom_startup,
+            session,
+            coord,
+            roles,
+            manifest,
+        )
         if manifest["version"] != 6 or manifest["custom_role_registry"] != str(
             registry
         ):
@@ -802,6 +874,13 @@ async def run_transport(
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
+        if collision_session is not None:
+            subprocess.run(
+                ["tmux", "kill-session", "-t", f"={collision_session}"],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
         await wait_for(
             lambda: not socket_path.exists() and broker_recovery_state(coord)[1] == 0,
             f"custom {transport} tmux processes did not shut down cleanly",
@@ -821,6 +900,7 @@ async def async_main() -> None:
         for transport in ("tui", "rpc"):
             await run_transport(root, transport)
             await run_transport(root, transport, interrupted=True)
+            await run_transport(root, transport, startup_failure=True)
 
 
 def main() -> int:

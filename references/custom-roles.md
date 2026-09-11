@@ -295,6 +295,12 @@ workflow routing remain active. It verifies:
   reconnects to the replacement process while retained custom generation,
   authority, and terminal workflow state remain unchanged. Exact session cleanup
   waits for broker socket removal and durable worker disconnects.
+- Manifest-v6 startup does not become `RUNNING` until the exact broker and every
+  selected worker pane remain live and authenticated through a bounded stability
+  window. Selection-to-launch resource revocation fails admission in TUI and RPC,
+  marks the retained run `FAILED`, removes the broker socket and exact new tmux
+  session, and leaves a prefix-colliding existing session unchanged. Unit coverage
+  also bounds one- and eight-custom-role fan-out and failures before grid creation.
 
 The real-extension sequence exposed two lifecycle ordering requirements now
 covered at the broker boundary for every role: an ordinary startup lifecycle
@@ -305,9 +311,9 @@ Only the assignment acknowledgement completes a prepared handover.
 This is **not actual Pi or provider evidence**: the synthetic host loads the real
 extension but does not implement Pi's full runtime or issue model requests. Existing
 isolated actual-Pi smoke establishes bootstrap/tool discovery only, not complete
-brokered report/restart behavior. Full custom partial-start/launch rollback and
-connected actual-Pi lifecycle evidence remain outstanding before removing either
-lower gate. #60 remains open; #61 stays separate.
+brokered report/restart behavior. Connected actual-Pi lifecycle evidence remains
+outstanding before removing either lower gate. #60 remains open; #61 stays
+separate.
 
 ## Retained control and presentation surfaces (partial #60)
 
