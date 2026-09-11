@@ -2,6 +2,33 @@
 
 This checklist prepares a human-controlled release. It does not authorize publication, tagging, pushing, or making the repository public. Local package checks establish publish-ready mechanics only; they do not establish npm-registry, Pi-gallery, update, rollback, or production acceptance.
 
+## 0. Roadmap admission gate
+
+The canonical next-stable-release checkpoint is
+[roadmap issue #139](https://github.com/revazi/pi-tmux-orchestrator/issues/139)
+and the **Next stable release candidate** milestone. Do not begin a versioned
+release-preparation PR until both required engineering roadmaps are closed:
+
+- [ ] [#101](https://github.com/revazi/pi-tmux-orchestrator/issues/101) — control-plane modularization, hardening, and final acceptance rerun.
+- [ ] [#58](https://github.com/revazi/pi-tmux-orchestrator/issues/58) — custom read-only specialists, including lifecycle/live starts [#60](https://github.com/revazi/pi-tmux-orchestrator/issues/60) and profile/activation integration [#61](https://github.com/revazi/pi-tmux-orchestrator/issues/61).
+
+For #60, the remaining explicit gates are real-tmux stale/uncertain handovers
+[#133](https://github.com/revazi/pi-tmux-orchestrator/issues/133), partial-start
+rollback [#134](https://github.com/revazi/pi-tmux-orchestrator/issues/134),
+connected actual-Pi acceptance
+[#136](https://github.com/revazi/pi-tmux-orchestrator/issues/136), and separately
+reviewed live-start gate removal
+[#137](https://github.com/revazi/pi-tmux-orchestrator/issues/137). Complete #60
+before #61. The broader token-efficiency roadmap #35 is not a blanket release
+blocker; only its explicitly required #58 child gates this candidate.
+
+After those roadmaps close, freeze feature work on clean, current `main` and open
+one dedicated release-preparation PR. Select its version only with explicit owner
+approval; no version is implied by the milestone or #139. A milestone, closed
+roadmap, green CI run, or completed local artifact check never authorizes a tag or
+publication. Continue through every section below, then obtain the separate final
+human approval in section 6.
+
 ## 1. Owner, author, and license confirmation
 
 - [ ] Obtain explicit owner authorization for the release.
