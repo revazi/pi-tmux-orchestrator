@@ -43,6 +43,7 @@ from .constants import (
     BROKER_PROTOCOL_VERSION,
     DEFAULT_IMPLEMENTATION_FLOW,
     DEFAULT_MODELS,
+    KNOWN_ROLES,
     MAX_CONTEXT_CAPSULE_BYTES,
     MAX_JSON_ITEMS,
     READ_ONLY_TOOLS,
@@ -52,6 +53,7 @@ from .constants import (
 )
 from .context_capsules import render_worker_baseline
 from .custom_role_resources import select_custom_start
+from .role_registry import valid_custom_role_id
 from .models import CommandResult, OrchestrationError
 from .output import bounded_message, human_print, public_role
 from .profiles import (
@@ -139,6 +141,60 @@ def role_config(
         "pane_id": None,
     }
     return config
+
+
+def construct_start_manifest(
+    coord: Path,
+    project: Path,
+    session: str,
+    transport: str,
+    *,
+    approve_project: bool,
+    execution_profile: dict[str, Any],
+    project_config: dict[str, Any],
+    orchestration_config: dict[str, Any],
+    roles: list[str],
+    configs: dict[str, dict[str, Any]],
+    custom_role_registry: str | None,
+) -> dict[str, Any]:
+    """Construct retained launch metadata; custom resources remain body-free."""
+    custom_roles = [role for role in roles if valid_custom_role_id(role)]
+    if (
+        len(set(roles)) != len(roles)
+        or not {"implementer", "reviewer"} <= set(roles)
+        or any(
+            role not in KNOWN_ROLES and not valid_custom_role_id(role) for role in roles
+        )
+        or set(configs) != set(roles)
+        or bool(custom_roles) != (custom_role_registry is not None)
+    ):
+        raise OrchestrationError("Start role bindings are inconsistent")
+    manifest: dict[str, Any] = {
+        "version": 6 if custom_roles else 5,
+        "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "session": session,
+        "window": WINDOW,
+        "project": str(project),
+        "coord": str(coord),
+        "approve_project": approve_project,
+        "transport": transport,
+        "coordination": BROKER_COORDINATION,
+        "protocol_version": BROKER_PROTOCOL_VERSION,
+        "execution_profile": execution_profile,
+        "project_config": project_config,
+        "orchestration_config": orchestration_config,
+        "monitor_pane_id": None,
+        "roles": {},
+    }
+    if custom_roles:
+        manifest["custom_role_registry"] = custom_role_registry
+    for role in roles:
+        manifest["roles"][role] = {
+            **configs[role],
+            "session_dir": str(coord / "sessions" / role),
+            "session_id": f"{coord.name}-{role}",
+        }
+    return manifest
 
 
 def create_tmux_grid(
@@ -648,28 +704,19 @@ def start_command(args: argparse.Namespace) -> CommandResult:
 
     try:
         secure_write(coord / "startup-state", "STARTING\n")
-        manifest: dict[str, Any] = {
-            "version": 5,
-            "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
-            "session": session,
-            "window": WINDOW,
-            "project": str(project),
-            "coord": str(coord),
-            "approve_project": bool(args.approve_project),
-            "transport": transport,
-            "coordination": BROKER_COORDINATION,
-            "protocol_version": BROKER_PROTOCOL_VERSION,
-            "execution_profile": public_execution_profile(execution_profile),
-            "project_config": project_config_metadata,
-            "orchestration_config": orchestration_config_metadata,
-            "monitor_pane_id": None,
-            "roles": {},
-        }
-        for role in roles:
-            config = configs[role]
-            config["session_dir"] = str(coord / "sessions" / role)
-            config["session_id"] = f"{coord.name}-{role}"
-            manifest["roles"][role] = config
+        manifest = construct_start_manifest(
+            coord,
+            project,
+            session,
+            transport,
+            approve_project=bool(args.approve_project),
+            execution_profile=public_execution_profile(execution_profile),
+            project_config=project_config_metadata,
+            orchestration_config=orchestration_config_metadata,
+            roles=roles,
+            configs=configs,
+            custom_role_registry=custom_selection["registry_path"],
+        )
 
         ensure_private_directory(coord / "sessions")
         for role in roles:
