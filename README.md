@@ -147,9 +147,9 @@ provider behavior. Explicit CLI selection can be previewed with
 `start --dry-run --custom-role ID PROVIDER MODEL THINKING` (repeatable, at most
 eight).
 Every custom model setting is required; no profile or built-in model inheritance
-applies. Live custom starts remain gated pending the separate gate-removal review.
-Retained custom status exposes contracts, not resource bodies or claims of current
-resource validity.
+applies. Omit `--dry-run` to launch the explicit selection after model and resource
+validation. Retained custom status exposes contracts, not resource bodies or
+claims of current resource validity. Automatic custom activation remains #61.
 See the [registry, bootstrap, and workflow trust boundaries](references/custom-roles.md).
 
 Reusable defaults are user-global, never project-local:

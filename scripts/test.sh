@@ -52,7 +52,6 @@ for path in (
     Path("$ROOT/tests/functional_smoke.py"),
     Path("$ROOT/tests/custom_worker_tmux_smoke.py"),
     Path("$ROOT/tests/actual_pi_custom_lifecycle.py"),
-    Path("$ROOT/tests/gated_custom_broker.py"),
     Path("$ROOT/tests/test_json_cli.py"),
     Path("$ROOT/tests/test_supervisor_api.py"),
     Path("$ROOT/tests/test_broker.py"),
@@ -178,7 +177,7 @@ fi
 printf '%s\n' '==> Model-free tmux functional smoke'
 python3 "$ROOT/tests/functional_smoke.py"
 
-printf '%s\n' '==> Gated model-free custom worker tmux smoke'
+printf '%s\n' '==> Model-free custom worker tmux lifecycle smoke'
 python3 "$ROOT/tests/custom_worker_tmux_smoke.py"
 
 printf '%s\n' 'All checks passed.'

@@ -1,4 +1,4 @@
-"""Gated custom workflow/ACL tests: real SQLite, synthetic transport, no Pi lifecycle."""
+"""Custom workflow/ACL tests: real SQLite, synthetic transport, no Pi lifecycle."""
 
 from __future__ import annotations
 

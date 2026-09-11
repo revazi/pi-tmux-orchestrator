@@ -6,13 +6,13 @@ All notable changes to this project are documented here.
 
 ### Added
 
-- Added a gated internal manifest-v6 custom start projection and model-free real-tmux TUI/RPC launcher smoke that loads the real worker extension, covering verified snapshots, extension-enforced fixed tools, brokered mandatory review, authenticated worker and broker-process restart, retained-state reconnection, stale-generation rejection, interrupted replacement uncertainty without replay/review/accounting, and revoked-resource rejection; manifest-v6 startup now requires a bounded stable authenticated broker/worker health boundary and rolls failed partial starts back to body-free `FAILED` metadata without affecting prefix-colliding sessions; isolated staged-package actual-Pi TUI/RPC acceptance now covers connected startup, broker reconnection, fresh restart, resource revocation, and exact cleanup with no prompt, credential access, or provider request, while complete report inference remains explicitly unclaimed and public live starts remain gated
+- Added explicit registered custom specialist starts through body-free manifest v6 and production broker routing for both TUI and RPC, retaining fixed read-only tools, one built-in writer, mandatory built-in review, fresh resource verification, bounded stable startup, exact partial-start rollback, authenticated restart/reconnection, stale-generation and uncertain-handover safety, and metadata-only state; model-free real-tmux report workflows and isolated staged-package actual-Pi startup/recovery acceptance remain distinct, with provider-backed report inference explicitly unclaimed
 
-- Added manifest-v6 custom role/resource bindings and shared fail-closed worker bootstrap: pinned registry revalidation, private verified Markdown snapshots, fixed read-only launch tools, and disabled automatic extension discovery; public custom starts and broker routing remain pending
+- Added manifest-v6 custom role/resource bindings and shared fail-closed worker bootstrap: pinned registry revalidation, private verified Markdown snapshots, fixed read-only launch tools, and disabled automatic extension discovery
 
-- Added the first custom-role worker contract boundary: explicit trusted identity/schema mappings, shared bridge report/assignment validation, and fixed read-only tool filtering plus call-time guards; custom-role manifest/launch/routing integration remains pending
+- Added the custom-role worker contract boundary: explicit trusted identity/schema mappings, shared bridge report/assignment validation, and fixed read-only tool filtering plus call-time guards
 
-- Added a version-1 user-global custom-specialist registry and read-only `role-registry` CLI validation, with bounded names/contracts/resources, reviewed SHA-256 digests, and strict filesystem ownership/path checks; custom-role launching remains unavailable
+- Added a version-1 user-global custom-specialist registry and read-only `role-registry` CLI validation, with bounded names/contracts/resources, reviewed SHA-256 digests, and strict filesystem ownership/path checks
 
 - Exposed retain/prune controls in the Pi start form and native `workerContext` tool parameter, with bounded input, explicit cancellation, CLI-resolved confirmation, and fail-closed preview matching
 

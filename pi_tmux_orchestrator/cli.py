@@ -270,7 +270,7 @@ def build_parser() -> argparse.ArgumentParser:
         nargs=4,
         default=[],
         metavar=("ID", "PROVIDER", "MODEL", "THINKING"),
-        help="preview one registered read-only specialist with explicit model settings; repeatable, requires --dry-run",
+        help="start one registered read-only specialist with explicit model settings; repeatable",
     )
     start.add_argument(
         "--role-registry",

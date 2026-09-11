@@ -1,8 +1,7 @@
 """Real Unix-socket custom broker tests, NOT tmux/Pi worker acceptance.
 
-Only the constructor's temporary role-catalog gate is bypassed in test setup.
-Public initialization remains gated; framing, authentication, workflow, control,
-SQLite transactions and recovery run unmocked with synthetic worker peers.
+Production initialization, construction, framing, authentication, workflow,
+control, SQLite transactions, and recovery run unmocked with synthetic peers.
 """
 
 from __future__ import annotations
@@ -11,14 +10,10 @@ import asyncio
 import json
 import secrets
 import unittest
-from unittest import mock
-
 from pi_tmux_orchestrator import broker_store, constants
 from pi_tmux_orchestrator.broker import Broker, initialize_broker_run
 from pi_tmux_orchestrator.custom_role_resources import retained_custom_contracts
-from pi_tmux_orchestrator.models import OrchestrationError
 from pi_tmux_orchestrator.protocol import encode_frame
-from pi_tmux_orchestrator.storage import secure_write
 from test_broker import assignment_usage_snapshot
 from test_custom_role_resources import CustomRoleResourceFixture
 
@@ -81,32 +76,15 @@ class CustomBrokerLifecycleTests(
         self.manifest["roles"][self.name]["custom_role"]["contract"] = contract
         self.save_registry()
         contracts = retained_custom_contracts(self.manifest, self.coord)
-        self.tokens = {role: secrets.token_hex(16) for role in self.manifest["roles"]}
-        self.control_token = secrets.token_hex(16)
-        with self.assertRaisesRegex(OrchestrationError, "not enabled"):
-            initialize_broker_run(self.coord, self.manifest, "synthetic", {})
-        self.assertFalse(broker_store.broker_paths(self.coord)["database"].exists())
-        broker_store.initialize_broker_database(
-            self.coord,
-            self.manifest,
-            self.tokens,
-            self.control_token,
-            soft_role_tokens=0,
-            soft_total_tokens=0,
+        initialize_broker_run(self.coord, self.manifest, "PRIVATE_TASK_CANARY", {})
+        self.tokens = {
+            role: (self.coord / f"{role}.token").read_text(encoding="utf-8").strip()
+            for role in self.manifest["roles"]
+        }
+        self.control_token = (
+            (self.coord / "control.token").read_text(encoding="utf-8").strip()
         )
-        secure_write(
-            self.coord / "startup.json",
-            json.dumps({"task": "PRIVATE_TASK_CANARY", "role_tasks": {}}),
-        )
-        # Prove the production gate still rejects this exact validated manifest.
-        with self.assertRaisesRegex(OrchestrationError, "not enabled"):
-            Broker(self.coord, self.manifest)
-        # This imported catalog is read locally only by the constructor gate.
-        # The protocol/manifest modules retain their original built-in catalogs.
-        with mock.patch.object(
-            constants, "KNOWN_ROLES", constants.KNOWN_ROLES | {self.name}
-        ):
-            self.broker = Broker(self.coord, self.manifest)
+        self.broker = Broker(self.coord, self.manifest)
         self.assertEqual(self.broker.custom_contracts, contracts)
         self.peers = []
         self.handlers = set()

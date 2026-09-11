@@ -485,12 +485,10 @@ class CustomRoleResourceTests(CustomRoleResourceFixture):
             execute.assert_not_called()
             popen.assert_not_called()
 
-    def test_custom_manifest_cannot_accidentally_activate_unimplemented_broker_routing(
-        self,
-    ):
-        before = set(self.coord.rglob("*"))
-        with self.assertRaisesRegex(OrchestrationError, "routing is not enabled"):
-            Broker(self.coord, self.manifest)
-        with self.assertRaisesRegex(OrchestrationError, "routing is not enabled"):
-            initialize_broker_run(self.coord, self.manifest, "synthetic", {})
-        self.assertEqual(set(self.coord.rglob("*")), before)
+    def test_validated_custom_manifest_initializes_production_broker_routing(self):
+        initialize_broker_run(self.coord, self.manifest, "synthetic", {})
+        broker = Broker(self.coord, self.manifest)
+        self.assertEqual(broker.custom_contracts, {self.name: "probe"})
+        self.assertTrue((self.coord / "broker.sqlite3").is_file())
+        self.assertTrue((self.coord / f"{self.name}.token").is_file())
+        self.assertTrue((self.coord / "control.token").is_file())

@@ -418,11 +418,6 @@ def start_command(args: argparse.Namespace) -> CommandResult:
             "interactive_only",
         )
     custom_selections = getattr(args, "custom_role", [])
-    if custom_selections and not args.dry_run:
-        raise OrchestrationError(
-            "Custom roles currently require --dry-run; lifecycle launch acceptance is pending",
-            "custom_start_not_enabled",
-        )
     project_input = Path(args.project).expanduser()
     project = project_input.resolve()
     if not project.is_dir():
@@ -695,8 +690,12 @@ def start_command(args: argparse.Namespace) -> CommandResult:
     }
     if custom_selection["roles"]:
         data["custom_role_selection"] = {
-            "launch_supported": False,
-            "resource_verification": "checked_at_selection",
+            "launch_supported": True,
+            "resource_verification": (
+                "checked_at_selection"
+                if args.dry_run
+                else "checked_at_selection_and_launch"
+            ),
             "models": "explicit-only",
             "skills": {
                 role: {
@@ -706,7 +705,7 @@ def start_command(args: argparse.Namespace) -> CommandResult:
                 for role, config in custom_selection["roles"].items()
             },
         }
-        human_print("Custom selection preview only; live starts remain disabled.")
+        human_print("Custom roles: explicit registry-bound read-only specialists.")
     human_print(f"Project: {project}")
     human_print(f"Session: {session}")
     human_print("Roles:")

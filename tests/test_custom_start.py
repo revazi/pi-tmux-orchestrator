@@ -1,4 +1,4 @@
-"""Explicit dry-run planning only; no connected lifecycle acceptance claim."""
+"""Explicit custom specialist selection and live-start integration."""
 
 from __future__ import annotations
 
@@ -78,13 +78,9 @@ class CustomStartTests(CustomRoleResourceFixture):
     def internal_selection(self):
         return select_custom_start(self.project, [self.spec], str(self.registry))
 
-    def test_internal_live_start_waits_for_custom_admission_before_running(self):
-        selected = self.internal_selection()
-        with (
-            mock.patch.object(commands, "select_custom_start", return_value=selected),
-            mock.patch.object(commands, "wait_for_custom_startup") as wait,
-        ):
-            code, envelope, raw, stderr = self.run_start(custom=False, dry_run=False)
+    def test_public_live_start_waits_for_custom_admission_before_running(self):
+        with mock.patch.object(commands, "wait_for_custom_startup") as wait:
+            code, envelope, raw, stderr = self.run_start(dry_run=False)
         self.assertEqual((code, stderr), (0, ""), raw)
         self.initialize.assert_called_once()
         self.grid.assert_called_once()
@@ -92,16 +88,23 @@ class CustomStartTests(CustomRoleResourceFixture):
         coord = Path(envelope["data"]["paths"]["coordination"])
         self.assertEqual((coord / "startup-state").read_text(), "RUNNING\n")
         self.assertEqual(wait.call_args.args[3]["version"], 6)
+        self.assertEqual(
+            envelope["data"]["custom_role_selection"],
+            {
+                "launch_supported": True,
+                "resource_verification": "checked_at_selection_and_launch",
+                "models": "explicit-only",
+                "skills": {self.name: {"source": "registry-bound", "count": 1}},
+            },
+        )
 
-    def test_internal_custom_failure_before_grid_is_retained_and_body_free(self):
-        selected = self.internal_selection()
+    def test_public_custom_failure_before_grid_is_retained_and_body_free(self):
         self.initialize.side_effect = OrchestrationError("PRIVATE_FAILURE_CANARY")
         with (
-            mock.patch.object(commands, "select_custom_start", return_value=selected),
             mock.patch.object(commands, "tmux") as tmux,
             mock.patch.object(commands, "wait_for_custom_startup") as wait,
         ):
-            code, envelope, raw, stderr = self.run_start(custom=False, dry_run=False)
+            code, envelope, raw, stderr = self.run_start(dry_run=False)
         self.assertEqual((code, stderr), (2, ""), raw)
         self.grid.assert_not_called()
         wait.assert_not_called()
@@ -167,10 +170,8 @@ class CustomStartTests(CustomRoleResourceFixture):
                     server.close()
                     socket_path.unlink(missing_ok=True)
 
-    def test_internal_custom_admission_failure_rolls_back_exact_session(self):
-        selected = self.internal_selection()
+    def test_public_custom_admission_failure_rolls_back_exact_session(self):
         with (
-            mock.patch.object(commands, "select_custom_start", return_value=selected),
             mock.patch.object(commands, "tmux") as tmux,
             mock.patch.object(
                 commands,
@@ -178,7 +179,7 @@ class CustomStartTests(CustomRoleResourceFixture):
                 side_effect=OrchestrationError("worker unavailable", "startup_failed"),
             ),
         ):
-            code, envelope, raw, stderr = self.run_start(custom=False, dry_run=False)
+            code, envelope, raw, stderr = self.run_start(dry_run=False)
         self.assertEqual((code, stderr), (2, ""), raw)
         self.grid.assert_called_once()
         self.assertEqual(
@@ -225,7 +226,7 @@ class CustomStartTests(CustomRoleResourceFixture):
                         "resource_verification": "not_checked",
                     },
                 )
-                self.assertFalse(data["custom_role_selection"]["launch_supported"])
+                self.assertTrue(data["custom_role_selection"]["launch_supported"])
                 self.assertEqual(
                     data["custom_role_selection"]["resource_verification"],
                     "checked_at_selection",
@@ -307,16 +308,14 @@ class CustomStartTests(CustomRoleResourceFixture):
                     custom_role_registry=registry,
                 )
 
-    def test_live_selection_fails_before_dependency_checks_reads_or_mutation(self):
-        for options in ([], ["--rpc-workers", "--approve-project"]):
-            with mock.patch.object(commands, "select_custom_start") as select:
-                code, envelope, raw, stderr = self.run_start(*options, dry_run=False)
-                self.assertEqual((code, stderr), (2, ""), raw)
-                self.assertEqual(envelope["error"]["code"], "custom_start_not_enabled")
-                select.assert_not_called()
-                self.command_path.assert_not_called()
-                self.session_exists.assert_not_called()
-                self.assert_no_start()
+    def test_invalid_live_selection_fails_before_dependencies_or_mutation(self):
+        Path(self.prompt["path"]).write_text("TAMPERED")
+        code, envelope, raw, stderr = self.run_start(dry_run=False)
+        self.assertEqual((code, stderr), (2, ""), raw)
+        self.assertFalse(envelope["success"])
+        self.command_path.assert_not_called()
+        self.session_exists.assert_not_called()
+        self.assert_no_start()
 
     def test_omission_never_loads_ambient_registry(self):
         with mock.patch(

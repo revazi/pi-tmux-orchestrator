@@ -93,23 +93,6 @@ node = os.environ["ACTUAL_PI_NODE_EXECUTABLE"]
 os.execv(node, [node, os.environ["ACTUAL_PI_FAKE_BUILTIN"], *sys.argv[1:]])
 """
 
-BROKER_SHIM = r"""#!/usr/bin/env python3
-import os
-from pathlib import Path
-import sys
-
-sys.path.insert(0, os.environ["ACTUAL_PI_PACKAGE_ROOT"])
-from pi_tmux_orchestrator import constants
-from pi_tmux_orchestrator.cli import main
-from pi_tmux_orchestrator.role_registry import valid_custom_role_id
-
-role = os.environ.get("ACTUAL_PI_CUSTOM_ROLE", "")
-if not valid_custom_role_id(role):
-    raise SystemExit("test-only custom broker role is invalid")
-constants.KNOWN_ROLES = constants.KNOWN_ROLES | {role}
-raise SystemExit(main())
-"""
-
 
 class RequestSentinel(http.server.ThreadingHTTPServer):
     daemon_threads = True
@@ -614,9 +597,6 @@ def main() -> int:
         pi_wrapper = directories["bin"] / "pi"
         pi_wrapper.write_text(PI_WRAPPER, encoding="utf-8")
         pi_wrapper.chmod(0o700)
-        broker_shim = root / "gated-broker.py"
-        broker_shim.write_text(BROKER_SHIM, encoding="utf-8")
-        broker_shim.chmod(0o700)
         launch_record = root / "actual-pi-launches.jsonl"
         wrapper = root / "runtime.sh"
 
@@ -675,8 +655,6 @@ def main() -> int:
             "ACTUAL_PI_NODE_EXECUTABLE": str(Path(node).resolve()),
             "ACTUAL_PI_FAKE_BUILTIN": str(fake_builtin),
             "ACTUAL_PI_LAUNCH_RECORD": str(launch_record),
-            "ACTUAL_PI_PACKAGE_ROOT": str(package_root),
-            "ACTUAL_PI_CUSTOM_ROLE": "custom-security",
             "ACTUAL_PI_RUNTIME_WRAPPER": str(wrapper),
         }
         env_args = " ".join(
@@ -689,8 +667,7 @@ def main() -> int:
             f' exec env -i {env_args} {shlex.quote(str(package_cli))} "$@"\n'
             "fi\n"
             'if [[ "$1" == "_broker" ]]; then\n'
-            f" exec env -i {env_args} {shlex.quote(str(Path(python).resolve()))} "
-            f'{shlex.quote(str(broker_shim))} "$@"\n'
+            f' exec env -i {env_args} {shlex.quote(str(package_cli))} "$@"\n'
             "fi\nexit 2\n",
             encoding="utf-8",
         )

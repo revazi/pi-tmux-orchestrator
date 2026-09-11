@@ -658,10 +658,10 @@ Sends one operator message through the authenticated broker bridge. `steer` and
 `follow-up` delivery are supported. A successful response acknowledges
 acceptance; completion is observed through lifecycle/events.
 
-Control/event parsers accept canonical custom identities, but require exact target
-manifest membership. This does not enable public custom starts, which remain gated
-pending #60 lifecycle acceptance. Custom roles retain read-only specialist authority;
-messages cannot grant writer tools, reviewer acceptance, or continuation approval.
+Control/event parsers accept canonical custom identities and require exact target
+manifest membership. Explicitly selected registered custom roles retain read-only
+specialist authority; messages cannot grant writer tools, reviewer acceptance, or
+continuation approval.
 Retained status/Supervisor custom role records include the specialist contract and
 `resource_verification: not_checked`, without reopening resource files or exposing
 resource paths/bodies. See [custom role surfaces](custom-roles.md).
@@ -715,26 +715,31 @@ and configured model availability without a provider request. This bounded
 metadata appears in the dashboard only after the user presses `d`. The CLI
 project defaults to the current directory.
 
-### Custom selection preview
+### Custom specialist selection
 
-`start --dry-run --custom-role ID PROVIDER MODEL THINKING` previews one explicitly
-registered specialist; repeat at most eight times with unique IDs. All four values
+`start --custom-role ID PROVIDER MODEL THINKING` launches one explicitly registered
+read-only specialist; repeat at most eight times with unique IDs. Add `--dry-run`
+to preview without creating files, workers, or inference requests. All four values
 are required, with no custom model/profile inheritance. Optional `--role-registry
 PATH` selects the user-owned registry; no selection means no registry lookup.
-Both TUI and `--rpc-workers` previews preserve the implementer/reviewer and expose
-only bounded custom metadata and skill counts. `--skip-model-check` skips catalog
-discovery, not resource verification. No files, workers, or inference requests are
-created. Live custom starts fail before mutation with `custom_start_not_enabled`;
-the two broker gates remain pending connected lifecycle acceptance. See
-[selection syntax and limitations](custom-roles.md#preview-an-explicit-selection-partial-60).
+Both TUI and `--rpc-workers` preserve the built-in implementer and mandatory
+reviewer and expose only bounded custom metadata and skill counts.
+`--skip-model-check` skips catalog discovery, not resource verification; use it
+only when availability is established separately. Live startup revalidates every
+bound resource at bootstrap and reaches `RUNNING` only after all panes and broker
+authentication remain stable. Failure rolls back the exact new session to retained
+body-free `FAILED` state. See
+[selection syntax and limitations](custom-roles.md#start-or-preview-an-explicit-selection).
 
 ### `role-registry [--project PATH] [--registry PATH]`
 
 Read-only validation of user-global custom specialist definitions and reviewed
 prompt/skill digests. Supports the standard `--json` envelope and returns metadata
 only. A missing default registry means no custom roles; explicitly selected files
-must exist. Custom-role launch/activation is not yet supported, and built-in starts
-are unchanged. See [the complete schema and filesystem policy](custom-roles.md).
+must exist. Valid definitions can be launched only through explicit `--custom-role`
+selection; automatic profile/activation mapping is not yet supported, and omitted
+custom selection leaves built-in starts unchanged. See
+[the complete schema and filesystem policy](custom-roles.md).
 
 ### `supervisor ...`
 
