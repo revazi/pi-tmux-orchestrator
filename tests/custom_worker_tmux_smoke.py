@@ -243,6 +243,7 @@ async def run_transport(root: Path, transport: str) -> None:
     runtime.SCRIPT_PATH = wrapper
     broker = None
     broker_task = None
+    handler_tasks: set[asyncio.Task[None]] = set()
     try:
         commands.create_tmux_grid(session, project, coord, roles, manifest)
         if manifest["version"] != 6 or manifest["custom_role_registry"] != str(
@@ -253,6 +254,17 @@ async def run_transport(root: Path, transport: str) -> None:
             constants, "KNOWN_ROLES", constants.KNOWN_ROLES | {role_name}
         ):
             broker = Broker(coord, manifest)
+        handle_client = broker.handle_client
+
+        async def tracked_client(reader, writer):
+            task = asyncio.current_task()
+            handler_tasks.add(task)
+            try:
+                await handle_client(reader, writer)
+            finally:
+                handler_tasks.discard(task)
+
+        broker.handle_client = tracked_client
         broker_task = asyncio.create_task(broker._run())
         try:
             await wait_for(
@@ -393,7 +405,9 @@ async def run_transport(root: Path, transport: str) -> None:
         if broker is not None:
             broker.stopping.set()
         if broker_task is not None:
-            await asyncio.wait_for(broker_task, 5)
+            await asyncio.wait_for(broker_task, 10)
+        if handler_tasks:
+            await asyncio.wait_for(asyncio.gather(*handler_tasks), 10)
         subprocess.run(
             ["tmux", "kill-session", "-t", f"={session}"],
             check=False,
