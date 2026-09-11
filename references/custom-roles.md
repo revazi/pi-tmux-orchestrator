@@ -225,6 +225,37 @@ partial-start/disconnect/restart TUI/RPC and actual-Pi acceptance must land befo
 removing the gates. No provider
 savings or full lifecycle acceptance is established by these tests.
 
+## Connected broker regression boundary (partial #60)
+
+`tests/test_custom_broker_lifecycle.py` runs the real broker server on its private
+Unix socket with real SQLite and explicit synthetic worker peers. Setup first
+asserts that both public initialization and broker construction reject custom
+roles, then bypasses only the constructor catalog gate within the test. No
+production gate or authentication, framing, routing, control, or recovery method
+is disabled. The tests do not invoke the public start/launcher path.
+
+Connected regressions cover:
+
+- All three specialist contracts through implementation, custom evidence, and
+  mandatory independent review; specialist findings cannot approve the run.
+- Partial worker connection, wrong-role tokens, duplicate connections, invalid
+  generations, and authenticated reviewer impersonation rejection.
+- Accepted-assignment reconnect with stable assignment/delivery identity;
+  unacknowledged delivery reconnect becomes uncertain rather than replaying work.
+- Authenticated restart with fresh resource verification, generation advancement,
+  old-generation rejection, new delivery identity, and idempotent control retry.
+- Disconnect during restart delivery preserves uncertainty; revoked resources
+  reject restart without disconnecting or mutating the active worker.
+- Report replay after reconnect and in-memory evidence loss neither accounts nor
+  routes twice; task, report, and resource canaries are absent from SQLite.
+
+This is connected **broker-only** evidence, not connected TUI/RPC worker or
+actual-Pi lifecycle acceptance. Synthetic peers explicitly acknowledge/report;
+no worker extension, tmux pane, supervisor, provider, or bootstrap is exercised.
+Full custom partial-start/launch rollback, TUI/RPC worker recovery, broker-process
+recovery, and actual-Pi lifecycle evidence remain outstanding before live-start
+integration can remove either lower gate. #60 remains open; #61 stays separate.
+
 ## Retained control and presentation surfaces (partial #60)
 
 Control parsers (`send`, `abort`, `restart`, `events`, and Supervisor event/command
