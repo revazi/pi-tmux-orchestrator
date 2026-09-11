@@ -402,18 +402,20 @@ async def run_transport(root: Path, transport: str) -> None:
             f"OK custom {transport.upper()} worker reached mandatory review and safe restart"
         )
     finally:
-        if broker is not None:
-            broker.stopping.set()
-        if broker_task is not None:
-            await asyncio.wait_for(broker_task, 10)
-        if handler_tasks:
-            await asyncio.wait_for(asyncio.gather(*handler_tasks), 10)
+        # Stop peer processes before the in-process broker so socket handlers can
+        # finish their durable disconnect transitions without wait_closed races.
         subprocess.run(
             ["tmux", "kill-session", "-t", f"={session}"],
             check=False,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
+        if handler_tasks:
+            await asyncio.wait_for(asyncio.gather(*tuple(handler_tasks)), 10)
+        if broker is not None:
+            broker.stopping.set()
+        if broker_task is not None:
+            await asyncio.wait_for(broker_task, 10)
         runtime.STATE_ROOT = original_state
         runtime.SCRIPT_PATH = original_script
 
