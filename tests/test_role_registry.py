@@ -67,7 +67,7 @@ class RoleRegistryTests(unittest.TestCase):
         result = load_registry(self.project)
         self.assertEqual(result["roles"], [])
         self.assertFalse(result["configured"])
-        self.assertFalse(result["launch_supported"])
+        self.assertTrue(result["launch_supported"])
         with self.assertRaises(OrchestrationError):
             load_registry(self.project, str(self.registry))
         os.environ[role_registry.REGISTRY_ENV] = str(self.registry)
@@ -79,7 +79,7 @@ class RoleRegistryTests(unittest.TestCase):
         result = load_registry(self.project, self.save())
         self.assertEqual(result["roles"], self.definition["roles"])
         self.assertTrue(result["configured"])
-        self.assertFalse(result["launch_supported"])
+        self.assertTrue(result["launch_supported"])
         self.assertNotIn("PRIVATE_PROMPT_CANARY", json.dumps(result))
         self.assertNotIn("PRIVATE_SKILL_CANARY", json.dumps(result))
         os.environ[role_registry.REGISTRY_ENV] = str(self.registry)
@@ -343,7 +343,7 @@ class RoleRegistryTests(unittest.TestCase):
         envelope = json.loads(output.getvalue())
         self.assertEqual(envelope["command"], "role-registry")
         self.assertTrue(envelope["success"])
-        self.assertFalse(envelope["data"]["launch_supported"])
+        self.assertTrue(envelope["data"]["launch_supported"])
         self.assertNotIn("PRIVATE_PROMPT_CANARY", output.getvalue())
         self.assertEqual(errors.getvalue(), "")
         with self.assertRaises(OrchestrationError):

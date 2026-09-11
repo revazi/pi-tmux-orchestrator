@@ -252,7 +252,7 @@ Valid report/verdict combinations:
 The tool returns `terminate: true`; the agent must not emit another response,
 sleep, or poll after reporting.
 
-## Custom specialist contract boundary (not yet launch-enabled)
+## Custom specialist contract boundary
 
 Protocol validators accept a bounded custom role map only from their trusted
 caller. Peers cannot add a contract field or self-register through broker-v1.
@@ -262,10 +262,11 @@ map to implementer or reviewer authority. With no explicit map, custom roles are
 rejected exactly as before. Manifest v6 adds bounded custom definition metadata
 and a pinned registry path, with metadata-only retained reads and fresh verification
 at bootstrap/restart. Existing v1–v5 manifests remain supported; ordinary starts
-still write v5. Live broker routing is explicitly gated until the remaining #60
-work lands. The parent observer receives selected identities/contracts only from
-the authoritative CLI public role projection (`specialist_contract` for custom
-roles), never from snapshot/report fields. Missing legacy metadata keeps validation
+still write v5. Explicit registered custom selections use production broker
+routing in both worker presentations. The parent observer receives selected
+identities/contracts only from the authoritative CLI public role projection
+(`specialist_contract` for custom roles), never from snapshot/report fields.
+Missing legacy metadata keeps validation
 built-in-only. Duplicate snapshot roles are rejected, and restart/handover states
 remain explicit. Custom observer reports must match the bound read-only contract;
 parent report bounds prioritize built-in writer/reviewer evidence. The direct

@@ -1,4 +1,4 @@
-"""Strict user-global definitions for future read-only custom specialists."""
+"""Strict user-global definitions for read-only custom specialists."""
 
 from __future__ import annotations
 
@@ -165,7 +165,7 @@ def load_registry(project: Path, explicit: str | None = None) -> dict[str, Any]:
         **registry,
         "configured": raw is not None,
         "registry_path": str(path),
-        "launch_supported": False,
+        "launch_supported": True,
     }
 
 
@@ -179,7 +179,7 @@ def role_registry_command(args: Any) -> CommandResult:
     data = load_registry(project, args.registry)
     human_print(f"Custom-role registry: {data['registry_path']}")
     human_print(
-        f"Validated definitions: {len(data['roles'])}; custom-role launch is not yet supported"
+        f"Validated definitions: {len(data['roles'])}; explicit custom-role launch is supported"
     )
     for role in data["roles"]:
         human_print(

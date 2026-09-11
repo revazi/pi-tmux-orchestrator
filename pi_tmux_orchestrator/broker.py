@@ -61,11 +61,6 @@ class Client:
 
 class Broker(BrokerControlSupport, BrokerObserverSupport, BrokerWorkflowSupport):
     def __init__(self, coord: Path, manifest: dict[str, Any]) -> None:
-        from .constants import KNOWN_ROLES
-
-        # Keep starts gated until custom control/presentation and lifecycle acceptance land.
-        if set(manifest["roles"]) - KNOWN_ROLES:
-            raise OrchestrationError("Custom role broker routing is not enabled yet")
         self.coord = coord
         self.manifest = manifest
         self.custom_contracts = retained_custom_contracts(manifest, coord)
@@ -1132,10 +1127,7 @@ def initialize_broker_run(
     soft_total_tokens: int | None = None,
 ) -> None:
     from .broker_store import initialize_broker_database
-    from .constants import KNOWN_ROLES
 
-    if set(manifest["roles"]) - KNOWN_ROLES:
-        raise OrchestrationError("Custom role broker routing is not enabled yet")
     tokens = {role: secrets.token_hex(16) for role in manifest["roles"]}
     control_token = secrets.token_hex(16)
     policy = validate_budget_config(

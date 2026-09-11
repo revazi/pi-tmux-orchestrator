@@ -1,10 +1,10 @@
 # Custom specialist registry
 
 The version-1 registry defines bounded, user-owned **read-only specialists**.
-The registry command is validation-only. Explicit custom selections can now be
-previewed through CLI `start --dry-run`, but cannot yet be launched or activated.
-Built-in start, model, profile, report, and worker policies are unchanged.
-Broker/worker integration is tracked in #60 and profile/activation integration in #61.
+The registry command is validation-only. Explicit registered selections can be
+previewed or launched through CLI `start`; automatic profile-based selection and
+activation remain unavailable pending #61. The built-in implementer remains the
+only writer and the built-in reviewer remains mandatory.
 
 ## Validate without starting workers
 
@@ -25,10 +25,10 @@ legacy versions are rejected rather than guessed or rewritten.
 
 Validation is local and read-only: no tmux, Pi, provider, model resolution, hooks,
 or role startup is invoked. JSON returns bounded definition metadata and
-`launch_supported: false`, never prompt/skill bodies. Failed validation emits no
+`launch_supported: true`, never prompt/skill bodies. Failed validation emits no
 partial definitions. The command does not install or approve anything.
 
-## Preview an explicit selection (partial #60)
+## Start or preview an explicit selection
 
 After reviewing and registering the exact Markdown resources:
 
@@ -36,8 +36,7 @@ After reviewing and registering the exact Markdown resources:
 pi-tmux-agents --json start --project /absolute/target/project \
   --task 'Inspect the requested change without editing.' \
   --custom-role custom-security EXACT_PROVIDER EXACT_MODEL off \
-  --role-registry /absolute/user-owned/roles.json \
-  --dry-run --skip-model-check
+  --role-registry /absolute/user-owned/roles.json
 ```
 
 Replace `EXACT_PROVIDER` and `EXACT_MODEL` with available exact identifiers. Each
@@ -53,25 +52,26 @@ TUI and `--rpc-workers` previews use the same bindings and fixed read-only polic
 and always retain the built-in implementer and reviewer. Custom skills come only
 from the verified registry definition; `--worker-skill`, `--worker-context`, and
 `--force-specialist` do not gain custom mappings. Profile mappings and deterministic
-custom activation remain #61. This is a CLI preview, not a new Pi start-tool field.
+custom activation remain #61. This is terminal CLI selection, not a new Pi
+start-tool field.
 
-Every preview rereads the registry/resources and verifies their digests. Successful
-JSON includes bounded identities, explicit models, report contracts, fixed tool
-policy, and registry-bound skill counts, not resource paths, digests, or bodies.
-`custom_role_selection.launch_supported` is **false** and its
-`resource_verification: checked_at_selection` is only a point-in-time observation;
-ordinary public role metadata remains `resource_verification: not_checked`, never
-claiming retained launch authorization. Nothing is persisted or launched. The
-normal CLI dependency/session checks still run; without `--skip-model-check`, Pi
-model-catalog discovery also runs. Skipping that check does not prove availability,
-and discovered custom-provider extensions may be unavailable to discovery-disabled
-custom workers. The orchestrator does not submit an inference prompt during a preview.
+Every preview or start rereads the registry/resources and verifies their digests.
+Successful JSON includes bounded identities, explicit models, report contracts,
+fixed tool policy, and registry-bound skill counts, not resource paths, digests,
+or bodies. `custom_role_selection.launch_supported` is **true**. A dry run reports
+`resource_verification: checked_at_selection`; a completed live start reports
+`checked_at_selection_and_launch` after final worker bootstrap revalidation and
+stable authenticated startup. Ordinary retained role metadata remains
+`resource_verification: not_checked`, never claiming that mutable external
+resources are currently valid.
 
-Without `--dry-run`, any custom selection fails with `custom_start_not_enabled`
-before dependency checks, resource reads, state creation, or tmux mutation. Both
-lower broker gates also remain. These planning regressions do not themselves
-establish the connected lifecycle evidence documented below; #60 stays open
-until the gates are reviewed separately.
+Add `--dry-run` to perform only the preview: nothing is persisted or launched.
+The normal CLI dependency/session checks run in both modes; without
+`--skip-model-check`, Pi model-catalog discovery also runs. Skipping that check
+does not prove availability, and providers supplied only by automatically
+discovered extensions are unavailable to discovery-disabled custom workers. The
+orchestrator does not submit an inference prompt during a preview or merely from
+starting an idle worker.
 
 ## Definition format
 
@@ -105,7 +105,7 @@ Put that exact lowercase 64-character digest in the registry; the validator does
 not generate or silently update approved digests. Every validation rereads and
 checks resources. Changed or missing content fails closed. Validation is an
 observation at that time, not permission to use subsequently modified resources;
-future launch/recovery integration must revalidate them.
+launch and recovery therefore revalidate them.
 
 Limits and fields:
 
@@ -126,19 +126,19 @@ Limits and fields:
   report schemas, extensions, activation rights, and authority fields are rejected.
   Prompt/skill text cannot grant tools or replace required independent review.
 
-## Worker contract boundary (partial #60 implementation)
+## Worker contract boundary
 
 The protocol validators now accept custom identities only when explicitly given
 a bounded trusted identity-to-contract map. A worker frame cannot register a role
 or choose its own contract. Without that map, custom messages and reports remain
-rejected. Public starts and live broker routing are not wired to custom roles
-yet; this is not end-to-end launch support.
+rejected. Live routing derives the map only from the validated retained manifest.
 
 The shared worker bridge supports an internal, launch-bound
 `PI_TMUX_ORCHESTRATOR_SPECIALIST_CONTRACT` (`probe`, `playwright`, or `django`).
 A valid `custom-*` identity requires that binding; built-in identities reject it.
 Both launchers strip ambient values and set the contract only after fresh
-resource verification. It is not a user-facing launch workaround.
+resource verification. Users select the registry identity through `--custom-role`;
+they cannot set or override this internal binding.
 
 Custom workers retain their custom identity in reports. Only the bound specialist
 report kind is permitted, including after assignment restoration. They cannot
@@ -154,16 +154,16 @@ tool set without prompts/provider calls. Connected actual-Pi startup and recover
 coverage is documented below; complete report generation remains outside the
 provider-free boundary.
 
-## Resource-bound bootstrap and retained metadata (partial #60)
+## Resource-bound bootstrap and retained metadata
 
 Manifest v6 can retain a pinned `custom_role_registry` path and at most eight
 custom worker records. Each custom record has a canonical `custom_role` definition
 (`id`, `contract`, `prompt`, `skills`) instead of independently overridable skills,
 and the exact `read,grep,find,ls` tool policy. It still requires the built-in
 implementer and reviewer. Manifest v1–v5 remains supported, and ordinary starts
-still write v5. Public selection is currently preview-only and writes no manifest.
-Broker initialization and recovery explicitly reject custom worker sets until
-connected lifecycle acceptance and live-start integration land.
+still write v5. A live explicit custom selection writes v6 only after strict
+registry/resource selection; broker initialization derives its custom contracts
+from that retained binding.
 
 Retained reads validate bounded metadata without opening the registry/resources;
 a deleted or changed source does not make retained metadata unreadable. This is
@@ -193,7 +193,7 @@ fixed tools despite skill `allowed-tools` claims, and disabled global/project
 extension discovery. The separate staged-package lifecycle smoke below connects
 actual Pi to the broker without submitting an inference prompt.
 
-## Gated broker workflow (partial #60)
+## Broker workflow
 
 The internal broker workflow now derives an identity-to-contract map from a fully
 validated retained manifest, never from a worker frame or current environment.
@@ -221,21 +221,18 @@ state. Synthetic regressions cover handler authentication, stale generations,
 rollback, bounded projections, all three contracts, eight-role fan-out, and repeated
 review rounds. SQLite/public snapshot tests exclude private report/resource bodies.
 
-**This is not public start or full lifecycle support.** Both temporary custom-role
-rejection gates remain. The tests use the lower workflow/storage boundary and
-synthetic streams, not custom tmux/TUI/RPC runs. Live public starts and custom
-partial-start/disconnect/restart TUI/RPC and actual-Pi acceptance must land before
-removing the gates. No provider
-savings or full lifecycle acceptance is established by these tests.
+These lower workflow/storage tests use synthetic streams; they establish broker
+semantics rather than tmux/Pi acceptance. The distinct real-tmux and actual-Pi
+boundaries below cover startup and lifecycle behavior. No provider savings or
+provider-backed report-quality claim is established by these tests.
 
-## Connected broker regression boundary (partial #60)
+## Connected broker regression boundary
 
 `tests/test_custom_broker_lifecycle.py` runs the real broker server on its private
-Unix socket with real SQLite and explicit synthetic worker peers. Setup first
-asserts that both public initialization and broker construction reject custom
-roles, then bypasses only the constructor catalog gate within the test. No
-production gate or authentication, framing, routing, control, or recovery method
-is disabled. The tests do not invoke the public start/launcher path.
+Unix socket with real SQLite and explicit synthetic worker peers. Setup uses
+production broker initialization and construction directly. No authentication,
+framing, routing, control, or recovery method is disabled. Public start-to-grid
+integration is covered separately.
 
 Connected regressions cover:
 
@@ -257,22 +254,20 @@ acknowledge/report; no worker extension, tmux pane, supervisor, provider, or
 bootstrap is exercised. The separate model-free tmux boundary below adds launcher
 coverage without turning these peers into actual-Pi evidence.
 
-## Internal launch and model-free tmux boundary (partial #60)
+## Launch and model-free tmux boundary
 
-The shared start manifest constructor now has a strict body-free manifest-v6 path
-for explicit custom selections. It requires exact role/config membership and a
+The shared start manifest constructor has a strict body-free manifest-v6 path for
+explicit custom selections. It requires exact role/config membership and a
 registry if and only if custom identities are selected. Ordinary starts retain
-manifest v5. The public CLI gate still precedes selection, so this internal path
-cannot make a live custom start available by itself.
+manifest v5. The public CLI uses this path only after fresh explicit selection.
 
 `tests/custom_worker_tmux_smoke.py` constructs that internal v6 projection and
 runs real tmux panes through the production `_run-agent` entry point in both TUI
 and RPC modes. A bounded model-free Pi host loads the real JavaScript worker
 extension and supplies only its documented registration/event surface; the
 extension owns broker-v1 framing, delivery acknowledgement, assignment state,
-and report submission. The broker also runs in its real monitor-pane subprocess;
-a test-only entry shim bypasses only its temporary custom-role catalog gate after
-validating the selected `custom-*` identity. SQLite, the TUI launcher, RPC
+and report submission. The production broker also runs in its real monitor-pane
+subprocess with the retained custom contract map. SQLite, the TUI launcher, RPC
 supervisor, tmux respawn, resource verification, snapshot creation, and mandatory
 workflow routing remain active. It verifies:
 
@@ -315,7 +310,7 @@ This boundary is **not actual Pi or provider evidence**: the synthetic host load
 the real extension but does not implement Pi's full runtime or issue model
 requests. The distinct actual-Pi boundary below now covers connected startup and
 recovery, but intentionally does not claim a generated report or provider behavior.
-#60 remains open for separately reviewed gate removal; #61 stays separate.
+The explicit public start path composes these boundaries; #61 stays separate.
 
 ## Connected actual-Pi boundary (provider-free #136)
 
@@ -345,10 +340,10 @@ prompt is sent and `orchestrator_report` is not synthesized through a fake
 provider. Any provider-backed report/quality acceptance remains a separately
 authorized step. The existing connected model-free boundaries continue to cover
 report normalization, routing, mandatory independent review, stale generations,
-and uncertain handovers. Public and lower custom live-start gates remain intact
-until #137 reviews their removal.
+and uncertain handovers. Complete report inference remains an optional,
+separately authorized provider-backed acceptance layer rather than a launch gate.
 
-## Retained control and presentation surfaces (partial #60)
+## Retained control and presentation surfaces
 
 Control parsers (`send`, `abort`, `restart`, `events`, and Supervisor event/command
 reads) accept canonical custom identities, but syntax does not enable a role:

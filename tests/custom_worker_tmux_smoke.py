@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Model-free real-tmux launch smoke for gated custom TUI and RPC workers."""
+"""Model-free real-tmux lifecycle smoke for custom TUI and RPC workers."""
 
 from __future__ import annotations
 
@@ -456,8 +456,7 @@ async def run_transport(
         f' exec {shlex.quote(str(ROOT / "bin" / "pi-tmux-agents"))} "$@"\n'
         "fi\n"
         'if [[ "$1" == "_broker" ]]; then\n'
-        f" export CUSTOM_GATED_BROKER_ROLE={shlex.quote(role_name)}\n"
-        f' exec {shlex.quote(sys.executable)} {shlex.quote(str(ROOT / "tests" / "gated_custom_broker.py"))} "$@"\n'
+        f' exec {shlex.quote(str(ROOT / "bin" / "pi-tmux-agents"))} "$@"\n'
         "fi\nexec sleep 60\n",
         encoding="utf-8",
     )
