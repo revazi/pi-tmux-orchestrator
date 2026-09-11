@@ -32,69 +32,104 @@ from pi_tmux_orchestrator.storage import (  # noqa: E402
     secure_write,
 )
 
-FAKE_PI = r"""#!/usr/bin/env python3
-import json, os, socket, sys, threading, time
+FAKE_PI = r"""#!/usr/bin/env node
+import { appendFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+import readline from "node:readline";
 
-def send(sock, value):
-    payload=json.dumps(value,separators=(',',':')).encode()
-    sock.sendall(len(payload).to_bytes(4,'big')+payload)
+const argv = process.argv.slice(2);
+const role = process.env.PI_TMUX_ORCHESTRATOR_ROLE;
+const mode = argv.includes("--mode") ? "rpc" : "tui";
+const extensionIndex = argv.indexOf("--extension");
+if (extensionIndex < 0 || !argv[extensionIndex + 1]) throw new Error("missing_worker_extension");
+const extension = await import(pathToFileURL(argv[extensionIndex + 1]).href);
+const handlers = new Map();
+const entries = [];
+let reportTool;
+let activeTools = argv.includes("--tools")
+  ? argv[argv.indexOf("--tools") + 1].split(",")
+  : [];
+const context = {
+  sessionManager: { getEntries: () => entries },
+  getContextUsage: () => undefined,
+  isIdle: () => true,
+  abort: () => {},
+};
 
-def receive(sock):
-    prefix=b''
-    while len(prefix)<4:
-        chunk=sock.recv(4-len(prefix))
-        if not chunk: return None
-        prefix+=chunk
-    size=int.from_bytes(prefix,'big'); payload=b''
-    while len(payload)<size:
-        chunk=sock.recv(size-len(payload))
-        if not chunk: return None
-        payload+=chunk
-    return json.loads(payload)
+function fail(error) {
+  console.error(error?.stack || String(error));
+  process.exitCode = 2;
+  setTimeout(() => process.exit(2), 10);
+}
 
-def broker_worker():
-    role=os.environ['PI_TMUX_ORCHESTRATOR_ROLE']
-    token=os.environ['PI_TMUX_ORCHESTRATOR_TOKEN']
-    generation=int(os.environ['PI_TMUX_ORCHESTRATOR_GENERATION'])
-    path=os.environ['PI_TMUX_ORCHESTRATOR_SOCKET']
-    sock=socket.socket(socket.AF_UNIX,socket.SOCK_STREAM)
-    for _ in range(200):
-        try: sock.connect(path); break
-        except OSError: time.sleep(.025)
-    else: raise SystemExit('broker unavailable')
-    sequence=1
-    send(sock,{'version':1,'type':'hello','role':role,'token':token,'id':f'{sequence:032x}','generation':generation})
-    sequence+=1
-    while True:
-        value=receive(sock)
-        if value is None: os._exit(0)
-        if value.get('type') not in {'context','assignment'}: continue
-        send(sock,{'version':1,'type':'ack','role':role,'token':token,'id':f'{sequence:032x}','delivery_id':value['id'],'status':'accepted'})
-        sequence+=1
-        if value['type']!='assignment': continue
-        kind=value['kind']; report={'kind':kind,'summary':'SYNTHETIC_CUSTOM_WORKER_REPORT'}
-        if kind=='review': report['verdict']='approved'
-        elif kind=='playwright': report['verdict']='pass'
-        elif kind=='django': report['verdict']='advisory_approved'
-        send(sock,{'version':1,'type':'report','role':role,'token':token,'id':f'{sequence:032x}','assignment_id':value['assignment_id'],'report':report})
-        sequence+=1
+const pi = {
+  registerTool(tool) { reportTool = tool; },
+  on(name, handler) { handlers.set(name, handler); },
+  getActiveTools() { return [...activeTools]; },
+  setActiveTools(names) { activeTools = [...names]; },
+  appendEntry(customType, data) {
+    entries.push({ type: "custom", customType, data });
+  },
+  sendMessage(message) {
+    if (message?.details?.kind !== "assignment") return;
+    setImmediate(async () => {
+      try {
+        const kind = message.details.assignment_kind;
+        const report = { kind, summary: "SYNTHETIC_CUSTOM_WORKER_REPORT" };
+        if (kind === "review") report.verdict = "approved";
+        else if (kind === "playwright") report.verdict = "pass";
+        else if (kind === "django") report.verdict = "advisory_approved";
+        await handlers.get("turn_start")?.({}, context);
+        await reportTool.execute("synthetic-report", report, undefined, undefined, context);
+        await handlers.get("agent_settled")?.({}, context);
+      } catch (error) {
+        fail(error);
+      }
+    });
+  },
+};
 
-def record():
-    path=os.environ['CUSTOM_WORKER_RECORD']
-    value={'role':os.environ['PI_TMUX_ORCHESTRATOR_ROLE'],'mode':'rpc' if '--mode' in sys.argv else 'tui','argv':sys.argv[1:],'contract':os.environ.get('PI_TMUX_ORCHESTRATOR_SPECIALIST_CONTRACT')}
-    with open(path,'a',encoding='utf-8') as handle:
-        handle.write(json.dumps(value,separators=(',',':'))+'\n')
+extension.default(pi);
+handlers.get("session_start")?.({}, context);
+appendFileSync(
+  process.env.CUSTOM_WORKER_RECORD,
+  JSON.stringify({
+    role,
+    mode,
+    argv,
+    contract: process.env.PI_TMUX_ORCHESTRATOR_SPECIALIST_CONTRACT,
+    activeTools,
+  }) + "\n",
+  { encoding: "utf8" },
+);
 
-record()
-if '--mode' not in sys.argv:
-    broker_worker()
-else:
-    threading.Thread(target=broker_worker,daemon=True).start()
-    for line in sys.stdin:
-        value=json.loads(line); response={'type':'response','command':value.get('type'),'success':True}
-        if 'id' in value: response['id']=value['id']
-        if value.get('type')=='get_state': response['data']={'sessionId':'synthetic-custom-rpc','isStreaming':False}
-        print(json.dumps(response),flush=True)
+let stopping = false;
+function shutdown() {
+  if (stopping) return;
+  stopping = true;
+  handlers.get("session_shutdown")?.();
+  process.exit(process.exitCode || 0);
+}
+process.on("SIGHUP", shutdown);
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
+
+if (mode === "rpc") {
+  const input = readline.createInterface({ input: process.stdin });
+  input.on("line", (line) => {
+    const value = JSON.parse(line);
+    const response = {
+      type: "response",
+      command: value.type,
+      success: true,
+      ...(value.id === undefined ? {} : { id: value.id }),
+      ...(value.type === "get_state"
+        ? { data: { sessionId: "synthetic-custom-rpc", isStreaming: false } }
+        : {}),
+    };
+    process.stdout.write(JSON.stringify(response) + "\n");
+  });
+}
 """
 
 
@@ -307,6 +342,7 @@ async def run_transport(root: Path, transport: str) -> None:
         expected_tools = "read,grep,find,ls,orchestrator_report"
         if (
             argv[argv.index("--tools") + 1] != expected_tools
+            or launch["activeTools"] != expected_tools.split(",")
             or "--no-extensions" not in argv
             or "--no-prompt-templates" not in argv
             or "--no-skills" not in argv
@@ -410,8 +446,13 @@ async def run_transport(root: Path, transport: str) -> None:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
+        # start_unix_server does not own/await callback tasks. Explicitly cancel
+        # any peer handler left after tmux teardown and let its finally block
+        # commit the disconnect before the temporary state root is removed.
+        for task in tuple(handler_tasks):
+            task.cancel()
         if handler_tasks:
-            await asyncio.wait_for(asyncio.gather(*tuple(handler_tasks)), 10)
+            await asyncio.gather(*tuple(handler_tasks), return_exceptions=True)
         if broker is not None:
             broker.stopping.set()
         if broker_task is not None:
