@@ -11,10 +11,12 @@ Keep these results distinct:
 
 1. **Package provenance** proves which Git checkout produced the tarball and
    staged package.
-2. **Provider-free discovery** proves Pi loads the staged extension, commands,
-   model tool, and skill from that package path.
+2. **Provider-free actual-Pi acceptance** proves Pi loads the staged extension,
+   commands, model tool, and skill, and connects staged-package custom TUI/RPC
+   workers through startup, broker reconnection, restart, revocation, and cleanup
+   without sending a prompt. It does not claim generated reports.
 3. **Local tmux acceptance** exercises broker, panes, routing, restart, and
-   retained metadata on the local machine.
+   retained metadata on the local machine; model-free peers cover report paths.
 4. **Provider-backed acceptance** measures real model behavior and usage. It can
    incur cost and must be explicitly chosen.
 
@@ -44,6 +46,14 @@ Run the normal suite first:
 ```bash
 scripts/test.sh
 ```
+
+When Pi is available, this invokes
+`tests/actual_pi_custom_lifecycle.py` against the exact disposable package staged
+by the suite. The test clears its child environment, uses isolated Pi/npm/XDG/tmux
+state and a non-secret local model catalog, and fails if its provider-request
+sentinel receives traffic. It covers actual-Pi custom TUI/RPC startup and recovery,
+not inference or a complete report round. If Pi is unavailable, that layer is
+reported as skipped rather than replaced by synthetic evidence.
 
 ## 1. Stage the exact local package
 
