@@ -51,6 +51,7 @@ for path in (
     Path("$ROOT/tests/test_hardening.py"),
     Path("$ROOT/tests/functional_smoke.py"),
     Path("$ROOT/tests/custom_worker_tmux_smoke.py"),
+    Path("$ROOT/tests/gated_custom_broker.py"),
     Path("$ROOT/tests/test_json_cli.py"),
     Path("$ROOT/tests/test_supervisor_api.py"),
     Path("$ROOT/tests/test_broker.py"),

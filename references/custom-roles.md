@@ -267,9 +267,11 @@ runs real tmux panes through the production `_run-agent` entry point in both TUI
 and RPC modes. A bounded model-free Pi host loads the real JavaScript worker
 extension and supplies only its documented registration/event surface; the
 extension owns broker-v1 framing, delivery acknowledgement, assignment state,
-and report submission. The real broker, SQLite store, TUI launcher, RPC supervisor,
-tmux respawn, resource verification, snapshot creation, and mandatory workflow
-routing remain active. It verifies:
+and report submission. The broker also runs in its real monitor-pane subprocess;
+a test-only entry shim bypasses only its temporary custom-role catalog gate after
+validating the selected `custom-*` identity. SQLite, the TUI launcher, RPC
+supervisor, tmux respawn, resource verification, snapshot creation, and mandatory
+workflow routing remain active. It verifies:
 
 - Exact launch-bound identity/contract, extension-enforced active no-shell tools,
   disabled automatic extension/prompt/skill discovery, and one explicit trusted
@@ -280,14 +282,18 @@ routing remain active. It verifies:
 - Authenticated custom restart with generation advancement and a second verified
   TUI/RPC process; resource revocation rejects restart without replacing or
   disconnecting the healthy worker.
+- Exact monitor-pane broker termination and respawn after readiness; every worker
+  reconnects to the replacement process while retained custom generation,
+  authority, and terminal workflow state remain unchanged. Exact session cleanup
+  waits for broker socket removal and durable worker disconnects.
 
 This is **not actual Pi or provider evidence**: the synthetic host loads the real
 extension but does not implement Pi's full runtime or issue model requests. Existing
 isolated actual-Pi smoke establishes bootstrap/tool discovery only, not complete
 brokered report/restart behavior. Full custom partial-start/launch rollback,
-broker-process recovery, stale-generation and uncertain-handover behavior in real
-tmux, and connected actual-Pi lifecycle evidence remain outstanding before
-removing either lower gate. #60 remains open; #61 stays separate.
+stale-generation and uncertain-handover behavior in real tmux, and connected
+actual-Pi lifecycle evidence remain outstanding before removing either lower
+gate. #60 remains open; #61 stays separate.
 
 ## Retained control and presentation surfaces (partial #60)
 
