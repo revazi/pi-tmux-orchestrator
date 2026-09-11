@@ -282,18 +282,32 @@ workflow routing remain active. It verifies:
 - Authenticated custom restart with generation advancement and a second verified
   TUI/RPC process; resource revocation rejects restart without replacing or
   disconnecting the healthy worker.
+- Accepted active assignments retain exact assignment/delivery identity across a
+  broker-process replacement, remain active after the extension's reconnect
+  lifecycle/duplicate acknowledgement, and report exactly once before mandatory
+  review.
+- A live stale generation repeatedly fails authentication after restart admission.
+  Terminating generation 2 before its replacement delivery acknowledgement marks
+  the handover uncertain; reconnecting that exact generation does not replay it,
+  route review, account usage, or accept a report. Uncertainty and the absence of
+  replay survive a further broker-process replacement in both TUI and RPC.
 - Exact monitor-pane broker termination and respawn after readiness; every worker
   reconnects to the replacement process while retained custom generation,
   authority, and terminal workflow state remain unchanged. Exact session cleanup
   waits for broker socket removal and durable worker disconnects.
 
+The real-extension sequence exposed two lifecycle ordering requirements now
+covered at the broker boundary for every role: an ordinary startup lifecycle
+cannot erase `recovering` or durable `uncertain`, and an accepted assignment
+acknowledgement restores an otherwise idle/disconnected reconnect to `active`.
+Only the assignment acknowledgement completes a prepared handover.
+
 This is **not actual Pi or provider evidence**: the synthetic host loads the real
 extension but does not implement Pi's full runtime or issue model requests. Existing
 isolated actual-Pi smoke establishes bootstrap/tool discovery only, not complete
-brokered report/restart behavior. Full custom partial-start/launch rollback,
-stale-generation and uncertain-handover behavior in real tmux, and connected
-actual-Pi lifecycle evidence remain outstanding before removing either lower
-gate. #60 remains open; #61 stays separate.
+brokered report/restart behavior. Full custom partial-start/launch rollback and
+connected actual-Pi lifecycle evidence remain outstanding before removing either
+lower gate. #60 remains open; #61 stays separate.
 
 ## Retained control and presentation surfaces (partial #60)
 

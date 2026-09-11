@@ -868,7 +868,11 @@ class Broker(BrokerControlSupport, BrokerObserverSupport, BrokerWorkflowSupport)
                 role_state = database.execute(
                     "SELECT state FROM roles WHERE role=?", (client.role,)
                 ).fetchone()["state"]
-                if state == "accepted" and role_state == "recovering":
+                if state == "accepted" and role_state in {
+                    "disconnected",
+                    "idle",
+                    "recovering",
+                }:
                     database.execute(
                         "UPDATE roles SET state='active',updated_at=? WHERE role=?",
                         (utc_now(), client.role),
@@ -1015,6 +1019,16 @@ class Broker(BrokerControlSupport, BrokerObserverSupport, BrokerWorkflowSupport)
             raise OrchestrationError("Provider usage is invalid", "invalid_protocol")
         now = utc_now()
         with connect_broker_database(self.coord) as database:
+            retained_state = database.execute(
+                "SELECT state FROM roles WHERE role=?", (client.role,)
+            ).fetchone()["state"]
+            # The actual worker sends its ordinary idle/active lifecycle directly
+            # after hello. During a prepared replacement, only the delivery ack
+            # proves the handover boundary; do not let that lifecycle erase the
+            # recovering marker before the assignment is accepted. Likewise, an
+            # ordinary lifecycle cannot downgrade a durable uncertain boundary.
+            if retained_state in {"recovering", "uncertain"} and state != "uncertain":
+                state = retained_state
             changes = ["state=?", "updated_at=?"]
             values: list[Any] = [state, now]
             if state != "active":
