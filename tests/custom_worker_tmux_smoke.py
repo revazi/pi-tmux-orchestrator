@@ -12,6 +12,7 @@ from pathlib import Path
 import secrets
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -31,7 +32,7 @@ from pi_tmux_orchestrator.storage import (  # noqa: E402
 )
 
 FAKE_PI = r"""#!/usr/bin/env node
-import { appendFileSync } from "node:fs";
+import { appendFileSync, existsSync, unlinkSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import readline from "node:readline";
 
@@ -44,6 +45,12 @@ const extension = await import(pathToFileURL(argv[extensionIndex + 1]).href);
 const handlers = new Map();
 const entries = [];
 let reportTool;
+let pendingReportKind;
+let reporting = false;
+const holdMarker = process.env.CUSTOM_WORKER_HOLD_MARKER;
+const releaseMarker = process.env.CUSTOM_WORKER_RELEASE_MARKER;
+const exitBeforeAckMarker = process.env.CUSTOM_WORKER_EXIT_BEFORE_ACK_MARKER;
+const eventRecord = process.env.CUSTOM_WORKER_EVENT_RECORD;
 let activeTools = argv.includes("--tools")
   ? argv[argv.indexOf("--tools") + 1].split(",")
   : [];
@@ -60,6 +67,31 @@ function fail(error) {
   setTimeout(() => process.exit(2), 10);
 }
 
+function recordEvent(value) {
+  if (!eventRecord) return;
+  appendFileSync(eventRecord, JSON.stringify({ role, generation: Number(process.env.PI_TMUX_ORCHESTRATOR_GENERATION), ...value }) + "\n");
+}
+
+async function submitReport(kind, context) {
+  if (reporting || !kind) return;
+  reporting = true;
+  pendingReportKind = undefined;
+  try {
+    const report = { kind, summary: "SYNTHETIC_CUSTOM_WORKER_REPORT" };
+    if (kind === "review") report.verdict = "approved";
+    else if (kind === "playwright") report.verdict = "pass";
+    else if (kind === "django") report.verdict = "advisory_approved";
+    await handlers.get("turn_start")?.({}, context);
+    await reportTool.execute("synthetic-report", report, undefined, undefined, context);
+    await handlers.get("agent_settled")?.({}, context);
+    recordEvent({ event: "report", kind });
+  } catch (error) {
+    fail(error);
+  } finally {
+    reporting = false;
+  }
+}
+
 const pi = {
   registerTool(tool) { reportTool = tool; },
   on(name, handler) { handlers.set(name, handler); },
@@ -70,25 +102,33 @@ const pi = {
   },
   sendMessage(message) {
     if (message?.details?.kind !== "assignment") return;
-    setImmediate(async () => {
-      try {
-        const kind = message.details.assignment_kind;
-        const report = { kind, summary: "SYNTHETIC_CUSTOM_WORKER_REPORT" };
-        if (kind === "review") report.verdict = "approved";
-        else if (kind === "playwright") report.verdict = "pass";
-        else if (kind === "django") report.verdict = "advisory_approved";
-        await handlers.get("turn_start")?.({}, context);
-        await reportTool.execute("synthetic-report", report, undefined, undefined, context);
-        await handlers.get("agent_settled")?.({}, context);
-      } catch (error) {
-        fail(error);
-      }
+    const kind = message.details.assignment_kind;
+    recordEvent({
+      event: "assignment",
+      kind,
+      assignment_id: message.details.assignment_id,
+      delivery_id: message.details.delivery_id,
     });
+    if (role.startsWith("custom-") && exitBeforeAckMarker && existsSync(exitBeforeAckMarker)) {
+      unlinkSync(exitBeforeAckMarker);
+      process.exit(0);
+    }
+    if (role.startsWith("custom-") && holdMarker && existsSync(holdMarker)) {
+      pendingReportKind = kind;
+      return;
+    }
+    setImmediate(() => submitReport(kind, context));
   },
 };
 
 extension.default(pi);
 handlers.get("session_start")?.({}, context);
+setInterval(() => {
+  if (!pendingReportKind || !releaseMarker || !existsSync(releaseMarker)) return;
+  unlinkSync(releaseMarker);
+  if (holdMarker && existsSync(holdMarker)) unlinkSync(holdMarker);
+  submitReport(pendingReportKind, context);
+}, 25);
 appendFileSync(
   process.env.CUSTOM_WORKER_RECORD,
   JSON.stringify({
@@ -96,6 +136,7 @@ appendFileSync(
     mode,
     argv,
     contract: process.env.PI_TMUX_ORCHESTRATOR_SPECIALIST_CONTRACT,
+    generation: Number(process.env.PI_TMUX_ORCHESTRATOR_GENERATION),
     activeTools,
   }) + "\n",
   { encoding: "utf8" },
@@ -162,7 +203,7 @@ def role_state(coord: Path, role: str) -> dict[str, object]:
         )
 
 
-def broker_recovery_state(coord: Path) -> tuple[int, int]:
+def broker_recovery_state(coord: Path) -> tuple[int, int, int]:
     with broker_store.connect_broker_database(coord, readonly=True) as database:
         starts = database.execute(
             "SELECT COUNT(*) FROM events WHERE event='broker_started'"
@@ -170,13 +211,129 @@ def broker_recovery_state(coord: Path) -> tuple[int, int]:
         connected = database.execute(
             "SELECT COUNT(*) FROM roles WHERE connected=1"
         ).fetchone()[0]
-    return starts, connected
+        connection_events = database.execute(
+            "SELECT COUNT(*) FROM events WHERE event='worker_connected'"
+        ).fetchone()[0]
+    return starts, connected, connection_events
 
 
-async def run_transport(root: Path, transport: str) -> None:
-    session = f"pi-custom-{transport}-{os.getpid()}"
-    project = ensure_private_directory(root / f"project-{transport}")
-    policy = ensure_private_directory(root / f"policy-{transport}")
+def active_assignment_state(coord: Path, role: str) -> dict[str, object] | None:
+    with broker_store.connect_broker_database(coord, readonly=True) as database:
+        row = database.execute(
+            "SELECT assignments.id,assignments.delivery_id,assignments.state "
+            "FROM roles JOIN assignments ON assignments.id=roles.active_assignment_id "
+            "WHERE roles.role=?",
+            (role,),
+        ).fetchone()
+    return dict(row) if row is not None else None
+
+
+def report_counts(coord: Path) -> tuple[int, int]:
+    with broker_store.connect_broker_database(coord, readonly=True) as database:
+        reports = database.execute("SELECT COUNT(*) FROM reports").fetchone()[0]
+        reviewer = database.execute(
+            "SELECT COUNT(*) FROM assignments WHERE role='reviewer'"
+        ).fetchone()[0]
+    return reports, reviewer
+
+
+def recorded_events(path: Path, role: str, event: str) -> list[dict[str, object]]:
+    if not path.exists():
+        return []
+    return [
+        value
+        for value in (json.loads(line) for line in path.read_text().splitlines())
+        if value["role"] == role and value["event"] == event
+    ]
+
+
+def respawn_worker(
+    pane_id: str, coord: Path, state_root: Path, wrapper: Path, role: str
+) -> None:
+    command = shlex.join(
+        [
+            str(wrapper),
+            "_run-agent",
+            "--state-root",
+            str(state_root),
+            "--coord",
+            str(coord),
+            "--role",
+            role,
+        ]
+    )
+    subprocess.run(
+        ["tmux", "respawn-pane", "-k", "-t", pane_id, command],
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+
+def respawn_broker(manifest: dict[str, object], coord: Path, wrapper: Path) -> None:
+    pane_id = manifest["monitor_pane_id"]
+    pane_pid = int(
+        subprocess.run(
+            ["tmux", "display-message", "-p", "-t", pane_id, "#{pane_pid}"],
+            check=True,
+            text=True,
+            capture_output=True,
+        ).stdout.strip()
+    )
+    os.kill(pane_pid, signal.SIGTERM)
+    deadline = time.monotonic() + 2
+    while time.monotonic() < deadline:
+        dead = subprocess.run(
+            ["tmux", "display-message", "-p", "-t", pane_id, "#{pane_dead}"],
+            check=True,
+            text=True,
+            capture_output=True,
+        ).stdout.strip()
+        if dead == "1":
+            break
+        time.sleep(0.05)
+    else:
+        # The acceptance target includes abrupt broker loss. Bound graceful
+        # shutdown, then terminate only the exact process hosted by this pane.
+        os.kill(pane_pid, signal.SIGKILL)
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            dead = subprocess.run(
+                ["tmux", "display-message", "-p", "-t", pane_id, "#{pane_dead}"],
+                check=True,
+                text=True,
+                capture_output=True,
+            ).stdout.strip()
+            if dead == "1":
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError("previous broker process did not terminate")
+    broker_command = shlex.join(
+        [
+            str(wrapper),
+            "_broker",
+            "--state-root",
+            str(coord.parent.parent),
+            "--coord",
+            str(coord),
+        ]
+    )
+    subprocess.run(
+        ["tmux", "respawn-pane", "-t", pane_id, broker_command],
+        check=True,
+        text=True,
+        capture_output=True,
+    )
+
+
+async def run_transport(
+    root: Path, transport: str, *, interrupted: bool = False
+) -> None:
+    scenario = "uncertain" if interrupted else "accepted"
+    session = f"pi-custom-{transport}-{scenario}-{os.getpid()}"
+    project = ensure_private_directory(root / f"project-{transport}-{scenario}")
+    policy = ensure_private_directory(root / f"policy-{transport}-{scenario}")
     prompt_body = "PRIVATE_CUSTOM_PROMPT_CANARY\n"
     skill_body = (
         "---\nname: custom-smoke\ndescription: PRIVATE_CUSTOM_SKILL_CANARY\n---\n"
@@ -272,13 +429,22 @@ async def run_transport(root: Path, transport: str) -> None:
     for role, token in tokens.items():
         secure_write(coord / f"{role}.token", token + "\n")
     secure_write(coord / "control.token", control_token + "\n")
-    record_path = root / f"launch-{transport}.jsonl"
-    wrapper = root / f"runtime-{transport}.sh"
+    record_path = root / f"launch-{transport}-{scenario}.jsonl"
+    event_path = root / f"events-{transport}-{scenario}.jsonl"
+    hold_marker = root / f"hold-{transport}-{scenario}"
+    release_marker = root / f"release-{transport}-{scenario}"
+    exit_marker = root / f"exit-before-ack-{transport}-{scenario}"
+    hold_marker.touch(mode=0o600)
+    wrapper = root / f"runtime-{transport}-{scenario}.sh"
     wrapper.write_text(
         "#!/usr/bin/env bash\nset -euo pipefail\n"
         'if [[ "$1" == "_run-agent" ]]; then\n'
         f" export PATH={shlex.quote(str(root))}:$PATH\n"
         f" export CUSTOM_WORKER_RECORD={shlex.quote(str(record_path))}\n"
+        f" export CUSTOM_WORKER_EVENT_RECORD={shlex.quote(str(event_path))}\n"
+        f" export CUSTOM_WORKER_HOLD_MARKER={shlex.quote(str(hold_marker))}\n"
+        f" export CUSTOM_WORKER_RELEASE_MARKER={shlex.quote(str(release_marker))}\n"
+        f" export CUSTOM_WORKER_EXIT_BEFORE_ACK_MARKER={shlex.quote(str(exit_marker))}\n"
         f' exec {shlex.quote(str(ROOT / "bin" / "pi-tmux-agents"))} "$@"\n'
         "fi\n"
         'if [[ "$1" == "_broker" ]]; then\n'
@@ -297,8 +463,13 @@ async def run_transport(root: Path, transport: str) -> None:
             raise AssertionError("custom launch did not retain manifest v6 binding")
         try:
             await wait_for(
-                lambda: workflow_state(coord) == "ready",
-                f"{transport} custom worker workflow did not reach independent approval",
+                lambda: (
+                    active_assignment_state(coord, role_name) is not None
+                    and active_assignment_state(coord, role_name)["state"] == "accepted"
+                    and role_state(coord, role_name)
+                    == {"state": "active", "connected": 1, "generation": 1}
+                ),
+                f"{transport} custom assignment was not held after acknowledgement",
             )
         except AssertionError as error:
             snapshot = broker_store.public_broker_snapshot(coord)
@@ -322,12 +493,23 @@ async def run_transport(root: Path, transport: str) -> None:
             launches = (
                 record_path.read_text(encoding="utf-8") if record_path.exists() else ""
             )
+            events = (
+                event_path.read_text(encoding="utf-8") if event_path.exists() else ""
+            )
             raise AssertionError(
-                f"{error}; snapshot={snapshot!r}; launches={launches!r}; panes={panes!r}"
+                f"{error}; snapshot={snapshot!r}; launches={launches!r}; "
+                f"events={events!r}; panes={panes!r}"
             ) from error
+        initial_assignment = active_assignment_state(coord, role_name)
+        if initial_assignment is None or report_counts(coord) != (1, 0):
+            raise AssertionError("custom assignment routed reviewer work before report")
         records = [json.loads(line) for line in record_path.read_text().splitlines()]
         custom = [value for value in records if value["role"] == role_name]
-        if len(custom) != 1 or custom[0]["mode"] != transport:
+        if (
+            len(custom) != 1
+            or custom[0]["mode"] != transport
+            or custom[0]["generation"] != 1
+        ):
             raise AssertionError(f"unexpected custom launch records: {custom!r}")
         launch = custom[0]
         if launch["contract"] != "probe":
@@ -352,6 +534,187 @@ async def run_transport(root: Path, transport: str) -> None:
             raise AssertionError("custom prompt snapshot was not launched")
         if snapshot_skill.read_text(encoding="utf-8") != skill_body:
             raise AssertionError("custom skill snapshot was not launched")
+
+        pane_id = manifest["roles"][role_name]["pane_id"]
+        restart_args = argparse.Namespace(
+            yes=True,
+            session=session,
+            role=role_name,
+            provider=None,
+            model=None,
+            thinking=None,
+            skip_model_check=True,
+        )
+        starts_before, _, connections_before = broker_recovery_state(coord)
+        if interrupted:
+            await asyncio.to_thread(
+                commands.broker_control_request, coord, role_name, "restart"
+            )
+            await wait_for(
+                lambda: role_state(coord, role_name)
+                == {"state": "restarting", "connected": 0, "generation": 2},
+                f"stale {transport} generation did not disconnect after restart admission",
+            )
+            await asyncio.sleep(0.5)
+            pane_status = subprocess.run(
+                ["tmux", "display-message", "-p", "-t", pane_id, "#{pane_dead}"],
+                check=True,
+                text=True,
+                capture_output=True,
+            ).stdout.strip()
+            if (
+                pane_status != "0"
+                or role_state(coord, role_name)
+                != {"state": "restarting", "connected": 0, "generation": 2}
+                or len(recorded_events(event_path, role_name, "assignment")) != 1
+            ):
+                raise AssertionError(
+                    "live stale-generation worker reconnected or received more work"
+                )
+
+            exit_marker.touch(mode=0o600)
+            respawn_worker(pane_id, coord, state_root, wrapper, role_name)
+            try:
+                await wait_for(
+                    lambda: role_state(coord, role_name)
+                    == {"state": "uncertain", "connected": 0, "generation": 2},
+                    f"interrupted {transport} replacement delivery was not uncertain",
+                )
+            except AssertionError as error:
+                raise AssertionError(
+                    f"{error}; role={role_state(coord, role_name)!r}; "
+                    f"assignment={active_assignment_state(coord, role_name)!r}; "
+                    f"launches={record_path.read_text(encoding='utf-8')!r}; "
+                    f"events={event_path.read_text(encoding='utf-8')!r}; "
+                    f"exit_marker={exit_marker.exists()}"
+                ) from error
+            if workflow_state(coord) != "uncertain" or report_counts(coord) != (1, 0):
+                raise AssertionError("interrupted replacement routed or completed work")
+
+            respawn_worker(pane_id, coord, state_root, wrapper, role_name)
+            try:
+                await wait_for(
+                    lambda: (
+                        role_state(coord, role_name)
+                        == {"state": "uncertain", "connected": 1, "generation": 2}
+                        and active_assignment_state(coord, role_name) is not None
+                        and active_assignment_state(coord, role_name)["state"]
+                        == "uncertain"
+                    ),
+                    f"current {transport} generation did not reconnect as uncertain",
+                )
+            except AssertionError as error:
+                raise AssertionError(
+                    f"{error}; role={role_state(coord, role_name)!r}; "
+                    f"assignment={active_assignment_state(coord, role_name)!r}; "
+                    f"launches={record_path.read_text(encoding='utf-8')!r}; "
+                    f"events={event_path.read_text(encoding='utf-8')!r}"
+                ) from error
+            assignment_events = recorded_events(event_path, role_name, "assignment")
+            if (
+                len(assignment_events) != 2
+                or assignment_events[0]["assignment_id"]
+                != assignment_events[1]["assignment_id"]
+                or assignment_events[0]["delivery_id"]
+                == assignment_events[1]["delivery_id"]
+                or [value["generation"] for value in assignment_events] != [1, 2]
+            ):
+                raise AssertionError(
+                    f"interrupted replacement identity drifted: {assignment_events!r}"
+                )
+
+            starts_before, _, connections_before = broker_recovery_state(coord)
+            respawn_broker(manifest, coord, wrapper)
+            try:
+                await wait_for(
+                    lambda: broker_recovery_state(coord)
+                    == (starts_before + 1, len(roles), connections_before + len(roles)),
+                    f"uncertain {transport} workers did not reconnect after broker restart",
+                )
+            except AssertionError as error:
+                raise AssertionError(
+                    f"{error}; recovery={broker_recovery_state(coord)!r}; "
+                    f"expected={(starts_before + 1, len(roles), connections_before + len(roles))!r}; "
+                    f"role={role_state(coord, role_name)!r}"
+                ) from error
+            release_marker.touch(mode=0o600)
+            await asyncio.sleep(0.3)
+            if (
+                workflow_state(coord) != "uncertain"
+                or role_state(coord, role_name)
+                != {"state": "uncertain", "connected": 1, "generation": 2}
+                or report_counts(coord) != (1, 0)
+                or len(recorded_events(event_path, role_name, "assignment")) != 2
+            ):
+                raise AssertionError(
+                    "uncertain custom assignment replayed, reported, or routed review"
+                )
+            with broker_store.connect_broker_database(coord, readonly=True) as database:
+                dump = "\n".join(database.iterdump())
+            for canary in (
+                "SYNTHETIC CUSTOM TMUX SMOKE",
+                "SYNTHETIC_CUSTOM_WORKER_REPORT",
+                "PRIVATE_CUSTOM_PROMPT_CANARY",
+                "PRIVATE_CUSTOM_SKILL_CANARY",
+            ):
+                if canary in dump:
+                    raise AssertionError("private interrupted payload entered SQLite")
+            print(
+                f"OK custom {transport.upper()} stale generation and uncertain handover survived broker recovery"
+            )
+            return
+
+        await asyncio.to_thread(commands.restart_command, restart_args)
+        await wait_for(
+            lambda: (
+                role_state(coord, role_name)
+                == {"state": "active", "connected": 1, "generation": 2}
+                and active_assignment_state(coord, role_name) is not None
+                and active_assignment_state(coord, role_name)["state"] == "accepted"
+            ),
+            f"accepted {transport} assignment did not survive worker restart",
+        )
+        replacement_assignment = active_assignment_state(coord, role_name)
+        replacement_events = recorded_events(event_path, role_name, "assignment")
+        if (
+            replacement_assignment is None
+            or replacement_assignment["id"] != initial_assignment["id"]
+            or replacement_assignment["delivery_id"]
+            == initial_assignment["delivery_id"]
+            or [value["generation"] for value in replacement_events] != [1, 2]
+        ):
+            raise AssertionError(
+                f"accepted replacement identity drifted: {replacement_events!r}"
+            )
+        initial_assignment = replacement_assignment
+        starts_before, _, connections_before = broker_recovery_state(coord)
+        respawn_broker(manifest, coord, wrapper)
+        try:
+            await wait_for(
+                lambda: (
+                    broker_recovery_state(coord)
+                    == (starts_before + 1, len(roles), connections_before + len(roles))
+                    and active_assignment_state(coord, role_name) == initial_assignment
+                    and role_state(coord, role_name)
+                    == {"state": "active", "connected": 1, "generation": 2}
+                ),
+                f"accepted {transport} assignment did not reconnect with stable identity",
+            )
+        except AssertionError as error:
+            raise AssertionError(
+                f"{error}; recovery={broker_recovery_state(coord)!r}; "
+                f"assignment={active_assignment_state(coord, role_name)!r}; "
+                f"initial={initial_assignment!r}; role={role_state(coord, role_name)!r}; "
+                f"events={recorded_events(event_path, role_name, 'assignment')!r}"
+            ) from error
+        if len(recorded_events(event_path, role_name, "assignment")) != 2:
+            raise AssertionError("accepted custom assignment was redelivered to Pi")
+        release_marker.touch(mode=0o600)
+        await wait_for(
+            lambda: workflow_state(coord) == "ready",
+            f"{transport} custom worker workflow did not reach independent approval",
+        )
+
         with broker_store.connect_broker_database(coord, readonly=True) as database:
             dump = "\n".join(database.iterdump())
             report_roles = {
@@ -371,24 +734,9 @@ async def run_transport(root: Path, transport: str) -> None:
             if canary in dump:
                 raise AssertionError("private custom payload entered SQLite")
 
-        restart_args = argparse.Namespace(
-            yes=True,
-            session=session,
-            role=role_name,
-            provider=None,
-            model=None,
-            thinking=None,
-            skip_model_check=True,
-        )
-        await asyncio.to_thread(commands.restart_command, restart_args)
         await wait_for(
-            lambda: role_state(coord, role_name)
-            == {"state": "idle", "connected": 1, "generation": 2},
-            f"custom {transport} restart did not complete its authenticated handover",
-        )
-        await wait_for(
-            lambda: record_path.read_text(encoding="utf-8").count("\n") == 4,
-            f"custom {transport} replacement worker did not launch",
+            lambda: role_state(coord, role_name)["connected"] == 1,
+            f"custom {transport} worker disconnected after accepted report",
         )
         records = [json.loads(line) for line in record_path.read_text().splitlines()]
         replacements = [value for value in records if value["role"] == role_name]
@@ -400,7 +748,6 @@ async def run_transport(root: Path, transport: str) -> None:
                 f"custom {transport} restart binding drifted: {replacements!r}"
             )
 
-        pane_id = manifest["roles"][role_name]["pane_id"]
         pane_pid = subprocess.run(
             ["tmux", "display-message", "-p", "-t", pane_id, "#{pane_pid}"],
             check=True,
@@ -429,32 +776,11 @@ async def run_transport(root: Path, transport: str) -> None:
         if current_pid != pane_pid:
             raise AssertionError("revoked restart replaced the healthy worker")
 
-        starts_before, _ = broker_recovery_state(coord)
-        broker_command = shlex.join(
-            [
-                str(runtime.SCRIPT_PATH),
-                "_broker",
-                "--state-root",
-                str(coord.parent.parent),
-                "--coord",
-                str(coord),
-            ]
-        )
-        subprocess.run(
-            [
-                "tmux",
-                "respawn-pane",
-                "-k",
-                "-t",
-                manifest["monitor_pane_id"],
-                broker_command,
-            ],
-            check=True,
-            text=True,
-            capture_output=True,
-        )
+        starts_before, _, connections_before = broker_recovery_state(coord)
+        respawn_broker(manifest, coord, wrapper)
         await wait_for(
-            lambda: broker_recovery_state(coord) == (starts_before + 1, len(roles)),
+            lambda: broker_recovery_state(coord)
+            == (starts_before + 1, len(roles), connections_before + len(roles)),
             f"custom {transport} workers did not reconnect to the replacement broker",
         )
         if workflow_state(coord) != "ready" or role_state(coord, role_name) != {
@@ -494,6 +820,7 @@ async def async_main() -> None:
         fake_pi.chmod(0o700)
         for transport in ("tui", "rpc"):
             await run_transport(root, transport)
+            await run_transport(root, transport, interrupted=True)
 
 
 def main() -> int:

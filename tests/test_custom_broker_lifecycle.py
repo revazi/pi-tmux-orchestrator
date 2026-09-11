@@ -285,6 +285,8 @@ class CustomBrokerLifecycleTests(
         self.assertEqual(restored["id"], assignment["id"])
         self.assertEqual(restored["assignment_id"], assignment["assignment_id"])
         self.assertEqual(restored["kind"], "probe")
+        self.assertTrue((await peer.accept(restored))["success"])
+        self.assertEqual(self.row()["state"], "active")
         self.workers[self.name] = peer
         await self.report(self.name, restored)
         await self.workers["reviewer"].receive("assignment")
@@ -294,8 +296,11 @@ class CustomBrokerLifecycleTests(
         assignment = await self.custom_assignment()
         self.workers[self.name].writer.close()
         await self.wait_for(lambda: self.row()["connected"] == 0)
-        await self.connect(self.name)
+        peer = await self.connect(self.name)
         await self.wait_for(lambda: self.row()["state"] == "uncertain")
+        lifecycle = await peer.send("lifecycle", state="idle", usage=None)
+        self.assertTrue((await peer.receive("response", id=lifecycle))["success"])
+        self.assertEqual(self.row()["state"], "uncertain")
         self.assertEqual(self.state(), "uncertain")
         with broker_store.connect_broker_database(self.coord, readonly=True) as db:
             state = db.execute(
@@ -335,6 +340,8 @@ class CustomBrokerLifecycleTests(
         await self.wait_for(lambda: self.row()["connected"] == 0)
         peer = await self.connect(self.name, generation=2)
         await peer.receive("assignment")
+        lifecycle = await peer.send("lifecycle", state="idle", usage=None)
+        self.assertTrue((await peer.receive("response", id=lifecycle))["success"])
         self.assertEqual(self.row()["state"], "recovering")
         peer.writer.close()
         await self.wait_for(lambda: self.row()["connected"] == 0)
