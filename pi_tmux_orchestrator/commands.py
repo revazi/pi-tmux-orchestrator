@@ -9,6 +9,8 @@ import os
 import shlex
 import shutil
 import stat
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -195,6 +197,92 @@ def construct_start_manifest(
             "session_id": f"{coord.name}-{role}",
         }
     return manifest
+
+
+CUSTOM_STARTUP_TIMEOUT_SECONDS = 20.0
+CUSTOM_STARTUP_STABLE_SECONDS = 0.25
+CUSTOM_STARTUP_WAIT = threading.Event()
+
+
+def wait_for_custom_startup(
+    session: str,
+    coord: Path,
+    roles: list[str],
+    manifest: dict[str, Any],
+    *,
+    timeout: float = CUSTOM_STARTUP_TIMEOUT_SECONDS,
+) -> None:
+    """Require a stable authenticated manifest-v6 broker/worker startup."""
+    if manifest.get("version") != 6 or not any(
+        valid_custom_role_id(role) for role in roles
+    ):
+        raise OrchestrationError("Custom startup admission requires manifest v6")
+    expected_panes = [
+        manifest["monitor_pane_id"],
+        *(manifest["roles"][role]["pane_id"] for role in roles),
+    ]
+    if any(not isinstance(pane_id, str) for pane_id in expected_panes):
+        raise OrchestrationError("Custom startup panes are incomplete")
+    deadline = time.monotonic() + timeout
+    stable_since: float | None = None
+    last_reason = "broker and workers did not authenticate"
+    while time.monotonic() < deadline:
+        for pane_id in expected_panes:
+            result = tmux(
+                ["display-message", "-p", "-t", pane_id, "#{pane_dead}"],
+                check=False,
+                capture=True,
+            )
+            if result.returncode != 0 or result.stdout.strip() != "0":
+                raise OrchestrationError(
+                    "Custom startup failed before every pane became healthy",
+                    "startup_failed",
+                )
+        try:
+            socket_metadata = broker_paths(coord)["socket"].lstat()
+            snapshot = public_broker_snapshot(coord)
+        except (FileNotFoundError, OSError, OrchestrationError):
+            stable_since = None
+            last_reason = "broker did not become ready"
+            CUSTOM_STARTUP_WAIT.wait(0.05)
+            continue
+        role_rows = {row["role"]: row for row in snapshot["roles"]}
+        workflow = snapshot["workflow"]["state"]
+        admitted = (
+            stat.S_ISSOCK(socket_metadata.st_mode)
+            and set(role_rows) == set(roles)
+            and all(role_rows[role]["connected"] for role in roles)
+            and workflow not in {"starting", "connecting", "initializing", "uncertain"}
+        )
+        if admitted:
+            now = time.monotonic()
+            if stable_since is None:
+                stable_since = now
+            elif now - stable_since >= CUSTOM_STARTUP_STABLE_SECONDS:
+                return
+        else:
+            stable_since = None
+            last_reason = "not every selected worker authenticated"
+        CUSTOM_STARTUP_WAIT.wait(0.05)
+    raise OrchestrationError(
+        f"Custom startup failed: {last_reason}",
+        "startup_failed",
+    )
+
+
+def rollback_partial_start(session: str, coord: Path) -> None:
+    """Stop only the exact new session and bound its broker-socket cleanup."""
+    tmux(
+        ["kill-session", "-t", exact_session_target(session)],
+        check=False,
+        capture=True,
+    )
+    socket_path = broker_paths(coord)["socket"]
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        if not session_exists(session) and not socket_path.exists():
+            return
+        CUSTOM_STARTUP_WAIT.wait(0.05)
 
 
 def create_tmux_grid(
@@ -738,13 +826,11 @@ def start_command(args: argparse.Namespace) -> CommandResult:
             worker_context_overrides=context_policy["overrides"],
         )
         create_tmux_grid(session, project, coord, roles, manifest)
+        if manifest["version"] == 6:
+            wait_for_custom_startup(session, coord, roles, manifest)
         secure_write(coord / "startup-state", "RUNNING\n")
     except BaseException:
-        tmux(
-            ["kill-session", "-t", exact_session_target(session)],
-            check=False,
-            capture=True,
-        )
+        rollback_partial_start(session, coord)
         try:
             secure_write(coord / "startup-state", "FAILED\n")
         except OrchestrationError:

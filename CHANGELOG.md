@@ -6,7 +6,7 @@ All notable changes to this project are documented here.
 
 ### Added
 
-- Added a gated internal manifest-v6 custom start projection and model-free real-tmux TUI/RPC launcher smoke that loads the real worker extension, covering verified snapshots, extension-enforced fixed tools, brokered mandatory review, authenticated worker and broker-process restart, retained-state reconnection, stale-generation rejection, interrupted replacement uncertainty without replay/review/accounting, and revoked-resource rejection; public live starts and connected actual-Pi lifecycle acceptance remain pending
+- Added a gated internal manifest-v6 custom start projection and model-free real-tmux TUI/RPC launcher smoke that loads the real worker extension, covering verified snapshots, extension-enforced fixed tools, brokered mandatory review, authenticated worker and broker-process restart, retained-state reconnection, stale-generation rejection, interrupted replacement uncertainty without replay/review/accounting, and revoked-resource rejection; manifest-v6 startup now requires a bounded stable authenticated broker/worker health boundary and rolls failed partial starts back to body-free `FAILED` metadata without affecting prefix-colliding sessions; public live starts and connected actual-Pi lifecycle acceptance remain pending
 
 - Added manifest-v6 custom role/resource bindings and shared fail-closed worker bootstrap: pinned registry revalidation, private verified Markdown snapshots, fixed read-only launch tools, and disabled automatic extension discovery; public custom starts and broker routing remain pending
 
