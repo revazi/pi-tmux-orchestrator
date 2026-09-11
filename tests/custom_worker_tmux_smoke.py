@@ -16,14 +16,12 @@ import subprocess
 import sys
 import tempfile
 import time
-from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from pi_tmux_orchestrator import broker_store, commands, constants, runtime  # noqa: E402
-from pi_tmux_orchestrator.broker import Broker  # noqa: E402
 from pi_tmux_orchestrator.configuration import public_project_config  # noqa: E402
 from pi_tmux_orchestrator.custom_role_resources import select_custom_start  # noqa: E402
 from pi_tmux_orchestrator.models import OrchestrationError  # noqa: E402
@@ -164,6 +162,17 @@ def role_state(coord: Path, role: str) -> dict[str, object]:
         )
 
 
+def broker_recovery_state(coord: Path) -> tuple[int, int]:
+    with broker_store.connect_broker_database(coord, readonly=True) as database:
+        starts = database.execute(
+            "SELECT COUNT(*) FROM events WHERE event='broker_started'"
+        ).fetchone()[0]
+        connected = database.execute(
+            "SELECT COUNT(*) FROM roles WHERE connected=1"
+        ).fetchone()[0]
+    return starts, connected
+
+
 async def run_transport(root: Path, transport: str) -> None:
     session = f"pi-custom-{transport}-{os.getpid()}"
     project = ensure_private_directory(root / f"project-{transport}")
@@ -271,36 +280,21 @@ async def run_transport(root: Path, transport: str) -> None:
         f" export PATH={shlex.quote(str(root))}:$PATH\n"
         f" export CUSTOM_WORKER_RECORD={shlex.quote(str(record_path))}\n"
         f' exec {shlex.quote(str(ROOT / "bin" / "pi-tmux-agents"))} "$@"\n'
+        "fi\n"
+        'if [[ "$1" == "_broker" ]]; then\n'
+        f" export CUSTOM_GATED_BROKER_ROLE={shlex.quote(role_name)}\n"
+        f' exec {shlex.quote(sys.executable)} {shlex.quote(str(ROOT / "tests" / "gated_custom_broker.py"))} "$@"\n'
         "fi\nexec sleep 60\n",
         encoding="utf-8",
     )
     wrapper.chmod(0o700)
     runtime.SCRIPT_PATH = wrapper
-    broker = None
-    broker_task = None
-    handler_tasks: set[asyncio.Task[None]] = set()
     try:
         commands.create_tmux_grid(session, project, coord, roles, manifest)
         if manifest["version"] != 6 or manifest["custom_role_registry"] != str(
             registry
         ):
             raise AssertionError("custom launch did not retain manifest v6 binding")
-        with mock.patch.object(
-            constants, "KNOWN_ROLES", constants.KNOWN_ROLES | {role_name}
-        ):
-            broker = Broker(coord, manifest)
-        handle_client = broker.handle_client
-
-        async def tracked_client(reader, writer):
-            task = asyncio.current_task()
-            handler_tasks.add(task)
-            try:
-                await handle_client(reader, writer)
-            finally:
-                handler_tasks.discard(task)
-
-        broker.handle_client = tracked_client
-        broker_task = asyncio.create_task(broker._run())
         try:
             await wait_for(
                 lambda: workflow_state(coord) == "ready",
@@ -434,29 +428,58 @@ async def run_transport(root: Path, transport: str) -> None:
         ).stdout.strip()
         if current_pid != pane_pid:
             raise AssertionError("revoked restart replaced the healthy worker")
+
+        starts_before, _ = broker_recovery_state(coord)
+        broker_command = shlex.join(
+            [
+                str(runtime.SCRIPT_PATH),
+                "_broker",
+                "--state-root",
+                str(coord.parent.parent),
+                "--coord",
+                str(coord),
+            ]
+        )
+        subprocess.run(
+            [
+                "tmux",
+                "respawn-pane",
+                "-k",
+                "-t",
+                manifest["monitor_pane_id"],
+                broker_command,
+            ],
+            check=True,
+            text=True,
+            capture_output=True,
+        )
+        await wait_for(
+            lambda: broker_recovery_state(coord) == (starts_before + 1, len(roles)),
+            f"custom {transport} workers did not reconnect to the replacement broker",
+        )
+        if workflow_state(coord) != "ready" or role_state(coord, role_name) != {
+            "state": "idle",
+            "connected": 1,
+            "generation": 2,
+        }:
+            raise AssertionError(
+                "broker recovery changed retained custom authority/state"
+            )
         print(
-            f"OK custom {transport.upper()} worker reached mandatory review and safe restart"
+            f"OK custom {transport.upper()} worker reached review, safe restart, and broker recovery"
         )
     finally:
-        # Stop peer processes before the in-process broker so socket handlers can
-        # finish their durable disconnect transitions without wait_closed races.
+        socket_path = broker_store.broker_paths(coord)["socket"]
         subprocess.run(
             ["tmux", "kill-session", "-t", f"={session}"],
             check=False,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-        # start_unix_server does not own/await callback tasks. Explicitly cancel
-        # any peer handler left after tmux teardown and let its finally block
-        # commit the disconnect before the temporary state root is removed.
-        for task in tuple(handler_tasks):
-            task.cancel()
-        if handler_tasks:
-            await asyncio.gather(*tuple(handler_tasks), return_exceptions=True)
-        if broker is not None:
-            broker.stopping.set()
-        if broker_task is not None:
-            await asyncio.wait_for(broker_task, 10)
+        await wait_for(
+            lambda: not socket_path.exists() and broker_recovery_state(coord)[1] == 0,
+            f"custom {transport} tmux processes did not shut down cleanly",
+        )
         runtime.STATE_ROOT = original_state
         runtime.SCRIPT_PATH = original_script
 
