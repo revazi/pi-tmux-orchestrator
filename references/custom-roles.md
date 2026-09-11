@@ -249,12 +249,43 @@ Connected regressions cover:
 - Report replay after reconnect and in-memory evidence loss neither accounts nor
   routes twice; task, report, and resource canaries are absent from SQLite.
 
-This is connected **broker-only** evidence, not connected TUI/RPC worker or
-actual-Pi lifecycle acceptance. Synthetic peers explicitly acknowledge/report;
-no worker extension, tmux pane, supervisor, provider, or bootstrap is exercised.
-Full custom partial-start/launch rollback, TUI/RPC worker recovery, broker-process
-recovery, and actual-Pi lifecycle evidence remain outstanding before live-start
-integration can remove either lower gate. #60 remains open; #61 stays separate.
+This is connected **broker-only** evidence. Synthetic peers explicitly
+acknowledge/report; no worker extension, tmux pane, supervisor, provider, or
+bootstrap is exercised. The separate model-free tmux boundary below adds launcher
+coverage without turning these peers into actual-Pi evidence.
+
+## Internal launch and model-free tmux boundary (partial #60)
+
+The shared start manifest constructor now has a strict body-free manifest-v6 path
+for explicit custom selections. It requires exact role/config membership and a
+registry if and only if custom identities are selected. Ordinary starts retain
+manifest v5. The public CLI gate still precedes selection, so this internal path
+cannot make a live custom start available by itself.
+
+`tests/custom_worker_tmux_smoke.py` constructs that internal v6 projection and
+runs real tmux panes through the production `_run-agent` entry point in both TUI
+and RPC modes. It deliberately substitutes a bounded model-free `pi` process that
+speaks broker-v1; the real broker, SQLite store, TUI launcher, RPC supervisor,
+tmux respawn, resource verification, snapshot creation, and mandatory workflow
+routing remain active. It verifies:
+
+- Exact launch-bound identity/contract, fixed no-shell tools, disabled automatic
+  extension/prompt/skill discovery, and one explicit trusted extension/skill.
+- Private system-prompt and skill snapshots for both presentations without task,
+  report, prompt, or skill bodies entering SQLite.
+- Implementation-to-custom-to-independent-review routing through terminal approval.
+- Authenticated custom restart with generation advancement and a second verified
+  TUI/RPC process; resource revocation rejects restart without replacing or
+  disconnecting the healthy worker.
+
+This is **not actual Pi or provider evidence**: the synthetic executable does not
+load the JavaScript worker extension or issue model requests. Existing isolated
+actual-Pi smoke establishes bootstrap/tool discovery only, not complete brokered
+report/restart behavior. Full custom partial-start/launch rollback, worker and
+broker-process disconnect/recovery under real extension framing, stale-generation
+and uncertain-handover behavior in real tmux, and connected actual-Pi lifecycle
+evidence remain outstanding before removing either lower gate. #60 remains open;
+#61 stays separate.
 
 ## Retained control and presentation surfaces (partial #60)
 

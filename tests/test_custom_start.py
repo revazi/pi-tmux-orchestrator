@@ -11,6 +11,7 @@ from unittest import mock
 from pi_tmux_orchestrator import commands, runtime
 from pi_tmux_orchestrator.custom_role_resources import select_custom_start
 from pi_tmux_orchestrator.models import OrchestrationError
+from pi_tmux_orchestrator.storage import validate_manifest
 from test_custom_role_resources import CustomRoleResourceFixture
 import test_json_cli
 
@@ -126,6 +127,64 @@ class CustomStartTests(CustomRoleResourceFixture):
                     self.assertNotIn(excluded, raw)
                 self.assertEqual(sorted(self.root.rglob("*")), before)
                 self.assert_no_start()
+
+    def test_internal_launch_projection_is_strict_body_free_manifest_v6(self):
+        custom = select_custom_start(self.project, [self.spec], str(self.registry))
+        roles = ["implementer", "reviewer", self.name]
+        configs = {
+            role: {
+                "provider": "fixture-provider",
+                "model": "fixture/model",
+                "thinking": "off",
+                "tools": None if role == "implementer" else "read,bash,grep,find,ls",
+                "pane_id": None,
+            }
+            for role in roles[:2]
+        }
+        configs.update(custom["roles"])
+        before = copy.deepcopy(configs)
+        manifest = commands.construct_start_manifest(
+            self.coord,
+            self.project,
+            self.manifest["session"],
+            "rpc",
+            approve_project=False,
+            execution_profile=self.manifest["execution_profile"],
+            project_config=self.manifest["project_config"],
+            orchestration_config=self.manifest["orchestration_config"],
+            roles=roles,
+            configs=configs,
+            custom_role_registry=custom["registry_path"],
+        )
+        manifest["monitor_pane_id"] = "%9"
+        for index, role in enumerate(roles, start=1):
+            manifest["roles"][role]["pane_id"] = f"%{index}"
+        self.assertEqual(validate_manifest(manifest, self.coord), manifest)
+        self.assertEqual(configs, before)
+        self.assertEqual(manifest["version"], 6)
+        self.assertEqual(manifest["custom_role_registry"], str(self.registry))
+        self.assertEqual(list(manifest["roles"]), roles)
+        self.assertEqual(manifest["roles"][self.name]["custom_role"], self.definition)
+        self.assertEqual(manifest["roles"][self.name]["tools"], "read,grep,find,ls")
+        retained = json.dumps(manifest)
+        self.assertNotIn("PRIVATE_GUIDANCE_CANARY", retained)
+        self.assertNotIn("PRIVATE_SKILL_CANARY", retained)
+        for registry in (None, str(self.registry)):
+            inconsistent = roles if registry is None else roles[:2]
+            with self.subTest(registry=registry), self.assertRaises(OrchestrationError):
+                commands.construct_start_manifest(
+                    self.coord,
+                    self.project,
+                    self.manifest["session"],
+                    "rpc",
+                    approve_project=False,
+                    execution_profile=self.manifest["execution_profile"],
+                    project_config=self.manifest["project_config"],
+                    orchestration_config=self.manifest["orchestration_config"],
+                    roles=inconsistent,
+                    configs={role: configs[role] for role in inconsistent},
+                    custom_role_registry=registry,
+                )
 
     def test_live_selection_fails_before_dependency_checks_reads_or_mutation(self):
         for options in ([], ["--rpc-workers", "--approve-project"]):
