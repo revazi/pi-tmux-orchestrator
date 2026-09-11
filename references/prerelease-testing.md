@@ -22,6 +22,14 @@ Model-free fixtures and serialized-byte/operation counts are proxies. They do
 not prove provider cost, cache behavior, reviewer quality, or production-wire
 acceptance.
 
+For the next stable candidate, run this guide as part of the explicit
+[release gate #139](https://github.com/revazi/pi-tmux-orchestrator/issues/139)
+only after engineering roadmaps
+[#101](https://github.com/revazi/pi-tmux-orchestrator/issues/101) and
+[#58](https://github.com/revazi/pi-tmux-orchestrator/issues/58) close. Staging a
+package or completing this guide does not select a version or authorize tagging
+or publication; `RELEASE.md` remains the maintainer checklist.
+
 ## Prerequisites
 
 - macOS or Linux
