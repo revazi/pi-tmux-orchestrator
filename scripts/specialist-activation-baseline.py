@@ -12,6 +12,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from pi_tmux_orchestrator.specialist_activation import (  # noqa: E402
+    decide_custom_specialist,
     decide_initial_probe,
     decide_specialist,
 )
@@ -34,6 +35,7 @@ def build_baseline() -> dict[str, object]:
             decide_initial_probe(task),
             decide_specialist("playwright", paths),
             decide_specialist("django", paths),
+            decide_custom_specialist("custom-security", "probe", paths),
         ]
         selected = sum(value["decision"] == "run" for value in decisions)
         before += len(decisions)
@@ -54,7 +56,7 @@ def build_baseline() -> dict[str, object]:
             }
         )
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "benchmark_kind": "deterministic-specialist-assignment-count-proxy",
         "cases": cases,
         "totals": {

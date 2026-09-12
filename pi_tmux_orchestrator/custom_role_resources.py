@@ -9,6 +9,7 @@ from typing import Any
 
 from .constants import CUSTOM_READ_ONLY_TOOLS, THINKING_LEVELS
 from .models import OrchestrationError
+from .profiles import CUSTOM_PROFILE_THINKING
 from .registry_resources import global_resource_path, read_global_resource
 from .role_registry import (
     MAX_CUSTOM_ROLES,
@@ -18,6 +19,13 @@ from .role_registry import (
     valid_custom_role_id,
     validate_registry,
 )
+
+
+CUSTOM_POLICY_FIELDS = frozenset(
+    {"selection_source", "thinking_source", "activation_source"}
+)
+CUSTOM_THINKING_SOURCES = frozenset({"per-run-override", "execution-profile"})
+CUSTOM_ACTIVATION_SOURCES = frozenset({"deterministic-contract-rule", "per-run-force"})
 
 
 @dataclass(frozen=True)
@@ -66,7 +74,7 @@ def select_custom_roles(
 def select_custom_start(
     project: Path, selections: list[list[str]], registry: str | None = None
 ) -> dict[str, Any]:
-    """Resolve explicit models and verified bindings, never profile/model defaults."""
+    """Resolve explicit models, optional profile thinking, and verified bindings."""
     if not isinstance(selections, list) or len(selections) > MAX_CUSTOM_ROLES:
         raise OrchestrationError(
             "Custom start selection is invalid", "invalid_arguments"
@@ -90,7 +98,7 @@ def select_custom_start(
                 for value in selection[1:3]
             )
             or not isinstance(selection[3], str)
-            or selection[3] not in THINKING_LEVELS
+            or selection[3] not in (*THINKING_LEVELS, CUSTOM_PROFILE_THINKING)
         ):
             raise OrchestrationError(
                 "Custom start selection is invalid", "invalid_arguments"
@@ -103,6 +111,15 @@ def select_custom_start(
             "thinking": thinking,
             "tools": CUSTOM_READ_ONLY_TOOLS,
             "pane_id": None,
+            "custom_policy": {
+                "selection_source": "per-run",
+                "thinking_source": (
+                    "execution-profile"
+                    if thinking == CUSTOM_PROFILE_THINKING
+                    else "per-run-override"
+                ),
+                "activation_source": "deterministic-contract-rule",
+            },
         }
     if registry is not None and not names:
         raise OrchestrationError(
@@ -114,10 +131,22 @@ def select_custom_start(
     return {"registry_path": selected["registry_path"], "roles": configs}
 
 
+def validate_custom_policy(value: object) -> dict[str, str]:
+    if (
+        not isinstance(value, dict)
+        or set(value) != CUSTOM_POLICY_FIELDS
+        or value.get("selection_source") != "per-run"
+        or value.get("thinking_source") not in CUSTOM_THINKING_SOURCES
+        or value.get("activation_source") not in CUSTOM_ACTIVATION_SOURCES
+    ):
+        raise OrchestrationError("Custom role policy metadata is invalid")
+    return dict(value)
+
+
 def retained_custom_definitions(manifest: dict[str, Any]) -> dict[str, Any]:
     """Strict versioned binding, without consulting ambient policy or live files."""
     version = manifest.get("version")
-    if type(version) is not int or version not in {1, 2, 3, 4, 5, 6}:
+    if type(version) is not int or version not in {1, 2, 3, 4, 5, 6, 7}:
         raise OrchestrationError("Unsupported custom role binding manifest version")
     project = Path(manifest["project"])
     roles = manifest["roles"]

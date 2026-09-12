@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "benchmark_kind": "deterministic-specialist-assignment-count-proxy",
   "cases": [
     {
@@ -19,9 +19,14 @@
           "role": "django",
           "decision": "skipped",
           "rule_id": "django-docs-only-paths-v1"
+        },
+        {
+          "role": "custom-security",
+          "decision": "skipped",
+          "rule_id": "custom-security-docs-only-paths-v1"
         }
       ],
-      "configured_assignments_before": 3,
+      "configured_assignments_before": 4,
       "selected_assignments_after": 0
     },
     {
@@ -41,10 +46,15 @@
           "role": "django",
           "decision": "skipped",
           "rule_id": "django-frontend-only-paths-v1"
+        },
+        {
+          "role": "custom-security",
+          "decision": "run",
+          "rule_id": "custom-security-ambiguous-paths-v1"
         }
       ],
-      "configured_assignments_before": 3,
-      "selected_assignments_after": 2
+      "configured_assignments_before": 4,
+      "selected_assignments_after": 3
     },
     {
       "name": "django-risk",
@@ -63,10 +73,15 @@
           "role": "django",
           "decision": "run",
           "rule_id": "django-framework-path-v1"
+        },
+        {
+          "role": "custom-security",
+          "decision": "run",
+          "rule_id": "custom-security-ambiguous-paths-v1"
         }
       ],
-      "configured_assignments_before": 3,
-      "selected_assignments_after": 3
+      "configured_assignments_before": 4,
+      "selected_assignments_after": 4
     },
     {
       "name": "empty-paths",
@@ -85,16 +100,21 @@
           "role": "django",
           "decision": "run",
           "rule_id": "django-ambiguous-paths-v1"
+        },
+        {
+          "role": "custom-security",
+          "decision": "run",
+          "rule_id": "custom-security-ambiguous-paths-v1"
         }
       ],
-      "configured_assignments_before": 3,
-      "selected_assignments_after": 3
+      "configured_assignments_before": 4,
+      "selected_assignments_after": 4
     }
   ],
   "totals": {
-    "configured_assignments_before": 12,
-    "selected_assignments_after": 8,
-    "assignments_avoided": 4
+    "configured_assignments_before": 16,
+    "selected_assignments_after": 11,
+    "assignments_avoided": 5
   },
   "authoritative_evidence": {
     "provider_usage": {

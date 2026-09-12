@@ -29,7 +29,7 @@ from test_custom_role_resources import CustomRoleResourceFixture
 class CustomBrokerWorkflowTests(
     CustomRoleResourceFixture, unittest.IsolatedAsyncioTestCase
 ):
-    def workflow(self, *, flow="single", count=3):
+    def workflow(self, *, flow="single", count=3, version=6, forced=()):
         original = self.manifest["roles"].pop(self.name)
         for index in range(count):
             name = f"custom-specialist-{index}"
@@ -42,7 +42,18 @@ class CustomBrokerWorkflowTests(
             role["custom_role"].update(
                 id=name, contract=("probe", "playwright", "django")[index % 3]
             )
+            if version >= 7:
+                role["custom_policy"] = {
+                    "selection_source": "per-run",
+                    "thinking_source": "per-run-override",
+                    "activation_source": (
+                        "per-run-force"
+                        if name in forced
+                        else "deterministic-contract-rule"
+                    ),
+                }
             self.manifest["roles"][name] = role
+        self.manifest["version"] = version
         # Exercise only the lower workflow boundary; public initialization and
         # Broker construction intentionally still reject this worker set.
         retained_custom_contracts(self.manifest, self.coord)
@@ -54,6 +65,7 @@ class CustomBrokerWorkflowTests(
             soft_role_tokens=0,
             soft_total_tokens=0,
             implementation_flow=flow,
+            forced_specialists=forced,
         )
         workflow = WorkflowHarness(self.coord, self.manifest)
         workflow.refresh_dashboard = mock.Mock()
@@ -71,10 +83,84 @@ class CustomBrokerWorkflowTests(
             }[contract]
             await workflow.report(role, contract, **fields)
 
+    async def test_manifest_v7_deterministic_custom_skips_are_reviewer_visible(self):
+        workflow = self.workflow(version=7)
+        await workflow.report(
+            "implementer", "implementation", changed_paths=["docs/guide.md"]
+        )
+        self.assertEqual(workflow.assign.await_count, 1)
+        self.assertEqual(workflow.assign.await_args.args[:3], ("reviewer", "review", 1))
+        snapshot = broker_store.public_broker_snapshot(self.coord)
+        custom = [
+            value
+            for value in snapshot["specialist_activations"]
+            if value["role"].startswith("custom-")
+        ]
+        self.assertEqual(len(custom), 3)
+        self.assertTrue(all(value["decision"] == "skipped" for value in custom))
+        self.assertTrue(
+            all(value["rule_id"].startswith(f"{value['role']}-") for value in custom)
+        )
+        capsule = workflow.deliver.await_args_list[0].args[3]
+        self.assertIn("custom-specialist-0: skipped", capsule)
+        self.assertIn("source=deterministic-contract-rule", capsule)
+
+    async def test_manifest_v7_malformed_implementation_cannot_activate_custom(self):
+        workflow = self.workflow(version=7)
+        assignment_id = workflow.create_assignment("implementer", "implementation")
+        with self.assertRaises(OrchestrationError):
+            await workflow.handle_report(
+                workflow.clients["implementer"],
+                {
+                    "id": secrets.token_hex(16),
+                    "assignment_id": assignment_id,
+                    "report": {
+                        "kind": "implementation",
+                        "summary": "malformed path evidence",
+                        "changed_paths": [1],
+                    },
+                },
+            )
+        self.assertEqual(
+            broker_store.public_broker_snapshot(self.coord)["specialist_activations"],
+            [],
+        )
+        workflow.assign.assert_not_awaited()
+
+    async def test_manifest_v7_force_runs_only_the_selected_custom_role(self):
+        forced = ("custom-specialist-0",)
+        workflow = self.workflow(version=7, forced=forced)
+        await workflow.report(
+            "implementer", "implementation", changed_paths=["docs/guide.md"]
+        )
+        self.assertEqual(workflow.assign.await_count, 1)
+        self.assertEqual(workflow.assign.await_args.args[0], forced[0])
+        with broker_store.connect_broker_database(
+            self.coord, readonly=True
+        ) as database:
+            activations = broker_store.public_specialist_activations(
+                database, round_number=1
+            )
+        selected = next(value for value in activations if value["role"] == forced[0])
+        self.assertEqual(
+            (selected["decision"], selected["forced"], selected["rule_id"]),
+            ("run", True, "custom-specialist-0-forced-v1"),
+        )
+        await workflow.report(forced[0], "probe")
+        self.assertEqual(workflow.assign.await_args.args[:3], ("reviewer", "review", 1))
+
     async def test_all_selected_contracts_gate_independent_review_each_round(self):
         workflow = self.workflow(count=8)
         await workflow.report("implementer", "implementation")
         self.assertEqual(workflow.assign.await_count, 8)
+        self.assertTrue(
+            all(
+                value["source"] == "legacy-always-run"
+                for value in broker_store.public_broker_snapshot(self.coord)[
+                    "specialist_activations"
+                ]
+            )
+        )
         for call, (role, contract) in zip(
             workflow.assign.await_args_list, workflow.custom_contracts.items()
         ):

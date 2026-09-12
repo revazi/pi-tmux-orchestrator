@@ -22,7 +22,7 @@ from .constants import BROKER_PROTOCOL_VERSION, RPC_TOKEN_PATTERN
 from .context_capsules import render_run_state_capsule
 from .models import OrchestrationError
 from .protocol import validate_report
-from .specialist_activation import decide_specialist
+from .specialist_activation import decide_custom_specialist, decide_specialist
 
 if TYPE_CHECKING:
     from .broker import Client
@@ -357,6 +357,7 @@ class BrokerWorkflowSupport:
                 for name in ("probe", "playwright", "django")
                 if name in self.manifest["roles"]
             ]
+            configured.extend(self.custom_contracts)
             activated: list[str] = []
             with connect_broker_database(self.coord) as database:
                 existing = {
@@ -371,11 +372,26 @@ class BrokerWorkflowSupport:
                 for specialist in configured:
                     if specialist in existing:
                         continue
-                    decision = decide_specialist(
-                        specialist,
-                        report["changed_paths"],
-                        forced=specialist in forced,
-                    )
+                    if specialist not in self.custom_contracts:
+                        decision = decide_specialist(
+                            specialist,
+                            report["changed_paths"],
+                            forced=specialist in forced,
+                        )
+                    elif self.manifest["version"] >= 7:
+                        decision = decide_custom_specialist(
+                            specialist,
+                            self.custom_contracts[specialist],
+                            report["changed_paths"],
+                            forced=specialist in forced,
+                        )
+                    else:
+                        decision = {
+                            "role": specialist,
+                            "decision": "run",
+                            "rule_id": f"{specialist}-legacy-always-run-v1",
+                            "forced": False,
+                        }
                     record_specialist_activation(
                         database,
                         round_number=round_number,
@@ -383,9 +399,6 @@ class BrokerWorkflowSupport:
                     )
                     if decision["decision"] == "run":
                         activated.append(specialist)
-            # Explicit selection requires one custom report per implementation round.
-            # Custom deterministic activation/profile policy remains outside this workflow.
-            activated.extend(self.custom_contracts)
             await self._deliver_run_state(tuple(["reviewer", *activated]), round_number)
             for specialist in activated:
                 await self.assign(
@@ -432,6 +445,8 @@ class BrokerWorkflowSupport:
             for name in ("probe", "playwright", "django")
             if name in self.manifest["roles"]
         ]
+        if self.manifest["version"] >= 7:
+            specialists.extend(self.custom_contracts)
         with connect_broker_database(self.coord) as database:
             implementation = database.execute(
                 "SELECT 1 FROM reports WHERE role='implementer' AND round=? "
@@ -466,9 +481,12 @@ class BrokerWorkflowSupport:
         if (
             implementation is not None
             and specialists_ready
-            and all(
-                completed.get(role) == contract
-                for role, contract in self.custom_contracts.items()
+            and (
+                self.manifest["version"] >= 7
+                or all(
+                    completed.get(role) == contract
+                    for role, contract in self.custom_contracts.items()
+                )
             )
             and reviewer_assignment is None
         ):

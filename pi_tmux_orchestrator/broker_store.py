@@ -42,6 +42,12 @@ SCHEMA_VERSION = 10
 _ACTIVATION_RULE_PATTERN = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
 
 
+def _activation_source(rule_id: str, forced: bool) -> str:
+    if rule_id.endswith("-legacy-always-run-v1"):
+        return "legacy-always-run"
+    return "per-run-force" if forced else "deterministic-contract-rule"
+
+
 def validate_implementation_flow(value: object) -> str:
     if not isinstance(value, str) or value not in IMPLEMENTATION_FLOWS:
         raise OrchestrationError("Implementation flow is invalid")
@@ -132,6 +138,22 @@ def initialize_broker_database(
     selected_forced = validate_forced_specialists(
         forced_specialists, set(manifest["roles"])
     )
+    if manifest["version"] >= 7:
+        from .custom_role_resources import retained_custom_definitions
+
+        for role in retained_custom_definitions(manifest):
+            expected_source = (
+                "per-run-force"
+                if role in selected_forced
+                else "deterministic-contract-rule"
+            )
+            if (
+                manifest["roles"][role]["custom_policy"]["activation_source"]
+                != expected_source
+            ):
+                raise OrchestrationError(
+                    "Custom role activation metadata does not match run policy"
+                )
     with connect_broker_database(coord) as database:
         database.executescript("""
             CREATE TABLE IF NOT EXISTS meta (
@@ -443,8 +465,14 @@ def record_specialist_activation(
     rule_id: str,
     forced: bool,
 ) -> dict[str, Any]:
+    from .role_registry import valid_custom_role_id
+
+    configured = database.execute(
+        "SELECT 1 FROM roles WHERE role=?", (role,)
+    ).fetchone()
     valid = (
-        role in SPECIALIST_ROLES
+        (role in SPECIALIST_ROLES or valid_custom_role_id(role))
+        and configured is not None
         and type(round_number) is int
         and round_number > 0
         and decision in ACTIVATION_DECISIONS
@@ -485,6 +513,7 @@ def record_specialist_activation(
         "decision": decision,
         "rule_id": rule_id,
         "forced": forced,
+        "source": _activation_source(rule_id, forced),
     }
 
 
@@ -495,12 +524,18 @@ def public_specialist_activations(
     for row in database.execute(
         "SELECT role,round,decision,rule_id,forced FROM specialist_activations "
         "WHERE round=? ORDER BY CASE role "
-        "WHEN 'probe' THEN 0 WHEN 'playwright' THEN 1 ELSE 2 END",
+        "WHEN 'probe' THEN 0 WHEN 'playwright' THEN 1 WHEN 'django' THEN 2 "
+        "ELSE 3 END, role",
         (round_number,),
     ):
         value = dict(row)
+        from .role_registry import valid_custom_role_id
+
         if (
-            value["role"] not in SPECIALIST_ROLES
+            (
+                value["role"] not in SPECIALIST_ROLES
+                and not valid_custom_role_id(value["role"])
+            )
             or value["decision"] not in ACTIVATION_DECISIONS
             or not isinstance(value["rule_id"], str)
             or _ACTIVATION_RULE_PATTERN.fullmatch(value["rule_id"]) is None
@@ -509,6 +544,7 @@ def public_specialist_activations(
         ):
             raise OrchestrationError("Retained specialist activation is invalid")
         value["forced"] = bool(value["forced"])
+        value["source"] = _activation_source(value["rule_id"], value["forced"])
         values.append(value)
     return values
 

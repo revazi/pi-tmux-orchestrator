@@ -233,7 +233,17 @@ def render_run_state_capsule(
                 if decision == "run"
                 else "not-required"
             )
-            source = "forced" if activation.get("forced") is True else "deterministic"
+            source = activation.get("source")
+            if source not in {
+                "per-run-force",
+                "deterministic-contract-rule",
+                "legacy-always-run",
+            }:
+                source = (
+                    "per-run-force"
+                    if activation.get("forced") is True
+                    else "deterministic-contract-rule"
+                )
             activation_lines.append(
                 f"- {role}: {decision}; evidence={evidence}; rule={rule_id}; source={source}"
             )

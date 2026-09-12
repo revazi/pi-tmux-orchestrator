@@ -7,6 +7,7 @@ from pathlib import Path
 
 from pi_tmux_orchestrator.models import OrchestrationError
 from pi_tmux_orchestrator.specialist_activation import (
+    decide_custom_specialist,
     decide_initial_probe,
     decide_specialist,
     validate_forced_specialists,
@@ -107,7 +108,16 @@ class SpecialistActivationPolicyTests(unittest.TestCase):
             )
         )
         self.assertEqual(baseline, expected)
-        self.assertEqual(baseline["totals"]["assignments_avoided"], 4)
+        self.assertEqual(baseline["totals"]["assignments_avoided"], 5)
+        self.assertTrue(
+            all(
+                any(
+                    decision["role"] == "custom-security"
+                    for decision in case["decisions"]
+                )
+                for case in baseline["cases"]
+            )
+        )
         self.assertEqual(
             baseline["authoritative_evidence"]["provider_usage"]["availability"],
             "unavailable",
@@ -118,11 +128,63 @@ class SpecialistActivationPolicyTests(unittest.TestCase):
         )
         self.assertFalse(any(baseline["claims"].values()))
 
+    def test_custom_contract_rules_are_identity_bound_and_conservative(self) -> None:
+        skipped = decide_custom_specialist(
+            "custom-security", "probe", ["docs/guide.md"]
+        )
+        self.assertEqual(
+            skipped,
+            {
+                "role": "custom-security",
+                "decision": "skipped",
+                "rule_id": "custom-security-docs-only-paths-v1",
+                "forced": False,
+            },
+        )
+        ambiguous = decide_custom_specialist(
+            "custom-browser", "playwright", [], forced=False
+        )
+        self.assertEqual(ambiguous["decision"], "run")
+        self.assertEqual(ambiguous["rule_id"], "custom-browser-ambiguous-paths-v1")
+        forced = decide_custom_specialist(
+            "custom-framework", "django", ["docs/guide.md"], forced=True
+        )
+        self.assertEqual(
+            forced,
+            {
+                "role": "custom-framework",
+                "decision": "run",
+                "rule_id": "custom-framework-forced-v1",
+                "forced": True,
+            },
+        )
+        for role, contract, paths in (
+            ("custom-Bad", "probe", ["src/app.py"]),
+            ("custom-security", "reviewer", ["src/app.py"]),
+            ("custom-security", "probe", [1]),
+        ):
+            with self.subTest(role=role, contract=contract, paths=paths):
+                if paths == [1]:
+                    self.assertEqual(
+                        decide_custom_specialist(role, contract, paths)["decision"],
+                        "run",
+                    )
+                else:
+                    with self.assertRaises(OrchestrationError):
+                        decide_custom_specialist(role, contract, paths)
+
     def test_forced_specialists_are_unique_enabled_and_canonical(self) -> None:
         configured = ["implementer", "reviewer", "probe", "playwright", "django"]
         self.assertEqual(
             validate_forced_specialists(["django", "probe"], configured),
             ("probe", "django"),
+        )
+        configured.extend(["custom-zeta", "custom-alpha"])
+        self.assertEqual(
+            validate_forced_specialists(
+                ["custom-zeta", "probe", "custom-alpha"], configured
+            ),
+            ("probe", "custom-alpha", "custom-zeta"),
         )
         for value in (["reviewer"], ["probe", "probe"], ["playwright"]):
             enabled = configured if value != ["playwright"] else ["implementer"]

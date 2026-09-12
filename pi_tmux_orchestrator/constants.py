@@ -104,6 +104,7 @@ MANIFEST_V5_FIELDS = MANIFEST_V4_FIELDS | {
     "orchestration_config",
 }
 MANIFEST_V6_FIELDS = MANIFEST_V5_FIELDS | {"custom_role_registry"}
+MANIFEST_V7_FIELDS = MANIFEST_V6_FIELDS
 ROLE_FIELDS = frozenset(
     {"provider", "model", "thinking", "tools", "pane_id", "prompt_path", "session_dir"}
 )
@@ -112,6 +113,7 @@ ROLE_V3_FIELDS = frozenset(
 )
 ROLE_V3_RESOURCE_FIELDS = ROLE_V3_FIELDS | {"skills"}
 ROLE_CUSTOM_FIELDS = ROLE_V3_FIELDS | {"custom_role"}
+ROLE_CUSTOM_V7_FIELDS = ROLE_CUSTOM_FIELDS | {"custom_policy"}
 PANE_ID_PATTERN = re.compile(r"%[0-9]+")
 RPC_STATE_FIELDS = frozenset(
     {

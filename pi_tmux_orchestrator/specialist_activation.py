@@ -10,7 +10,8 @@ from .models import OrchestrationError
 
 SPECIALIST_ROLES = ("probe", "playwright", "django")
 ACTIVATION_DECISIONS = ("run", "skipped")
-MAX_FORCED_SPECIALISTS = len(SPECIALIST_ROLES)
+# Three built-ins plus the registry's bounded eight custom identities.
+MAX_FORCED_SPECIALISTS = 11
 
 _DOCUMENTATION_NAMES = {
     "changelog",
@@ -70,12 +71,14 @@ def validate_forced_specialists(
         return ()
     if not isinstance(values, (list, tuple)) or len(values) > MAX_FORCED_SPECIALISTS:
         raise OrchestrationError("Forced specialists are invalid")
+    from .role_registry import valid_custom_role_id
+
     configured = set(configured_roles)
     selected: list[str] = []
     for value in values:
         if (
             not isinstance(value, str)
-            or value not in SPECIALIST_ROLES
+            or (value not in SPECIALIST_ROLES and not valid_custom_role_id(value))
             or value not in configured
             or value in selected
         ):
@@ -83,7 +86,8 @@ def validate_forced_specialists(
                 "Forced specialists must be unique enabled specialist roles"
             )
         selected.append(value)
-    return tuple(role for role in SPECIALIST_ROLES if role in selected)
+    ordered = (*SPECIALIST_ROLES, *sorted(configured - set(SPECIALIST_ROLES)))
+    return tuple(role for role in ordered if role in selected)
 
 
 def _decision(
@@ -137,6 +141,22 @@ def decide_initial_probe(task: object, *, forced: bool = False) -> dict[str, Any
     ):
         return _decision("probe", "skipped", "probe-docs-only-task-v1", forced=False)
     return _decision("probe", "run", "probe-ambiguous-task-v1", forced=False)
+
+
+def decide_custom_specialist(
+    role: str,
+    contract: str,
+    changed_paths: object,
+    *,
+    forced: bool = False,
+) -> dict[str, Any]:
+    from .role_registry import CONTRACTS, valid_custom_role_id
+
+    if not valid_custom_role_id(role) or contract not in CONTRACTS:
+        raise OrchestrationError("Custom specialist activation binding is invalid")
+    base = decide_specialist(contract, changed_paths, forced=forced)
+    contract_rule = base["rule_id"].removeprefix(f"{contract}-")
+    return {**base, "role": role, "rule_id": f"{role}-{contract_rule}"}
 
 
 def decide_specialist(

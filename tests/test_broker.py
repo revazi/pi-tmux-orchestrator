@@ -499,7 +499,7 @@ class ContextCapsuleTests(unittest.TestCase):
             capsule,
         )
         self.assertIn(
-            "playwright: run; evidence=reported; rule=playwright-forced-v1; source=forced",
+            "playwright: run; evidence=reported; rule=playwright-forced-v1; source=per-run-force",
             capsule,
         )
         self.assertIn("Synthetic data only.", capsule)
@@ -1652,6 +1652,7 @@ class BrokerObserverTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
                     "decision": "run",
                     "rule_id": "playwright-forced-v1",
                     "forced": True,
+                    "source": "per-run-force",
                 }
             ],
         )

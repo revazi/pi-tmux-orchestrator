@@ -189,6 +189,12 @@ Run the smallest useful matrix rather than every expensive combination:
   the reviewer without waking irrelevant specialists.
 - Use an ambiguous/high-risk change or explicit force selection to verify the
   configured specialist runs and review waits for its real report.
+- For one registered custom specialist, preview an explicit thinking level and
+  `THINKING=profile`; confirm the explicit level wins and an absent profile mapping
+  fails closed. A profile mapping without `--custom-role` must launch nothing.
+- Exercise documentation-only skip, ambiguous-path run, and
+  `--force-specialist CUSTOM_ID`; confirm every run gates built-in review while a
+  skip remains reviewer-visible and issues no specialist provider turn.
 - Do not treat synthetic probe/browser evidence as production acceptance.
 
 ### D. Workspace capsule experiment

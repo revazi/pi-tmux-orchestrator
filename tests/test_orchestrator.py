@@ -567,6 +567,20 @@ class UtilityTests(unittest.TestCase):
         self.assertEqual(selected["kind"], "custom")
         self.assertEqual(selected["source"], "user-global")
         self.assertEqual(selected["thinking"], custom_mapping)
+        custom_role_mapping = {**custom_mapping, "custom-security": "high"}
+        with_custom_role = ORCHESTRATOR.validate_model_config(
+            {
+                "version": 3,
+                "defaultProfile": "review-heavy",
+                "profiles": {"review-heavy": custom_role_mapping},
+                "defaults": {},
+                "roles": {},
+            }
+        )
+        self.assertEqual(
+            ORCHESTRATOR.resolve_execution_profile(with_custom_role)["thinking"],
+            custom_role_mapping,
+        )
         requested = ORCHESTRATOR.resolve_execution_profile(configured, "economy")
         self.assertEqual(requested["source"], "per-run")
         self.assertEqual(requested["thinking"]["implementer"], "medium")
@@ -621,6 +635,25 @@ class UtilityTests(unittest.TestCase):
             {
                 "version": 2,
                 "profiles": {"partial": {"implementer": "low"}},
+                "defaults": {},
+                "roles": {},
+            },
+            {
+                "version": 3,
+                "profiles": {
+                    "invalid-custom": {**custom_mapping, "custom-Bad": "high"}
+                },
+                "defaults": {},
+                "roles": {},
+            },
+            {
+                "version": 3,
+                "profiles": {
+                    "too-many-custom": {
+                        **custom_mapping,
+                        **{f"custom-specialist-{index}": "high" for index in range(9)},
+                    }
+                },
                 "defaults": {},
                 "roles": {},
             },

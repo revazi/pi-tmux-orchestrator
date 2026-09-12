@@ -60,6 +60,7 @@ from .models import CommandResult, OrchestrationError
 from .output import bounded_message, human_print, public_role
 from .profiles import (
     public_execution_profile,
+    resolve_custom_thinking,
     resolve_execution_profile,
     retained_execution_profile,
 )
@@ -172,7 +173,7 @@ def construct_start_manifest(
     ):
         raise OrchestrationError("Start role bindings are inconsistent")
     manifest: dict[str, Any] = {
-        "version": 6 if custom_roles else 5,
+        "version": 7 if custom_roles else 5,
         "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
         "session": session,
         "window": WINDOW,
@@ -212,11 +213,11 @@ def wait_for_custom_startup(
     *,
     timeout: float = CUSTOM_STARTUP_TIMEOUT_SECONDS,
 ) -> None:
-    """Require a stable authenticated manifest-v6 broker/worker startup."""
-    if manifest.get("version") != 6 or not any(
+    """Require a stable authenticated custom broker/worker startup."""
+    if manifest.get("version") not in {6, 7} or not any(
         valid_custom_role_id(role) for role in roles
     ):
-        raise OrchestrationError("Custom startup admission requires manifest v6")
+        raise OrchestrationError("Custom startup admission requires manifest v6+")
     expected_panes = [
         manifest["monitor_pane_id"],
         *(manifest["roles"][role]["pane_id"] for role in roles),
@@ -574,9 +575,6 @@ def start_command(args: argparse.Namespace) -> CommandResult:
         roles.append("playwright")
     if with_django_expert:
         roles.append("django")
-    forced_specialists = validate_forced_specialists(
-        getattr(args, "force_specialist", []), roles
-    )
     execution_profile = resolve_execution_profile(
         configured_models,
         getattr(args, "profile", None),
@@ -598,8 +596,20 @@ def start_command(args: argparse.Namespace) -> CommandResult:
     )
     for role in roles:
         configs[role]["skills"] = worker_skills[role]
+    for role, config in custom_selection["roles"].items():
+        thinking, source = resolve_custom_thinking(
+            role, config["thinking"], execution_profile
+        )
+        config["thinking"] = thinking
+        config["custom_policy"]["thinking_source"] = source
     configs.update(custom_selection["roles"])
     roles.extend(custom_selection["roles"])
+    forced_specialists = validate_forced_specialists(
+        getattr(args, "force_specialist", []), roles
+    )
+    for role in custom_selection["roles"]:
+        if role in forced_specialists:
+            configs[role]["custom_policy"]["activation_source"] = "per-run-force"
     continuation_policy = repair_policy(getattr(args, "max_repair_rounds", None))
     context_policy = resolve_context_policy(
         getattr(args, "worker_context", None), set(roles)
@@ -696,7 +706,14 @@ def start_command(args: argparse.Namespace) -> CommandResult:
                 if args.dry_run
                 else "checked_at_selection_and_launch"
             ),
-            "models": "explicit-only",
+            "models": "explicit-or-profile-thinking",
+            "roles": {
+                role: {
+                    "state": "enabled",
+                    **config["custom_policy"],
+                }
+                for role, config in custom_selection["roles"].items()
+            },
             "skills": {
                 role: {
                     "source": "registry-bound",
@@ -711,9 +728,16 @@ def start_command(args: argparse.Namespace) -> CommandResult:
     human_print("Roles:")
     for role in roles:
         config = configs[role]
+        custom_policy = config.get("custom_policy")
+        policy_text = (
+            f" thinking-source={custom_policy['thinking_source']} "
+            f"activation={custom_policy['activation_source']}"
+            if custom_policy is not None
+            else ""
+        )
         human_print(
             f"  {role}: {config['provider']}/{config['model']} "
-            f"thinking={config['thinking']}"
+            f"thinking={config['thinking']}{policy_text}"
         )
     human_print("  monitor: broker/status")
     human_print(f"Worker transport: {transport}")
@@ -825,7 +849,7 @@ def start_command(args: argparse.Namespace) -> CommandResult:
             worker_context_overrides=context_policy["overrides"],
         )
         create_tmux_grid(session, project, coord, roles, manifest)
-        if manifest["version"] == 6:
+        if manifest["version"] in {6, 7}:
             wait_for_custom_startup(session, coord, roles, manifest)
         secure_write(coord / "startup-state", "RUNNING\n")
     except BaseException:
@@ -1115,7 +1139,7 @@ def status_command(args: argparse.Namespace) -> CommandResult:
         for activation in broker_snapshot.get("specialist_activations", []):
             human_print(
                 f"  activation {activation['role']}: {activation['decision']} "
-                f"rule={activation['rule_id']} forced={activation['forced']}"
+                f"rule={activation['rule_id']} source={activation['source']}"
             )
         for worker in broker_snapshot["roles"]:
             human_print(
@@ -1148,6 +1172,8 @@ def status_command(args: argparse.Namespace) -> CommandResult:
         if "specialist_contract" in role_value:
             human_print(
                 f"  {role_value['name']}: contract={role_value['specialist_contract']} "
+                f"thinking-source={role_value['thinking_source']} "
+                f"activation={role_value['activation_source']} "
                 "tools=custom-read-only-no-shell resources=not_checked"
             )
     if manifest_transport(manifest) == RPC_TRANSPORT:

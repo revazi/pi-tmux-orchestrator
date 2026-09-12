@@ -7,6 +7,7 @@ from typing import Any
 
 from .constants import DEFAULT_MODELS, THINKING_LEVELS
 from .models import OrchestrationError
+from .role_registry import MAX_CUSTOM_ROLES, valid_custom_role_id
 
 DEFAULT_EXECUTION_PROFILE = "thorough"
 MAX_CUSTOM_PROFILES = 16
@@ -15,6 +16,7 @@ PROFILE_NAME_PATTERN = re.compile(r"[a-z][a-z0-9-]{0,31}")
 PROFILE_KINDS = frozenset({"packaged", "custom"})
 PROFILE_SOURCES = frozenset({"per-run", "project", "user-global", "packaged-default"})
 EXECUTION_PROFILE_FIELDS = frozenset({"name", "kind", "source"})
+CUSTOM_PROFILE_THINKING = "profile"
 
 # The compatibility default preserves the pre-profile worker thinking levels.
 # Comparative provider usage and quality remain unavailable until measured runs exist.
@@ -60,12 +62,19 @@ def validate_custom_profiles(value: object) -> dict[str, dict[str, str]]:
             raise OrchestrationError(
                 f"Custom profile {name} cannot replace a packaged execution profile"
             )
-        if not isinstance(raw_mapping, dict) or set(raw_mapping) != expected_roles:
+        if not isinstance(raw_mapping, dict) or not expected_roles <= set(raw_mapping):
             raise OrchestrationError(
-                f"Custom profile {name} must map every known role exactly once"
+                f"Custom profile {name} must map every built-in role exactly once"
+            )
+        custom_roles = set(raw_mapping) - expected_roles
+        if len(custom_roles) > MAX_CUSTOM_ROLES or any(
+            not valid_custom_role_id(role) for role in custom_roles
+        ):
+            raise OrchestrationError(
+                f"Custom profile {name} has invalid custom role mappings"
             )
         mapping: dict[str, str] = {}
-        for role in DEFAULT_MODELS:
+        for role in (*DEFAULT_MODELS, *sorted(custom_roles)):
             thinking = raw_mapping[role]
             if not isinstance(thinking, str) or thinking not in THINKING_LEVELS:
                 raise OrchestrationError(
@@ -109,6 +118,26 @@ def resolve_execution_profile(
         "source": source,
         "thinking": dict(thinking),
     }
+
+
+def resolve_custom_thinking(
+    role: str, requested: str, profile: dict[str, Any]
+) -> tuple[str, str]:
+    """Resolve an explicit level or an opted-in user-global profile mapping."""
+    if requested != CUSTOM_PROFILE_THINKING:
+        if requested not in THINKING_LEVELS:
+            raise OrchestrationError("Custom role thinking selection is invalid")
+        return requested, "per-run-override"
+    if profile["source"] == "project":
+        raise OrchestrationError(
+            "Project profile selection cannot configure a custom role"
+        )
+    thinking = profile["thinking"].get(role)
+    if profile["kind"] != "custom" or thinking not in THINKING_LEVELS:
+        raise OrchestrationError(
+            f"Execution profile {profile['name']} has no mapping for {role}"
+        )
+    return thinking, "execution-profile"
 
 
 def public_execution_profile(profile: dict[str, Any]) -> dict[str, str]:

@@ -23,12 +23,14 @@ from .constants import (
     KNOWN_ROLES,
     CUSTOM_READ_ONLY_TOOLS,
     ROLE_CUSTOM_FIELDS,
+    ROLE_CUSTOM_V7_FIELDS,
     MANIFEST_FIELDS,
     MANIFEST_V1_FIELDS,
     MANIFEST_V3_FIELDS,
     MANIFEST_V4_FIELDS,
     MANIFEST_V5_FIELDS,
     MANIFEST_V6_FIELDS,
+    MANIFEST_V7_FIELDS,
     MAX_CONTROLLER_STATE_BYTES,
     MAX_MANIFEST_BYTES,
     PANE_ID_PATTERN,
@@ -304,7 +306,7 @@ def validate_manifest(
     if not isinstance(value, dict):
         raise OrchestrationError("Orchestration manifest must be a JSON object")
     version = value.get("version")
-    if type(version) is not int or version not in {1, 2, 3, 4, 5, 6}:
+    if type(version) is not int or version not in {1, 2, 3, 4, 5, 6, 7}:
         raise OrchestrationError("Unsupported orchestration manifest version")
     expected_fields = {
         1: MANIFEST_V1_FIELDS,
@@ -313,6 +315,7 @@ def validate_manifest(
         4: MANIFEST_V4_FIELDS,
         5: MANIFEST_V5_FIELDS,
         6: MANIFEST_V6_FIELDS,
+        7: MANIFEST_V7_FIELDS,
     }[version]
     if set(value) != expected_fields:
         raise OrchestrationError(
@@ -410,7 +413,9 @@ def validate_manifest(
                 ROLE_V3_RESOURCE_FIELDS if "skills" in role else ROLE_V3_FIELDS
             )
         if role_name in custom:
-            expected_role_fields = ROLE_CUSTOM_FIELDS
+            expected_role_fields = (
+                ROLE_CUSTOM_V7_FIELDS if version >= 7 else ROLE_CUSTOM_FIELDS
+            )
         if set(role) != expected_role_fields:
             raise OrchestrationError(f"Manifest role {role_name} has invalid fields")
         for field in ("provider", "model"):
@@ -436,6 +441,10 @@ def validate_manifest(
             raise OrchestrationError(
                 f"Manifest role {role_name} has invalid tool configuration"
             )
+        if role_name in custom and version >= 7:
+            from .custom_role_resources import validate_custom_policy
+
+            validate_custom_policy(role["custom_policy"])
         pane_id = role["pane_id"]
         if not isinstance(pane_id, str) or not PANE_ID_PATTERN.fullmatch(pane_id):
             raise OrchestrationError(f"Manifest role {role_name} has invalid pane ID")

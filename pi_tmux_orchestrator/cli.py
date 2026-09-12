@@ -55,7 +55,7 @@ from .supervisor_commands import (
 )
 from .specialist_activation import SPECIALIST_ROLES
 from .worker_resources import worker_skill_argument
-from .role_registry import role_registry_command
+from .role_registry import role_registry_command, valid_custom_role_id
 from .role_contracts import valid_role_identity
 from .worker_context import worker_context_argument
 
@@ -147,6 +147,14 @@ def rpc_command_id(value: str) -> str:
     if not RPC_TOKEN_PATTERN.fullmatch(value):
         raise argparse.ArgumentTypeError(
             "command ID must be exactly 32 lowercase hexadecimal characters"
+        )
+    return value
+
+
+def specialist_role(value: str) -> str:
+    if value not in SPECIALIST_ROLES and not valid_custom_role_id(value):
+        raise argparse.ArgumentTypeError(
+            "specialist must be a built-in specialist or canonical custom identity"
         )
     return value
 
@@ -302,9 +310,10 @@ def build_parser() -> argparse.ArgumentParser:
     start.add_argument(
         "--force-specialist",
         action="append",
-        choices=SPECIALIST_ROLES,
+        type=specialist_role,
         default=[],
-        help="force one enabled specialist to run whenever applicable; repeatable",
+        metavar="ROLE",
+        help="force one enabled built-in or custom specialist to run; repeatable",
     )
     probe = start.add_mutually_exclusive_group()
     probe.add_argument("--with-probe", dest="with_probe", action="store_true")
