@@ -37,6 +37,7 @@ const pythonFiles = [
   "runtime.py",
   "specialist_activation.py",
   "storage.py",
+  "start_commands.py",
   "supervisor_api.py",
   "supervisor_commands.py",
   "tmux.py",

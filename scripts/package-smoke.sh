@@ -66,6 +66,7 @@ EXPECTED_FILES=(
   pi_tmux_orchestrator/runtime.py
   pi_tmux_orchestrator/specialist_activation.py
   pi_tmux_orchestrator/storage.py
+  pi_tmux_orchestrator/start_commands.py
   pi_tmux_orchestrator/supervisor_api.py
   pi_tmux_orchestrator/supervisor_commands.py
   pi_tmux_orchestrator/tmux.py

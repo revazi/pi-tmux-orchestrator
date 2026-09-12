@@ -9,7 +9,7 @@ from pathlib import Path
 import socket
 from unittest import mock
 
-from pi_tmux_orchestrator import commands, runtime
+from pi_tmux_orchestrator import commands, runtime, start_commands
 from pi_tmux_orchestrator.custom_role_resources import select_custom_start
 from pi_tmux_orchestrator.models import OrchestrationError
 from pi_tmux_orchestrator.profiles import (
@@ -42,14 +42,18 @@ class CustomStartTests(CustomRoleResourceFixture):
             )
         )
         self.command_path = self.enterContext(
-            mock.patch.object(commands, "command_path", return_value="/fixture/command")
+            mock.patch.object(
+                start_commands, "command_path", return_value="/fixture/command"
+            )
         )
         self.session_exists = self.enterContext(
-            mock.patch.object(commands, "session_exists", return_value=False)
+            mock.patch.object(start_commands, "session_exists", return_value=False)
         )
-        self.grid = self.enterContext(mock.patch.object(commands, "create_tmux_grid"))
+        self.grid = self.enterContext(
+            mock.patch.object(start_commands, "create_tmux_grid")
+        )
         self.initialize = self.enterContext(
-            mock.patch.object(commands, "initialize_broker_run")
+            mock.patch.object(start_commands, "initialize_broker_run")
         )
         self.spec = [self.name, "fixture-provider", "fixture/model", "off"]
 
@@ -99,7 +103,7 @@ class CustomStartTests(CustomRoleResourceFixture):
         return select_custom_start(self.project, [self.spec], str(self.registry))
 
     def test_public_live_start_waits_for_custom_admission_before_running(self):
-        with mock.patch.object(commands, "wait_for_custom_startup") as wait:
+        with mock.patch.object(start_commands, "wait_for_custom_startup") as wait:
             code, envelope, raw, stderr = self.run_start(dry_run=False)
         self.assertEqual((code, stderr), (0, ""), raw)
         self.initialize.assert_called_once()
@@ -129,8 +133,8 @@ class CustomStartTests(CustomRoleResourceFixture):
     def test_public_custom_failure_before_grid_is_retained_and_body_free(self):
         self.initialize.side_effect = OrchestrationError("PRIVATE_FAILURE_CANARY")
         with (
-            mock.patch.object(commands, "tmux") as tmux,
-            mock.patch.object(commands, "wait_for_custom_startup") as wait,
+            mock.patch.object(start_commands, "tmux") as tmux,
+            mock.patch.object(start_commands, "wait_for_custom_startup") as wait,
         ):
             code, envelope, raw, stderr = self.run_start(dry_run=False)
         self.assertEqual((code, stderr), (2, ""), raw)
@@ -181,11 +185,15 @@ class CustomStartTests(CustomRoleResourceFixture):
                         ],
                     }
                     with (
-                        mock.patch.object(commands, "tmux", return_value=pane),
+                        mock.patch.object(start_commands, "tmux", return_value=pane),
                         mock.patch.object(
-                            commands, "public_broker_snapshot", return_value=snapshot
+                            start_commands,
+                            "public_broker_snapshot",
+                            return_value=snapshot,
                         ),
-                        mock.patch.object(commands, "CUSTOM_STARTUP_STABLE_SECONDS", 0),
+                        mock.patch.object(
+                            start_commands, "CUSTOM_STARTUP_STABLE_SECONDS", 0
+                        ),
                     ):
                         commands.wait_for_custom_startup(
                             "pi-custom-health",
@@ -200,9 +208,9 @@ class CustomStartTests(CustomRoleResourceFixture):
 
     def test_public_custom_admission_failure_rolls_back_exact_session(self):
         with (
-            mock.patch.object(commands, "tmux") as tmux,
+            mock.patch.object(start_commands, "tmux") as tmux,
             mock.patch.object(
-                commands,
+                start_commands,
                 "wait_for_custom_startup",
                 side_effect=OrchestrationError("worker unavailable", "startup_failed"),
             ),
@@ -472,7 +480,7 @@ class CustomStartTests(CustomRoleResourceFixture):
         self.assertIn("enabled", envelope["error"]["message"])
 
     def test_explicit_model_values_ignore_profile_and_builtin_overrides(self):
-        with mock.patch.object(commands, "validate_model") as validate:
+        with mock.patch.object(start_commands, "validate_model") as validate:
             code, envelope, raw, _ = self.run_start(
                 "--profile",
                 "economy",
