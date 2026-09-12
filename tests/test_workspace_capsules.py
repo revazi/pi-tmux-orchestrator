@@ -279,7 +279,7 @@ class WorkspaceCapsuleTests(WorkspaceRepositoryFixture):
         )
         with (
             mock.patch(
-                "pi_tmux_orchestrator.commands.command_path",
+                "pi_tmux_orchestrator.start_commands.command_path",
                 return_value="/synthetic/command",
             ),
             self.assertRaisesRegex(OrchestrationError, "non-symlink"),
