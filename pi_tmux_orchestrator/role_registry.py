@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import Any
 
 from . import runtime
-from .configuration import unique_json_object
 from .constants import KNOWN_ROLES
 from .models import CommandResult, OrchestrationError
 from .output import human_print
@@ -23,6 +22,17 @@ MAX_ROLE_SKILLS = 4
 MAX_PROMPT_BYTES = 16 * 1024
 MAX_SKILL_BYTES = 32 * 1024
 CONTRACTS = frozenset({"probe", "playwright", "django"})
+
+
+def _unique_json_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    value: dict[str, Any] = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError("duplicate JSON field")
+        value[key] = item
+    return value
+
+
 RESERVED_SUFFIXES = KNOWN_ROLES | {
     "all",
     "parent",
@@ -149,7 +159,7 @@ def load_registry(project: Path, explicit: str | None = None) -> dict[str, Any]:
     else:
         try:
             value = json.loads(
-                raw.decode("utf-8"), object_pairs_hook=unique_json_object
+                raw.decode("utf-8"), object_pairs_hook=_unique_json_object
             )
         except (ValueError, UnicodeError, RecursionError) as error:
             raise OrchestrationError(

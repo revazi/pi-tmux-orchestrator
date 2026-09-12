@@ -2,8 +2,8 @@
 
 The version-1 registry defines bounded, user-owned **read-only specialists**.
 The registry command is validation-only. Explicit registered selections can be
-previewed or launched through CLI `start`; automatic profile-based selection and
-activation remain unavailable pending #61. The built-in implementer remains the
+previewed or launched through CLI `start`; profile mappings never select a role,
+and selected roles use deterministic contract-bound activation. The built-in implementer remains the
 only writer and the built-in reviewer remains mandatory.
 
 ## Validate without starting workers
@@ -43,16 +43,20 @@ Replace `EXACT_PROVIDER` and `EXACT_MODEL` with available exact identifiers. Eac
 repeatable `--custom-role` consumes **four** values: ID, provider, model, thinking.
 All are required, with at most eight unique registered IDs. Provider/model strings
 are bounded to 256 printable, non-whitespace characters and cannot start with `-`;
-thinking uses the existing supported levels. No model/profile/project default is
-inherited for custom roles, including defaults for their specialist contract.
+thinking uses the existing supported levels or the exact token `profile`.
+Provider/model values never inherit. `profile` opts into a mapping for the same
+custom identity in the selected user-global custom execution profile; a direct
+thinking level wins. Packaged profiles have no custom mapping, and a project-selected
+profile cannot configure a custom role.
 `--role-registry` requires a selection and uses the same precedence and filesystem
 policy as registry validation. Omission of `--custom-role` never reads the registry.
 
 TUI and `--rpc-workers` previews use the same bindings and fixed read-only policy,
 and always retain the built-in implementer and reviewer. Custom skills come only
-from the verified registry definition; `--worker-skill`, `--worker-context`, and
-`--force-specialist` do not gain custom mappings. Profile mappings and deterministic
-custom activation remain #61. This is terminal CLI selection, not a new Pi
+from the verified registry definition; `--worker-skill` and `--worker-context` do
+not gain custom mappings. `--force-specialist CUSTOM_ID` is accepted only when that
+identity is selected in the same run; otherwise its bound contract supplies the
+fixed deterministic path rule. This is terminal CLI selection, not a new Pi
 start-tool field.
 
 Every preview or start rereads the registry/resources and verifies their digests.
@@ -156,14 +160,16 @@ provider-free boundary.
 
 ## Resource-bound bootstrap and retained metadata
 
-Manifest v6 can retain a pinned `custom_role_registry` path and at most eight
+Manifest v7 retains a pinned `custom_role_registry` path and at most eight
 custom worker records. Each custom record has a canonical `custom_role` definition
-(`id`, `contract`, `prompt`, `skills`) instead of independently overridable skills,
-and the exact `read,grep,find,ls` tool policy. It still requires the built-in
-implementer and reviewer. Manifest v1–v5 remains supported, and ordinary starts
-still write v5. A live explicit custom selection writes v6 only after strict
-registry/resource selection; broker initialization derives its custom contracts
-from that retained binding.
+(`id`, `contract`, `prompt`, `skills`), exact `read,grep,find,ls` tool policy, and
+strict metadata-only `custom_policy`: per-run selection, per-run override or
+execution-profile thinking source, and deterministic-rule or per-run-force
+activation source. It still requires the built-in implementer and reviewer.
+Manifest v1–v6 remains supported, ordinary starts still write v5, and retained v6
+custom runs preserve their original always-run workflow. A new live explicit custom
+selection writes v7 only after strict registry/resource selection; broker
+initialization derives its custom contracts from that retained binding.
 
 Retained reads validate bounded metadata without opening the registry/resources;
 a deleted or changed source does not make retained metadata unreadable. This is
@@ -203,13 +209,16 @@ and restored assignment kinds use that binding. Custom identities cannot select 
 contract, impersonate another authenticated identity, authorize operator control with
 a worker token, or submit writer/reviewer reports.
 
-At the tested workflow boundary, every explicitly selected custom specialist gets
-one assignment after each implementation report, not after a phased plan. All
-selected custom reports for that round are required before assigning the built-in
-reviewer. Specialist verdicts are evidence for that independent reviewer, never final
-acceptance. No custom skip predicate, profile mapping, or deterministic activation
-policy is introduced; those remain #61. Fan-out is bounded by the eight-role registry
-limit. Run-state capsules reserve bounded space for every selected identity without
+A registry or profile entry never creates a worker. `--custom-role` is the explicit
+enable boundary. After each implementation report—not after a phased plan—the broker
+applies the fixed conservative path rule for the role's retained probe, Playwright,
+or Django contract. Documentation-only and clearly inapplicable paths may skip;
+empty, malformed, or ambiguous evidence fails toward running. Repeat
+`--force-specialist CUSTOM_ID` to require a selected identity. Run decisions require
+the custom report before built-in review; skips are explicit reviewer-visible facts.
+Specialist verdicts are evidence for that independent reviewer, never final
+acceptance. Fan-out is bounded by the eight-role registry limit. Run-state capsules
+reserve bounded space for every selected identity without
 dropping independent reviewer evidence; reuse hints remain non-authorizing.
 
 Custom report acceptance uses the existing single SQLite transaction for assignment
@@ -256,12 +265,12 @@ coverage without turning these peers into actual-Pi evidence.
 
 ## Launch and model-free tmux boundary
 
-The shared start manifest constructor has a strict body-free manifest-v6 path for
+The shared start manifest constructor has a strict body-free manifest-v7 path for
 explicit custom selections. It requires exact role/config membership and a
 registry if and only if custom identities are selected. Ordinary starts retain
 manifest v5. The public CLI uses this path only after fresh explicit selection.
 
-`tests/custom_worker_tmux_smoke.py` constructs that internal v6 projection and
+`tests/custom_worker_tmux_smoke.py` constructs that internal v7 projection and
 runs real tmux panes through the production `_run-agent` entry point in both TUI
 and RPC modes. A bounded model-free Pi host loads the real JavaScript worker
 extension and supplies only its documented registration/event surface; the

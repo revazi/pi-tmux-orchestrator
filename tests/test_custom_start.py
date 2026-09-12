@@ -12,6 +12,10 @@ from unittest import mock
 from pi_tmux_orchestrator import commands, runtime
 from pi_tmux_orchestrator.custom_role_resources import select_custom_start
 from pi_tmux_orchestrator.models import OrchestrationError
+from pi_tmux_orchestrator.profiles import (
+    PACKAGED_EXECUTION_PROFILES,
+    resolve_custom_thinking,
+)
 from pi_tmux_orchestrator.storage import validate_manifest
 from test_custom_role_resources import CustomRoleResourceFixture
 import test_json_cli
@@ -70,6 +74,22 @@ class CustomStartTests(CustomRoleResourceFixture):
             arguments.append("--skip-model-check")
         return test_json_cli.JsonMainTests.run_main(self, [*arguments, *options])
 
+    def write_model_config(self, profiles, *, default="custom-careful"):
+        path = self.root / "absent-models.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "version": 3,
+                    "defaultProfile": default,
+                    "profiles": profiles,
+                    "defaults": {},
+                    "roles": {},
+                }
+            ),
+            encoding="utf-8",
+        )
+        return path
+
     def assert_no_start(self):
         self.grid.assert_not_called()
         self.initialize.assert_not_called()
@@ -87,13 +107,21 @@ class CustomStartTests(CustomRoleResourceFixture):
         wait.assert_called_once()
         coord = Path(envelope["data"]["paths"]["coordination"])
         self.assertEqual((coord / "startup-state").read_text(), "RUNNING\n")
-        self.assertEqual(wait.call_args.args[3]["version"], 6)
+        self.assertEqual(wait.call_args.args[3]["version"], 7)
         self.assertEqual(
             envelope["data"]["custom_role_selection"],
             {
                 "launch_supported": True,
                 "resource_verification": "checked_at_selection_and_launch",
-                "models": "explicit-only",
+                "models": "explicit-or-profile-thinking",
+                "roles": {
+                    self.name: {
+                        "state": "enabled",
+                        "selection_source": "per-run",
+                        "thinking_source": "per-run-override",
+                        "activation_source": "deterministic-contract-rule",
+                    }
+                },
                 "skills": {self.name: {"source": "registry-bound", "count": 1}},
             },
         )
@@ -224,6 +252,10 @@ class CustomStartTests(CustomRoleResourceFixture):
                         "tool_policy": "custom-read-only-no-shell",
                         "specialist_contract": "probe",
                         "resource_verification": "not_checked",
+                        "selection_source": "per-run",
+                        "thinking_source": "per-run-override",
+                        "activation_source": "deterministic-contract-rule",
+                        "activation_state": "enabled",
                     },
                 )
                 self.assertTrue(data["custom_role_selection"]["launch_supported"])
@@ -250,7 +282,7 @@ class CustomStartTests(CustomRoleResourceFixture):
                 self.assertEqual(sorted(self.root.rglob("*")), before)
                 self.assert_no_start()
 
-    def test_internal_launch_projection_is_strict_body_free_manifest_v6(self):
+    def test_internal_launch_projection_is_strict_body_free_manifest_v7(self):
         custom = select_custom_start(self.project, [self.spec], str(self.registry))
         roles = ["implementer", "reviewer", self.name]
         configs = {
@@ -283,11 +315,30 @@ class CustomStartTests(CustomRoleResourceFixture):
             manifest["roles"][role]["pane_id"] = f"%{index}"
         self.assertEqual(validate_manifest(manifest, self.coord), manifest)
         self.assertEqual(configs, before)
-        self.assertEqual(manifest["version"], 6)
+        self.assertEqual(manifest["version"], 7)
         self.assertEqual(manifest["custom_role_registry"], str(self.registry))
         self.assertEqual(list(manifest["roles"]), roles)
         self.assertEqual(manifest["roles"][self.name]["custom_role"], self.definition)
         self.assertEqual(manifest["roles"][self.name]["tools"], "read,grep,find,ls")
+        self.assertEqual(
+            manifest["roles"][self.name]["custom_policy"],
+            {
+                "selection_source": "per-run",
+                "thinking_source": "per-run-override",
+                "activation_source": "deterministic-contract-rule",
+            },
+        )
+        for mutation in ("missing", "unknown", "bad-source"):
+            invalid_manifest = copy.deepcopy(manifest)
+            policy = invalid_manifest["roles"][self.name]["custom_policy"]
+            if mutation == "missing":
+                policy.pop("thinking_source")
+            elif mutation == "unknown":
+                policy["extra"] = "unsafe"
+            else:
+                policy["activation_source"] = "project"
+            with self.subTest(mutation=mutation), self.assertRaises(OrchestrationError):
+                validate_manifest(invalid_manifest, self.coord)
         retained = json.dumps(manifest)
         self.assertNotIn("PRIVATE_GUIDANCE_CANARY", retained)
         self.assertNotIn("PRIVATE_SKILL_CANARY", retained)
@@ -330,6 +381,95 @@ class CustomStartTests(CustomRoleResourceFixture):
             )
             load.assert_not_called()
         self.assert_no_start()
+
+    def test_custom_profile_thinking_is_opt_in_and_explicit_override_wins(self):
+        mapping = dict(PACKAGED_EXECUTION_PROFILES["balanced"])
+        mapping[self.name] = "high"
+        self.write_model_config({"custom-careful": mapping})
+
+        self.spec[3] = "profile"
+        code, envelope, raw, _ = self.run_start("--profile", "custom-careful")
+        self.assertEqual(code, 0, raw)
+        role = envelope["data"]["roles"][-1]
+        self.assertEqual(
+            (role["thinking"], role["thinking_source"]), ("high", "execution-profile")
+        )
+        self.assertEqual(
+            envelope["data"]["execution_profile"],
+            {"name": "custom-careful", "kind": "custom", "source": "per-run"},
+        )
+
+        self.spec[3] = "off"
+        code, envelope, raw, _ = self.run_start("--profile", "custom-careful")
+        self.assertEqual(code, 0, raw)
+        role = envelope["data"]["roles"][-1]
+        self.assertEqual(
+            (role["thinking"], role["thinking_source"]), ("off", "per-run-override")
+        )
+
+    def test_custom_profile_mapping_does_not_implicitly_select_a_role(self):
+        mapping = dict(PACKAGED_EXECUTION_PROFILES["balanced"])
+        mapping[self.name] = "high"
+        self.write_model_config({"custom-careful": mapping})
+        with mock.patch("pi_tmux_orchestrator.role_registry.load_registry") as load:
+            code, envelope, raw, _ = self.run_start(
+                "--profile", "custom-careful", custom=False
+            )
+        self.assertEqual(code, 0, raw)
+        load.assert_not_called()
+        self.assertEqual(
+            [role["name"] for role in envelope["data"]["roles"]],
+            ["implementer", "reviewer"],
+        )
+        self.assertNotIn("custom_role_selection", envelope["data"])
+
+    def test_custom_profile_missing_malformed_and_project_sources_fail_closed(self):
+        self.write_model_config(
+            {"custom-careful": dict(PACKAGED_EXECUTION_PROFILES["balanced"])}
+        )
+        self.spec[3] = "profile"
+        code, envelope, raw, _ = self.run_start("--profile", "custom-careful")
+        self.assertEqual(code, 2, raw)
+        self.assertIn("no mapping", envelope["error"]["message"])
+
+        malformed = dict(PACKAGED_EXECUTION_PROFILES["balanced"])
+        malformed["custom-Bad"] = "high"
+        self.write_model_config({"custom-careful": malformed})
+        code, envelope, raw, _ = self.run_start("--profile", "custom-careful")
+        self.assertEqual(code, 2, raw)
+        self.assertIn("invalid custom role mappings", envelope["error"]["message"])
+
+        with self.assertRaisesRegex(OrchestrationError, "Project profile"):
+            resolve_custom_thinking(
+                self.name,
+                "profile",
+                {
+                    "name": "custom-careful",
+                    "kind": "custom",
+                    "source": "project",
+                    "thinking": {self.name: "high"},
+                },
+            )
+
+    def test_forced_custom_role_is_selected_enabled_and_retained(self):
+        code, envelope, raw, _ = self.run_start("--force-specialist", self.name)
+        self.assertEqual(code, 0, raw)
+        self.assertEqual(envelope["data"]["forced_specialists"], [self.name])
+        self.assertEqual(
+            envelope["data"]["roles"][-1]["activation_source"], "per-run-force"
+        )
+        self.assertEqual(
+            envelope["data"]["custom_role_selection"]["roles"][self.name][
+                "activation_source"
+            ],
+            "per-run-force",
+        )
+
+        code, envelope, raw, _ = self.run_start(
+            "--force-specialist", self.name, custom=False
+        )
+        self.assertEqual(code, 2, raw)
+        self.assertIn("enabled", envelope["error"]["message"])
 
     def test_explicit_model_values_ignore_profile_and_builtin_overrides(self):
         with mock.patch.object(commands, "validate_model") as validate:
@@ -461,7 +601,6 @@ class CustomStartTests(CustomRoleResourceFixture):
             ["--custom-role", self.name, self.spec[1]],
             ["--worker-skill", f"{self.name}={self.skill['path']}"],
             ["--worker-context", f"{self.name}=retain"],
-            ["--force-specialist", self.name],
         ):
             with self.subTest(options=options):
                 code, envelope, raw, _ = self.run_start(*options)

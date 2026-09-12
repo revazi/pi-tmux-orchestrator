@@ -67,6 +67,17 @@ def public_role(
     if valid_custom_role_id(role):
         value["tool_policy"] = "custom-read-only-no-shell"
         value["specialist_contract"] = config["custom_role"]["contract"]
+        policy = config.get("custom_policy")
+        value["selection_source"] = (
+            policy["selection_source"] if policy is not None else "unavailable"
+        )
+        value["thinking_source"] = (
+            policy["thinking_source"] if policy is not None else "unavailable"
+        )
+        value["activation_source"] = (
+            policy["activation_source"] if policy is not None else "legacy-always-run"
+        )
+        value["activation_state"] = "enabled"
         # Retained reads never reopen live resources or imply launch authorization.
         value["resource_verification"] = "not_checked"
     if config.get("pane_id") is not None:

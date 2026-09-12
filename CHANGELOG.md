@@ -6,7 +6,9 @@ All notable changes to this project are documented here.
 
 ### Added
 
-- Added explicit registered custom specialist starts through body-free manifest v6 and production broker routing for both TUI and RPC, retaining fixed read-only tools, one built-in writer, mandatory built-in review, fresh resource verification, bounded stable startup, exact partial-start rollback, authenticated restart/reconnection, stale-generation and uncertain-handover safety, and metadata-only state; model-free real-tmux report workflows and isolated staged-package actual-Pi startup/recovery acceptance remain distinct, with provider-backed report inference explicitly unclaimed
+- Added opt-in custom-role thinking mappings in strict user-global execution profiles and deterministic contract-bound custom activation, including explicit per-run force, reviewer-visible identity-prefixed decisions, fail-toward-run ambiguity handling, and body-free manifest-v7 policy sources; profile mappings never create roles or alter writer/reviewer authority
+
+- Added explicit registered custom specialist starts through body-free versioned manifests and production broker routing for both TUI and RPC, retaining fixed read-only tools, one built-in writer, mandatory built-in review, fresh resource verification, bounded stable startup, exact partial-start rollback, authenticated restart/reconnection, stale-generation and uncertain-handover safety, and metadata-only state; model-free real-tmux report workflows and isolated staged-package actual-Pi startup/recovery acceptance remain distinct, with provider-backed report inference explicitly unclaimed
 
 - Added manifest-v6 custom role/resource bindings and shared fail-closed worker bootstrap: pinned registry revalidation, private verified Markdown snapshots, fixed read-only launch tools, and disabled automatic extension discovery
 

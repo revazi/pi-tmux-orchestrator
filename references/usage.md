@@ -108,12 +108,14 @@ model override is needed. The README has a separate
 The file is relative to `PI_CODING_AGENT_DIR`; an absolute
 `PI_TMUX_ORCHESTRATOR_CONFIG` overrides its location. Legacy versions 1 and 2
 remain accepted. Version 2 may select one default profile and define at most 16
-complete custom thinking mappings. Version 3 adds at most 64 exact project
-mappings. Names match `[a-z][a-z0-9-]{0,31}`; packaged names
-cannot be replaced; every custom map must contain exactly implementer, reviewer,
-probe, Playwright, and Django. Unknown fields/roles, partial mappings,
-unsupported levels, credentials, and configuration paths inside the target
-project fail closed.
+custom thinking mappings. Version 3 adds at most 64 exact project mappings.
+Names match `[a-z][a-z0-9-]{0,31}`; packaged names cannot be replaced. Every
+custom map must contain implementer, reviewer, probe, Playwright, and Django
+exactly once and may additionally contain at most eight canonical `custom-*`
+identities. Unknown fields/roles, partial built-in mappings, unsupported levels,
+credentials, and configuration paths inside the target project fail closed.
+A custom mapping is inert unless that registered identity is explicitly selected
+for the run; it does not supply a provider/model or activate a worker.
 
 A project mapping uses one existing canonical absolute `directory`. Matching is
 exact: there are no globs, prefixes, implicit parent matches, repository-name
@@ -138,7 +140,10 @@ savings, equivalence, billing, recommended-default, or production claim. Run
 `node scripts/execution-profile-baseline.mjs --check` to validate that evidence
 availability record. Profiles change only thinking levels. They do not
 select models, add/remove roles, change tool authority, skip required review,
-alter result caps, or route workflow.
+alter result caps, or route workflow. For an explicitly selected custom role,
+`THINKING=profile` opts into that identity's mapping in a user-global custom
+profile. An explicit thinking level wins. Packaged profiles have no custom
+mappings, and an exact project profile selection cannot configure a custom role.
 
 Select a profile with `--profile NAME` or model-tool `profile`. Selection
 precedence is per-run profile, exact project mapping, user-global
@@ -367,7 +372,7 @@ Common options:
 - `--approve-project`: separately confirmed Pi trust bypass for inspected projects
 - repeatable `--worker-skill ROLE=/absolute/path/SKILL.md`: explicit reviewed per-role skill opt-in
 - `--with-probe` / `--without-probe` and optional `--probe-task[-file]`
-- repeatable `--force-specialist probe|playwright|django` for an enabled role
+- repeatable `--force-specialist ROLE` for an enabled built-in or selected canonical custom specialist
 - `--with-playwright` / `--without-playwright` and optional `--playwright-task[-file]`
 - `--with-django-expert` / `--without-django-expert` and optional `--django-task[-file]`
 - `--rpc-workers`: headless RPC event panes instead of interactive TUI panes
@@ -543,14 +548,17 @@ roles that the operator explicitly requires. Forced roles always produce an
 actual report before reviewer assignment; no deterministic skip can satisfy
 that requirement.
 
-SQLite schema v7 and public projections contain only role, round, `run|skipped`,
-versioned rule ID, and forced boolean. The rolling capsule adds the same bounded
+SQLite activation rows and public projections contain only role, round,
+`run|skipped`, versioned identity-prefixed rule ID, forced boolean, and derived
+`per-run-force|deterministic-contract-rule` source (`legacy-always-run` only for
+retained v6 custom runs). The rolling capsule adds the same bounded
 decision and `required|reported|not-required` evidence status. The reviewer
 therefore sees which configured roles ran or were skipped without receiving a
 classifier prompt or persisted task/path content. Probe and Playwright reports
 remain synthetic/local evidence and cannot claim production acceptance. The
-checked docs/frontend/Django/empty-path fixture selects 8 of 12 configured
-assignment opportunities, a 4-assignment proxy reduction. Provider calls,
+checked docs/frontend/Django/empty-path fixture covers the three built-ins plus
+one contract-bound custom specialist and selects 11 of 16 configured assignment
+opportunities, a 5-assignment proxy reduction. Provider calls,
 tokens, cost, and quality are explicitly unavailable; validate the no-claim
 fixture with `python3 scripts/specialist-activation-baseline.py --check`.
 
@@ -720,7 +728,9 @@ project defaults to the current directory.
 `start --custom-role ID PROVIDER MODEL THINKING` launches one explicitly registered
 read-only specialist; repeat at most eight times with unique IDs. Add `--dry-run`
 to preview without creating files, workers, or inference requests. All four values
-are required, with no custom model/profile inheritance. Optional `--role-registry
+are required. Provider and model are always explicit. `THINKING` is either an
+explicit level or `profile`, which opts into that identity's mapping in the selected
+user-global custom profile; an explicit level wins. Optional `--role-registry
 PATH` selects the user-owned registry; no selection means no registry lookup.
 Both TUI and `--rpc-workers` preserve the built-in implementer and mandatory
 reviewer and expose only bounded custom metadata and skill counts.
@@ -737,8 +747,10 @@ Read-only validation of user-global custom specialist definitions and reviewed
 prompt/skill digests. Supports the standard `--json` envelope and returns metadata
 only. A missing default registry means no custom roles; explicitly selected files
 must exist. Valid definitions can be launched only through explicit `--custom-role`
-selection; automatic profile/activation mapping is not yet supported, and omitted
-custom selection leaves built-in starts unchanged. See
+selection. A profile mapping never creates a role. Selected roles use the fixed
+path activation rules of their bound probe/Playwright/Django contract after an
+implementation report; `--force-specialist CUSTOM_ID` forces the selected identity.
+Omitted custom selection leaves built-in starts unchanged. See
 [the complete schema and filesystem policy](custom-roles.md).
 
 ### `supervisor ...`

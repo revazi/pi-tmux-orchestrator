@@ -259,18 +259,24 @@ caller. Peers cannot add a contract field or self-register through broker-v1.
 Custom reports normalize using the selected built-in read-only specialist schema,
 while retaining the original custom identity on the wire. No custom binding may
 map to implementer or reviewer authority. With no explicit map, custom roles are
-rejected exactly as before. Manifest v6 adds bounded custom definition metadata
-and a pinned registry path, with metadata-only retained reads and fresh verification
-at bootstrap/restart. Existing v1–v5 manifests remain supported; ordinary starts
-still write v5. Explicit registered custom selections use production broker
+rejected exactly as before. Manifest v6 added bounded custom definition metadata
+and a pinned registry path; manifest v7 adds strict selection/thinking/activation
+source metadata and contract-bound deterministic activation. Retained v6 custom
+runs keep their original always-run behavior. Reads remain metadata-only with fresh
+verification at bootstrap/restart. Existing v1–v6 manifests remain supported;
+ordinary starts still write v5. Explicit registered custom selections use production broker
 routing in both worker presentations. The parent observer receives selected
 identities/contracts only from the authoritative CLI public role projection
 (`specialist_contract` for custom roles), never from snapshot/report fields.
 Missing legacy metadata keeps validation
 built-in-only. Duplicate snapshot roles are rejected, and restart/handover states
 remain explicit. Custom observer reports must match the bound read-only contract;
-parent report bounds prioritize built-in writer/reviewer evidence. The direct
-broker restart path also revalidates custom resources before generation mutation.
+parent report bounds prioritize built-in writer/reviewer evidence. Activation
+records are not new worker wire authority: public projections derive their bounded
+`per-run-force|deterministic-contract-rule` source from retained metadata
+(`legacy-always-run` is limited to retained v6 custom runs), and rule IDs remain
+identity-prefixed. The direct broker restart path also
+revalidates custom resources before generation mutation.
 See [custom role bootstrap and surfaces](custom-roles.md).
 
 ## Delivery and recovery

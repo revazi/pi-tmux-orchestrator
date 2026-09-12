@@ -137,6 +137,7 @@ appendFileSync(
     argv,
     contract: process.env.PI_TMUX_ORCHESTRATOR_SPECIALIST_CONTRACT,
     generation: Number(process.env.PI_TMUX_ORCHESTRATOR_GENERATION),
+    pid: process.pid,
     activeTools,
   }) + "\n",
   { encoding: "utf8" },
@@ -325,6 +326,51 @@ def respawn_broker(manifest: dict[str, object], coord: Path, wrapper: Path) -> N
         text=True,
         capture_output=True,
     )
+
+
+async def stop_recorded_workers(record_path: Path, fake_pi: Path) -> None:
+    if not record_path.exists():
+        return
+    records = [json.loads(line) for line in record_path.read_text().splitlines()]
+    pids = {
+        value.get("pid")
+        for value in records
+        if type(value.get("pid")) is int and value["pid"] > 1
+    }
+    for pid in pids:
+        command = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "command="],
+            text=True,
+            capture_output=True,
+        ).stdout.strip()
+        if not command:
+            continue
+        if str(fake_pi) not in command:
+            raise AssertionError(
+                "recorded worker PID no longer has the exact test command"
+            )
+        os.kill(pid, signal.SIGTERM)
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline:
+        live = []
+        for pid in pids:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                continue
+            live.append(pid)
+        if not live:
+            return
+        await asyncio.sleep(0.05)
+    for pid in live:
+        command = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "command="],
+            text=True,
+            capture_output=True,
+        ).stdout.strip()
+        if str(fake_pi) in command:
+            os.kill(pid, signal.SIGKILL)
+    raise AssertionError("recorded custom workers required forced cleanup")
 
 
 async def run_transport(
@@ -528,7 +574,7 @@ async def run_transport(
             roles,
             manifest,
         )
-        if manifest["version"] != 6 or manifest["custom_role_registry"] != str(
+        if manifest["version"] != 7 or manifest["custom_role_registry"] != str(
             registry
         ):
             raise AssertionError("custom launch did not retain manifest v6 binding")
@@ -880,6 +926,7 @@ async def run_transport(
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
             )
+        await stop_recorded_workers(record_path, root / "pi")
         await wait_for(
             lambda: not socket_path.exists() and broker_recovery_state(coord)[1] == 0,
             f"custom {transport} tmux processes did not shut down cleanly",

@@ -106,8 +106,9 @@ does not wait for handoff. Crashes and ambiguous delivery fail to `uncertain`
 rather than blindly replaying work.
 
 The package supports interactive native Pi panes and explicit headless RPC
-workers through the same broker protocol. New runs use manifest v5 and
-`broker-v1`; retained older runs remain readable.
+workers through the same broker protocol. Ordinary new runs use manifest v5;
+explicit custom-role runs use v7. Both use `broker-v1`, and retained older runs
+remain readable.
 
 ## Configure orchestrations
 
@@ -137,7 +138,7 @@ proof of current checks or permission to reuse approval. See
 Validate future custom-specialist definitions with
 `pi-tmux-agents role-registry --project /absolute/project`. This checks strict
 user-global definitions and reviewed resource digests; it does **not** launch
-custom roles. The shared bootstrap now verifies pinned v6 role/resource bindings
+custom roles. The shared bootstrap verifies pinned v6/v7 role/resource bindings
 and isolates read-only resources. Internal custom contract/routing/accounting
 checks and bounded control/presentation adapters are covered by model-free
 regressions. Isolated staged-package actual-Pi TUI/RPC startup, broker
@@ -145,11 +146,13 @@ reconnection, restart, resource revocation, and cleanup are also covered without
 a prompt or provider request; this does not claim a generated custom report or
 provider behavior. Explicit CLI selection can be previewed with
 `start --dry-run --custom-role ID PROVIDER MODEL THINKING` (repeatable, at most
-eight).
-Every custom model setting is required; no profile or built-in model inheritance
-applies. Omit `--dry-run` to launch the explicit selection after model and resource
-validation. Retained custom status exposes contracts, not resource bodies or
-claims of current resource validity. Automatic custom activation remains #61.
+eight). Provider/model values are always explicit. Thinking accepts an explicit
+level or `profile` to opt into the same identity's user-global custom-profile
+mapping; mappings never select workers and project profile selections cannot
+configure custom roles. Selected roles use deterministic rules from their bound
+specialist contract, or `--force-specialist CUSTOM_ID`. Omit `--dry-run` to launch
+after model and resource validation. Retained custom status exposes contracts and
+bounded policy sources, not resource bodies or claims of current resource validity.
 See the [registry, bootstrap, and workflow trust boundaries](references/custom-roles.md).
 
 Reusable defaults are user-global, never project-local:
