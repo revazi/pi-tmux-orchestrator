@@ -28,6 +28,7 @@ All notable changes to this project are documented here.
 
 ### Changed
 
+- Split the broker and JSON CLI regression suites into independently discoverable observer, workflow, recovery, start, session/control, and shared-fixture modules without changing test coverage
 - Extracted start policy resolution, manifest construction, tmux launch, custom admission, and rollback from the general CLI command module while preserving its compatibility imports
 - Extracted report acceptance, bounded run-state projection, and specialist/reviewer routing into a broker workflow support boundary without changing usage accounting, review authority, or recovery behavior
 - Extended the development-only retained usage analyzer with provider-call distributions, workflow rounds and assignment shape, specialist activation counts, and accepted-assignment call/context distributions while preserving body-free metadata access and explicit legacy availability
