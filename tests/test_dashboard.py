@@ -144,8 +144,8 @@ class DashboardRenderingTests(DashboardFixture):
         )
         self.assertIn("NOW", rendered)
         self.assertIn("→", rendered)
-        self.assertIn("✎ implementer", rendered)
-        self.assertIn("✓ reviewer waiting", rendered)
+        self.assertIn("⚡ implementer", rendered)
+        self.assertIn("👀 reviewer waiting", rendered)
         self.assertIn("TRANSPORT TUI", rendered)
         self.assertIn("PROTOCOL BROKER-V1 / V1", rendered)
         self.assertIn("anthropic/claude-sonnet-4-6", rendered)
@@ -157,7 +157,7 @@ class DashboardRenderingTests(DashboardFixture):
         self.assertIn("47.2%", rendered)
         self.assertIn("! 345", rendered)
         self.assertIn("#00007", rendered)
-        self.assertIn("● worker_lifecycle", rendered)
+        self.assertIn("💫 worker_lifecycle", rendered)
         self.assertIn("worker_lifecycle", rendered)
         self.assertIn("pi-tmux-agents stop pi-dashboard-test --yes", rendered)
         self.assertIn("prefix + L return", rendered)
@@ -172,9 +172,9 @@ class DashboardRenderingTests(DashboardFixture):
             color=False,
         )
         self.assertIn("NOW", rendered)
-        self.assertIn("✎ implementer", rendered)
+        self.assertIn("⚡ implementer", rendered)
         self.assertIn("→", rendered)
-        self.assertIn("✓ reviewer waiting", rendered)
+        self.assertIn("👀 reviewer waiting", rendered)
         compact = render_dashboard(
             self.manifest,
             self.snapshot,

@@ -32,7 +32,7 @@ PI TMUX ORCHESTRATOR  /  SESSION pi-example-agents
 BROKER + STATUS  ·  PROJECT /work/example
 ● ACTIVE   ROUND 2
 TRANSPORT TUI   PROTOCOL BROKER-V1 / V1   ACTUAL USAGE 42.8k TOKENS
-NOW  ✎ implementer  streaming ►  →  ✓ reviewer waiting
+NOW  ⚡ implementer  streaming ►  →  👀 reviewer waiting
 
 ROLES
 ROLE         LINK       LIVE         ASSIGNMENT          MODEL                    THINK   TOTAL/Δ   CTX
@@ -41,9 +41,9 @@ implementer  ● up · g1  streaming ►  r2 implementation   anthropic/model-na
 reviewer     ● up · g1  waiting      r2 review           google/model-name        medium   11.6k/+1k  28.1%
 
 RECENT METADATA EVENTS
-#00124  14:03:18  implementer  ● worker_lifecycle  active     r2
-#00125  14:03:21  implementer  ▸ worker_progress   streaming  r2
-#00126  14:03:40  implementer  ↩ report_accepted   recorded   r2
+#00124  14:03:18  implementer  💫 worker_lifecycle  active     r2
+#00125  14:03:21  implementer  ✨ worker_progress   streaming  r2
+#00126  14:03:40  implementer  📬 report_accepted   recorded   r2
 
 ACTIONS  attach: pi-tmux-agents attach pi-example-agents   status: pi-tmux-agents status pi-example-agents
          stop: pi-tmux-agents stop pi-example-agents --yes   tmux: prefix + L return · prefix + z zoom

@@ -47,6 +47,7 @@ All notable changes to this project are documented here.
 - Degraded supervisor snapshot/usage to `temporarily-unavailable` when the broker database is briefly busy
 - Added a metadata-only NOW flow line, role/activity glyphs, and event markers to the broker dashboard so live handoffs are watchable without payload bodies
 - Recorded assignment-bound `worker_progress` events only when the live phase changes, so the broker dashboard rail shows thinking→streaming→tool→reporting without pulse flooding
+- Gave the broker dashboard funnier role and event glyphs (⚡ implementer, 👀 reviewer, 🎭 playwright, ✨ progress) with ASCII fallbacks
 - Preserved `recovering` and durable `uncertain` role states against the actual worker extension's immediate ordinary lifecycle update, and restored accepted reconnects to `active` only through the assignment acknowledgement boundary
 
 ## 0.9.5 - 2026-09-02
