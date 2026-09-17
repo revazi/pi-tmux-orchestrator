@@ -890,6 +890,68 @@ class BrokerDashboardHookTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
             await broker.handle_message(client, {"type": "unsupported"})
         broker.dashboard.refresh_from_store.assert_called_once_with(self.coord)
 
+    async def test_progress_records_phase_changes_not_repeated_pulses(self) -> None:
+        initialize_broker_run(self.coord, self.manifest, "task", {})
+        assignment_id = "c" * 32
+        now = broker_store.utc_now()
+        with broker_store.connect_broker_database(self.coord) as database:
+            database.execute(
+                "INSERT INTO assignments(id,role,round,kind,state,delivery_id,"
+                "boundary_effective,created_at,updated_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?)",
+                (
+                    assignment_id,
+                    "implementer",
+                    1,
+                    "implementation",
+                    "accepted",
+                    "d" * 32,
+                    1,
+                    now,
+                    now,
+                ),
+            )
+            database.execute(
+                "UPDATE roles SET active_assignment_id=?,state='active' WHERE role=?",
+                (assignment_id, "implementer"),
+            )
+        broker = Broker(self.coord, self.manifest)
+        writer = mock.Mock()
+        writer.drain = mock.AsyncMock()
+        client = Client("implementer", mock.Mock(), writer)
+
+        async def send(phase: str, message_id: str) -> None:
+            await broker.handle_message(
+                client,
+                {
+                    "type": "progress",
+                    "assignment_id": assignment_id,
+                    "phase": phase,
+                    "usage": None,
+                    "id": message_id,
+                },
+            )
+
+        await send("thinking", "1" * 32)
+        await send("thinking", "2" * 32)
+        await send("streaming", "3" * 32)
+        events = broker_store.public_broker_events(self.coord, after=0, limit=50)
+        progress = [
+            event for event in events["events"] if event["event"] == "worker_progress"
+        ]
+        self.assertEqual(
+            [(event["role"], event["status"]) for event in progress],
+            [("implementer", "thinking"), ("implementer", "streaming")],
+        )
+        snapshot = broker_store.public_broker_snapshot(self.coord)
+        implementer = next(
+            role for role in snapshot["roles"] if role["role"] == "implementer"
+        )
+        self.assertEqual(implementer["activity"], "streaming")
+        self.assertGreaterEqual(implementer["activity_sequence"], 3)
+        rendered = "\n".join(json.dumps(event) for event in progress)
+        self.assertNotIn("PRIVATE_", rendered)
+
     def test_dashboard_failure_cannot_change_broker_workflow(self) -> None:
         initialize_broker_run(self.coord, self.manifest, "task", {})
         broker = Broker(self.coord, self.manifest)

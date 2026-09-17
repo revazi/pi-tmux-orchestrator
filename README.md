@@ -101,8 +101,8 @@ bounded typed reports, and schedules the mandatory review.
 The invoking Pi remains the parent supervisor. It receives event-driven
 completion or attention updates while each worker keeps its normal durable Pi
 session. The broker dashboard refreshes assignment-bound thinking, streaming,
-tool, reporting, and finalized-usage metadata directly from worker events; it
-does not wait for handoff. Crashes and ambiguous delivery fail to `uncertain`
+tool, reporting, and finalized-usage metadata directly from worker events; a
+NOW line shows who is working and who is waiting. It does not wait for handoff. Crashes and ambiguous delivery fail to `uncertain`
 rather than blindly replaying work.
 
 The package supports interactive native Pi panes and explicit headless RPC

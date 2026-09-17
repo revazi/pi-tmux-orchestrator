@@ -979,20 +979,23 @@ class Broker(BrokerControlSupport, BrokerObserverSupport, BrokerWorkflowSupport)
         assignment_id = message["assignment_id"]
         now = utc_now()
         with connect_broker_database(self.coord) as database:
-            active_assignment_id = database.execute(
-                "SELECT active_assignment_id FROM roles WHERE role=?", (client.role,)
-            ).fetchone()["active_assignment_id"]
-            if active_assignment_id != assignment_id:
+            role_row = database.execute(
+                "SELECT active_assignment_id,activity FROM roles WHERE role=?",
+                (client.role,),
+            ).fetchone()
+            if role_row["active_assignment_id"] != assignment_id:
                 raise OrchestrationError(
                     "Worker progress assignment is not active", "conflict"
                 )
+            phase = message["phase"]
+            previous = role_row["activity"]
             changes = [
                 "activity=?",
                 "activity_sequence=activity_sequence+1",
                 "activity_at=?",
                 "updated_at=?",
             ]
-            values: list[Any] = [message["phase"], now, now]
+            values: list[Any] = [phase, now, now]
             if usage is not None:
                 for field, value in self._usage_fields(usage).items():
                     changes.append(f"{field}=?")
@@ -1001,6 +1004,15 @@ class Broker(BrokerControlSupport, BrokerObserverSupport, BrokerWorkflowSupport)
             database.execute(
                 f"UPDATE roles SET {','.join(changes)} WHERE role=?", values
             )
+            if previous != phase:
+                record_event(
+                    database,
+                    "worker_progress",
+                    role=client.role,
+                    round_number=self.current_round(database),
+                    assignment_id=assignment_id,
+                    status=phase,
+                )
         await self.reply(client, message["id"], True, status="recorded")
 
     async def handle_lifecycle(self, client: Client, message: dict[str, Any]) -> None:

@@ -661,6 +661,7 @@ def _event_lines(events: list[dict[str, Any]], *, unicode: bool) -> list[Line]:
             "assignment_accepted": ("→", ">"),
             "report_accepted": ("↩", "<"),
             "worker_lifecycle": ("●", "*"),
+            "worker_progress": ("▸", ">"),
             "broker_started": ("▶", ">"),
             "workflow_active": ("◆", "*"),
             "workflow_started": ("▶", ">"),
