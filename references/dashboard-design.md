@@ -32,12 +32,12 @@ PI TMUX ORCHESTRATOR  /  SESSION pi-example-agents
 BROKER + STATUS  ·  PROJECT /work/example
 ● ACTIVE   ROUND 2
 TRANSPORT TUI   PROTOCOL BROKER-V1 / V1   ACTUAL USAGE 42.8k TOKENS
-NOW  ⚡ implementer  streaming ►  →  👀 reviewer waiting
+NOW  ⚡ implementer  ▰▰▰▰▱▱▱▱▱▱▱▱  streaming  →  👀 reviewer waiting
 
 ROLES
 ROLE         LINK       LIVE         ASSIGNMENT          MODEL                    THINK   TOTAL/Δ   CTX
 --------------------------------------------------------------------------------------------------------
-implementer  ● up · g1  streaming ►  r2 implementation   anthropic/model-name     high     31.2k/+4k  62.4%
+implementer  ● up · g1  streaming ▰▰▰▱▱▱  r2 implementation   anthropic/model-name     high     31.2k/+4k  62.4%
 reviewer     ● up · g1  waiting      r2 review           google/model-name        medium   11.6k/+1k  28.1%
 
 RECENT METADATA EVENTS

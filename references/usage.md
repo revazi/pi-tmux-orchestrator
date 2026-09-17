@@ -356,10 +356,9 @@ introduced. Provider savings and semantic verification reuse remain unproven.
 Creates a detached tmux grid with an implementer, reviewer, broker/status
 monitor, and optional probe, Playwright, and Django roles. The monitor is an
 in-place, event-driven dashboard with full, compact, and narrow layouts. A NOW
-flow line names the active worker and the waiting next role. Worker turn,
-stream, tool, and report events refresh a bounded live phase marker and
-finalized usage directly; phase *changes* also appear on the metadata event
-rail. The monitor does not tail worker output, wait for a handoff, or poll
+flow line names the active worker, a bouncing progress bar, and the waiting
+next role. Worker turn, stream, tool, and report events refresh that bar and
+the LIVE phase marker; phase *changes* also appear on the metadata event rail. The monitor does not tail worker output, wait for a handoff, or poll
 broker state.
 
 Required:

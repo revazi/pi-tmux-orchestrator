@@ -215,6 +215,49 @@ class DashboardRenderingTests(DashboardFixture):
         self.assertIn("streaming", second)
         self.assertNotEqual(first[0], second)
 
+    def test_live_progress_bar_moves_with_activity_sequence(self) -> None:
+        snapshot = copy.deepcopy(self.snapshot)
+        snapshot["roles"][0].update({"activity": "streaming", "activity_sequence": 0})
+        frames = []
+        for sequence in range(8):
+            snapshot["roles"][0]["activity_sequence"] = sequence
+            rendered = render_dashboard(
+                self.manifest,
+                snapshot,
+                self.events,
+                width=180,
+                height=30,
+                color=False,
+            )
+            self.assertIn("streaming", rendered)
+            self.assertIn("▰", rendered)
+            self.assertIn("▱", rendered)
+            self.assertIn("NOW", rendered)
+            frames.append(rendered)
+        self.assertGreaterEqual(len(set(frames)), 6)
+        ascii_frame = render_dashboard(
+            self.manifest,
+            snapshot,
+            self.events,
+            width=180,
+            height=30,
+            color=False,
+            unicode=False,
+        )
+        self.assertIn("#", ascii_frame)
+        self.assertIn("-", ascii_frame)
+        self.assertNotIn("▰", ascii_frame)
+        idle = render_dashboard(
+            self.manifest,
+            self.snapshot,
+            self.events,
+            width=180,
+            height=30,
+            color=False,
+        )
+        self.assertNotIn("▰", idle)
+        self.assertNotIn("PRIVATE_", "\n".join(frames))
+
     def test_assignment_guardrail_markers_are_visible_in_every_layout(self) -> None:
         snapshot = copy.deepcopy(self.snapshot)
         snapshot["roles"][0]["assignment_guardrails"] = [

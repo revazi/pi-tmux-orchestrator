@@ -290,17 +290,25 @@ def _role_glyph(role: object, *, unicode: bool) -> str:
     return pair[0] if unicode else pair[1]
 
 
-def _activity_pulse(activity: str, sequence: object, *, unicode: bool) -> str:
-    frames = {
-        "thinking": (("·", "•", "●", "•"), (".", "o", "O", "o")),
-        "streaming": (("▹", "▸", "►", "▸"), ("-", "=", ">", "=")),
-        "tool": (("◦", "•", "●", "•"), ("*", "+", "*", "+")),
-        "reporting": (("›", "»", "↗", "»"), (">", "^", ">", "^")),
-    }.get(activity)
-    if frames is None:
-        frames = (("·", "•", "●", "•"), (".", "o", "O", "o"))
-    index = sequence % 4 if type(sequence) is int and sequence >= 0 else 0
-    return frames[0 if unicode else 1][index]
+def _activity_bar(
+    sequence: object, *, unicode: bool, width: int = 8, blob: int = 3
+) -> str:
+    """Bounce a filled blob along a 1-column track. Advances only with sequence."""
+    if width < 2:
+        return ""
+    on = "▰" if unicode else "#"
+    off = "▱" if unicode else "-"
+    span = min(blob, width)
+    seq = sequence if type(sequence) is int and sequence >= 0 else 0
+    travel = width - span + 1
+    if travel <= 1:
+        return on * width
+    cycle = travel * 2 - 2
+    tick = seq % cycle
+    start = tick if tick < travel else cycle - tick
+    return "".join(
+        on if start <= index < start + span else off for index in range(width)
+    )
 
 
 def _live_state(role: dict[str, Any], *, unicode: bool) -> str:
@@ -308,8 +316,8 @@ def _live_state(role: dict[str, Any], *, unicode: bool) -> str:
     activity = role.get("activity")
     if state != "active" or not isinstance(activity, str) or not activity:
         return state
-    pulse = _activity_pulse(activity, role.get("activity_sequence"), unicode=unicode)
-    return f"{activity} {pulse}"
+    bar = _activity_bar(role.get("activity_sequence"), unicode=unicode, width=6, blob=3)
+    return f"{activity} {bar}"
 
 
 def _now_flow_line(snapshot: dict[str, Any], *, unicode: bool) -> Line | None:
@@ -341,16 +349,37 @@ def _now_flow_line(snapshot: dict[str, Any], *, unicode: bool) -> Line | None:
     else:
         name = sanitize_terminal_text(working.get("role"))
         glyph = _role_glyph(name, unicode=unicode)
-        live = _live_state(working, unicode=unicode)
+        activity = working.get("activity")
         if glyph:
             line.append(Span(f"{glyph} ", "active"))
-        line.extend(
-            [
-                Span(name, "active"),
-                Span("  "),
-                Span(live, state_semantic(live.split(" ", 1)[0])),
-            ]
-        )
+        line.append(Span(name, "active"))
+        if (
+            sanitize_terminal_text(working.get("state")).lower() == "active"
+            and isinstance(activity, str)
+            and activity
+        ):
+            bar = _activity_bar(
+                working.get("activity_sequence"),
+                unicode=unicode,
+                width=12,
+                blob=4,
+            )
+            line.extend(
+                [
+                    Span("  ", "normal"),
+                    Span(bar, "active"),
+                    Span("  ", "normal"),
+                    Span(activity, "active"),
+                ]
+            )
+        else:
+            live = _live_state(working, unicode=unicode)
+            line.extend(
+                [
+                    Span("  "),
+                    Span(live, state_semantic(live.split(" ", 1)[0])),
+                ]
+            )
     if waiting:
         dest = waiting[0]
         name = sanitize_terminal_text(dest.get("role"))
@@ -489,7 +518,7 @@ def _full_role_lines(
     columns = {
         "role": 11,
         "link": 9,
-        "state": 11,
+        "state": 18,
         "work": 18,
         "think": 7,
         "tokens": 9,
@@ -582,7 +611,7 @@ def _compact_role_lines(
     manifest: dict[str, Any], snapshot: dict[str, Any], width: int, *, unicode: bool
 ) -> list[Line]:
     role_width = 11
-    state_width = 11
+    state_width = 16
     token_width = 8
     context_width = 6
     thinking_width = 7
