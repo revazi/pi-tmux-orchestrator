@@ -134,9 +134,10 @@ medium/medium for implementer/reviewer, `balanced` uses high/high, and `thorough
 preserves the previous xhigh/high values. Specialists use low-or-medium,
 medium, and high respectively. The packaged compatibility default is `thorough`
 until comparative provider usage and quality are measured; this is not a
-quality or savings recommendation. Strict version-3 user-global configuration
+quality or savings recommendation. Strict version-4 user-global configuration
 may select a default, define complete custom profiles, and map exact canonical
-project directories to profile/model/flow/specialist/workspace defaults. Profiles
+project directories to profile/model/flow/specialist/workspace defaults and
+registered customRoles. Version 3 remains accepted without customRoles. Profiles
 do not select models, create roles, change tools, or skip review.
 
 Global and exact-project model policy is read from

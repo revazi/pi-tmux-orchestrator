@@ -211,6 +211,38 @@ read or copy provider credentials. Model policy, custom profiles, specialist
 activation, observational budgets, worker skills, and workspace capsules are
 documented in the [complete usage reference](references/usage.md).
 
+## Upgrading to 0.10
+
+Version 0.10.0 adds opt-in custom read-only specialists, worker-context
+retention, repair-round continuation, and a watchable broker dashboard. There
+is no new slash-command, protocol, or authority-model breaking change. The 0.9
+command map below still applies.
+
+Finish or stop active orchestrations, update, and restart Pi:
+
+```bash
+pi update npm:pi-tmux-orchestrator
+```
+
+Start a new orchestration after restarting. An already-running broker keeps the
+code loaded when that run started and does not hot-reload this release.
+
+- Ordinary new runs still use manifest v5 and `broker-v1`. Explicit custom-role
+  runs use manifest v7.
+- Version-3 user-global configuration remains accepted without `customRoles`.
+  Version 4 adds exact-project `customRoles` for already-registered identities.
+- Retained older runs remain readable.
+- Custom specialists, worker-context retention, and the repair-round cap are
+  opt-in. Defaults do not start custom roles or retain extra worker context.
+
+See the [v0.10.0 release notes](releases/v0.10.0.md).
+If migration is blocked, stop active 0.10 runs and roll back:
+
+```bash
+pi remove npm:pi-tmux-orchestrator
+pi install npm:pi-tmux-orchestrator@0.9.5
+```
+
 ## Upgrading to 0.9
 
 Version 0.9 removed duplicate long-form commands and separate helper commands:
