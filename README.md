@@ -146,13 +146,16 @@ reconnection, restart, resource revocation, and cleanup are also covered without
 a prompt or provider request; this does not claim a generated custom report or
 provider behavior. Explicit CLI selection can be previewed with
 `start --dry-run --custom-role ID PROVIDER MODEL THINKING` (repeatable, at most
-eight). Provider/model values are always explicit. Thinking accepts an explicit
-level or `profile` to opt into the same identity's user-global custom-profile
-mapping; mappings never select workers and project profile selections cannot
-configure custom roles. Selected roles use deterministic rules from their bound
-specialist contract, or `--force-specialist CUSTOM_ID`. Omit `--dry-run` to launch
-after model and resource validation. Retained custom status exposes contracts and
-bounded policy sources, not resource bodies or claims of current resource validity.
+eight). Version-4 exact-project `customRoles` can also select the same registered
+identities for one canonical directory; `--no-project-custom-roles` omits them,
+and explicit `--custom-role` wins. Provider/model values are always explicit.
+Thinking accepts an explicit level or `profile` to opt into the same identity's
+user-global custom-profile mapping; profile mappings never select workers and
+project profile selections cannot configure custom thinking. Selected roles use
+deterministic rules from their bound specialist contract, or
+`--force-specialist CUSTOM_ID`. Omit `--dry-run` to launch after model and
+resource validation. Retained custom status exposes contracts and bounded policy
+sources, not resource bodies or claims of current resource validity.
 See the [registry, bootstrap, and workflow trust boundaries](references/custom-roles.md).
 
 Reusable defaults are user-global, never project-local:
@@ -170,11 +173,13 @@ Packaged profiles change only Pi thinking levels:
 Profiles do not change models, tools, role authority, mandatory review,
 routing, or budget behavior.
 
-Version-3 configuration can apply exact defaults to canonical project paths:
+Version-4 configuration can apply exact defaults to canonical project paths,
+including registered custom specialists. Version 3 remains accepted without
+`customRoles`:
 
 ```json
 {
-  "version": 3,
+  "version": 4,
   "defaultProfile": "balanced",
   "projects": [
     {
@@ -182,15 +187,24 @@ Version-3 configuration can apply exact defaults to canonical project paths:
       "profile": "thorough",
       "implementationFlow": "phased",
       "specialists": ["probe"],
-      "workspaceCapsule": false
+      "workspaceCapsule": false,
+      "customRoles": [
+        {
+          "id": "custom-security",
+          "provider": "exact-provider",
+          "model": "exact-model",
+          "thinking": "low"
+        }
+      ]
     }
   ]
 }
 ```
 
 Project directories must already exist and exactly match `pwd -P`; there are no
-globs, prefix matches, repository-name matches, or symlink components. Explicit
-run options override an exact project mapping.
+globs, prefix matches, repository-name matches, or symlink components. Custom role
+IDs must already exist in the user-global registry. Explicit run options override
+an exact project mapping.
 
 Pi remains authoritative for provider authentication. The orchestrator does not
 read or copy provider credentials. Model policy, custom profiles, specialist

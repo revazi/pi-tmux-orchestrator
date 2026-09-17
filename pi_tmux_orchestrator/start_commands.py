@@ -381,18 +381,37 @@ def start_command(args: argparse.Namespace) -> CommandResult:
             "start --attach is interactive-only and cannot be used with --json",
             "interactive_only",
         )
-    custom_selections = getattr(args, "custom_role", [])
+    explicit_custom_selections = getattr(args, "custom_role", [])
     project_input = Path(args.project).expanduser()
     project = project_input.resolve()
     if not project.is_dir():
         raise OrchestrationError(f"Project directory does not exist: {project}")
+    configured_models = load_model_config(project=project)
+    matched_project = project_model_config(configured_models, project)
+    project_custom_selections = (
+        [
+            [role["id"], role["provider"], role["model"], role["thinking"]]
+            for role in matched_project.get("custom_roles", [])
+        ]
+        if matched_project is not None
+        and getattr(args, "project_custom_roles", None) is not False
+        else []
+    )
+    custom_selections = (
+        explicit_custom_selections
+        if explicit_custom_selections
+        else project_custom_selections
+    )
     custom_selection = select_custom_start(
-        project, custom_selections, getattr(args, "role_registry", None)
+        project,
+        custom_selections,
+        getattr(args, "role_registry", None),
+        selection_source=(
+            "per-run" if explicit_custom_selections else "project-config"
+        ),
     )
     command_path("pi")
     command_path("tmux")
-    configured_models = load_model_config(project=project)
-    matched_project = project_model_config(configured_models, project)
     workspace_requested = getattr(args, "workspace_capsule", None)
     workspace_capsule_enabled = (
         workspace_requested
@@ -669,7 +688,7 @@ def start_command(args: argparse.Namespace) -> CommandResult:
                 if args.dry_run
                 else "checked_at_selection_and_launch"
             ),
-            "models": "explicit-or-profile-thinking",
+            "models": "exact-project-or-explicit-with-optional-profile-thinking",
             "roles": {
                 role: {
                     "state": "enabled",
@@ -685,7 +704,14 @@ def start_command(args: argparse.Namespace) -> CommandResult:
                 for role, config in custom_selection["roles"].items()
             },
         }
-        human_print("Custom roles: explicit registry-bound read-only specialists.")
+        sources = {
+            config["custom_policy"]["selection_source"]
+            for config in custom_selection["roles"].values()
+        }
+        human_print(
+            "Custom roles: registry-bound read-only specialists "
+            f"(source={next(iter(sources))})."
+        )
     human_print(f"Project: {project}")
     human_print(f"Session: {session}")
     human_print("Roles:")
@@ -693,8 +719,10 @@ def start_command(args: argparse.Namespace) -> CommandResult:
         config = configs[role]
         custom_policy = config.get("custom_policy")
         policy_text = (
-            f" thinking-source={custom_policy['thinking_source']} "
-            f"activation={custom_policy['activation_source']}"
+            f" contract={config['custom_role']['contract']}"
+            f" selection={custom_policy['selection_source']}"
+            f" thinking-source={custom_policy['thinking_source']}"
+            f" activation={custom_policy['activation_source']}"
             if custom_policy is not None
             else ""
         )

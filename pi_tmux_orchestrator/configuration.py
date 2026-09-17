@@ -22,8 +22,10 @@ from .profiles import (
     validate_custom_profiles,
 )
 from .specialist_activation import SPECIALIST_ROLES
+from .role_registry import MAX_CUSTOM_ROLES, valid_custom_role_id
 
-MODEL_CONFIG_VERSION = 3
+MODEL_CONFIG_VERSION = 4
+PROJECT_MODEL_CONFIG_VERSION = 3
 PROFILE_MODEL_CONFIG_VERSION = 2
 LEGACY_MODEL_CONFIG_VERSION = 1
 MAX_MODEL_CONFIG_BYTES = 64 * 1024
@@ -46,6 +48,7 @@ PROJECT_CONFIG_FIELDS = frozenset(
         "workspaceCapsule",
     }
 )
+PROJECT_CUSTOM_ROLE_CONFIG_FIELDS = frozenset({"id", "provider", "model", "thinking"})
 MODEL_CONFIG_ENV = "PI_TMUX_ORCHESTRATOR_CONFIG"
 
 
@@ -144,12 +147,13 @@ def validate_model_config(value: object) -> dict[str, Any]:
         allowed_fields = LEGACY_MODEL_CONFIG_FIELDS
     elif version == PROFILE_MODEL_CONFIG_VERSION:
         allowed_fields = PROFILE_MODEL_CONFIG_FIELDS
-    elif version == MODEL_CONFIG_VERSION:
+    elif version in {PROJECT_MODEL_CONFIG_VERSION, MODEL_CONFIG_VERSION}:
         allowed_fields = MODEL_CONFIG_FIELDS
     else:
         raise OrchestrationError(
             "Model configuration version must be "
-            f"{LEGACY_MODEL_CONFIG_VERSION}, {PROFILE_MODEL_CONFIG_VERSION}, or {MODEL_CONFIG_VERSION}"
+            f"{LEGACY_MODEL_CONFIG_VERSION}, {PROFILE_MODEL_CONFIG_VERSION}, "
+            f"{PROJECT_MODEL_CONFIG_VERSION}, or {MODEL_CONFIG_VERSION}"
         )
     if set(value) - allowed_fields:
         raise OrchestrationError("Model configuration has unsupported top-level fields")
@@ -177,8 +181,12 @@ def validate_model_config(value: object) -> dict[str, Any]:
                 "Model configuration defaultProfile must name a packaged or configured profile"
             )
     projects = (
-        validate_project_configs(value.get("projects", []), profiles)
-        if version == MODEL_CONFIG_VERSION
+        validate_project_configs(
+            value.get("projects", []),
+            profiles,
+            allow_custom_roles=version >= MODEL_CONFIG_VERSION,
+        )
+        if version >= PROJECT_MODEL_CONFIG_VERSION
         else []
     )
     return {
@@ -262,9 +270,38 @@ def _canonical_project_directory(value: object) -> str:
     return str(canonical)
 
 
+def _project_custom_roles(value: object, label: str) -> list[dict[str, str]]:
+    if not isinstance(value, list) or len(value) > MAX_CUSTOM_ROLES:
+        raise OrchestrationError(
+            f"Model configuration {label} must contain at most {MAX_CUSTOM_ROLES} custom roles"
+        )
+    roles: list[dict[str, str]] = []
+    for index, raw in enumerate(value):
+        item_label = f"{label}[{index}]"
+        if not isinstance(raw, dict) or set(raw) != PROJECT_CUSTOM_ROLE_CONFIG_FIELDS:
+            raise OrchestrationError(
+                f"Model configuration {item_label} has invalid fields"
+            )
+        identifier = raw.get("id")
+        if not valid_custom_role_id(identifier):
+            raise OrchestrationError(f"Model configuration {item_label}.id is invalid")
+        model = validate_model_fields(
+            {field: raw[field] for field in ("provider", "model", "thinking")},
+            item_label,
+        )
+        roles.append({"id": identifier, **model})
+    if len({role["id"] for role in roles}) != len(roles):
+        raise OrchestrationError(
+            f"Model configuration {label} must contain unique custom role IDs"
+        )
+    return roles
+
+
 def validate_project_configs(
     value: object,
     profiles: dict[str, dict[str, str]],
+    *,
+    allow_custom_roles: bool = True,
 ) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         raise OrchestrationError("Model configuration projects must be an array")
@@ -276,7 +313,12 @@ def validate_project_configs(
     directories: set[str] = set()
     for index, raw in enumerate(value):
         label = f"projects[{index}]"
-        if not isinstance(raw, dict) or set(raw) - PROJECT_CONFIG_FIELDS:
+        allowed_fields = (
+            PROJECT_CONFIG_FIELDS | {"customRoles"}
+            if allow_custom_roles
+            else PROJECT_CONFIG_FIELDS
+        )
+        if not isinstance(raw, dict) or set(raw) - allowed_fields:
             raise OrchestrationError(
                 f"Model configuration {label} has unsupported fields"
             )
@@ -334,6 +376,11 @@ def validate_project_configs(
             raise OrchestrationError(
                 f"Model configuration {label}.workspaceCapsule must be boolean"
             )
+        custom_roles = (
+            _project_custom_roles(raw.get("customRoles", []), f"{label}.customRoles")
+            if allow_custom_roles
+            else []
+        )
         projects.append(
             {
                 "directory": directory,
@@ -343,6 +390,7 @@ def validate_project_configs(
                 "implementation_flow": implementation_flow,
                 "specialists": specialists,
                 "workspace_capsule": workspace_capsule,
+                "custom_roles": custom_roles,
             }
         )
     return projects
@@ -466,7 +514,7 @@ def validate_manifest_orchestration_config(value: object) -> dict[str, Any]:
         or any(ord(character) < 32 for character in path)
     ):
         raise OrchestrationError("Manifest orchestration configuration path is invalid")
-    if value["version"] != MODEL_CONFIG_VERSION:
+    if value["version"] not in {PROJECT_MODEL_CONFIG_VERSION, MODEL_CONFIG_VERSION}:
         raise OrchestrationError(
             "Manifest orchestration configuration version is invalid"
         )

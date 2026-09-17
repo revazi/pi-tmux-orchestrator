@@ -1929,6 +1929,7 @@ test("natural-language starts preserve project defaults unless explicitly overri
     "--without-django-expert",
     "--workspace-capsule",
     "--no-workspace-capsule",
+    "--no-project-custom-roles",
   ]) {
     assert.equal(inherited.includes(flag), false, flag);
   }
@@ -1940,6 +1941,7 @@ test("natural-language starts preserve project defaults unless explicitly overri
       withPlaywright: true,
       withDjangoExpert: false,
       workspaceCapsule: false,
+      projectCustomRoles: false,
     },
     "/project",
     { task: "/private/task" },
@@ -1949,6 +1951,35 @@ test("natural-language starts preserve project defaults unless explicitly overri
   assert.equal(overridden.includes("--with-playwright"), true);
   assert.equal(overridden.includes("--without-django-expert"), true);
   assert.equal(overridden.includes("--no-workspace-capsule"), true);
+  assert.equal(overridden.includes("--no-project-custom-roles"), true);
+});
+
+test("start confirmation shows custom-role contract and policy sources", async () => {
+  const { tool } = harness(async (_command, args) => ({
+    code: 0,
+    stdout: JSON.stringify(success("start", {
+      project: process.cwd(),
+      session: "pi-project-agents",
+      roles: [
+        { name: "implementer", provider: "provider", model: "writer", thinking: "high" },
+        {
+          name: "custom-security",
+          provider: "provider",
+          model: "reader",
+          thinking: "off",
+          specialist_contract: "probe",
+          selection_source: "project-config",
+          thinking_source: "per-run-override",
+          activation_source: "deterministic-contract-rule",
+        },
+      ],
+      dry_run: args.includes("--dry-run"),
+      paths: { state_root: "/tmp/state", coordination: null },
+    })),
+  }));
+  const ctx = context({ confirmations: [true] });
+  await tool.execute("call", { action: "start", task: "synthetic" }, undefined, undefined, ctx);
+  assert.match(ctx.calls.confirmations[0].message, /custom-security: provider\/reader \(off\); contract=probe; selection=project-config; thinking-source=per-run-override; activation=deterministic-contract-rule/);
 });
 
 test("natural-language starts pass strict native per-run budget overrides", () => {
@@ -3014,6 +3045,7 @@ test("slash start can inherit exact-project orchestration defaults", async () =>
       "--without-django-expert",
       "--workspace-capsule",
       "--no-workspace-capsule",
+      "--no-project-custom-roles",
     ]) {
       assert.equal(args.includes(flag), false, flag);
     }
@@ -3066,7 +3098,7 @@ test("controller mode requires and collects an explicit target project", async (
 
     const ctx = context({
       inputs: [process.cwd(), "", ""],
-      confirmations: [true, false, false, false, false, false, true],
+      confirmations: [true, false, false, false, false, true, false, true],
     });
     await commands.get("or-start").handler("synthetic", ctx);
     assert.equal(calls, 2);
@@ -3177,6 +3209,7 @@ test("short start command reuses private preview and explicit confirmation flow"
     execCalls += 1;
     assert.equal(args.includes(task), false);
     assert.equal(args.includes("--rpc-workers"), false);
+    assert.equal(args.includes("--no-project-custom-roles"), false);
     assert.equal(args.includes("--workspace-capsule"), true);
     assert.deepEqual(
       args.filter((_value, index) => args[index - 1] === "--workspace-relevant-path"),
@@ -3205,11 +3238,12 @@ test("short start command reuses private preview and explicit confirmation flow"
     };
   });
   const ctx = context({
-    confirmations: [true, true, false, false, false, true, true],
+    confirmations: [true, true, false, false, false, true, true, true],
     editors: ["src/service.py\ntests/test_service.py"],
   });
   await commands.get("or-start").handler(task, ctx);
   assert.equal(execCalls, 2);
+  assert.equal(ctx.calls.confirmations[5].title, "Project custom specialists");
   assert.equal(ctx.calls.confirmations.at(-1).title, "Start tmux orchestration?");
   assert.equal(ctx.calls.editors[0].title, "Workspace capsule relevant paths");
   assert.match(ctx.calls.confirmations.at(-1).message, /Experimental workspace capsule: validated schema=1/);
