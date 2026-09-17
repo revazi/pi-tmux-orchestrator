@@ -40,6 +40,13 @@ from .worker_context import context_policy, retained_context_policy
 
 SCHEMA_VERSION = 10
 _ACTIVATION_RULE_PATTERN = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
+_SQLITE_BUSY_MARKERS = ("database is locked", "database is busy")
+
+
+def _sqlite_busy(error: BaseException) -> bool:
+    return isinstance(error, sqlite3.OperationalError) and any(
+        marker in str(error).lower() for marker in _SQLITE_BUSY_MARKERS
+    )
 
 
 def _activation_source(rule_id: str, forced: bool) -> str:
@@ -74,32 +81,43 @@ def connect_broker_database(
 ) -> Iterator[sqlite3.Connection]:
     paths = broker_paths(coord)
     database = paths["database"]
-    if readonly:
-        if not database.is_file() or database.is_symlink():
-            raise OrchestrationError("Broker state is unavailable", "broker_not_ready")
-        uri = f"file:{database}?mode=ro"
-        connection = sqlite3.connect(uri, uri=True, timeout=2.0)
-    else:
-        ensure_private_directory(database.parent)
-        if database.exists() and (database.is_symlink() or not database.is_file()):
-            raise OrchestrationError("Broker database path is unsafe")
-        previous_umask = os.umask(0o077)
-        try:
-            connection = sqlite3.connect(database, timeout=5.0)
-        finally:
-            os.umask(previous_umask)
+    connection: sqlite3.Connection | None = None
     try:
+        if readonly:
+            if not database.is_file() or database.is_symlink():
+                raise OrchestrationError(
+                    "Broker state is unavailable", "broker_not_ready"
+                )
+            uri = f"file:{database}?mode=ro"
+            connection = sqlite3.connect(uri, uri=True, timeout=2.0)
+        else:
+            ensure_private_directory(database.parent)
+            if database.exists() and (database.is_symlink() or not database.is_file()):
+                raise OrchestrationError("Broker database path is unsafe")
+            previous_umask = os.umask(0o077)
+            try:
+                connection = sqlite3.connect(database, timeout=5.0)
+            finally:
+                os.umask(previous_umask)
         if not readonly:
             os.chmod(database, 0o600)
         connection.row_factory = sqlite3.Row
+        connection.execute(f"PRAGMA busy_timeout = {2000 if readonly else 5000}")
         connection.execute("PRAGMA foreign_keys = ON")
         if not readonly:
             connection.execute("PRAGMA journal_mode = DELETE")
             connection.execute("PRAGMA synchronous = FULL")
         with connection:
             yield connection
+    except sqlite3.OperationalError as error:
+        if _sqlite_busy(error):
+            raise OrchestrationError(
+                "Broker state is busy", "broker_not_ready"
+            ) from None
+        raise
     finally:
-        connection.close()
+        if connection is not None:
+            connection.close()
 
 
 def initialize_broker_database(
