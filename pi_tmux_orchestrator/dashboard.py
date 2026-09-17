@@ -277,16 +277,16 @@ def _assignment_guardrail_marker(role: dict[str, Any]) -> str:
 
 def _role_glyph(role: object, *, unicode: bool) -> str:
     glyphs = {
-        "implementer": ("✎", "I"),
-        "reviewer": ("✓", "R"),
-        "probe": ("⌕", "P"),
-        "playwright": ("▷", "W"),
-        "django": ("⊞", "D"),
+        "implementer": ("⚡", "I"),
+        "reviewer": ("👀", "R"),
+        "probe": ("🔎", "P"),
+        "playwright": ("🎭", "W"),
+        "django": ("🐍", "D"),
     }
     name = sanitize_terminal_text(role, fallback="").lower()
     pair = glyphs.get(name)
     if pair is None:
-        return "◆" if unicode and valid_custom_role_id(name) else ""
+        return "🧩" if unicode and valid_custom_role_id(name) else ""
     return pair[0] if unicode else pair[1]
 
 
@@ -658,13 +658,13 @@ def _event_lines(events: list[dict[str, Any]], *, unicode: bool) -> list[Line]:
         role = sanitize_terminal_text(event.get("role"), fallback="broker")
         name = sanitize_terminal_text(event.get("event"), fallback="event")
         glyph = {
-            "assignment_accepted": ("→", ">"),
-            "report_accepted": ("↩", "<"),
-            "worker_lifecycle": ("●", "*"),
-            "worker_progress": ("▸", ">"),
-            "broker_started": ("▶", ">"),
-            "workflow_active": ("◆", "*"),
-            "workflow_started": ("▶", ">"),
+            "assignment_accepted": ("🎯", ">"),
+            "report_accepted": ("📬", "<"),
+            "worker_lifecycle": ("💫", "*"),
+            "worker_progress": ("✨", ">"),
+            "broker_started": ("🚀", ">"),
+            "workflow_active": ("🔥", "*"),
+            "workflow_started": ("🚀", ">"),
         }.get(name, ("·", "."))
         marker = glyph[0] if unicode else glyph[1]
         status = sanitize_terminal_text(event.get("status"), fallback="unknown")
