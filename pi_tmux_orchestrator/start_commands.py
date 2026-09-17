@@ -6,6 +6,7 @@ import argparse
 import datetime as dt
 import os
 import shlex
+import sqlite3
 import stat
 import threading
 import time
@@ -205,7 +206,7 @@ def wait_for_custom_startup(
         try:
             socket_metadata = broker_paths(coord)["socket"].lstat()
             snapshot = public_broker_snapshot(coord)
-        except (FileNotFoundError, OSError, OrchestrationError):
+        except (FileNotFoundError, OSError, sqlite3.Error, OrchestrationError):
             stable_since = None
             last_reason = "broker did not become ready"
             CUSTOM_STARTUP_WAIT.wait(0.05)

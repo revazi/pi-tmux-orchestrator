@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import signal
+import sqlite3
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -639,6 +640,33 @@ class BrokerStoreTests(BrokerFixture):
         self.assertFalse(
             any("active_assignment_id" in role for role in snapshot["roles"])
         )
+
+    def test_locked_readonly_snapshot_is_bounded_broker_not_ready(self) -> None:
+        initialize_broker_run(self.coord, self.manifest, "task", {})
+        path = str(broker_store.broker_paths(self.coord)["database"])
+        writer = sqlite3.connect(path, timeout=5.0)
+        original = sqlite3.connect
+
+        def connect_fast(*args, **kwargs):
+            kwargs = dict(kwargs)
+            kwargs["timeout"] = 0.05
+            return original(*args, **kwargs)
+
+        try:
+            writer.execute("BEGIN EXCLUSIVE")
+            with mock.patch.object(
+                broker_store.sqlite3, "connect", side_effect=connect_fast
+            ):
+                with self.assertRaises(OrchestrationError) as raised:
+                    broker_store.public_broker_snapshot(self.coord)
+            self.assertEqual(raised.exception.code, "broker_not_ready")
+            self.assertEqual(str(raised.exception), "Broker state is busy")
+            serialized = str(raised.exception).lower()
+            self.assertNotIn("sqlite", serialized)
+            self.assertNotIn(path.lower(), serialized)
+        finally:
+            writer.rollback()
+            writer.close()
 
     def test_protocol_v1_retained_reports_keep_assignment_usage_unavailable(
         self,
