@@ -275,15 +275,100 @@ def _assignment_guardrail_marker(role: dict[str, Any]) -> str:
     return ""
 
 
+def _role_glyph(role: object, *, unicode: bool) -> str:
+    glyphs = {
+        "implementer": ("✎", "I"),
+        "reviewer": ("✓", "R"),
+        "probe": ("⌕", "P"),
+        "playwright": ("▷", "W"),
+        "django": ("⊞", "D"),
+    }
+    name = sanitize_terminal_text(role, fallback="").lower()
+    pair = glyphs.get(name)
+    if pair is None:
+        return "◆" if unicode and valid_custom_role_id(name) else ""
+    return pair[0] if unicode else pair[1]
+
+
+def _activity_pulse(activity: str, sequence: object, *, unicode: bool) -> str:
+    frames = {
+        "thinking": (("·", "•", "●", "•"), (".", "o", "O", "o")),
+        "streaming": (("▹", "▸", "►", "▸"), ("-", "=", ">", "=")),
+        "tool": (("◦", "•", "●", "•"), ("*", "+", "*", "+")),
+        "reporting": (("›", "»", "↗", "»"), (">", "^", ">", "^")),
+    }.get(activity)
+    if frames is None:
+        frames = (("·", "•", "●", "•"), (".", "o", "O", "o"))
+    index = sequence % 4 if type(sequence) is int and sequence >= 0 else 0
+    return frames[0 if unicode else 1][index]
+
+
 def _live_state(role: dict[str, Any], *, unicode: bool) -> str:
     state = sanitize_terminal_text(role.get("state"), fallback="unknown").lower()
     activity = role.get("activity")
     if state != "active" or not isinstance(activity, str) or not activity:
         return state
-    sequence = role.get("activity_sequence")
-    index = sequence % 4 if type(sequence) is int and sequence >= 0 else 0
-    pulse = ("·", "•", "●", "•")[index] if unicode else (".", "o", "O", "o")[index]
+    pulse = _activity_pulse(activity, role.get("activity_sequence"), unicode=unicode)
     return f"{activity} {pulse}"
+
+
+def _now_flow_line(snapshot: dict[str, Any], *, unicode: bool) -> Line | None:
+    roles = [
+        role
+        for role in snapshot.get("roles", [])
+        if isinstance(role, dict) and isinstance(role.get("role"), str)
+    ]
+    working = next(
+        (
+            role
+            for role in roles
+            if sanitize_terminal_text(role.get("state")).lower() == "active"
+        ),
+        None,
+    )
+    waiting = [
+        role
+        for role in roles
+        if sanitize_terminal_text(role.get("state")).lower()
+        in {"waiting", "needs_attention"}
+    ]
+    if working is None and not waiting:
+        return None
+    arrow = " → " if unicode else " -> "
+    line: Line = [Span("NOW  ", "heading")]
+    if working is None:
+        line.append(Span("idle", "muted"))
+    else:
+        name = sanitize_terminal_text(working.get("role"))
+        glyph = _role_glyph(name, unicode=unicode)
+        live = _live_state(working, unicode=unicode)
+        if glyph:
+            line.append(Span(f"{glyph} ", "active"))
+        line.extend(
+            [
+                Span(name, "active"),
+                Span("  "),
+                Span(live, state_semantic(live.split(" ", 1)[0])),
+            ]
+        )
+    if waiting:
+        dest = waiting[0]
+        name = sanitize_terminal_text(dest.get("role"))
+        glyph = _role_glyph(name, unicode=unicode)
+        line.append(Span(arrow, "muted"))
+        if glyph:
+            line.append(Span(f"{glyph} ", "warning"))
+        line.extend(
+            [
+                Span(name, "warning"),
+                Span(" "),
+                Span(
+                    sanitize_terminal_text(dest.get("state")),
+                    "warning",
+                ),
+            ]
+        )
+    return line
 
 
 def _assignment(role: dict[str, Any]) -> str:
@@ -572,6 +657,15 @@ def _event_lines(events: list[dict[str, Any]], *, unicode: bool) -> list[Line]:
         )
         role = sanitize_terminal_text(event.get("role"), fallback="broker")
         name = sanitize_terminal_text(event.get("event"), fallback="event")
+        glyph = {
+            "assignment_accepted": ("→", ">"),
+            "report_accepted": ("↩", "<"),
+            "worker_lifecycle": ("●", "*"),
+            "broker_started": ("▶", ">"),
+            "workflow_active": ("◆", "*"),
+            "workflow_started": ("▶", ">"),
+        }.get(name, ("·", "."))
+        marker = glyph[0] if unicode else glyph[1]
         status = sanitize_terminal_text(event.get("status"), fallback="unknown")
         round_number = event.get("round")
         round_text = f"r{round_number}" if type(round_number) is int else ""
@@ -580,7 +674,8 @@ def _event_lines(events: list[dict[str, Any]], *, unicode: bool) -> list[Line]:
                 Span(f"{sequence_text}  {time_text}  ", "muted"),
                 Span(_cell(role, 11, unicode=unicode)),
                 Span("  "),
-                Span(_cell(name, 24, unicode=unicode)),
+                Span(f"{marker} ", "muted"),
+                Span(_cell(name, 22, unicode=unicode)),
                 Span("  "),
                 Span(status, state_semantic(status)),
                 Span(f"  {round_text}" if round_text else "", "muted"),
@@ -624,6 +719,9 @@ def _full_layout(
 ) -> list[Line]:
     lines = _header_lines(manifest, snapshot, unicode=unicode, include_project=True)
     lines.append(_transport_line(manifest, snapshot, compact=False))
+    now = _now_flow_line(snapshot, unicode=unicode)
+    if now is not None:
+        lines.append(now)
     lines.extend([_line(), _line("ROLES", "heading")])
     lines.extend(_full_role_lines(manifest, snapshot, width, unicode=unicode))
     session = sanitize_terminal_text(manifest.get("session"), fallback="SESSION")
@@ -648,6 +746,9 @@ def _compact_layout(
 ) -> list[Line]:
     lines = _header_lines(manifest, snapshot, unicode=unicode, include_project=False)
     lines.append(_transport_line(manifest, snapshot, compact=True))
+    now = _now_flow_line(snapshot, unicode=unicode)
+    if now is not None:
+        lines.append(now)
     lines.extend(
         [
             _line(),

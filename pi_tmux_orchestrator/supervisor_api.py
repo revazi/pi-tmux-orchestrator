@@ -10,7 +10,7 @@ from . import runtime
 from .broker_store import (
     public_assignment_usage,
     public_broker_events,
-    public_broker_snapshot,
+    try_public_broker_snapshot,
 )
 from .constants import (
     MAX_JSON_ITEMS,
@@ -363,7 +363,39 @@ def supervisor_snapshot(session: str, run_id: str | None) -> dict[str, Any]:
     coord, manifest = resolve_supervisor_target(session, run_id, require_rpc=False)
     transport = manifest_transport(manifest)
     if manifest.get("version", 0) >= 3:
-        snapshot = public_broker_snapshot(coord)
+        snapshot = try_public_broker_snapshot(coord)
+        if snapshot is None:
+            roles = []
+            for role, config in manifest["roles"].items():
+                value = public_role(role, config, transport)
+                value["runtime"] = {
+                    "source": "retained-broker-state",
+                    "liveness": "not-observed",
+                    "state": None,
+                }
+                value["worker"] = None
+                value["event_cursor"] = None
+                roles.append(value)
+            return {
+                "api_version": SUPERVISOR_API_VERSION,
+                "session": manifest["session"],
+                "run_id": coord.name,
+                "created_at": manifest["created_at"],
+                "project": manifest["project"],
+                "transport": transport,
+                "execution_profile": retained_execution_profile(manifest),
+                "project_config": retained_project_config(manifest),
+                "orchestration_config": retained_orchestration_config(manifest),
+                "coordination": manifest["coordination"],
+                "durable_workers": True,
+                "host_adapter": {"name": "tmux", "runtime_status": "not_observed"},
+                "workflow": None,
+                "guardrails": None,
+                "usage": None,
+                "roles": roles,
+                "availability": "temporarily-unavailable",
+                "paths": {"coordination": str(coord)},
+            }
         role_state = {value["role"]: value for value in snapshot["roles"]}
         roles = []
         for role, config in manifest["roles"].items():
@@ -512,8 +544,35 @@ def supervisor_usage(session: str, run_id: str | None, *, limit: int) -> dict[st
             "truncated": False,
             "limit": limit,
         }
-    snapshot = public_broker_snapshot(coord)
-    page = public_assignment_usage(coord, limit=limit)
+    snapshot = try_public_broker_snapshot(coord)
+    if snapshot is None:
+        return {
+            **base,
+            "availability": "temporarily-unavailable",
+            "available": False,
+            "cumulative": None,
+            "roles": [],
+            "assignment_count": 0,
+            "assignment_usage_unavailable": 0,
+            "truncated": False,
+            "limit": limit,
+        }
+    try:
+        page = public_assignment_usage(coord, limit=limit)
+    except OrchestrationError as error:
+        if error.code != "broker_not_ready":
+            raise
+        return {
+            **base,
+            "availability": "temporarily-unavailable",
+            "available": False,
+            "cumulative": None,
+            "roles": [],
+            "assignment_count": 0,
+            "assignment_usage_unavailable": 0,
+            "truncated": False,
+            "limit": limit,
+        }
     by_role: dict[str, list[dict[str, Any]]] = {role: [] for role in manifest["roles"]}
     unavailable = 0
     for assignment in page["assignments"]:
