@@ -43,6 +43,7 @@ All notable changes to this project are documented here.
 ### Fixed
 
 - Retried custom-start admission across brief broker SQLite locks and mapped concurrent busy readers to bounded `broker_not_ready` errors without SQLite traces
+- Kept `status` readable when the broker database is briefly busy, and failed custom admission immediately on non-busy snapshot validation errors
 - Preserved `recovering` and durable `uncertain` role states against the actual worker extension's immediate ordinary lifecycle update, and restored accepted reconnects to `active` only through the assignment acknowledgement boundary
 
 ## 0.9.5 - 2026-09-02
