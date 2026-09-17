@@ -367,6 +367,7 @@ def _now_flow_line(snapshot: dict[str, Any], *, unicode: bool) -> Line | None:
             line.extend(
                 [
                     Span("  ", "normal"),
+                    Span("LIVE ", "muted"),
                     Span(bar, "active"),
                     Span("  ", "normal"),
                     Span(activity, "active"),

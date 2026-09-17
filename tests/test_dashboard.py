@@ -230,8 +230,7 @@ class DashboardRenderingTests(DashboardFixture):
                 color=False,
             )
             self.assertIn("streaming", rendered)
-            self.assertIn("▰", rendered)
-            self.assertIn("▱", rendered)
+            self.assertRegex(rendered, r"LIVE [▰▱]{12}")
             self.assertIn("NOW", rendered)
             frames.append(rendered)
         self.assertGreaterEqual(len(set(frames)), 6)
@@ -244,8 +243,7 @@ class DashboardRenderingTests(DashboardFixture):
             color=False,
             unicode=False,
         )
-        self.assertIn("#", ascii_frame)
-        self.assertIn("-", ascii_frame)
+        self.assertRegex(ascii_frame, r"LIVE [#-]{12}")
         self.assertNotIn("▰", ascii_frame)
         idle = render_dashboard(
             self.manifest,
