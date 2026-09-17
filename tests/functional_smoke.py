@@ -356,7 +356,7 @@ def main() -> int:
             raise AssertionError("manifest did not bind the execution profile")
         if manifest["project_config"]["matched"] is not False:
             raise AssertionError("manifest did not bind the unmatched project policy")
-        if manifest["orchestration_config"]["version"] != 3:
+        if manifest["orchestration_config"]["version"] != 4:
             raise AssertionError(
                 "manifest did not bind the orchestration config schema"
             )

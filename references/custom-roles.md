@@ -48,16 +48,22 @@ Provider/model values never inherit. `profile` opts into a mapping for the same
 custom identity in the selected user-global custom execution profile; a direct
 thinking level wins. Packaged profiles have no custom mapping, and a project-selected
 profile cannot configure a custom role.
-`--role-registry` requires a selection and uses the same precedence and filesystem
-policy as registry validation. Omission of `--custom-role` never reads the registry.
+`--role-registry` requires a custom-role selection and uses the same precedence and
+filesystem policy as registry validation. Omission of `--custom-role` does not read
+the registry unless version-4 exact-project `customRoles` selected identities for
+this canonical directory. `--no-project-custom-roles` omits that project list;
+explicit `--custom-role` replaces it. Project `customRoles` require exact thinking
+levels, not `profile`.
 
 TUI and `--rpc-workers` previews use the same bindings and fixed read-only policy,
 and always retain the built-in implementer and reviewer. Custom skills come only
 from the verified registry definition; `--worker-skill` and `--worker-context` do
 not gain custom mappings. `--force-specialist CUSTOM_ID` is accepted only when that
 identity is selected in the same run; otherwise its bound contract supplies the
-fixed deterministic path rule. This is terminal CLI selection, not a new Pi
-start-tool field.
+fixed deterministic path rule. Terminal CLI `--custom-role` remains the explicit
+per-run override. `/or-start` and the model tool include exact-project custom
+specialists from validated configuration unless cancelled or `projectCustomRoles`
+is false; they never invent custom role IDs.
 
 Every preview or start rereads the registry/resources and verifies their digests.
 Successful JSON includes bounded identities, explicit models, report contracts,
@@ -209,8 +215,9 @@ and restored assignment kinds use that binding. Custom identities cannot select 
 contract, impersonate another authenticated identity, authorize operator control with
 a worker token, or submit writer/reviewer reports.
 
-A registry or profile entry never creates a worker. `--custom-role` is the explicit
-enable boundary. After each implementation report—not after a phased plan—the broker
+A registry or profile entry never creates a worker. `--custom-role` or version-4
+exact-project `customRoles` is the enable boundary. After each implementation
+report—not after a phased plan—the broker
 applies the fixed conservative path rule for the role's retained probe, Playwright,
 or Django contract. Documentation-only and clearly inapplicable paths may skip;
 empty, malformed, or ambiguous evidence fails toward running. Repeat

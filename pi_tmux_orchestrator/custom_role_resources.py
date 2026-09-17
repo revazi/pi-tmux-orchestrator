@@ -24,6 +24,7 @@ from .role_registry import (
 CUSTOM_POLICY_FIELDS = frozenset(
     {"selection_source", "thinking_source", "activation_source"}
 )
+CUSTOM_SELECTION_SOURCES = frozenset({"per-run", "project-config"})
 CUSTOM_THINKING_SOURCES = frozenset({"per-run-override", "execution-profile"})
 CUSTOM_ACTIVATION_SOURCES = frozenset({"deterministic-contract-rule", "per-run-force"})
 
@@ -72,10 +73,18 @@ def select_custom_roles(
 
 
 def select_custom_start(
-    project: Path, selections: list[list[str]], registry: str | None = None
+    project: Path,
+    selections: list[list[str]],
+    registry: str | None = None,
+    *,
+    selection_source: str = "per-run",
 ) -> dict[str, Any]:
     """Resolve explicit models, optional profile thinking, and verified bindings."""
-    if not isinstance(selections, list) or len(selections) > MAX_CUSTOM_ROLES:
+    if (
+        not isinstance(selections, list)
+        or len(selections) > MAX_CUSTOM_ROLES
+        or selection_source not in CUSTOM_SELECTION_SOURCES
+    ):
         raise OrchestrationError(
             "Custom start selection is invalid", "invalid_arguments"
         )
@@ -112,7 +121,7 @@ def select_custom_start(
             "tools": CUSTOM_READ_ONLY_TOOLS,
             "pane_id": None,
             "custom_policy": {
-                "selection_source": "per-run",
+                "selection_source": selection_source,
                 "thinking_source": (
                     "execution-profile"
                     if thinking == CUSTOM_PROFILE_THINKING
@@ -123,7 +132,8 @@ def select_custom_start(
         }
     if registry is not None and not names:
         raise OrchestrationError(
-            "--role-registry requires --custom-role", "invalid_arguments"
+            "--role-registry requires a custom-role selection",
+            "invalid_arguments",
         )
     selected = select_custom_roles(project, names, registry)
     for name, definition in selected["roles"].items():
@@ -135,7 +145,7 @@ def validate_custom_policy(value: object) -> dict[str, str]:
     if (
         not isinstance(value, dict)
         or set(value) != CUSTOM_POLICY_FIELDS
-        or value.get("selection_source") != "per-run"
+        or value.get("selection_source") not in CUSTOM_SELECTION_SOURCES
         or value.get("thinking_source") not in CUSTOM_THINKING_SOURCES
         or value.get("activation_source") not in CUSTOM_ACTIVATION_SOURCES
     ):

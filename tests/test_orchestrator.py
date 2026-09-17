@@ -251,6 +251,7 @@ class UtilityTests(unittest.TestCase):
         self.assertIsNone(parsed.workspace_capsule)
         self.assertEqual(parsed.workspace_relevant_path, [])
         self.assertIsNone(parsed.implementation_flow)
+        self.assertIsNone(parsed.project_custom_roles)
         workspace = ORCHESTRATOR.build_parser().parse_args(
             [
                 "start",
@@ -284,6 +285,15 @@ class UtilityTests(unittest.TestCase):
             ]
         )
         self.assertEqual(forced.force_specialist, ["playwright"])
+        omitted = ORCHESTRATOR.build_parser().parse_args(
+            [
+                "start",
+                "--task",
+                "Custom task",
+                "--no-project-custom-roles",
+            ]
+        )
+        self.assertIs(omitted.project_custom_roles, False)
 
     def test_worker_skills_are_explicit_per_role_digest_bound_and_bounded(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -486,7 +496,7 @@ class UtilityTests(unittest.TestCase):
                 self.assertEqual(
                     ORCHESTRATOR.load_model_config(),
                     {
-                        "version": 3,
+                        "version": 4,
                         "default_profile": None,
                         "profiles": {},
                         "defaults": {},
@@ -536,7 +546,7 @@ class UtilityTests(unittest.TestCase):
         legacy = ORCHESTRATOR.validate_model_config(
             {"version": 1, "defaults": {}, "roles": {}}
         )
-        self.assertEqual(legacy["version"], 3)
+        self.assertEqual(legacy["version"], 4)
         self.assertEqual(
             ORCHESTRATOR.resolve_execution_profile(legacy),
             {
@@ -709,6 +719,7 @@ class UtilityTests(unittest.TestCase):
             assert matched is not None
             self.assertIsNone(ORCHESTRATOR.project_model_config(config, other))
             self.assertEqual(matched["specialists"], ["probe", "django"])
+            self.assertEqual(matched["custom_roles"], [])
             self.assertEqual(
                 ORCHESTRATOR.public_project_config(matched),
                 {
@@ -755,6 +766,7 @@ class UtilityTests(unittest.TestCase):
                 [{"directory": str(project), "profile": "missing"}],
                 [{"directory": str(project), "specialists": ["reviewer"]}],
                 [{"directory": str(project), "workspaceCapsule": "yes"}],
+                [{"directory": str(project), "customRoles": []}],
                 [{"directory": str(project), "unknown": True}],
             )
             for projects in invalid_projects:
@@ -767,6 +779,69 @@ class UtilityTests(unittest.TestCase):
                                 "defaults": {},
                                 "roles": {},
                                 "projects": projects,
+                            }
+                        )
+
+    def test_project_custom_roles_are_versioned_exact_unique_and_strict(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            project = root / "project"
+            other = root / "other"
+            project.mkdir()
+            other.mkdir()
+            role = {
+                "id": "custom-security",
+                "provider": "project-provider",
+                "model": "project/model",
+                "thinking": "low",
+            }
+            value = {
+                "version": 4,
+                "defaults": {},
+                "roles": {},
+                "projects": [
+                    {
+                        "directory": str(project),
+                        "customRoles": [role],
+                    }
+                ],
+            }
+            config = ORCHESTRATOR.validate_model_config(value)
+            self.assertEqual(config["version"], 4)
+            matched = ORCHESTRATOR.project_model_config(config, project)
+            self.assertIsNotNone(matched)
+            assert matched is not None
+            self.assertEqual(matched["custom_roles"], [role])
+            self.assertIsNone(ORCHESTRATOR.project_model_config(config, other))
+            self.assertEqual(
+                ORCHESTRATOR.public_project_config(matched)["matched"], True
+            )
+
+            invalid_roles = (
+                [{"id": "custom-security"}],
+                [{**role, "thinking": "profile"}],
+                [{**role, "id": "reviewer"}],
+                [{**role, "id": "custom-Bad"}],
+                [role, role],
+                [{**role, "unknown": True}],
+                [{**role, "id": f"custom-specialist-{index}"} for index in range(9)],
+            )
+            for custom_roles in invalid_roles:
+                with self.subTest(custom_roles=custom_roles):
+                    with self.assertRaises(ORCHESTRATOR.OrchestrationError):
+                        ORCHESTRATOR.validate_model_config(
+                            {
+                                "version": 4,
+                                "defaults": {},
+                                "roles": {},
+                                "projects": [
+                                    {
+                                        "directory": str(project),
+                                        "customRoles": custom_roles,
+                                    }
+                                ],
                             }
                         )
 

@@ -191,7 +191,10 @@ Run the smallest useful matrix rather than every expensive combination:
   configured specialist runs and review waits for its real report.
 - For one registered custom specialist, preview an explicit thinking level and
   `THINKING=profile`; confirm the explicit level wins and an absent profile mapping
-  fails closed. A profile mapping without `--custom-role` must launch nothing.
+  fails closed. A profile mapping without `--custom-role` or exact-project
+  `customRoles` must launch nothing. A version-4 exact-project `customRoles`
+  preview must show the identity, contract, and `project-config` source, and
+  `--no-project-custom-roles` must omit it.
 - Exercise documentation-only skip, ambiguous-path run, and
   `--force-specialist CUSTOM_ID`; confirm every run gates built-in review while a
   skip remains reviewer-visible and issues no specialist provider turn.

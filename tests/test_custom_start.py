@@ -78,6 +78,26 @@ class CustomStartTests(CustomRoleResourceFixture):
             arguments.append("--skip-model-check")
         return test_json_cli.JsonMainTests.run_main(self, [*arguments, *options])
 
+    def write_project_custom_roles(self, roles, *, version=4):
+        path = self.root / "absent-models.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "version": version,
+                    "defaults": {},
+                    "roles": {},
+                    "projects": [
+                        {
+                            "directory": str(self.project),
+                            "customRoles": roles,
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        return path
+
     def write_model_config(self, profiles, *, default="custom-careful"):
         path = self.root / "absent-models.json"
         path.write_text(
@@ -117,7 +137,7 @@ class CustomStartTests(CustomRoleResourceFixture):
             {
                 "launch_supported": True,
                 "resource_verification": "checked_at_selection_and_launch",
-                "models": "explicit-or-profile-thinking",
+                "models": "exact-project-or-explicit-with-optional-profile-thinking",
                 "roles": {
                     self.name: {
                         "state": "enabled",
@@ -430,6 +450,91 @@ class CustomStartTests(CustomRoleResourceFixture):
             ["implementer", "reviewer"],
         )
         self.assertNotIn("custom_role_selection", envelope["data"])
+
+    def test_exact_project_custom_roles_are_selected_with_project_config_source(
+        self,
+    ):
+        self.write_project_custom_roles(
+            [
+                {
+                    "id": self.name,
+                    "provider": self.spec[1],
+                    "model": self.spec[2],
+                    "thinking": self.spec[3],
+                }
+            ]
+        )
+        code, envelope, raw, _ = self.run_start(
+            "--role-registry", str(self.registry), custom=False
+        )
+        self.assertEqual(code, 0, raw)
+        data = envelope["data"]
+        self.assertEqual(
+            [role["name"] for role in data["roles"]],
+            ["implementer", "reviewer", self.name],
+        )
+        custom = data["roles"][-1]
+        self.assertEqual(custom["selection_source"], "project-config")
+        self.assertEqual(custom["thinking_source"], "per-run-override")
+        self.assertEqual(custom["activation_source"], "deterministic-contract-rule")
+        self.assertEqual(custom["specialist_contract"], "probe")
+        self.assertEqual(
+            data["custom_role_selection"]["roles"][self.name]["selection_source"],
+            "project-config",
+        )
+        self.assertEqual(
+            data["custom_role_selection"]["models"],
+            "exact-project-or-explicit-with-optional-profile-thinking",
+        )
+        self.assertNotIn(str(self.registry), raw)
+        self.assert_no_start()
+
+    def test_no_project_custom_roles_omits_configured_identities(self):
+        self.write_project_custom_roles(
+            [
+                {
+                    "id": self.name,
+                    "provider": self.spec[1],
+                    "model": self.spec[2],
+                    "thinking": self.spec[3],
+                }
+            ]
+        )
+        with mock.patch(
+            "pi_tmux_orchestrator.custom_role_resources.load_registry"
+        ) as load:
+            code, envelope, raw, _ = self.run_start(
+                "--no-project-custom-roles", custom=False
+            )
+        self.assertEqual(code, 0, raw)
+        load.assert_not_called()
+        self.assertEqual(
+            [role["name"] for role in envelope["data"]["roles"]],
+            ["implementer", "reviewer"],
+        )
+        self.assertNotIn("custom_role_selection", envelope["data"])
+        self.assert_no_start()
+
+    def test_explicit_custom_role_overrides_exact_project_selection(self):
+        self.write_project_custom_roles(
+            [
+                {
+                    "id": self.name,
+                    "provider": "project-provider",
+                    "model": "project/model",
+                    "thinking": "low",
+                }
+            ]
+        )
+        code, envelope, raw, _ = self.run_start()
+        self.assertEqual(code, 0, raw)
+        custom = envelope["data"]["roles"][-1]
+        self.assertEqual(
+            [custom[key] for key in ("name", "provider", "model", "thinking")],
+            self.spec,
+        )
+        self.assertEqual(custom["selection_source"], "per-run")
+        self.assert_no_start()
 
     def test_custom_profile_missing_malformed_and_project_sources_fail_closed(self):
         self.write_model_config(

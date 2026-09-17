@@ -282,8 +282,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     start.add_argument(
         "--role-registry",
-        help="absolute user-owned registry path for explicit --custom-role selections",
+        help="absolute user-owned registry path for explicit or exact-project custom-role selections",
     )
+    start.add_argument(
+        "--no-project-custom-roles",
+        dest="project_custom_roles",
+        action="store_false",
+        help="omit custom roles configured for the exact project from this run",
+    )
+    start.set_defaults(project_custom_roles=None)
     start.add_argument(
         "--implementation-flow",
         choices=IMPLEMENTATION_FLOWS,

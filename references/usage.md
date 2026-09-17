@@ -51,7 +51,7 @@ A complete multi-project setup can look like this:
 
 ```json
 {
-  "version": 3,
+  "version": 4,
   "defaultProfile": "balanced",
   "profiles": {
     "review-heavy": {
@@ -109,21 +109,25 @@ The file is relative to `PI_CODING_AGENT_DIR`; an absolute
 `PI_TMUX_ORCHESTRATOR_CONFIG` overrides its location. Legacy versions 1 and 2
 remain accepted. Version 2 may select one default profile and define at most 16
 custom thinking mappings. Version 3 adds at most 64 exact project mappings.
+Version 4 may additionally bind at most eight registered `customRoles` on an
+exact project, each with an exact provider, model, and thinking level.
 Names match `[a-z][a-z0-9-]{0,31}`; packaged names cannot be replaced. Every
 custom map must contain implementer, reviewer, probe, Playwright, and Django
 exactly once and may additionally contain at most eight canonical `custom-*`
 identities. Unknown fields/roles, partial built-in mappings, unsupported levels,
 credentials, and configuration paths inside the target project fail closed.
-A custom mapping is inert unless that registered identity is explicitly selected
-for the run; it does not supply a provider/model or activate a worker.
+A profile mapping is inert unless that registered identity is selected for the
+run; it does not supply a provider/model or activate a worker.
 
 A project mapping uses one existing canonical absolute `directory`. Matching is
 exact: there are no globs, prefixes, implicit parent matches, repository-name
 matches, or project-local policy files. Duplicate, relative, missing,
 non-directory, and symlinked entries fail closed. A mapping may select a profile,
 model defaults/role overrides, implementation flow, enabled built-in specialists,
-and the workspace-capsule default. It cannot configure trust bypass, forced
-specialists, prompts, skills, tools, writers, or reviewer authority.
+the workspace-capsule default, and version-4 exact-project custom specialists.
+It cannot configure trust bypass, forced specialists, prompts, skills, tools,
+writers, or reviewer authority. `customRoles` thinking must be an explicit
+supported level, not `profile`.
 
 Packaged thinking mappings are:
 
@@ -730,8 +734,12 @@ read-only specialist; repeat at most eight times with unique IDs. Add `--dry-run
 to preview without creating files, workers, or inference requests. All four values
 are required. Provider and model are always explicit. `THINKING` is either an
 explicit level or `profile`, which opts into that identity's mapping in the selected
-user-global custom profile; an explicit level wins. Optional `--role-registry
-PATH` selects the user-owned registry; no selection means no registry lookup.
+user-global custom profile; an explicit level wins. Version-4 exact-project
+`customRoles` select the same registered identities for one canonical directory
+through the normal start flow; `--no-project-custom-roles` omits them for one run,
+and explicit `--custom-role` replaces the project list. Optional `--role-registry
+PATH` selects the user-owned registry; a missing selection with no project or
+explicit custom roles means no registry lookup.
 Both TUI and `--rpc-workers` preserve the built-in implementer and mandatory
 reviewer and expose only bounded custom metadata and skill counts.
 `--skip-model-check` skips catalog discovery, not resource verification; use it
@@ -746,8 +754,9 @@ body-free `FAILED` state. See
 Read-only validation of user-global custom specialist definitions and reviewed
 prompt/skill digests. Supports the standard `--json` envelope and returns metadata
 only. A missing default registry means no custom roles; explicitly selected files
-must exist. Valid definitions can be launched only through explicit `--custom-role`
-selection. A profile mapping never creates a role. Selected roles use the fixed
+must exist. Valid definitions can be launched through explicit `--custom-role`
+or version-4 exact-project `customRoles`. A profile mapping never creates a role.
+Selected roles use the fixed
 path activation rules of their bound probe/Playwright/Django contract after an
 implementation report; `--force-specialist CUSTOM_ID` forces the selected identity.
 Omitted custom selection leaves built-in starts unchanged. See
