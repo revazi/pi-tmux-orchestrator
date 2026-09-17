@@ -288,6 +288,10 @@ function appendSpecialistSelection(args, input, field, enabledFlag, disabledFlag
   if (input[field] === false) args.push(disabledFlag);
 }
 
+function appendProjectCustomRoleArgs(args, input) {
+  if (input.projectCustomRoles === false) args.push("--no-project-custom-roles");
+}
+
 function buildStartArgs(
   input,
   project,
@@ -306,7 +310,7 @@ function buildStartArgs(
   if (input.rpcWorkers) args.push("--rpc-workers");
   appendWorkspaceCapsuleArgs(args, input);
   if (input.implementationFlow) args.push("--implementation-flow", input.implementationFlow);
-  if (input.projectCustomRoles === false) args.push("--no-project-custom-roles");
+  appendProjectCustomRoleArgs(args, input);
   appendForcedSpecialistArgs(args, input.forceSpecialists);
   if (input.profile) args.push("--profile", input.profile);
   appendModelArgs(args, input);
