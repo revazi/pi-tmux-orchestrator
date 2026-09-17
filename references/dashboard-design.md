@@ -14,11 +14,14 @@ The pane answers these questions in order:
 2. **What needs attention?** Workflow state and round are the strongest line.
 3. **How is it coordinated?** Worker transport, broker protocol, and actual
    provider-reported run tokens.
-4. **Who is doing what?** One row per role: connection/generation, live
-   assignment activity, active assignment, configured provider/model/thinking,
-   tokens, context, and a body-free assignment-guardrail marker when present.
+4. **Who is doing what right now?** A NOW flow line names the active worker,
+   its live phase, and the waiting next role, with bounded glyphs. Then one row
+   per role: connection/generation, live assignment activity, active assignment,
+   configured provider/model/thinking, tokens, context, and a body-free
+   assignment-guardrail marker when present.
 5. **What just changed?** Up to eight newest metadata events, without IDs or
-   bodies.
+   bodies. Phase *changes* may appear as `worker_progress`; repeated pulses of
+   the same phase only advance the LIVE marker.
 6. **What can I do?** Exact attach, status, confirmed stop, return, and zoom
    guidance.
 
@@ -26,22 +29,24 @@ Full-layout wireframe (values are illustrative metadata):
 
 ```text
 PI TMUX ORCHESTRATOR  /  SESSION pi-example-agents
-BROKER + STATUS  /  PROJECT /work/example
-* ACTIVE   ROUND 2
+BROKER + STATUS  ·  PROJECT /work/example
+● ACTIVE   ROUND 2
 TRANSPORT TUI   PROTOCOL BROKER-V1 / V1   ACTUAL USAGE 42.8k TOKENS
+NOW  ✎ implementer  streaming ►  →  ✓ reviewer waiting
 
 ROLES
-ROLE         LINK       LIVE        ASSIGNMENT          MODEL                    THINK   TOKENS   CTX
-------------------------------------------------------------------------------------------------------
-implementer  + up / g1  streaming * r2 implementation   anthropic/model-name     high     31.2k  62.4%
-reviewer     + up / g1  idle        -                   google/model-name        medium   11.6k  28.1%
+ROLE         LINK       LIVE         ASSIGNMENT          MODEL                    THINK   TOTAL/Δ   CTX
+--------------------------------------------------------------------------------------------------------
+implementer  ● up · g1  streaming ►  r2 implementation   anthropic/model-name     high     31.2k/+4k  62.4%
+reviewer     ● up · g1  waiting      r2 review           google/model-name        medium   11.6k/+1k  28.1%
 
 RECENT METADATA EVENTS
-#00124  14:03:18  implementer  worker_lifecycle  active  r2
-#00125  14:03:21  broker       context_delivered delivered
+#00124  14:03:18  implementer  ● worker_lifecycle  active     r2
+#00125  14:03:21  implementer  ▸ worker_progress   streaming  r2
+#00126  14:03:40  implementer  ↩ report_accepted   recorded   r2
 
 ACTIONS  attach: pi-tmux-agents attach pi-example-agents   status: pi-tmux-agents status pi-example-agents
-         stop: pi-tmux-agents stop pi-example-agents --yes   tmux: prefix + L return / prefix + z zoom
+         stop: pi-tmux-agents stop pi-example-agents --yes   tmux: prefix + L return · prefix + z zoom
 ```
 
 ## Semantic tokens
@@ -97,10 +102,12 @@ The dashboard is a control-plane summary, not another worker log:
 - Assignment, delivery, report, command, and authentication IDs are omitted;
   they add diagnostic noise and are available through bounded metadata APIs
   where appropriate.
-- Raw assistant/tool progress stays in worker panes. The role row receives only
-  an assignment-bound phase (`thinking`, `streaming`, `tool`, or `reporting`),
-  a monotonic pulse sequence, and finalized provider usage when available. No
-  message, thinking, tool-input, result, or provider body crosses this boundary.
+- Raw assistant/tool progress stays in worker panes. The NOW line and role row
+  receive only an assignment-bound phase (`thinking`, `streaming`, `tool`, or
+  `reporting`), a monotonic pulse sequence, and finalized provider usage when
+  available. A `worker_progress` rail event is recorded only when that phase
+  changes. No message, thinking, tool-input, result, or provider body crosses
+  this boundary.
 - PIDs and inferred process liveness are omitted. Connection state comes from
   the live broker; retained reads continue to report host runtime as not
   observed.
