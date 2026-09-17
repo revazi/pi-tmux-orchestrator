@@ -273,6 +273,46 @@ class CustomStartTests(CustomRoleResourceFixture):
             server.close()
             socket_path.unlink(missing_ok=True)
 
+    def test_custom_admission_does_not_retry_invalid_snapshot(self):
+        coord = runtime.STATE_ROOT / "health-invalid" / "run-1"
+        coord.mkdir(mode=0o700, parents=True)
+        role_names = ["implementer", "reviewer", self.name]
+        manifest = {
+            "version": 7,
+            "transport": "tui",
+            "monitor_pane_id": "%99",
+            "roles": {
+                role: {"pane_id": f"%{index}"} for index, role in enumerate(role_names)
+            },
+        }
+        socket_path = commands.broker_paths(coord)["socket"]
+        socket_path.parent.mkdir(parents=True, exist_ok=True)
+        server = socket.socket(socket.AF_UNIX)
+        server.bind(str(socket_path))
+        try:
+            pane = mock.Mock(returncode=0, stdout="0\n")
+            with (
+                mock.patch.object(start_commands, "tmux", return_value=pane),
+                mock.patch.object(
+                    start_commands,
+                    "public_broker_snapshot",
+                    side_effect=OrchestrationError(
+                        "Retained worker activity is invalid"
+                    ),
+                ),
+            ):
+                with self.assertRaisesRegex(OrchestrationError, "activity is invalid"):
+                    commands.wait_for_custom_startup(
+                        "pi-custom-health",
+                        coord,
+                        role_names,
+                        manifest,
+                        timeout=0.5,
+                    )
+        finally:
+            server.close()
+            socket_path.unlink(missing_ok=True)
+
     def test_public_custom_admission_failure_rolls_back_exact_session(self):
         with (
             mock.patch.object(start_commands, "tmux") as tmux,

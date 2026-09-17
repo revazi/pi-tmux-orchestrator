@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from pi_tmux_orchestrator import broker_store
+from pi_tmux_orchestrator import broker_store, commands
 from pi_tmux_orchestrator.broker import (
     Broker,
     Client,
@@ -667,6 +667,17 @@ class BrokerStoreTests(BrokerFixture):
         finally:
             writer.rollback()
             writer.close()
+
+    def test_status_roles_omit_live_broker_fields_when_busy(self) -> None:
+        initialize_broker_run(self.coord, self.manifest, "task", {})
+        with mock.patch.object(
+            broker_store,
+            "public_broker_snapshot",
+            side_effect=OrchestrationError("Broker state is busy", "broker_not_ready"),
+        ):
+            roles = commands.status_roles(self.coord, self.manifest)
+        self.assertEqual([role["name"] for role in roles], ["implementer", "reviewer"])
+        self.assertTrue(all("broker_state" not in role for role in roles))
 
     def test_protocol_v1_retained_reports_keep_assignment_usage_unavailable(
         self,

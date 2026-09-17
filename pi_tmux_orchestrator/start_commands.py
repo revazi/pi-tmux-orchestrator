@@ -206,7 +206,14 @@ def wait_for_custom_startup(
         try:
             socket_metadata = broker_paths(coord)["socket"].lstat()
             snapshot = public_broker_snapshot(coord)
-        except (FileNotFoundError, OSError, sqlite3.Error, OrchestrationError):
+        except (FileNotFoundError, OSError, sqlite3.Error):
+            stable_since = None
+            last_reason = "broker did not become ready"
+            CUSTOM_STARTUP_WAIT.wait(0.05)
+            continue
+        except OrchestrationError as error:
+            if error.code != "broker_not_ready":
+                raise
             stable_since = None
             last_reason = "broker did not become ready"
             CUSTOM_STARTUP_WAIT.wait(0.05)

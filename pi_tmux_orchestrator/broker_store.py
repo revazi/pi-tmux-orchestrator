@@ -813,6 +813,16 @@ def public_broker_snapshot(coord: Path) -> dict[str, Any]:
         }
 
 
+def try_public_broker_snapshot(coord: Path) -> dict[str, Any] | None:
+    """Return a snapshot or None when the writer briefly holds the database."""
+    try:
+        return public_broker_snapshot(coord)
+    except OrchestrationError as error:
+        if error.code == "broker_not_ready":
+            return None
+        raise
+
+
 def public_assignment_usage(coord: Path, *, limit: int) -> dict[str, Any]:
     """Return a bounded latest assignment-usage page without payload bodies."""
 

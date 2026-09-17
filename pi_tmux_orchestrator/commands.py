@@ -22,6 +22,7 @@ from .broker_store import (
     broker_paths,
     broker_role_generation,
     public_broker_snapshot,
+    try_public_broker_snapshot,
     worker_guardrail_policy,
     worker_context_mode,
 )
@@ -229,9 +230,9 @@ def status_roles(coord: Path, manifest: dict[str, Any]) -> list[dict[str, Any]]:
     transport = manifest_transport(manifest)
     broker_roles: dict[str, dict[str, Any]] = {}
     if manifest.get("version", 0) >= 3:
-        broker_roles = {
-            value["role"]: value for value in public_broker_snapshot(coord)["roles"]
-        }
+        snapshot = try_public_broker_snapshot(coord)
+        if snapshot is not None:
+            broker_roles = {value["role"]: value for value in snapshot["roles"]}
     for role, config in manifest["roles"].items():
         value = public_role(role, config, transport)
         if role in broker_roles:
@@ -342,50 +343,55 @@ def status_command(args: argparse.Namespace) -> CommandResult:
     files: list[tuple[Path, os.stat_result]] = []
     file_values: list[dict[str, Any]] = []
     if manifest.get("version", 0) >= 3:
-        broker_snapshot = public_broker_snapshot(coord)
-        workflow = broker_snapshot["workflow"]
-        usage = broker_snapshot["usage"]
-        total_warning = " budget=warning" if usage["soft_total_budget_exceeded"] else ""
-        human_print(
-            f"Workflow: {workflow['state']} round={workflow['round']} "
-            f"flow={workflow.get('implementation_flow', DEFAULT_IMPLEMENTATION_FLOW)} "
-            f"forced={','.join(workflow.get('forced_specialists', [])) or 'none'} "
-            f"tokens={usage['total_tokens']}{total_warning}"
-        )
-        context_overrides = workflow["worker_context_policy"]["overrides"]
-        human_print(
-            f"  worker context: default=prune; overrides={json.dumps(context_overrides, sort_keys=True)}"
-        )
-        continuation = workflow.get("continuation", {})
-        if continuation.get("max_repair_rounds") is not None:
-            human_print(
-                f"  repair rounds: {continuation['repair_rounds_admitted']}/{continuation['max_repair_rounds']}"
+        broker_snapshot = try_public_broker_snapshot(coord)
+        if broker_snapshot is None:
+            human_print("Workflow: temporarily unavailable")
+        else:
+            workflow = broker_snapshot["workflow"]
+            usage = broker_snapshot["usage"]
+            total_warning = (
+                " budget=warning" if usage["soft_total_budget_exceeded"] else ""
             )
-        if continuation.get("pending_repair_round") is not None:
             human_print(
-                f"  Paused: repair_round_limit before round {continuation['pending_repair_round']}; "
-                f"incomplete, not approved. To authorize exactly one more round: "
-                f"pi-tmux-agents continue {session} --yes --command-id <32-hex-id>"
+                f"Workflow: {workflow['state']} round={workflow['round']} "
+                f"flow={workflow.get('implementation_flow', DEFAULT_IMPLEMENTATION_FLOW)} "
+                f"forced={','.join(workflow.get('forced_specialists', [])) or 'none'} "
+                f"tokens={usage['total_tokens']}{total_warning}"
             )
-        for activation in broker_snapshot.get("specialist_activations", []):
+            context_overrides = workflow["worker_context_policy"]["overrides"]
             human_print(
-                f"  activation {activation['role']}: {activation['decision']} "
-                f"rule={activation['rule_id']} source={activation['source']}"
+                f"  worker context: default=prune; overrides={json.dumps(context_overrides, sort_keys=True)}"
             )
-        for worker in broker_snapshot["roles"]:
-            human_print(
-                f"  {worker['role']}: {worker['state']} connected={worker['connected']} "
-                f"tokens={worker['total_tokens']}"
-                f"{' budget=warning' if worker['soft_budget_exceeded'] else ''}"
-            )
-            latest_usage = _status_assignment_usage(worker)
-            if latest_usage is not None:
-                human_print(f"    {latest_usage}")
-            for guardrail in worker.get("assignment_guardrails", []):
+            continuation = workflow.get("continuation", {})
+            if continuation.get("max_repair_rounds") is not None:
                 human_print(
-                    f"    guardrail={guardrail['level']} metric={guardrail['metric']} "
-                    f"observed={guardrail['observed']} threshold={guardrail['threshold']}"
+                    f"  repair rounds: {continuation['repair_rounds_admitted']}/{continuation['max_repair_rounds']}"
                 )
+            if continuation.get("pending_repair_round") is not None:
+                human_print(
+                    f"  Paused: repair_round_limit before round {continuation['pending_repair_round']}; "
+                    f"incomplete, not approved. To authorize exactly one more round: "
+                    f"pi-tmux-agents continue {session} --yes --command-id <32-hex-id>"
+                )
+            for activation in broker_snapshot.get("specialist_activations", []):
+                human_print(
+                    f"  activation {activation['role']}: {activation['decision']} "
+                    f"rule={activation['rule_id']} source={activation['source']}"
+                )
+            for worker in broker_snapshot["roles"]:
+                human_print(
+                    f"  {worker['role']}: {worker['state']} connected={worker['connected']} "
+                    f"tokens={worker['total_tokens']}"
+                    f"{' budget=warning' if worker['soft_budget_exceeded'] else ''}"
+                )
+                latest_usage = _status_assignment_usage(worker)
+                if latest_usage is not None:
+                    human_print(f"    {latest_usage}")
+                for guardrail in worker.get("assignment_guardrails", []):
+                    human_print(
+                        f"    guardrail={guardrail['level']} metric={guardrail['metric']} "
+                        f"observed={guardrail['observed']} threshold={guardrail['threshold']}"
+                    )
     else:
         human_print("Legacy coordination files:")
         files = coordination_files(coord)
