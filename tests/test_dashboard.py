@@ -142,6 +142,10 @@ class DashboardRenderingTests(DashboardFixture):
         self.assertLess(
             rendered.index("RECENT METADATA EVENTS"), rendered.index("ACTIONS")
         )
+        self.assertIn("NOW", rendered)
+        self.assertIn("→", rendered)
+        self.assertIn("✎ implementer", rendered)
+        self.assertIn("✓ reviewer waiting", rendered)
         self.assertIn("TRANSPORT TUI", rendered)
         self.assertIn("PROTOCOL BROKER-V1 / V1", rendered)
         self.assertIn("anthropic/claude-sonnet-4-6", rendered)
@@ -153,9 +157,35 @@ class DashboardRenderingTests(DashboardFixture):
         self.assertIn("47.2%", rendered)
         self.assertIn("! 345", rendered)
         self.assertIn("#00007", rendered)
+        self.assertIn("● worker_lifecycle", rendered)
         self.assertIn("worker_lifecycle", rendered)
         self.assertIn("pi-tmux-agents stop pi-dashboard-test --yes", rendered)
         self.assertIn("prefix + L return", rendered)
+
+    def test_now_flow_shows_active_to_waiting_handoff_without_bodies(self) -> None:
+        rendered = render_dashboard(
+            self.manifest,
+            self.snapshot,
+            self.events,
+            width=180,
+            height=30,
+            color=False,
+        )
+        self.assertIn("NOW", rendered)
+        self.assertIn("✎ implementer", rendered)
+        self.assertIn("→", rendered)
+        self.assertIn("✓ reviewer waiting", rendered)
+        compact = render_dashboard(
+            self.manifest,
+            self.snapshot,
+            self.events,
+            width=80,
+            height=18,
+            color=False,
+        )
+        self.assertIn("NOW", compact)
+        self.assertNotIn("a" * 32, rendered)
+        self.assertNotIn("PRIVATE_", rendered)
 
     def test_live_worker_activity_pulses_in_every_layout(self) -> None:
         snapshot = copy.deepcopy(self.snapshot)
@@ -328,7 +358,7 @@ class DashboardRenderingTests(DashboardFixture):
         self.assertNotIn("\x1b", rendered)
         self.assertIn("safe [2J SESSION", rendered)
         self.assertIn("model INJECTED", rendered)
-        self.assertIn("worker [31m_lifecycle f…", rendered)
+        self.assertIn("worker [31m_lifecycle", rendered)
         for canary in (
             "PRIVATE_TASK_BODY_CANARY",
             "PRIVATE_PROMPT_BODY_CANARY",

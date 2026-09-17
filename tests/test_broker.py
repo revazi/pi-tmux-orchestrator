@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 
-from pi_tmux_orchestrator import broker_store, commands
+from pi_tmux_orchestrator import broker_store, commands, supervisor_api
 from pi_tmux_orchestrator.broker import (
     Broker,
     Client,
@@ -678,6 +678,25 @@ class BrokerStoreTests(BrokerFixture):
             roles = commands.status_roles(self.coord, self.manifest)
         self.assertEqual([role["name"] for role in roles], ["implementer", "reviewer"])
         self.assertTrue(all("broker_state" not in role for role in roles))
+
+    def test_supervisor_reads_degrade_when_broker_is_busy(self) -> None:
+        initialize_broker_run(self.coord, self.manifest, "task", {})
+        with mock.patch.object(
+            supervisor_api,
+            "try_public_broker_snapshot",
+            return_value=None,
+        ):
+            snapshot = supervisor_api.supervisor_snapshot(
+                self.manifest["session"], self.coord.name
+            )
+            usage = supervisor_api.supervisor_usage(
+                self.manifest["session"], self.coord.name, limit=10
+            )
+        self.assertEqual(snapshot["availability"], "temporarily-unavailable")
+        self.assertIsNone(snapshot["workflow"])
+        self.assertEqual(usage["availability"], "temporarily-unavailable")
+        self.assertFalse(usage["available"])
+        self.assertIsNone(usage["cumulative"])
 
     def test_protocol_v1_retained_reports_keep_assignment_usage_unavailable(
         self,
