@@ -32,7 +32,7 @@ PI TMUX ORCHESTRATOR  /  SESSION pi-example-agents
 BROKER + STATUS  ·  PROJECT /work/example
 ● ACTIVE   ROUND 2
 TRANSPORT TUI   PROTOCOL BROKER-V1 / V1   ACTUAL USAGE 42.8k TOKENS
-NOW  ⚡ implementer  ▰▰▰▰▱▱▱▱▱▱▱▱  streaming  →  👀 reviewer waiting
+NOW  ⚡ implementer  LIVE ▰▰▰▰▱▱▱▱▱▱▱▱  streaming  →  👀 reviewer waiting
 
 ROLES
 ROLE         LINK       LIVE         ASSIGNMENT          MODEL                    THINK   TOTAL/Δ   CTX
@@ -116,7 +116,8 @@ The dashboard is a control-plane summary, not another worker log:
   remains available through status/Supervisor APIs.
 - Timer-driven spinners, progress estimates, and hard-budget gauges are omitted
   because they would imply polling or precision the broker does not have. The
-  live phase marker advances only on real worker events. A compact `G~`/`G!`
+  bouncing `LIVE` bar is an activity marker, not percent-complete. It advances
+  only on real worker events. A compact `G~`/`G!`
   prefix denotes a retained assignment warning/hard fact without presenting it
   as a live gauge.
 
