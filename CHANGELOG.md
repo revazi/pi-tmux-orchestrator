@@ -10,7 +10,7 @@ All notable changes to this project are documented here.
 
 ### Fixed
 
-## 0.10.0 - 2026-09-18
+## 0.10.0 - 2026-09-21
 
 ### Added
 
@@ -59,6 +59,7 @@ All notable changes to this project are documented here.
 - Replaced the 1-character live pulse with a bouncing assignment-bound progress bar on the NOW line and LIVE cells so thinking/streaming/tool/reporting motion is obvious
 - Labeled that bouncing bar `LIVE` so it cannot be read as task completion
 - Preserved `recovering` and durable `uncertain` role states against the actual worker extension's immediate ordinary lifecycle update, and restored accepted reconnects to `active` only through the assignment acknowledgement boundary
+- Kept syntax and package-contract checks over every on-disk Python module and JavaScript extension so split 0.10.0 files cannot drift out of verification
 
 ## 0.9.5 - 2026-09-02
 

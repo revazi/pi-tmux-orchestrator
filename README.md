@@ -308,6 +308,7 @@ See [SECURITY.md](SECURITY.md) for the complete security model.
 ## Documentation
 
 - [Complete operator and CLI usage](references/usage.md)
+- [Custom read-only specialists](references/custom-roles.md)
 - [Coordination protocol and state boundaries](references/protocol-v1.md)
 - [Dashboard design](references/dashboard-design.md)
 - [Pre-release artifact testing](references/prerelease-testing.md)

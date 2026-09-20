@@ -67,6 +67,17 @@ class SkillMetadataTests(unittest.TestCase):
         self.assertIn("tmux_orchestrator", content)
         self.assertIn("standalone `pi-tmux-agents` CLI fallback", content)
 
+    def test_release_docs_and_verification_cover_the_five_command_surface(self) -> None:
+        contributing = (ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
+        self.assertNotIn("twenty-four-command", contributing)
+        self.assertIn("/or-dashboard", contributing)
+        self.assertIn("/or-stop", contributing)
+        readme = (ROOT / "README.md").read_text(encoding="utf-8")
+        self.assertIn("references/custom-roles.md", readme)
+        test_sh = (ROOT / "scripts" / "test.sh").read_text(encoding="utf-8")
+        self.assertIn('(root / "tests").glob("*.py")', test_sh)
+        self.assertIn('"$ROOT/extensions"/*.js', test_sh)
+
 
 class PromptTests(unittest.TestCase):
     def setUp(self) -> None:
