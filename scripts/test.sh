@@ -41,71 +41,27 @@ printf '%s\n' '==> Python syntax'
 python3 - <<PY
 import ast
 from pathlib import Path
-for path in (
-    Path("$ROOT/bin/pi-tmux-agents"),
-    *sorted(Path("$ROOT/pi_tmux_orchestrator").glob("*.py")),
-    Path("$ROOT/scripts/specialist-activation-baseline.py"),
-    Path("$ROOT/scripts/workspace-capsule-baseline.py"),
-    Path("$ROOT/tests/support.py"),
-    Path("$ROOT/tests/test_orchestrator.py"),
-    Path("$ROOT/tests/test_hardening.py"),
-    Path("$ROOT/tests/functional_smoke.py"),
-    Path("$ROOT/tests/custom_worker_tmux_smoke.py"),
-    Path("$ROOT/tests/actual_pi_custom_lifecycle.py"),
-    Path("$ROOT/tests/test_json_cli.py"),
-    Path("$ROOT/tests/test_supervisor_api.py"),
-    Path("$ROOT/tests/test_broker.py"),
-    Path("$ROOT/tests/test_broker_workflow.py"),
-    Path("$ROOT/tests/test_continuation.py"),
-    Path("$ROOT/tests/test_continuation_policy.py"),
-    Path("$ROOT/tests/test_worker_context.py"),
-    Path("$ROOT/tests/test_evidence_reuse.py"),
-    Path("$ROOT/tests/test_role_registry.py"),
-    Path("$ROOT/tests/test_custom_role_contracts.py"),
-    Path("$ROOT/tests/test_custom_role_resources.py"),
-    Path("$ROOT/tests/test_custom_broker_workflow.py"),
-    Path("$ROOT/tests/test_custom_broker_lifecycle.py"),
-    Path("$ROOT/tests/test_custom_role_surfaces.py"),
-    Path("$ROOT/tests/test_custom_start.py"),
-    Path("$ROOT/tests/test_dashboard.py"),
-    Path("$ROOT/tests/test_rpc_rendering.py"),
-    Path("$ROOT/tests/test_specialist_activation.py"),
-    Path("$ROOT/tests/test_token_efficiency.py"),
-    Path("$ROOT/tests/test_workspace_capsules.py"),
-):
+root = Path("$ROOT")
+paths = [
+    root / "bin" / "pi-tmux-agents",
+    *sorted((root / "pi_tmux_orchestrator").glob("*.py")),
+    *sorted((root / "scripts").glob("*.py")),
+    *sorted((root / "tests").glob("*.py")),
+]
+for path in paths:
     ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    print(f"OK {path.relative_to(Path('$ROOT'))}")
+    print(f"OK {path.relative_to(root)}")
 PY
 
 printf '%s\n' '==> Unit tests'
 python3 -m unittest discover -s "$ROOT/tests" -p 'test_*.py' -v
 
 printf '%s\n' '==> Extension syntax and unit tests'
-node --check "$ROOT/extensions/tmux-orchestrator.js"
-node --check "$ROOT/extensions/orchestrator-context.js"
-node --check "$ROOT/extensions/orchestrator-context-policy.js"
-node --check "$ROOT/extensions/orchestrator-budgets.js"
-node --check "$ROOT/extensions/orchestrator-models.js"
-node --check "$ROOT/extensions/orchestrator-dashboard.js"
-node --check "$ROOT/extensions/orchestrator-parent.js"
-node --check "$ROOT/extensions/orchestrator-parent-content.js"
-node --check "$ROOT/extensions/orchestrator-parent-protocol.js"
-node --check "$ROOT/extensions/orchestrator-worker.js"
-node --check "$ROOT/extensions/orchestrator-worker-context.js"
-node --check "$ROOT/extensions/orchestrator-worker-protocol.js"
-node --check "$ROOT/extensions/orchestrator-worker-roles.js"
-node --check "$ROOT/extensions/orchestrator-role-metadata.js"
-node --check "$ROOT/extensions/orchestrator-worker-reporting.js"
-node --check "$ROOT/extensions/orchestrator-worker-usage.js"
-node --check "$ROOT/extensions/orchestrator-result-policy.js"
-node --check "$ROOT/scripts/baseline-fixture.mjs"
-node --check "$ROOT/scripts/node-coverage-reporter.mjs"
-node --check "$ROOT/scripts/token-efficiency-baseline.mjs"
-node --check "$ROOT/scripts/result-volume-baseline.mjs"
-node --check "$ROOT/scripts/execution-profile-baseline.mjs"
-node --check "$ROOT/scripts/phased-implementation-baseline.mjs"
-node --check "$ROOT/scripts/worker-prompt-baseline.mjs"
-node --check "$ROOT/tests/fixtures/token-efficiency-fixtures.mjs"
+shopt -s nullglob
+for file in "$ROOT/extensions"/*.js "$ROOT/scripts"/*.mjs "$ROOT/tests"/*.mjs "$ROOT/tests/fixtures"/*.mjs; do
+  node --check "$file"
+done
+shopt -u nullglob
 node --test "$ROOT/tests/extension.test.mjs"
 "$ROOT/scripts/test-coverage.sh" "$TEST_ROOT/coverage/coverage-final.json"
 node "$ROOT/scripts/token-efficiency-baseline.mjs" --check

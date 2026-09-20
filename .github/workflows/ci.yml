@@ -104,7 +104,10 @@ jobs:
 
       - name: Verify extension and publish-ready package
         run: |
-          node --check extensions/tmux-orchestrator.js
+          shopt -s nullglob
+          for file in extensions/*.js; do
+            node --check "$file"
+          done
           node --test tests/extension.test.mjs
           node scripts/verify-package.mjs
           scripts/package-smoke.sh

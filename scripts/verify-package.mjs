@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -225,22 +225,26 @@ const requiredBadges = [
 for (const badge of requiredBadges) {
   if (!readme.includes(badge)) throw new Error(`README.md omitted required badge: ${badge}`);
 }
-const extensionSources = await Promise.all([
-  "extensions/tmux-orchestrator.js",
-  "extensions/orchestrator-budgets.js",
-  "extensions/orchestrator-models.js",
-  "extensions/orchestrator-update.js",
-  "extensions/orchestrator-dashboard.js",
-  "extensions/orchestrator-parent.js",
-  "extensions/orchestrator-parent-content.js",
-  "extensions/orchestrator-parent-protocol.js",
-  "extensions/orchestrator-worker.js",
-  "extensions/orchestrator-worker-context.js",
-  "extensions/orchestrator-worker-protocol.js",
-  "extensions/orchestrator-worker-reporting.js",
-  "extensions/orchestrator-worker-usage.js",
-  "extensions/orchestrator-result-policy.js",
-].map((path) => readFile(resolve(root, path), "utf8")));
+if (!readme.includes("references/custom-roles.md")) {
+  throw new Error("README.md omitted the custom-roles reference");
+}
+const expectedExtensionFiles = expectedFiles
+  .filter((path) => path.startsWith("extensions/") && path.endsWith(".js"))
+  .sort();
+const onDiskExtensionFiles = (await readdir(resolve(root, "extensions")))
+  .filter((name) => name.endsWith(".js"))
+  .map((name) => `extensions/${name}`)
+  .sort();
+assertExact("packaged JavaScript extensions", onDiskExtensionFiles, expectedExtensionFiles);
+const expectedPythonFiles = pythonFiles.slice().sort();
+const onDiskPythonFiles = (await readdir(resolve(root, "pi_tmux_orchestrator")))
+  .filter((name) => name.endsWith(".py"))
+  .map((name) => `pi_tmux_orchestrator/${name}`)
+  .sort();
+assertExact("packaged Python modules", onDiskPythonFiles, expectedPythonFiles);
+const extensionSources = await Promise.all(
+  expectedExtensionFiles.map((path) => readFile(resolve(root, path), "utf8")),
+);
 for (const method of ["setStatus", "setWidget", "setTitle"]) {
   if (extensionSources.some((source) => source.includes(`.${method}(`))) {
     throw new Error(`package extensions must not add persistent Pi UI chrome with ${method}`);

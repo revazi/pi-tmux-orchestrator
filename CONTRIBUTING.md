@@ -26,7 +26,7 @@ Do not push feature work directly to `main` after the initial repository bootstr
 - Keep target repository files separate from orchestration state and keep workflow payloads out of durable coordination metadata.
 - Retain explicit confirmation for trust bypass, role restart, and session stop.
 - Keep human and schema-v1 JSON behavior aligned; errors, arrays, and status output must remain bounded and free of private payloads.
-- Keep the package extension thin. The explicit worker bridge may adapt Pi lifecycle/tools/messages to the authoritative broker but must not own workflow transitions. Canonical slash commands and compatibility aliases must share handlers.
+- Keep the package extension thin. The explicit worker bridge may adapt Pi lifecycle/tools/messages to the authoritative broker but must not own workflow transitions. The five short slash commands share handlers with the model tool; do not reintroduce duplicate long-form or helper aliases.
 - Add tests that reproduce the behavior being corrected.
 
 ## Testing
@@ -40,7 +40,7 @@ Do not push feature work directly to `main` after the initial repository bootstr
 - Shell syntax checks
 - A model-free tmux functional smoke covering all roles, broker/bridge lifecycle, and exact session targeting
 - CLI help and an all-role dry-run
-- Node built-in extension tests for the exact twenty-four-command canonical/short/compatibility surface, shared aliases, bounded update notices, parent watch/lifecycle delivery, delegation, trust/confirmation, bounded errors, and private send cancellation/cleanup/redaction
+- Node built-in extension tests for the exact five-command short slash surface (`/or-dashboard`, `/or-models`, `/or-start`, `/or-send`, `/or-stop`), bounded update notices, parent watch/lifecycle delivery, delegation, trust/confirmation, bounded errors, and private send cancellation/cleanup/redaction
 - deterministic manifest and `npm pack --dry-run --json` checks
 - exact inspection and disposable installation of the deterministic modular tarball, including broker/bridge and MIT/author metadata
 - isolated `pi install` of the npm-installed package root followed by RPC `get_commands` discovery without `--extension`, requiring exact package provenance
