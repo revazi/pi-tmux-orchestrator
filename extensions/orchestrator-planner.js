@@ -234,10 +234,12 @@ export function selectDecisionModel(ctx, requested, configuredPolicy, candidateP
   const ordered = explicit
     ? [explicit]
     : [...(policy.preferred ? [policy.preferred] : []), ...policy.fallbacks];
-  const candidates = plannerModelCandidates(ctx, [...ordered, ...candidatePriorities]);
-  return explicit
+  const resolvedPriorities = [...ordered, ...candidatePriorities];
+  const candidates = plannerModelCandidates(ctx, resolvedPriorities);
+  const selection = explicit
     ? explicitDecision(candidates, explicit)
     : configuredDecision(candidates, policy, ordered);
+  return { ...selection, candidatePriorities: resolvedPriorities };
 }
 
 export function decisionModelConfirmation(selection) {

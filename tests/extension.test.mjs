@@ -10,6 +10,7 @@ import { consumeObserverFrames } from "../extensions/orchestrator-parent-protoco
 import { publicRoleContracts, validControlRole } from "../extensions/orchestrator-role-metadata.js";
 import {
   metadataDigest,
+  plannerCandidateDigest,
   plannerModelCandidates,
   runPreflightPlanner,
   selectDecisionModel,
@@ -2867,9 +2868,14 @@ test("preflight decision model uses exact per-run, preferred, then cross-provide
     ...Array.from({ length: 101 }, (_, index) => model("alpha", `model-${index}`)),
     openai,
   ];
-  assert.equal(selectDecisionModel(ctx, {
+  const boundedExplicit = selectDecisionModel(ctx, {
     provider: "openai", model: "gpt-exact", thinking: "medium",
-  }, configured).modelId, "gpt-exact");
+  }, configured);
+  assert.equal(boundedExplicit.modelId, "gpt-exact");
+  assert.equal(
+    plannerCandidateDigest(boundedExplicit.candidates),
+    plannerCandidateDigest(plannerModelCandidates(ctx, boundedExplicit.candidatePriorities)),
+  );
   assert.throws(
     () => selectDecisionModel(ctx, {
       provider: "openai", model: "gpt-exact", thinking: "high",
@@ -2905,6 +2911,16 @@ test("preflight candidate projection honors scoped thinking and strict decision 
   const candidates = plannerModelCandidates(ctx);
   assert.deepEqual(candidates.map((item) => item.modelId), ["medium"]);
   assert.deepEqual(candidates[0].thinkingLevels, ["low", "medium"]);
+  const other = {
+    model: highOnly,
+    provider: "another-provider",
+    modelId: "another-model",
+    thinkingLevels: ["off"],
+  };
+  assert.equal(
+    plannerCandidateDigest([candidates[0], other]),
+    plannerCandidateDigest([other, candidates[0]]),
+  );
   const scopedSelection = selectDecisionModel(ctx, undefined, plannerPolicy({
     preferred: { provider: "provider", model: "medium", thinking: "medium" },
   }));

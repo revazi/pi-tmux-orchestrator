@@ -628,7 +628,7 @@ async function applyDynamicPlan(pi, ctx, input, project, signal) {
     plannerPolicy: policyProjection.bindingDigest,
     topologyPolicy: topologyProjection.bindingDigest,
     candidateSet: plannerCandidateDigest(selection.candidates),
-    topologyModels,
+    candidatePriorities: selection.candidatePriorities,
   };
   return planned;
 }
@@ -711,7 +711,7 @@ async function revalidateDynamicBindings(pi, ctx, project, plannerPlan, signal) 
   const policy = plannerPolicyProjectionFromEnvelope(policyEnvelope);
   const topologyEnvelope = await runCli(pi, "planner-topology", expected.topologyArgs, signal);
   const topology = plannerTopologyProjectionFromEnvelope(topologyEnvelope);
-  const candidates = plannerModelCandidates(ctx, expected.topologyModels);
+  const candidates = plannerModelCandidates(ctx, expected.candidatePriorities);
   if (!dynamicBindingsMatch(expected, policy, topology, candidates)) {
     throw new Error("stale_dynamic_planning_binding");
   }

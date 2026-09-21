@@ -17,11 +17,19 @@ export function metadataDigest(value) {
 }
 
 export function plannerCandidateDigest(candidates) {
-  return metadataDigest(candidates.map((candidate) => ({
+  const projected = candidates.map((candidate) => ({
     provider: candidate.provider,
     model: candidate.modelId,
     thinking_levels: candidate.thinkingLevels,
-  })));
+  }));
+  projected.sort((left, right) => {
+    const leftIdentity = `${left.provider}\0${left.model}`;
+    const rightIdentity = `${right.provider}\0${right.model}`;
+    if (leftIdentity < rightIdentity) return -1;
+    if (leftIdentity > rightIdentity) return 1;
+    return 0;
+  });
+  return metadataDigest(projected);
 }
 
 function planningUsage(value) {
