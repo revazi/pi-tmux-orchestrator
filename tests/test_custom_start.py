@@ -14,6 +14,7 @@ from pi_tmux_orchestrator import commands, runtime, start_commands
 from pi_tmux_orchestrator.custom_role_resources import select_custom_start
 from pi_tmux_orchestrator.models import OrchestrationError
 from pi_tmux_orchestrator.planner_topology import planner_topology_policy
+from pi_tmux_orchestrator.planning import metadata_digest
 from pi_tmux_orchestrator.profiles import (
     PACKAGED_EXECUTION_PROFILES,
     resolve_custom_thinking,
@@ -912,3 +913,73 @@ class CustomStartTests(CustomRoleResourceFixture):
         )
         self.assertEqual(code, 2, raw)
         self.assertEqual(envelope["error"]["code"], "invalid_arguments")
+
+    def test_bound_custom_planning_launch_uses_manifest_v9(self):
+        code, envelope, raw, _ = self.run_start()
+        self.assertEqual(code, 0, raw)
+        roles = [
+            {
+                "id": role["name"],
+                "contract": role.get("specialist_contract", role["name"]),
+                "provider": role["provider"],
+                "model": role["model"],
+                "thinking": role["thinking"],
+            }
+            for role in envelope["data"]["roles"]
+        ]
+        record = {
+            "version": 1,
+            "mode": "dynamic",
+            "request_id": "a" * 32,
+            "status": "accepted",
+            "created_at_ms": 1_800_000_000_000,
+            "accepted_at_ms": 1_800_000_000_001,
+            "decision_schema_version": 1,
+            "decision_model": {
+                "provider": "fixture-provider",
+                "model": "fixture/model",
+                "thinking": "off",
+                "source": "explicit",
+            },
+            "roles": roles,
+            "bindings": {
+                "input": None,
+                "start_config": None,
+                "planner_policy": "b" * 64,
+                "topology_policy": "c" * 64,
+                "candidate_set": "d" * 64,
+                "decision": metadata_digest({"version": 1, "roles": roles}),
+            },
+            "usage": None,
+        }
+        planning_path = self.root / "planning.json"
+        planning_path.write_text(json.dumps(record), encoding="utf-8")
+        code, preview, raw, _ = self.run_start(
+            "--planning-record-file", str(planning_path)
+        )
+        self.assertEqual(code, 0, raw)
+        planning_path.write_text(
+            json.dumps(preview["data"]["planning"]), encoding="utf-8"
+        )
+        skill_path = Path(self.skill["path"])
+        original_skill = skill_path.read_text(encoding="utf-8")
+        skill_path.write_text("changed after planning preview", encoding="utf-8")
+        code, rejected, raw, _ = self.run_start(
+            "--planning-record-file",
+            str(planning_path),
+            dry_run=False,
+        )
+        self.assertEqual(code, 2, raw)
+        self.assertFalse(rejected["success"])
+        self.grid.assert_not_called()
+        skill_path.write_text(original_skill, encoding="utf-8")
+        with mock.patch.object(start_commands, "wait_for_custom_startup"):
+            code, _started, raw, _ = self.run_start(
+                "--planning-record-file",
+                str(planning_path),
+                dry_run=False,
+            )
+        self.assertEqual(code, 0, raw)
+        manifest = self.grid.call_args.args[4]
+        self.assertEqual(manifest["version"], 9)
+        self.assertEqual(manifest["planning"], preview["data"]["planning"])

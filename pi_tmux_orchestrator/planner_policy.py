@@ -12,6 +12,7 @@ from typing import Any
 from . import runtime
 from .models import CommandResult, OrchestrationError
 from .output import human_print
+from .planning import metadata_digest
 
 PLANNER_POLICY_VERSION = 1
 MAX_PLANNER_POLICY_BYTES = 32 * 1024
@@ -201,6 +202,9 @@ def planner_policy_command(args: argparse.Namespace) -> CommandResult:
         data={
             "config_path": str(path),
             "configured": configured,
+            "binding_digest": metadata_digest(
+                {"config_path": str(path), "configured": configured, "policy": policy}
+            ),
             "policy": policy,
         }
     )

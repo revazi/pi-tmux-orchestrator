@@ -283,6 +283,32 @@ def build_parser() -> argparse.ArgumentParser:
     )
     start.add_argument("--session")
     start.add_argument(
+        "--dynamic-plan",
+        action="store_true",
+        help="request one bounded provider-backed preflight topology decision",
+    )
+    start.add_argument(
+        "--authorize-planning",
+        action="store_true",
+        help="authorize the additional provider call required by --dynamic-plan",
+    )
+    start.add_argument(
+        "--allow-static-fallback",
+        action="store_true",
+        help="allow the configured no-provider static fallback when dynamic planning has no eligible decision model",
+    )
+    start.add_argument(
+        "--yes",
+        action="store_true",
+        help="confirm launch of an accepted dynamic plan; static starts are unchanged",
+    )
+    start.add_argument("--decision-provider")
+    start.add_argument("--decision-model")
+    start.add_argument(
+        "--decision-thinking", choices=("off", "minimal", "low", "medium")
+    )
+    start.add_argument("--planning-record-file", help=argparse.SUPPRESS)
+    start.add_argument(
         "--custom-role",
         action="append",
         nargs=4,

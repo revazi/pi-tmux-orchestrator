@@ -156,9 +156,11 @@ class PlannerPolicyTests(TestCase):
                 result = planner_policy.planner_policy_command(args)
         self.assertEqual(result.code, 0)
         self.assertEqual(
-            set(result.data or {}), {"config_path", "configured", "policy"}
+            set(result.data or {}),
+            {"config_path", "configured", "binding_digest", "policy"},
         )
         self.assertTrue(result.data["configured"])
+        self.assertRegex(result.data["binding_digest"], r"^[a-f0-9]{64}$")
         serialized = json.dumps(result.data)
         for forbidden in ("apiKey", "endpoint", "task", "response"):
             self.assertNotIn(forbidden, serialized)

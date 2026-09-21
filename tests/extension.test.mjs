@@ -9,6 +9,8 @@ import extension, { testHooks } from "../extensions/tmux-orchestrator.js";
 import { consumeObserverFrames } from "../extensions/orchestrator-parent-protocol.js";
 import { publicRoleContracts, validControlRole } from "../extensions/orchestrator-role-metadata.js";
 import {
+  metadataDigest,
+  plannerCandidateDigest,
   plannerModelCandidates,
   runPreflightPlanner,
   selectDecisionModel,
@@ -75,6 +77,7 @@ function plannerPolicyEnvelope(policy = plannerPolicy()) {
   return success("planner-policy", {
     config_path: "/external/tmux-orchestrator-planner.json",
     configured: true,
+    binding_digest: metadataDigest(policy),
     policy,
   });
 }
@@ -95,8 +98,23 @@ function plannerTopology({ constraints = {}, optionalRoles = ["probe", "playwrig
 function plannerTopologyEnvelope(policy = plannerTopology()) {
   return success("planner-topology", {
     config_path: "/external/tmux-orchestrator.json",
+    binding_digest: metadataDigest(policy),
     policy,
   });
+}
+
+async function boundPlanningFromArgs(args) {
+  const index = args.indexOf("--planning-record-file");
+  if (index < 0) return undefined;
+  const value = JSON.parse(await readFile(args[index + 1], "utf8"));
+  return {
+    ...value,
+    bindings: {
+      ...value.bindings,
+      input: "c".repeat(64),
+      start_config: "d".repeat(64),
+    },
+  };
 }
 
 function harness(exec) {
@@ -291,6 +309,7 @@ function dashboardSnapshot() {
           project: "/work/alpha",
           execution_profile: { name: "balanced", kind: "packaged", source: "project" },
           roles: [{ name: "implementer" }, { name: "reviewer" }],
+          planning: { mode: "dynamic", status: "accepted" },
           dashboard: {
             available: true,
             workflow: { state: "active", round: 2, implementation_flow: "phased" },
@@ -356,6 +375,8 @@ test("dashboard display is bounded and keeps unavailable usage explicit", () => 
   assert.ok(lines.length <= 40);
   assert.match(lines.join("\n"), /7 calls · 12\.5k tok · \$0\.234 · ctx 42\.3%/);
   assert.match(lines.join("\n"), /usage unavailable/);
+  assert.match(lines.join("\n"), /plan dynamic/);
+  assert.match(lines.join("\n"), /plan static/);
   assert.match(lines.join("\n"), new RegExp(`About: v${packageJson.version}`));
   assert.match(lines.join("\n"), /Repository: https:\/\/github\.com\/revazi\/pi-tmux-orchestrator/);
   assert.match(lines.join("\n"), /Issues: https:\/\/github\.com\/revazi\/pi-tmux-orchestrator\/issues/);
@@ -2847,9 +2868,14 @@ test("preflight decision model uses exact per-run, preferred, then cross-provide
     ...Array.from({ length: 101 }, (_, index) => model("alpha", `model-${index}`)),
     openai,
   ];
-  assert.equal(selectDecisionModel(ctx, {
+  const boundedExplicit = selectDecisionModel(ctx, {
     provider: "openai", model: "gpt-exact", thinking: "medium",
-  }, configured).modelId, "gpt-exact");
+  }, configured);
+  assert.equal(boundedExplicit.modelId, "gpt-exact");
+  assert.equal(
+    plannerCandidateDigest(boundedExplicit.candidates),
+    plannerCandidateDigest(plannerModelCandidates(ctx, boundedExplicit.candidatePriorities)),
+  );
   assert.throws(
     () => selectDecisionModel(ctx, {
       provider: "openai", model: "gpt-exact", thinking: "high",
@@ -2885,6 +2911,16 @@ test("preflight candidate projection honors scoped thinking and strict decision 
   const candidates = plannerModelCandidates(ctx);
   assert.deepEqual(candidates.map((item) => item.modelId), ["medium"]);
   assert.deepEqual(candidates[0].thinkingLevels, ["low", "medium"]);
+  const other = {
+    model: highOnly,
+    provider: "another-provider",
+    modelId: "another-model",
+    thinkingLevels: ["off"],
+  };
+  assert.equal(
+    plannerCandidateDigest([candidates[0], other]),
+    plannerCandidateDigest([other, candidates[0]]),
+  );
   const scopedSelection = selectDecisionModel(ctx, undefined, plannerPolicy({
     preferred: { provider: "provider", model: "medium", thinking: "medium" },
   }));
@@ -3075,9 +3111,12 @@ test("dynamic start plans mixed-provider built-in and trusted custom topology be
   let completion;
   let catalogReads = 0;
   let catalogReadsAtCompletion = 0;
+  let plannerPolicyReads = 0;
+  let topologyReads = 0;
   let execCalls = 0;
   const { tool } = harness(async (_command, args) => {
     if (args[2] === "planner-policy") {
+      plannerPolicyReads += 1;
       assert.equal(args.includes(privateTask), false);
       return {
         code: 0,
@@ -3087,6 +3126,7 @@ test("dynamic start plans mixed-provider built-in and trusted custom topology be
       };
     }
     if (args[2] === "planner-topology") {
+      topologyReads += 1;
       return {
         code: 0,
         stdout: JSON.stringify(plannerTopologyEnvelope(plannerTopology({
@@ -3117,6 +3157,7 @@ test("dynamic start plans mixed-provider built-in and trusted custom topology be
           { name: "probe", provider: "xai", model: "grok-4.6", thinking: "medium" },
           { name: "custom-security", provider: "xai", model: "grok-4.6", thinking: "low", specialist_contract: "probe" },
         ],
+        planning: await boundPlanningFromArgs(args),
         trust: { child_bypass: false },
         paths: { state_root: "/tmp/state", coordination: dryRun ? null : "/tmp/state/run" },
       })),
@@ -3163,8 +3204,10 @@ test("dynamic start plans mixed-provider built-in and trusted custom topology be
     ctx,
   );
   assert.equal(execCalls, 2);
+  assert.equal(plannerPolicyReads, 2);
+  assert.equal(topologyReads, 2);
   assert.equal(catalogReadsAtCompletion, 1);
-  assert.equal(catalogReads, 2);
+  assert.equal(catalogReads, 3);
   assert.equal(result.usage.totalTokens, 150);
   assert.equal(result.details.planner_usage.cost.total, 0.01);
   assert.equal(completion.selected, model);
@@ -3182,7 +3225,142 @@ test("dynamic start plans mixed-provider built-in and trusted custom topology be
   assert.match(ctx.calls.confirmations[1].message, /Selected 4 workers/);
   assert.match(ctx.calls.confirmations[1].message, /reviewer: openai-codex\/gpt-review thinking=low/);
   assert.match(ctx.calls.confirmations[1].message, /probe: xai\/grok-4\.6 thinking=medium/);
-  assert.match(ctx.calls.confirmations[1].message, /custom-security: xai\/grok-4\.6 thinking=low/);
+  assert.match(ctx.calls.confirmations[1].message, /custom-security: contract=probe xai\/grok-4\.6 thinking=low/);
+  assert.equal(result.details.data.planning.mode, "dynamic");
+  assert.equal(result.details.data.planning.status, "accepted");
+  assert.equal(Number.isSafeInteger(result.details.data.planning.created_at_ms), true);
+  assert.equal(result.details.data.planning.accepted_at_ms >= result.details.data.planning.created_at_ms, true);
+  assert.match(result.details.data.planning.bindings.input, /^[a-f0-9]{64}$/);
+});
+
+test("dynamic launch rejects a topology binding changed after accepted preview", async () => {
+  const model = {
+    provider: "provider", id: "model", reasoning: true,
+    thinkingLevelMap: { off: null, minimal: null, low: "low", medium: "medium" },
+  };
+  let topologyReads = 0;
+  let startCalls = 0;
+  const { tool } = harness(async (_command, args) => {
+    if (args[2] === "planner-policy") {
+      return {
+        code: 0,
+        stdout: JSON.stringify(plannerPolicyEnvelope(plannerPolicy({
+          preferred: { provider: "provider", model: "model", thinking: "medium" },
+        }))),
+      };
+    }
+    if (args[2] === "planner-topology") {
+      topologyReads += 1;
+      const topology = plannerTopology({
+        optionalRoles: topologyReads === 1 ? ["probe", "playwright", "django"] : [],
+      });
+      return { code: 0, stdout: JSON.stringify(plannerTopologyEnvelope(topology)) };
+    }
+    startCalls += 1;
+    return {
+      code: 0,
+      stdout: JSON.stringify(success("start", {
+        project: process.cwd(), session: "pi-stale-plan", dry_run: true,
+        roles: [
+          { name: "implementer", provider: "provider", model: "model", thinking: "medium" },
+          { name: "reviewer", provider: "provider", model: "model", thinking: "low" },
+        ],
+        planning: await boundPlanningFromArgs(args),
+        trust: { child_bypass: false },
+        paths: { state_root: "/tmp/state", coordination: null },
+      })),
+    };
+  });
+  const ctx = context({
+    confirmations: [true, true],
+    context: {
+      model,
+      modelRegistry: {
+        getAvailable: () => [model],
+        complete: async () => ({
+          stopReason: "stop",
+          content: [{ type: "text", text: JSON.stringify({
+            version: 1,
+            roles: [
+              { role: "implementer", provider: "provider", model: "model", thinking: "medium", reason: "One writer." },
+              { role: "reviewer", provider: "provider", model: "model", thinking: "low", reason: "Mandatory review." },
+            ],
+          }) }],
+        }),
+      },
+    },
+  });
+  await assert.rejects(
+    tool.execute("stale-plan", {
+      action: "start", task: "Synthetic", dynamicPlan: true,
+    }, undefined, undefined, ctx),
+    /stale_dynamic_planning_binding/,
+  );
+  assert.equal(topologyReads, 2);
+  assert.equal(startCalls, 1);
+});
+
+test("dynamic launch rejects available-model thinking changed after accepted preview", async () => {
+  const model = {
+    provider: "provider", id: "model", reasoning: true,
+    thinkingLevelMap: { off: null, minimal: null, low: "low", medium: "medium" },
+  };
+  let startCalls = 0;
+  const { tool } = harness(async (_command, args) => {
+    if (args[2] === "planner-policy") {
+      return {
+        code: 0,
+        stdout: JSON.stringify(plannerPolicyEnvelope(plannerPolicy({
+          preferred: { provider: "provider", model: "model", thinking: "medium" },
+        }))),
+      };
+    }
+    if (args[2] === "planner-topology") {
+      return { code: 0, stdout: JSON.stringify(plannerTopologyEnvelope(plannerTopology())) };
+    }
+    startCalls += 1;
+    const planning = await boundPlanningFromArgs(args);
+    model.thinkingLevelMap = { off: null, minimal: null, low: "low", medium: null };
+    return {
+      code: 0,
+      stdout: JSON.stringify(success("start", {
+        project: process.cwd(), session: "pi-stale-catalog", dry_run: true,
+        roles: [
+          { name: "implementer", provider: "provider", model: "model", thinking: "medium" },
+          { name: "reviewer", provider: "provider", model: "model", thinking: "low" },
+        ],
+        planning,
+        trust: { child_bypass: false },
+        paths: { state_root: "/tmp/state", coordination: null },
+      })),
+    };
+  });
+  const ctx = context({
+    confirmations: [true, true],
+    context: {
+      model,
+      modelRegistry: {
+        getAvailable: () => [model],
+        complete: async () => ({
+          stopReason: "stop",
+          content: [{ type: "text", text: JSON.stringify({
+            version: 1,
+            roles: [
+              { role: "implementer", provider: "provider", model: "model", thinking: "medium", reason: "One writer." },
+              { role: "reviewer", provider: "provider", model: "model", thinking: "low", reason: "Mandatory review." },
+            ],
+          }) }],
+        }),
+      },
+    },
+  });
+  await assert.rejects(
+    tool.execute("stale-catalog", {
+      action: "start", task: "Synthetic", dynamicPlan: true,
+    }, undefined, undefined, ctx),
+    /stale_dynamic_planning_binding/,
+  );
+  assert.equal(startCalls, 1);
 });
 
 test("dynamic planning failure or declined authorization starts nothing", async () => {
@@ -3711,6 +3889,7 @@ test("slash --plan uses the same preflight decision and two-gate start path", as
           { name: "implementer", provider: "provider", model: "decision", thinking: "medium" },
           { name: "reviewer", provider: "provider", model: "decision", thinking: "medium" },
         ],
+        planning: await boundPlanningFromArgs(args),
         trust: { child_bypass: false },
         paths: { state_root: "/tmp/state", coordination: dryRun ? null : "/tmp/state/run" },
       })),

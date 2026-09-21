@@ -31,6 +31,8 @@ from .constants import (
     MANIFEST_V5_FIELDS,
     MANIFEST_V6_FIELDS,
     MANIFEST_V7_FIELDS,
+    MANIFEST_V8_FIELDS,
+    MANIFEST_V9_FIELDS,
     MAX_CONTROLLER_STATE_BYTES,
     MAX_MANIFEST_BYTES,
     PANE_ID_PATTERN,
@@ -306,7 +308,7 @@ def validate_manifest(
     if not isinstance(value, dict):
         raise OrchestrationError("Orchestration manifest must be a JSON object")
     version = value.get("version")
-    if type(version) is not int or version not in {1, 2, 3, 4, 5, 6, 7}:
+    if type(version) is not int or version not in {1, 2, 3, 4, 5, 6, 7, 8, 9}:
         raise OrchestrationError("Unsupported orchestration manifest version")
     expected_fields = {
         1: MANIFEST_V1_FIELDS,
@@ -316,6 +318,8 @@ def validate_manifest(
         5: MANIFEST_V5_FIELDS,
         6: MANIFEST_V6_FIELDS,
         7: MANIFEST_V7_FIELDS,
+        8: MANIFEST_V8_FIELDS,
+        9: MANIFEST_V9_FIELDS,
     }[version]
     if set(value) != expected_fields:
         raise OrchestrationError(
@@ -371,6 +375,10 @@ def validate_manifest(
                 "Manifest project configuration does not match the project"
             )
         validate_manifest_orchestration_config(value["orchestration_config"])
+    if version in {8, 9}:
+        from .planning import validate_planning_record
+
+        validate_planning_record(value["planning"])
 
     project_value = value["project"]
     if not isinstance(project_value, str):

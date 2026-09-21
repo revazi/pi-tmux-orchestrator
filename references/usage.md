@@ -170,14 +170,20 @@ per-role `modelOverrides` after resolving ambiguous IDs with `models`.
 
 ### Model-guided preflight planning (opt in)
 
-Use `/or-start --plan TASK` or model-tool `dynamicPlan=true` to request one
-bounded model decision before the ordinary dry-run preview. This is an
-additional provider call and requires its own interactive confirmation showing
-the exact decision model, thinking, selection source, and candidate count. A
-second confirmation remains required before launch. Declining either gate,
-cancellation, malformed/oversized policy or output, unavailable models,
-unsupported thinking, ambiguity, or conflicting explicit constraints starts
-nothing.
+Use `/or-start --plan TASK`, model-tool `dynamicPlan=true`, or terminal
+`start --dynamic-plan --authorize-planning --yes` to request one bounded model
+decision before the ordinary dry-run preview. Terminal planning runs a private
+one-request Pi RPC adapter with no tools; task/context travel in a mode-0600
+request file, never argv. Planning authorization and launch authorization are
+separate: `--authorize-planning` permits the provider call and `--yes` permits
+launch. Omission of either fails before any call. The interactive path likewise
+requires its own confirmation showing the exact decision model, thinking,
+selection source, candidate count, and bounded payload categories, then a
+second confirmation after validation showing selected identities, locked custom
+contracts, exact model/thinking values, rationale summaries, and operator
+constraints. Declining either gate, cancellation, malformed/oversized policy or
+output, unavailable models, unsupported thinking, ambiguity, or conflicting
+explicit constraints starts nothing.
 
 Decision-model precedence is:
 
@@ -263,6 +269,31 @@ over-cap, stale, or ambiguous choices fail before the provider call or before
 launch; unsafe optional candidates are omitted without weakening mandatory
 review. The accepted topology is fed through CLI dry-run, custom resource
 revalidation, exact preview matching, and final model availability checks.
+Before launch, the adapter rereads policy/topology configuration, recomputes the
+eligible catalog and thinking support, and compares SHA-256 bindings for the
+private task/context, canonical project, complete resolved start configuration,
+planner policy, topology policy, and candidate set. Any changed task, config,
+registry resource, catalog availability, selected tuple, or preview projection
+fails with no launch. The accepted record has a bounded request ID and cannot
+admit duplicate tmux sessions; interrupted pre-launch requests retain no run
+state. Temporary request/decision files are owner-only and removed on every
+exit path. Cancellation, malformed output, and interruption before final launch
+admission are preflight failures and therefore have no run directory to roll
+back or retain; their operation result is cancelled/failed rather than accepted.
+After final admission, the existing partial-start rollback kills only the exact
+new tmux session, marks the retained startup failed, and does not rewrite the
+accepted planning record.
+
+Manifest schemas v8/v9 retain only body-free planning provenance: dynamic mode,
+accepted status, decision model identity/thinking/source, selected exact
+role/model/thinking tuples and fixed custom contracts, timestamps, request ID,
+and binding digests. `list`, `status`, the dashboard, and Supervisor run/session
+reads project that same bounded metadata. They never retain or return the task,
+context capsule, planner prompt/reasoning, provider response body, credentials,
+endpoints, or custom resource paths/bodies. Legacy/static manifests are reported
+as static/manual provenance. Dry-run previews return accepted metadata but write
+no coordination state.
+
 Deterministic specialist activation remains authoritative after launch; the
 planner cannot force it. The model tool reports nested planner usage to Pi's
 tool-result accounting. No provider-cost, latency, role-selection, or quality
@@ -486,6 +517,11 @@ Common options:
 - `--attach`
 - `--dry-run`
 - `--skip-model-check`
+- `--dynamic-plan`: opt into the shared bounded planner before preview
+- `--authorize-planning`: authorize that one additional provider call (required with `--dynamic-plan`)
+- `--yes`: separately authorize launch after the validated dynamic preview (required with `--dynamic-plan`)
+- `--decision-provider`, `--decision-model`, and `--decision-thinking`: exact per-run decision identity override; provider and model must be supplied together
+- `--allow-static-fallback`: permit only the configured `noEligible: "static"` no-provider fallback
 - `--budget-enforcement warn-only|hard`
 - repeatable `--budget-override LEVEL.SCOPE.METRIC=VALUE` (`=off` disables one)
 

@@ -43,6 +43,7 @@ from .constants import (
 )
 from .models import CommandResult, OrchestrationError
 from .output import bounded_message, human_print, public_role
+from .planning import retained_planning
 from .profiles import (
     public_execution_profile,
     resolve_execution_profile,
@@ -174,6 +175,7 @@ def list_command(_: argparse.Namespace) -> CommandResult:
                     "execution_profile": retained_execution_profile(manifest),
                     "project_config": retained_project_config(manifest),
                     "orchestration_config": retained_orchestration_config(manifest),
+                    "planning": retained_planning(manifest),
                     "dashboard": orchestration_dashboard_summary(coord, manifest),
                     "roles": role_values,
                     "paths": {"coordination": str(coord)},
@@ -276,6 +278,7 @@ def status_command(args: argparse.Namespace) -> CommandResult:
     profile = retained_execution_profile(manifest)
     project_config = retained_project_config(manifest)
     orchestration_config = retained_orchestration_config(manifest)
+    planning = retained_planning(manifest)
     human_print(
         "Execution profile: "
         + (
@@ -302,6 +305,17 @@ def status_command(args: argparse.Namespace) -> CommandResult:
                 if project_config["matched"] is False
                 else "unavailable (legacy run)"
             )
+        )
+    )
+    human_print(
+        "Planning: "
+        + (
+            f"dynamic accepted via {planning['decision_model']['provider']}/"
+            f"{planning['decision_model']['model']} "
+            f"thinking={planning['decision_model']['thinking']} "
+            f"source={planning['decision_model']['source']}"
+            if planning["mode"] == "dynamic"
+            else "static/manual or legacy"
         )
     )
     human_print(f"Coordination: {coord}")
@@ -442,6 +456,7 @@ def status_command(args: argparse.Namespace) -> CommandResult:
             "execution_profile": profile,
             "project_config": project_config,
             "orchestration_config": orchestration_config,
+            "planning": planning,
             "paths": paths,
             "roles": role_values,
             "panes": panes,

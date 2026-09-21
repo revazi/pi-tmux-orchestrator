@@ -47,6 +47,12 @@ from .custom_role_resources import select_custom_start
 from .role_registry import valid_custom_role_id
 from .models import CommandResult, OrchestrationError
 from .output import human_print, public_role
+from .planning import (
+    bind_planning_record,
+    load_planning_record,
+    planning_input_digest,
+    planning_start_config_digest,
+)
 from .profiles import (
     public_execution_profile,
     resolve_custom_thinking,
@@ -123,6 +129,7 @@ def construct_start_manifest(
     roles: list[str],
     configs: dict[str, dict[str, Any]],
     custom_role_registry: str | None,
+    planning: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Construct retained launch metadata; custom resources remain body-free."""
     custom_roles = [role for role in roles if valid_custom_role_id(role)]
@@ -137,7 +144,11 @@ def construct_start_manifest(
     ):
         raise OrchestrationError("Start role bindings are inconsistent")
     manifest: dict[str, Any] = {
-        "version": 7 if custom_roles else 5,
+        "version": (
+            (9 if custom_roles else 8)
+            if planning is not None
+            else (7 if custom_roles else 5)
+        ),
         "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
         "session": session,
         "window": WINDOW,
@@ -155,6 +166,8 @@ def construct_start_manifest(
     }
     if custom_roles:
         manifest["custom_role_registry"] = custom_role_registry
+    if planning is not None:
+        manifest["planning"] = planning
     for role in roles:
         manifest["roles"][role] = {
             **configs[role],
@@ -178,7 +191,7 @@ def wait_for_custom_startup(
     timeout: float = CUSTOM_STARTUP_TIMEOUT_SECONDS,
 ) -> None:
     """Require a stable authenticated custom broker/worker startup."""
-    if manifest.get("version") not in {6, 7} or not any(
+    if manifest.get("version") not in {6, 7, 9} or not any(
         valid_custom_role_id(role) for role in roles
     ):
         raise OrchestrationError("Custom startup admission requires manifest v6+")
@@ -384,12 +397,33 @@ def create_tmux_grid(
 
 
 def start_command(args: argparse.Namespace) -> CommandResult:
+    if getattr(args, "dynamic_plan", False):
+        from .terminal_planning import terminal_dynamic_start
+
+        return terminal_dynamic_start(args)
+    if any(
+        (
+            getattr(args, "authorize_planning", False),
+            getattr(args, "allow_static_fallback", False),
+            getattr(args, "yes", False),
+            getattr(args, "decision_provider", None),
+            getattr(args, "decision_model", None),
+            getattr(args, "decision_thinking", None),
+        )
+    ):
+        raise OrchestrationError(
+            "Dynamic planning flags require --dynamic-plan", "invalid_arguments"
+        )
     if getattr(args, "json_output", False) and args.attach:
         raise OrchestrationError(
             "start --attach is interactive-only and cannot be used with --json",
             "interactive_only",
         )
     explicit_custom_selections = getattr(args, "custom_role", [])
+    planning_record = load_planning_record(
+        getattr(args, "planning_record_file", None),
+        allow_unbound=bool(args.dry_run),
+    )
     project_input = Path(args.project).expanduser()
     project = project_input.resolve()
     if not project.is_dir():
@@ -646,6 +680,24 @@ def start_command(args: argparse.Namespace) -> CommandResult:
         for role, config in configs.items():
             validate_model(role, config, model_catalogs)
 
+    planning = None
+    if planning_record is not None:
+        planning = bind_planning_record(
+            planning_record,
+            input_digest=planning_input_digest(task, context_capsule, role_tasks),
+            start_config_digest=planning_start_config_digest(
+                project=project,
+                configured_models=configured_models,
+                project_config=matched_project,
+                execution_profile=execution_profile,
+                roles=roles,
+                configs=configs,
+            ),
+            roles=roles,
+            configs=configs,
+            dry_run=bool(args.dry_run),
+        )
+
     project_config_metadata = public_project_config(matched_project)
     orchestration_config_metadata = {
         "path": str(model_config_path(project)),
@@ -710,6 +762,8 @@ def start_command(args: argparse.Namespace) -> CommandResult:
         },
         "workspace_capsule": workspace_capsule_metadata(workspace_capsule),
     }
+    if planning is not None:
+        data["planning"] = planning
     if custom_selection["roles"]:
         data["custom_role_selection"] = {
             "launch_supported": True,
@@ -848,6 +902,7 @@ def start_command(args: argparse.Namespace) -> CommandResult:
             roles=roles,
             configs=configs,
             custom_role_registry=custom_selection["registry_path"],
+            planning=planning,
         )
 
         ensure_private_directory(coord / "sessions")
@@ -870,7 +925,7 @@ def start_command(args: argparse.Namespace) -> CommandResult:
             worker_context_overrides=context_policy["overrides"],
         )
         create_tmux_grid(session, project, coord, roles, manifest)
-        if manifest["version"] in {6, 7}:
+        if manifest["version"] in {6, 7, 9}:
             wait_for_custom_startup(session, coord, roles, manifest)
         secure_write(coord / "startup-state", "RUNNING\n")
     except BaseException:

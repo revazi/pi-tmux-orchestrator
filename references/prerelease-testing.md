@@ -231,7 +231,16 @@ Run the smallest useful matrix rather than every expensive combination:
   those exact trusted identities; confirm a selected subset is passed as exact
   `--project-custom-role` identities, registry/resource digests are revalidated,
   and unavailable, stale, duplicate, or unallowlisted identities make no
-  provider or launch call.
+  provider or launch call. Exercise the equivalent terminal path with
+  `start --dynamic-plan --authorize-planning --yes` and confirm that omitting
+  either authorization fails before planning/launch. After accepting a preview,
+  change each mutable class in turn (task/context, planner policy, exact-project
+  config or custom resource digest, and available catalog/thinking metadata) and
+  confirm pre-launch binding revalidation rejects it with no worker/session.
+  Confirm successful `list`, `status`, dashboard, and Supervisor projections
+  show only bounded accepted model/role/contract/source/request/timestamp/digest
+  metadata and contain no task, prompt, rationale/provider body, endpoint,
+  credential, or custom resource path/body.
 - Exercise documentation-only skip, ambiguous-path run, and
   `--force-specialist CUSTOM_ID`; confirm every run gates built-in review while a
   skip remains reviewer-visible and issues no specialist provider turn.
