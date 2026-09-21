@@ -59,7 +59,17 @@ PI_TMUX_ORCHESTRATOR_PLANNER_CONFIG=/absolute/path/planner.json \
 
 The output must contain only the config path, configured flag, and normalized
 canonical identity/thinking policy—never credentials, endpoints, task bodies,
-or provider response bodies.
+or provider response bodies. The corresponding topology projection can be
+inspected without a provider call:
+
+```bash
+pi-tmux-agents --json planner-topology --project /absolute/project
+```
+
+It may contain only fixed built-in constraints and verified custom
+identity/contract/model metadata—never registry/resource paths or bodies. Use
+`--no-project-custom-roles` to confirm the custom candidate list is empty and
+that no registry resources are read.
 
 When Pi is available, this invokes
 `tests/actual_pi_custom_lifecycle.py` against the exact disposable package staged
@@ -186,10 +196,11 @@ Run the smallest useful matrix rather than every expensive combination:
   decision model is shown before the additional provider call, an exact
   operator-supplied canonical Jev identity wins without name guessing or fuzzy
   matching, fallback is explicit otherwise, selected worker models/thinking are
-  available and at most `medium`, malformed
-  output starts nothing, and launch still requires a second confirmation. This
-  first slice selects built-in roles only and is not evidence of cost or quality
-  improvement.
+  available and at most `medium`, malformed output starts nothing, and launch
+  still requires a second confirmation. If exact-project custom specialists are
+  configured, confirm only freshly verified allowlisted identities/contracts are
+  candidates and an accepted subset remains read-only. This is not evidence of
+  cost or quality improvement.
 - Start one small `single` workflow with only implementer and mandatory reviewer.
 - Reopen `/or-dashboard`, confirm the run and usage metadata appear, use Enter
   to attach when the parent Pi is inside tmux, and verify `x` requires explicit
@@ -216,7 +227,11 @@ Run the smallest useful matrix rather than every expensive combination:
   fails closed. A profile mapping without `--custom-role` or exact-project
   `customRoles` must launch nothing. A version-4 exact-project `customRoles`
   preview must show the identity, contract, and `project-config` source, and
-  `--no-project-custom-roles` must omit it.
+  `--no-project-custom-roles` must omit it. A dynamic preview may select only
+  those exact trusted identities; confirm a selected subset is passed as exact
+  `--project-custom-role` identities, registry/resource digests are revalidated,
+  and unavailable, stale, duplicate, or unallowlisted identities make no
+  provider or launch call.
 - Exercise documentation-only skip, ambiguous-path run, and
   `--force-specialist CUSTOM_ID`; confirm every run gates built-in review while a
   skip remains reviewer-visible and issues no specialist provider turn.

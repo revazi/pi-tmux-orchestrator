@@ -27,6 +27,7 @@ const pythonFiles = [
   "models.py",
   "output.py",
   "planner_policy.py",
+  "planner_topology.py",
   "prompts.py",
   "profiles.py",
   "protocol.py",

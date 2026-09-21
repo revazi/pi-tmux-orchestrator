@@ -52,8 +52,9 @@ profile cannot configure a custom role.
 filesystem policy as registry validation. Omission of `--custom-role` does not read
 the registry unless version-4 exact-project `customRoles` selected identities for
 this canonical directory. `--no-project-custom-roles` omits that project list;
-explicit `--custom-role` replaces it. Project `customRoles` require exact thinking
-levels, not `profile`.
+`--project-custom-role ID` selects only an identity already in that exact-project
+list for the bounded planner adapter; explicit `--custom-role` replaces project
+selection. Project `customRoles` require exact thinking levels, not `profile`.
 
 TUI and `--rpc-workers` previews use the same bindings and fixed read-only policy,
 and always retain the built-in implementer and reviewer. Custom skills come only
@@ -63,7 +64,9 @@ identity is selected in the same run; otherwise its bound contract supplies the
 fixed deterministic path rule. Terminal CLI `--custom-role` remains the explicit
 per-run override. `/or-start` and the model tool include exact-project custom
 specialists from validated configuration unless cancelled or `projectCustomRoles`
-is false; they never invent custom role IDs.
+is false; dynamic planning may select a subset only after fresh descriptor/resource
+validation, while explicit `projectCustomRoles=true` requires all eligible mapped
+identities. They never invent custom role IDs or contracts.
 
 Every preview or start rereads the registry/resources and verifies their digests.
 Successful JSON includes bounded identities, explicit models, report contracts,

@@ -43,6 +43,7 @@ from .commands import (
 from .models import CommandResult, OrchestrationArgumentParser, OrchestrationError
 from .output import bounded_message, emit_json, eprint
 from .planner_policy import planner_policy_command
+from .planner_topology import planner_topology_command
 from .profiles import profile_name
 from .relay import relay_command
 from .supervisor_commands import (
@@ -148,6 +149,14 @@ def rpc_command_id(value: str) -> str:
     if not RPC_TOKEN_PATTERN.fullmatch(value):
         raise argparse.ArgumentTypeError(
             "command ID must be exactly 32 lowercase hexadecimal characters"
+        )
+    return value
+
+
+def project_custom_role(value: str) -> str:
+    if not valid_custom_role_id(value):
+        raise argparse.ArgumentTypeError(
+            "project custom role must be a canonical custom identity"
         )
     return value
 
@@ -292,6 +301,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="omit custom roles configured for the exact project from this run",
     )
     start.set_defaults(project_custom_roles=None)
+    start.add_argument(
+        "--project-custom-role",
+        action="append",
+        type=project_custom_role,
+        default=None,
+        metavar="ID",
+        help="select one identity from exact-project customRoles; repeatable",
+    )
     start.add_argument(
         "--implementation-flow",
         choices=IMPLEMENTATION_FLOWS,
@@ -564,6 +581,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     planner_policy.set_defaults(handler=planner_policy_command)
 
+    planner_topology = subparsers.add_parser(
+        "planner-topology",
+        help="validate and project bounded worker-topology constraints",
+    )
+    planner_topology.add_argument("--project", default=os.getcwd())
+    planner_topology.add_argument("--profile", type=execution_profile)
+    planner_topology.add_argument(
+        "--no-project-custom-roles",
+        action="store_true",
+        help="omit exact-project trusted custom specialists from planner eligibility",
+    )
+    planner_topology.set_defaults(handler=planner_topology_command)
+
     doctor = subparsers.add_parser(
         "doctor", help="check local prerequisites and defaults"
     )
@@ -610,6 +640,7 @@ def requested_command(argv: list[str]) -> str:
     public_commands = {
         "doctor",
         "planner-policy",
+        "planner-topology",
         "role-registry",
         "controller",
         "supervisor",
