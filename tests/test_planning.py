@@ -10,6 +10,7 @@ from unittest import mock
 
 from json_cli_support import JsonCliFixture
 from pi_tmux_orchestrator import terminal_planning
+from pi_tmux_orchestrator.models import OrchestrationError
 from pi_tmux_orchestrator.planning import (
     metadata_digest,
     validate_planning_record,
@@ -261,6 +262,38 @@ class PlanningAdmissionTests(JsonCliFixture):
         self.assertTrue(request["previewOnly"])
         self.assertIn("PRIVATE_TERMINAL_TASK", request["input"]["task"])
         self.assertNotIn("PRIVATE_TERMINAL_TASK", raw)
+
+    def test_terminal_rpc_timeout_fails_before_start_delivery(self):
+        process = mock.MagicMock()
+        process.stdout = io.StringIO()
+        process.poll.return_value = None
+
+        class EmptySelector:
+            def register(self, *_args):
+                pass
+
+            def select(self, *, timeout):
+                self.timeout = timeout
+                return []
+
+            def close(self):
+                pass
+
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            mock.patch.object(terminal_planning, "TERMINAL_TIMEOUT_SECONDS", 0),
+            mock.patch.object(
+                terminal_planning.selectors,
+                "DefaultSelector",
+                return_value=EmptySelector(),
+            ),
+        ):
+            output = Path(directory) / "result.json"
+            output.write_text("", encoding="utf-8")
+            with self.assertRaisesRegex(OrchestrationError, "did not complete safely"):
+                terminal_planning._read_terminal_result(
+                    process, output, mock.MagicMock()
+                )
 
     def test_terminal_rpc_adapter_keeps_private_input_out_of_process_arguments(self):
         private_task = "PRIVATE_RPC_ADAPTER_TASK_91e2"

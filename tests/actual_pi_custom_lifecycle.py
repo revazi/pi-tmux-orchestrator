@@ -264,7 +264,13 @@ def run_transport(
     from pi_tmux_orchestrator.configuration import public_project_config
     from pi_tmux_orchestrator.custom_role_resources import select_custom_start
     from pi_tmux_orchestrator.models import OrchestrationError
-    from pi_tmux_orchestrator.storage import ensure_private_directory, secure_write
+    from pi_tmux_orchestrator.planning import metadata_digest
+    from pi_tmux_orchestrator.storage import (
+        ensure_private_directory,
+        load_manifest,
+        secure_write,
+    )
+    from pi_tmux_orchestrator.supervisor_api import public_supervisor_run
 
     role_name = "custom-security"
     session = f"pi-actual-custom-{transport}-{os.getpid()}"
@@ -321,6 +327,41 @@ def run_transport(
         },
         **selected["roles"],
     }
+    retained_roles = [
+        {
+            "id": role,
+            "contract": configs[role].get("custom_role", {}).get("contract", role),
+            "provider": configs[role]["provider"],
+            "model": configs[role]["model"],
+            "thinking": configs[role]["thinking"],
+        }
+        for role in roles
+    ]
+    planning = {
+        "version": 1,
+        "mode": "dynamic",
+        "request_id": "a" * 32,
+        "status": "accepted",
+        "created_at_ms": 1_800_000_000_000,
+        "accepted_at_ms": 1_800_000_000_001,
+        "decision_schema_version": 1,
+        "decision_model": {
+            "provider": "actual-pi-fixture",
+            "model": "fixed-no-inference",
+            "thinking": "off",
+            "source": "explicit",
+        },
+        "roles": retained_roles,
+        "bindings": {
+            "input": "b" * 64,
+            "start_config": "c" * 64,
+            "planner_policy": "d" * 64,
+            "topology_policy": "e" * 64,
+            "candidate_set": "f" * 64,
+            "decision": metadata_digest({"version": 1, "roles": retained_roles}),
+        },
+        "usage": None,
+    }
     state_root = ensure_private_directory(root / "state")
     coord = ensure_private_directory(state_root / session / "run-1", parents=True)
     manifest = commands.construct_start_manifest(
@@ -339,6 +380,7 @@ def run_transport(
         roles=roles,
         configs=configs,
         custom_role_registry=selected["registry_path"],
+        planning=planning,
     )
     ensure_private_directory(coord / "sessions")
     for role in roles:
@@ -413,6 +455,16 @@ def run_transport(
                 f"launches={launch_records(launch_record)!r}; panes={panes!r}"
             ) from error
         secure_write(coord / "startup-state", "RUNNING\n")
+        retained_manifest = load_manifest(coord, expected_session=session)
+        retained = public_supervisor_run(coord, retained_manifest)
+        if (
+            retained_manifest["version"] != 9
+            or retained_manifest["planning"] != planning
+            or retained["planning"] != planning
+        ):
+            raise AssertionError(
+                "actual Pi lifecycle lost fixed accepted planning provenance"
+            )
         wait_for(
             lambda: len(launch_records(launch_record)) == launches_before + 1,
             f"actual Pi {transport} launch was not recorded",
@@ -696,8 +748,9 @@ def main() -> int:
             )
     print(
         "Connected staged-package actual-Pi TUI/RPC custom startup, broker reconnect, "
-        "fresh restart, revoked-resource rejection, and exact cleanup passed without "
-        "a prompt, credential access, or provider request; report inference was not exercised."
+        "fresh restart, retained fixed-plan provenance, revoked-resource rejection, "
+        "and exact cleanup passed without a prompt, credential access, or provider request; "
+        "planner or report inference was not exercised."
     )
     return 0
 

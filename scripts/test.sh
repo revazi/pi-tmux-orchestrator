@@ -97,7 +97,7 @@ package_root = path.parent / value["package_root"]
 if not (package_root / "extensions" / "tmux-orchestrator.js").is_file():
     raise SystemExit("pre-release stage omitted the installed extension")
 PY
-printf '%s\n' '==> Provider-free staged-package actual-Pi custom lifecycle smoke'
+printf '%s\n' '==> Provider-free staged-package actual-Pi fixed-plan custom lifecycle smoke'
 python3 "$ROOT/tests/actual_pi_custom_lifecycle.py" \
   "$PRERELEASE_STAGE/package-host/node_modules/pi-tmux-orchestrator"
 printf '\nlocal tamper probe\n' >> \

@@ -26,6 +26,7 @@ from pi_tmux_orchestrator import broker_store, commands, constants, runtime  # n
 from pi_tmux_orchestrator.configuration import public_project_config  # noqa: E402
 from pi_tmux_orchestrator.custom_role_resources import select_custom_start  # noqa: E402
 from pi_tmux_orchestrator.models import OrchestrationError  # noqa: E402
+from pi_tmux_orchestrator.planning import metadata_digest  # noqa: E402
 from pi_tmux_orchestrator.storage import (  # noqa: E402
     ensure_private_directory,
     secure_write,
@@ -373,6 +374,46 @@ async def stop_recorded_workers(record_path: Path, fake_pi: Path) -> None:
     raise AssertionError("recorded custom workers required forced cleanup")
 
 
+def fixed_planning_record(
+    roles: list[str], configs: dict[str, dict[str, object]]
+) -> dict[str, object]:
+    retained_roles = [
+        {
+            "id": role,
+            "contract": configs[role].get("custom_role", {}).get("contract", role),
+            "provider": configs[role]["provider"],
+            "model": configs[role]["model"],
+            "thinking": configs[role]["thinking"],
+        }
+        for role in roles
+    ]
+    return {
+        "version": 1,
+        "mode": "dynamic",
+        "request_id": "a" * 32,
+        "status": "accepted",
+        "created_at_ms": 1_800_000_000_000,
+        "accepted_at_ms": 1_800_000_000_001,
+        "decision_schema_version": 1,
+        "decision_model": {
+            "provider": "fixture",
+            "model": "fixed-no-inference",
+            "thinking": "off",
+            "source": "explicit",
+        },
+        "roles": retained_roles,
+        "bindings": {
+            "input": "b" * 64,
+            "start_config": "c" * 64,
+            "planner_policy": "d" * 64,
+            "topology_policy": "e" * 64,
+            "candidate_set": "f" * 64,
+            "decision": metadata_digest({"version": 1, "roles": retained_roles}),
+        },
+        "usage": None,
+    }
+
+
 async def run_transport(
     root: Path,
     transport: str,
@@ -459,6 +500,7 @@ async def run_transport(
         roles=roles,
         configs=configs,
         custom_role_registry=selected["registry_path"],
+        planning=fixed_planning_record(roles, configs),
     )
     ensure_private_directory(coord / "sessions")
     for role in roles:
@@ -574,10 +616,14 @@ async def run_transport(
             roles,
             manifest,
         )
-        if manifest["version"] != 7 or manifest["custom_role_registry"] != str(
-            registry
+        if (
+            manifest["version"] != 9
+            or manifest["custom_role_registry"] != str(registry)
+            or manifest["planning"]["status"] != "accepted"
         ):
-            raise AssertionError("custom launch did not retain manifest v6 binding")
+            raise AssertionError(
+                "custom launch did not retain fixed accepted planning provenance"
+            )
         try:
             await wait_for(
                 lambda: (

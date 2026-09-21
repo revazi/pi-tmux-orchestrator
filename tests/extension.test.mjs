@@ -3418,6 +3418,29 @@ test("dynamic planning failure or declined authorization starts nothing", async 
 
   registry.complete = async () => ({
     stopReason: "stop",
+    content: [{ type: "text", text: "x".repeat(12 * 1024 + 1) }],
+  });
+  await assert.rejects(
+    tool.execute("oversized", {
+      action: "start", task: "synthetic", dynamicPlan: true,
+    }, undefined, undefined,
+    context({ confirmations: [true], context: { model, modelRegistry: registry } })),
+    /planner_response_invalid_size/,
+  );
+  assert.equal(executions, 0);
+
+  registry.complete = async () => { throw new Error("planner_request_timeout"); };
+  await assert.rejects(
+    tool.execute("timeout", {
+      action: "start", task: "synthetic", dynamicPlan: true,
+    }, undefined, undefined,
+    context({ confirmations: [true], context: { model, modelRegistry: registry } })),
+    /planner_request_timeout/,
+  );
+  assert.equal(executions, 0);
+
+  registry.complete = async () => ({
+    stopReason: "stop",
     content: [{ type: "text", text: JSON.stringify({
       version: 1,
       roles: [

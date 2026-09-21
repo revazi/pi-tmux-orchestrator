@@ -13,10 +13,13 @@ Keep these results distinct:
    staged package.
 2. **Provider-free actual-Pi acceptance** proves Pi loads the staged extension,
    commands, model tool, and skill, and connects staged-package custom TUI/RPC
-   workers through startup, broker reconnection, restart, revocation, and cleanup
-   without sending a prompt. It does not claim generated reports.
-3. **Local tmux acceptance** exercises broker, panes, routing, restart, and
-   retained metadata on the local machine; model-free peers cover report paths.
+   workers from a fixed accepted planning record through startup, broker
+   reconnection, restart, revocation, retained provenance, and cleanup without
+   sending a prompt. It does not exercise planner inference or claim generated
+   reports.
+3. **Local tmux acceptance** exercises fixed accepted v8/v9 plans across TUI/RPC
+   broker panes, routing, rollback, restart, cleanup, and retained metadata;
+   model-free peers cover report paths.
 4. **Provider-backed acceptance** measures real model behavior and usage. It can
    incur cost and must be explicitly chosen.
 
@@ -78,6 +81,28 @@ state and a non-secret local model catalog, and fails if its provider-request
 sentinel receives traffic. It covers actual-Pi custom TUI/RPC startup and recovery,
 not inference or a complete report round. If Pi is unavailable, that layer is
 reported as skipped rather than replaced by synthetic evidence.
+
+### Automated provider-free planning gate
+
+`scripts/test.sh` is the authoritative model-free gate. Its planning coverage
+includes strict preferred/fallback and scoped-catalog selection; minimum/maximum
+built-in and trusted-custom topologies; malformed and oversized responses;
+unsupported thinking, unavailable or ambiguous models, duplicate/excess roles,
+stale task/config/topology/catalog/resource bindings, declined confirmations,
+and planner/RPC timeout failures. Fake completion fixtures exercise strict parsing
+and shared start admission but are not production inference evidence.
+
+The real-tmux layer injects a fixed accepted decision, binds it through dry-run
+and launch, and exercises manifest v8/v9 TUI/RPC startup, custom startup rollback,
+broker and worker restart, exact cleanup, and retained status/Supervisor reads.
+The staged actual-Pi layer repeats custom TUI/RPC lifecycle acceptance with a
+local no-inference catalog and a network request sentinel. Security assertions
+keep task/context/custom-resource bodies out of argv, manifests, SQLite, status,
+dashboards, and Supervisor projections; require owner-only temporary files;
+retain one writer plus mandatory built-in review; and revalidate target-project
+custom trust before restart. These checks do not access real credentials or
+endpoints and do not establish Jev availability, planner quality, worker quality,
+provider cost, or latency.
 
 ## 1. Stage the exact local package
 
@@ -185,7 +210,26 @@ cd /absolute/path/to/inspected-test-project
 pi --no-extensions --no-skills -e "$PACKAGE_ROOT" --no-session
 ```
 
-Run the smallest useful matrix rather than every expensive combination:
+Run the smallest useful matrix rather than every expensive combination.
+Provider-backed planning evaluation is **not authorized by this guide**. Before
+making any call, record separate owner approval and freeze this paired benchmark:
+
+| Case | Fixed task class | Static/manual arm | Dynamic arm |
+| --- | --- | --- | --- |
+| 1 | simple bounded change with no specialist need | built-in implementer + reviewer | planner may not remove either built-in role |
+| 2 | one clearly specialist-relevant change | same explicitly enabled specialist candidate set | planner chooses from that exact set |
+| 3 | ambiguous cross-cutting change | all reviewed optional candidates available | planner chooses the smallest accepted roster |
+
+Use the same reviewed project revision, task class, profile, model availability,
+budget policy, required checks, and acceptance rubric for both arms. Run one pair
+per case first; any repeat or broader matrix needs fresh approval. Record only
+the bounded facts listed in section F plus planner latency, corrections, invalid
+choices, false specialist omissions, and unnecessary specialists. Report exact
+Jev and fallback evidence separately; never substitute a display-name match.
+Stop the benchmark on a trust/authority violation, private-body leak, invalid
+model choice, failed mandatory review, or unexpected provider request. Synthetic
+and fixed-output runs remain lifecycle evidence only and never fill a quality or
+cost cell.
 
 ### A. Command and parent supervision
 
