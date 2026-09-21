@@ -22,7 +22,9 @@ Keep these results distinct:
 
 Model-free fixtures and serialized-byte/operation counts are proxies. They do
 not prove provider cost, cache behavior, reviewer quality, or production-wire
-acceptance.
+acceptance. The suite also validates the strict user-global planner-policy
+parser/projection and selection against synthetic available/scoped catalogs;
+these checks make no provider call and do not identify Jev.
 
 For the next stable candidate, run this guide as part of the explicit
 [release gate #139](https://github.com/revazi/pi-tmux-orchestrator/issues/139)
@@ -46,6 +48,18 @@ Run the normal suite first:
 ```bash
 scripts/test.sh
 ```
+
+For a reviewed planner-policy fixture outside the target project, the metadata-
+only validation boundary can also be inspected without contacting a provider:
+
+```bash
+PI_TMUX_ORCHESTRATOR_PLANNER_CONFIG=/absolute/path/planner.json \
+  pi-tmux-agents --json planner-policy --project /absolute/project
+```
+
+The output must contain only the config path, configured flag, and normalized
+canonical identity/thinking policy—never credentials, endpoints, task bodies,
+or provider response bodies.
 
 When Pi is available, this invokes
 `tests/actual_pi_custom_lifecycle.py` against the exact disposable package staged

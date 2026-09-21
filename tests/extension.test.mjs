@@ -12,6 +12,7 @@ import {
   plannerModelCandidates,
   runPreflightPlanner,
   selectDecisionModel,
+  validateDecisionModelPolicy,
   validatePlannerDecision,
 } from "../extensions/orchestrator-planner.js";
 import {
@@ -58,6 +59,23 @@ async function waitFor(predicate, timeoutMs = 1_000) {
 
 function success(command, data = {}) {
   return { schema_version: "1", command, success: true, data, error: null };
+}
+
+function plannerPolicy({ preferred = null, fallbacks = [], noEligible = "cancel" } = {}) {
+  return {
+    version: 1,
+    preferred,
+    fallbacks,
+    no_eligible: noEligible,
+  };
+}
+
+function plannerPolicyEnvelope(policy = plannerPolicy()) {
+  return success("planner-policy", {
+    config_path: "/external/tmux-orchestrator-planner.json",
+    configured: true,
+    policy,
+  });
 }
 
 function harness(exec) {
@@ -2759,53 +2777,73 @@ test("start keeps the invoking Pi as parent and starts no separate parent sessio
   assert.match(result.content[0].text, /This invoking Pi remains the parent/);
 });
 
-test("preflight decision model uses exact override then parent and deterministic fallback", () => {
-  const model = (provider, id, levels = {}) => ({
+test("preflight decision model uses exact per-run, preferred, then cross-provider fallback order", () => {
+  const model = (provider, id, levels = {}, name = id) => ({
     provider,
     id,
+    name,
     reasoning: true,
     thinkingLevelMap: levels,
   });
-  const canonicalJev = model("zeta", "jev", { high: "high", xhigh: "xhigh" });
-  const parent = model("parent", "current");
-  const alpha = model("alpha", "fallback");
+  const preferred = model("canonical", "exact-id");
+  const grok = model("xai", "grok-exact");
+  const openai = model("openai", "gpt-exact");
+  const fuzzyJev = model("other", "unrelated-id", {}, "Jev display label");
   const ctx = {
-    model: parent,
+    model: fuzzyJev,
     scopedModels: [],
-    modelRegistry: { getAvailable: () => [alpha, parent, canonicalJev] },
+    modelRegistry: { getAvailable: () => [openai, fuzzyJev, grok, preferred] },
   };
-  const current = selectDecisionModel(ctx);
-  assert.equal(current.provider, "parent");
-  assert.equal(current.modelId, "current");
-  assert.equal(current.source, "parent-model-fallback");
+  const configured = plannerPolicy({
+    preferred: { provider: "canonical", model: "exact-id", thinking: "medium" },
+    fallbacks: [
+      { provider: "xai", model: "grok-exact", thinking: "low" },
+      { provider: "openai", model: "gpt-exact", thinking: "medium" },
+    ],
+  });
 
-  ctx.model = { provider: "missing", id: "parent" };
-  const fallback = selectDecisionModel(ctx);
-  assert.equal(fallback.provider, "alpha");
-  assert.equal(fallback.modelId, "fallback");
-  assert.equal(fallback.source, "available-model-fallback");
+  const selectedPreferred = selectDecisionModel(ctx, undefined, configured);
+  assert.equal(selectedPreferred.modelId, "exact-id");
+  assert.equal(selectedPreferred.source, "configured-preferred");
+
+  const preferredWithoutMedium = model("canonical", "exact-id", { medium: null });
+  ctx.modelRegistry.getAvailable = () => [openai, grok, preferredWithoutMedium];
+  assert.equal(selectDecisionModel(ctx, undefined, configured).modelId, "grok-exact");
+
+  ctx.modelRegistry.getAvailable = () => [openai, fuzzyJev, grok];
+  const selectedFallback = selectDecisionModel(ctx, undefined, configured);
+  assert.equal(selectedFallback.provider, "xai");
+  assert.equal(selectedFallback.source, "configured-fallback");
 
   const explicit = selectDecisionModel(ctx, {
-    provider: "zeta", model: "jev", thinking: "low",
-  });
-  assert.equal(explicit.source, "explicit");
-  assert.equal(explicit.modelId, "jev");
+    provider: "openai", model: "gpt-exact", thinking: "low",
+  }, configured);
+  assert.equal(explicit.source, "per-run");
+  assert.equal(explicit.modelId, "gpt-exact");
   assert.equal(explicit.thinking, "low");
 
   ctx.modelRegistry.getAvailable = () => [
     ...Array.from({ length: 101 }, (_, index) => model("alpha", `model-${index}`)),
-    canonicalJev,
+    openai,
   ];
   assert.equal(selectDecisionModel(ctx, {
-    provider: "zeta", model: "jev", thinking: "medium",
-  }).modelId, "jev");
+    provider: "openai", model: "gpt-exact", thinking: "medium",
+  }, configured).modelId, "gpt-exact");
   assert.throws(
-    () => selectDecisionModel(ctx, { provider: "parent", model: "current", thinking: "high" }),
+    () => selectDecisionModel(ctx, {
+      provider: "openai", model: "gpt-exact", thinking: "high",
+    }, configured),
     /exceeds_medium_cap/,
   );
   assert.throws(
-    () => selectDecisionModel(ctx, { provider: "missing", model: "model" }),
+    () => selectDecisionModel(ctx, { provider: "missing", model: "model" }, configured),
     /decision_model_unavailable/,
+  );
+
+  ctx.modelRegistry.getAvailable = () => [fuzzyJev];
+  assert.throws(
+    () => selectDecisionModel(ctx, undefined, configured),
+    /no_eligible_decision_model/,
   );
 });
 
@@ -2826,6 +2864,32 @@ test("preflight candidate projection honors scoped thinking and strict decision 
   const candidates = plannerModelCandidates(ctx);
   assert.deepEqual(candidates.map((item) => item.modelId), ["medium"]);
   assert.deepEqual(candidates[0].thinkingLevels, ["low", "medium"]);
+  const scopedSelection = selectDecisionModel(ctx, undefined, plannerPolicy({
+    preferred: { provider: "provider", model: "medium", thinking: "medium" },
+  }));
+  assert.equal(scopedSelection.model, medium);
+  assert.throws(
+    () => selectDecisionModel(ctx, undefined, plannerPolicy({
+      preferred: { provider: "provider", model: "medium", thinking: "off" },
+    })),
+    /no_eligible_decision_model/,
+  );
+  assert.throws(
+    () => plannerModelCandidates({
+      scopedModels: [{ model: medium }, { model: medium }],
+      modelRegistry: { getAvailable: () => [] },
+    }),
+    /ambiguous_decision_model_catalog/,
+  );
+  assert.throws(
+    () => validateDecisionModelPolicy({
+      version: 1,
+      preferred: { provider: "provider", model: "medium", thinking: "low" },
+      fallbacks: [{ provider: "provider", model: "medium", thinking: "medium" }],
+      no_eligible: "cancel",
+    }),
+    /duplicate_planner_policy_identity/,
+  );
   const input = { withProbe: false, modelOverrides: { reviewer: { thinking: "low" } } };
   const valid = validatePlannerDecision({
     version: 1,
@@ -2905,6 +2969,15 @@ test("dynamic start plans a mixed-provider built-in topology before preview", as
   let completion;
   let execCalls = 0;
   const { tool } = harness(async (_command, args) => {
+    if (args[2] === "planner-policy") {
+      assert.equal(args.includes(privateTask), false);
+      return {
+        code: 0,
+        stdout: JSON.stringify(plannerPolicyEnvelope(plannerPolicy({
+          preferred: { provider: "xai", model: "grok-4.6", thinking: "medium" },
+        }))),
+      };
+    }
     execCalls += 1;
     assert.equal(args.includes(privateTask), false);
     assert.ok(args.includes("--with-probe"));
@@ -2989,7 +3062,16 @@ test("dynamic planning failure or declined authorization starts nothing", async 
   const model = { provider: "provider", id: "model", reasoning: true };
   let completions = 0;
   let executions = 0;
-  const { tool } = harness(async () => {
+  let selectedPolicy = plannerPolicy({
+    preferred: { provider: "provider", model: "model", thinking: "medium" },
+  });
+  const { tool } = harness(async (_command, args) => {
+    if (args[2] === "planner-policy") {
+      return {
+        code: 0,
+        stdout: JSON.stringify(plannerPolicyEnvelope(selectedPolicy)),
+      };
+    }
     executions += 1;
     return { code: 0, stdout: JSON.stringify(success("start")) };
   });
@@ -3042,12 +3124,134 @@ test("dynamic planning failure or declined authorization starts nothing", async 
   );
   assert.equal(executions, 1);
 
+  selectedPolicy = plannerPolicy({
+    preferred: { provider: "missing", model: "unavailable", thinking: "medium" },
+  });
+  await assert.rejects(
+    tool.execute("unavailable", {
+      action: "start", task: "synthetic", dynamicPlan: true,
+    }, undefined, undefined, context({ context: { model, modelRegistry: registry } })),
+    /no_eligible_decision_model/,
+  );
+  assert.equal(completions, 1);
+  assert.equal(executions, 1);
+
+  selectedPolicy = {
+    version: 1,
+    preferred: { provider: "provider", model: "model", thinking: "high" },
+    fallbacks: [],
+    no_eligible: "cancel",
+  };
+  await assert.rejects(
+    tool.execute("invalid-policy", {
+      action: "start", task: "synthetic", dynamicPlan: true,
+    }, undefined, undefined, context({ context: { model, modelRegistry: registry } })),
+    /invalid_planner_policy_projection/,
+  );
+  assert.equal(completions, 1);
+  assert.equal(executions, 1);
+
   await assert.rejects(
     tool.execute("orphan", {
       action: "start", task: "synthetic", decisionModel: { provider: "provider", model: "model" },
     }, undefined, undefined, context({ context: { model, modelRegistry: registry } })),
     /decision_model_requires_dynamic_plan/,
   );
+});
+
+test("invalid user-global planner configuration blocks provider and start calls", async () => {
+  const model = { provider: "provider", id: "model", reasoning: true };
+  let completions = 0;
+  let starts = 0;
+  const { tool } = harness(async (_command, args) => {
+    if (args[2] === "planner-policy") {
+      return {
+        code: 2,
+        stdout: JSON.stringify({
+          schema_version: "1",
+          command: "planner-policy",
+          success: false,
+          data: null,
+          error: { code: "orchestration_error", message: "Planner policy is invalid" },
+        }),
+      };
+    }
+    starts += 1;
+    return { code: 0, stdout: JSON.stringify(success("start")) };
+  });
+  await assert.rejects(
+    tool.execute("invalid-config", {
+      action: "start", task: "synthetic", dynamicPlan: true,
+    }, undefined, undefined, context({
+      context: {
+        model,
+        modelRegistry: {
+          getAvailable: () => [model],
+          complete: async () => { completions += 1; },
+        },
+      },
+    })),
+    /planner_policy_unavailable/,
+  );
+  assert.equal(completions, 0);
+  assert.equal(starts, 0);
+});
+
+test("zero eligible models require explicit configured static fallback and final launch confirmation", async () => {
+  const available = { provider: "other", id: "available", reasoning: false };
+  let completions = 0;
+  let startCalls = 0;
+  const { tool } = harness(async (_command, args) => {
+    if (args[2] === "planner-policy") {
+      return {
+        code: 0,
+        stdout: JSON.stringify(plannerPolicyEnvelope(plannerPolicy({
+          preferred: { provider: "missing", model: "unavailable", thinking: "medium" },
+          noEligible: "static",
+        }))),
+      };
+    }
+    startCalls += 1;
+    const dryRun = args.includes("--dry-run");
+    return {
+      code: 0,
+      stdout: JSON.stringify(success("start", {
+        project: process.cwd(),
+        session: "pi-static-fallback",
+        dry_run: dryRun,
+        roles: [],
+        trust: { child_bypass: false },
+        paths: { state_root: "/tmp/state" },
+      })),
+    };
+  });
+  const registry = {
+    getAvailable: () => [available],
+    complete: async () => { completions += 1; throw new Error("must not call provider"); },
+  };
+  await assert.rejects(
+    tool.execute("static-decline", {
+      action: "start", task: "synthetic", dynamicPlan: true,
+    }, undefined, undefined, context({
+      confirmations: [false],
+      context: { model: available, modelRegistry: registry },
+    })),
+    /dynamic_planning_static_fallback_declined/,
+  );
+  assert.equal(startCalls, 0);
+  assert.equal(completions, 0);
+
+  await assert.rejects(
+    tool.execute("static-final-decline", {
+      action: "start", task: "synthetic", dynamicPlan: true,
+    }, undefined, undefined, context({
+      confirmations: [true, false],
+      context: { model: available, modelRegistry: registry },
+    })),
+    /start_confirmation_declined/,
+  );
+  assert.equal(startCalls, 1);
+  assert.equal(completions, 0);
 });
 
 test("start previews CLI policy, keeps private text out of argv, and cleans mode-0600 files", async () => {
@@ -3333,6 +3537,14 @@ test("slash --plan uses the same preflight decision and two-gate start path", as
   let completions = 0;
   let executions = 0;
   const { commands } = harness(async (_command, args) => {
+    if (args[2] === "planner-policy") {
+      return {
+        code: 0,
+        stdout: JSON.stringify(plannerPolicyEnvelope(plannerPolicy({
+          preferred: { provider: "provider", model: "decision", thinking: "medium" },
+        }))),
+      };
+    }
     executions += 1;
     assert.ok(args.includes("--without-probe"));
     assert.ok(args.includes("--without-playwright"));

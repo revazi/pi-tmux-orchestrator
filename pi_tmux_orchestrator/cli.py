@@ -42,6 +42,7 @@ from .commands import (
 )
 from .models import CommandResult, OrchestrationArgumentParser, OrchestrationError
 from .output import bounded_message, emit_json, eprint
+from .planner_policy import planner_policy_command
 from .profiles import profile_name
 from .relay import relay_command
 from .supervisor_commands import (
@@ -552,6 +553,17 @@ def build_parser() -> argparse.ArgumentParser:
     stop.add_argument("--yes", action="store_true")
     stop.set_defaults(handler=stop_command)
 
+    planner_policy = subparsers.add_parser(
+        "planner-policy",
+        help="validate and project the strict user-global decision-model policy",
+    )
+    planner_policy.add_argument(
+        "--project",
+        default=os.getcwd(),
+        help="enforce that planner policy remains outside this project",
+    )
+    planner_policy.set_defaults(handler=planner_policy_command)
+
     doctor = subparsers.add_parser(
         "doctor", help="check local prerequisites and defaults"
     )
@@ -597,6 +609,7 @@ def parse_internal_command(argv: list[str]) -> argparse.Namespace | None:
 def requested_command(argv: list[str]) -> str:
     public_commands = {
         "doctor",
+        "planner-policy",
         "role-registry",
         "controller",
         "supervisor",

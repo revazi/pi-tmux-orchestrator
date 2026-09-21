@@ -175,21 +175,66 @@ bounded model decision before the ordinary dry-run preview. This is an
 additional provider call and requires its own interactive confirmation showing
 the exact decision model, thinking, selection source, and candidate count. A
 second confirmation remains required before launch. Declining either gate,
-cancellation, malformed/oversized output, unavailable models, unsupported
-thinking, or conflicting explicit constraints starts nothing.
+cancellation, malformed/oversized policy or output, unavailable models,
+unsupported thinking, ambiguity, or conflicting explicit constraints starts
+nothing.
 
-Decision-model precedence in this first slice is:
+Decision-model precedence is:
 
 1. exact model-tool `decisionModel: {provider, model, thinking?}`;
-2. the current parent Pi model when it is in the available/scoped catalog;
-3. the first deterministic provider/model-sorted available candidate.
+2. exact `preferred` identity from the strict user-global planner policy;
+3. the first eligible identity in the policy's ordered `fallbacks` array;
+4. configured `noEligible: "static"` with explicit confirmation, or cancellation.
 
-Use the explicit override for Jev only after supplying its canonical
-provider/model identity. The current catalog does not provide a known Jev
-identity, so the runtime never guesses an ID or fuzzy-matches a display name.
-The lookup does not read credentials or endpoints.
-Decision thinking and every selected worker thinking level are capped at
-`medium`; a conflicting explicit higher setting fails before the planning call.
+The policy is read through the authoritative Python boundary from
+`~/.pi/agent/tmux-orchestrator-planner.json`. An absolute
+`PI_TMUX_ORCHESTRATOR_PLANNER_CONFIG` overrides that path. Its version-1 shape is:
+
+```json
+{
+  "version": 1,
+  "preferred": {
+    "provider": "provider-a",
+    "model": "exact-model-a",
+    "thinking": "medium"
+  },
+  "fallbacks": [
+    { "provider": "provider-b", "model": "exact-model-b", "thinking": "low" },
+    { "provider": "provider-c", "model": "exact-model-c", "thinking": "medium" }
+  ],
+  "noEligible": "cancel"
+}
+```
+
+`preferred` may be `null`; at most 16 fallbacks are accepted. The ordered list
+may span enabled providers—for example exact Grok and OpenAI identities resolved
+from `/or-models`—without constraining worker roles to that provider. Every candidate
+must contain exactly a canonical provider, canonical model, and explicit `off`,
+`minimal`, `low`, or `medium` thinking level. Identities must be unique across
+preferred and fallback entries. Unknown/duplicate fields, duplicate identities,
+partial entries, higher thinking, non-regular/symlinked/oversized files, and
+policy files inside the target project fail closed. A missing policy is the
+versioned empty `cancel` policy. `pi-tmux-agents --json planner-policy --project
+/absolute/project` validates and projects only the path, configured flag, and
+bounded identity policy; it does not expose auth or endpoint data.
+
+At runtime each identity is matched exactly against Pi's bounded
+available/scoped catalog and its model-specific thinking support. An unavailable
+or unsupported configured candidate is ineligible and the next configured entry
+is considered. Duplicate catalog identities are ambiguous and reject the whole
+start. `noEligible: "cancel"` rejects before a provider or orchestration call;
+`"static"` offers an explicit no-provider-call fallback to the ordinary
+static/manual preview and final confirmation. An unavailable or unsupported
+exact per-run override fails immediately and never falls through to configured
+entries.
+
+Use the preferred slot or explicit override for Jev only after supplying its
+canonical provider/model identity. The canonical Jev identity remains unknown,
+so no default or placeholder is shipped and the runtime never guesses an ID or
+fuzzy-matches a model/display name. The lookup does not read credentials or
+endpoints. Decision thinking and every selected worker thinking level are capped
+at `medium`; a conflicting explicit higher setting fails before the planning
+call.
 The planner receives the bounded task, optional structured parent capsule,
 project identity, built-in role descriptors, exact candidate model metadata,
 and explicit constraints. It gets no tools and must return one strict JSON
@@ -763,6 +808,14 @@ operator authentication alone cannot bypass that check.
 
 Kills only the selected tmux grid. Pi sessions and metadata-only broker state
 remain under `~/.pi/agent/orchestrations/`.
+
+### `planner-policy [--project PATH]`
+
+Validates the external strict planner policy and emits its bounded normalized
+identity/thinking projection. It does not inspect credentials, endpoints, tasks,
+or provider responses and never makes a provider call. The project defaults to
+the current directory and is used only to reject a policy path inside the target
+project.
 
 ### `doctor [--project PATH]`
 

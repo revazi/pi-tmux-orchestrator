@@ -20,6 +20,7 @@ class JsonMainTests(JsonCliFixture):
         parser = ORCHESTRATOR.build_parser()
         cases = {
             "doctor": ["doctor"],
+            "planner-policy": ["planner-policy"],
             "role-registry": ["role-registry"],
             "controller": ["controller", "status"],
             "supervisor": ["supervisor", "capabilities"],

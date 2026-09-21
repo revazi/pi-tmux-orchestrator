@@ -121,10 +121,13 @@ terminal CLI; explicit run options take precedence.
 For opt-in model-guided preflight selection, use `/or-start --plan TASK` or
 model-tool `dynamicPlan=true`. Before preview, the extension shows the exact
 decision model and requires approval for one additional provider call. An
-exact model-tool `decisionModel` wins; use that for Jev only after supplying its
-canonical provider/model identity. The runtime never guesses or fuzzy-matches
-Jev. Without an override it uses the current parent model or a deterministic
-available fallback. The strict one-shot decision selects only built-in roles and
+exact model-tool `decisionModel` wins. Otherwise the strict version-1
+user-global planner policy selects an exact configured preferred identity, then
+ordered exact cross-provider fallbacks. Use the preferred slot for Jev only after
+its canonical provider/model identity is known; the runtime never guesses or
+fuzzy-matches Jev. If no configured identity is eligible, policy either cancels
+or offers an explicitly confirmed static/manual start without a planning call.
+The strict one-shot decision selects only built-in roles and
 exact available per-role provider/model/thinking tuples at or below `medium`;
 roles may use different enabled providers. It cannot remove the implementer/reviewer,
 invent roles, tools, or model IDs, or start tmux/workers before the separate
@@ -221,9 +224,36 @@ IDs must already exist in the user-global registry. Explicit run options overrid
 an exact project mapping.
 
 Pi remains authoritative for provider authentication. The orchestrator does not
-read or copy provider credentials. Model policy, custom profiles, specialist
-activation, observational budgets, worker skills, and workspace capsules are
-documented in the [complete usage reference](references/usage.md).
+read or copy provider credentials.
+
+Dynamic planning uses a separate strict user-global file,
+`~/.pi/agent/tmux-orchestrator-planner.json`:
+
+```json
+{
+  "version": 1,
+  "preferred": {
+    "provider": "provider-a",
+    "model": "exact-model-a",
+    "thinking": "medium"
+  },
+  "fallbacks": [
+    { "provider": "provider-b", "model": "exact-model-b", "thinking": "low" },
+    { "provider": "provider-c", "model": "exact-model-c", "thinking": "medium" }
+  ],
+  "noEligible": "cancel"
+}
+```
+
+Resolve every identity from `/or-models`; display names never match. `preferred`
+may be `null`, fallbacks are tried in listed order (for example, exact Grok and
+OpenAI identities discovered from the current catalog), every thinking level is
+explicit and capped at `medium`, and `noEligible` is exactly `cancel` or
+`static`. Missing policy defaults to cancellation. `static` still requires an
+extra confirmation and the ordinary final launch confirmation. Model policy,
+custom profiles, specialist activation, planner policy, observational budgets,
+worker skills, and workspace capsules are documented in the
+[complete usage reference](references/usage.md).
 
 ## Upgrading to 0.10
 
@@ -294,6 +324,7 @@ pi install npm:pi-tmux-orchestrator@0.8.1
 The Python CLI provides the complete operational surface:
 
 ```bash
+pi-tmux-agents --json planner-policy --project /absolute/project
 pi-tmux-agents list
 pi-tmux-agents status SESSION
 pi-tmux-agents attach SESSION
