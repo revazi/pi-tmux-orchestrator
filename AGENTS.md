@@ -41,6 +41,7 @@ Provide a small, reusable, intentionally tmux-scoped Pi skill and modular standa
 - `extensions/orchestrator-context-policy.js`: bounded Pi retain/prune start inputs and CLI-resolved confirmation
 - `extensions/orchestrator-budgets.js`: bounded native budget override adapter
 - `extensions/orchestrator-models.js`: bounded model metadata and override adapter
+- `extensions/orchestrator-planner.js`: bounded model-guided preflight selection and strict decision validation
 - `extensions/orchestrator-dashboard.js`: bounded cross-session Pi overlay and doctor projection
 - `extensions/orchestrator-update.js`: best-effort npm release notice
 - `extensions/orchestrator-parent.js`: parent-session observer runtime and reconnection state machine

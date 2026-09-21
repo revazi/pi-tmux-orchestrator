@@ -30,6 +30,12 @@ import {
   startInputWithParentModel,
 } from "./orchestrator-models.js";
 import {
+  decisionModelConfirmation,
+  plannerPlanConfirmation,
+  runPreflightPlanner,
+  selectDecisionModel,
+} from "./orchestrator-planner.js";
+import {
   getOrchestratorAboutSummary,
   scheduleOrchestratorUpdateNotice,
 } from "./orchestrator-update.js";
@@ -111,6 +117,21 @@ const parameters = {
     useParentModel: {
       type: "boolean",
       description: "For start, use this Pi session's exact current provider/model/thinking as the default for every worker role",
+    },
+    dynamicPlan: {
+      type: "boolean",
+      description: "Before start preview, make one separately confirmed provider call that chooses the bounded built-in worker roster and exact per-role model/thinking settings. No tmux session or worker starts before the decision and final confirmation",
+    },
+    decisionModel: {
+      type: "object",
+      additionalProperties: false,
+      required: ["provider", "model"],
+      description: "Exact available provider/model for dynamic planning. Use this for a canonical Jev identity only when the operator supplies it; the runtime never guesses or fuzzy-matches Jev. Omit to use the current parent model, then a deterministic available fallback. Planning thinking is capped at medium",
+      properties: {
+        provider: { type: "string", minLength: 1, maxLength: 256 },
+        model: { type: "string", minLength: 1, maxLength: 256 },
+        thinking: { type: "string", enum: ["off", "minimal", "low", "medium"] },
+      },
     },
     modelOverrides: {
       type: "object",
@@ -361,7 +382,7 @@ function customRoleLine(role) {
   return `${base}; contract=${role.specialist_contract}; selection=${role.selection_source}; thinking-source=${role.thinking_source}; activation=${role.activation_source}`;
 }
 
-function startConfirmation(preview) {
+function startConfirmation(preview, plannerPlan) {
   const data = preview.data ?? {};
   const roles = (data.roles || []).map(customRoleLine).join("\n");
   const trustPolicy = data.trust?.policy;
@@ -381,6 +402,7 @@ function startConfirmation(preview) {
     `Execution profile: ${executionProfileConfirmation(data)}`,
     `Orchestration config: ${configPath}`,
     `Project mapping: ${projectMapping}`,
+    `Preflight decision:\n${plannerPlanConfirmation(plannerPlan)}`,
     `Roles/models (CLI policy):\n${roles}`,
     `Effective provider-usage budget policy:\n${budgetConfirmation(data.budget_policy)}`,
     `Repair-round continuation cap: ${repairLimitConfirmation(data)}`,
@@ -461,10 +483,8 @@ function validateWorkspaceCapsuleSelection(input) {
   }
 }
 
-async function runStart(pi, input, signal, ctx) {
-  if (ctx.mode !== "tui" || !ctx.hasUI) {
-    throw new Error("start_requires_interactive_tui_confirmation");
-  }
+function validateStartRequest(input, ctx) {
+  if (ctx.mode !== "tui" || !ctx.hasUI) throw new Error("start_requires_interactive_tui_confirmation");
   if (!input.task || !String(input.task).trim()) throw new Error("start_requires_task");
   if (input.probeTask && input.withProbe === false) throw new Error("probe_task_requires_role");
   if (input.playwrightTask && input.withPlaywright === false) throw new Error("playwright_task_requires_role");
@@ -475,34 +495,77 @@ async function runStart(pi, input, signal, ctx) {
   if (isControllerMode() && !String(input.project || "").trim()) {
     throw new Error("controller_start_requires_explicit_project");
   }
-
-  const startInput = startInputWithParentModel(input, ctx);
-  const project = await canonicalProject(startInput.project, ctx.cwd, {
-    requireCanonical: Boolean(startInput.workspaceCapsule),
-  });
-  if (startInput.approveProject) {
-    if (!ctx.isProjectTrusted()) throw new Error("approve_requires_trusted_parent_project");
-    const bypassConfirmed = await ctx.ui.confirm(
-      "Child project trust bypass",
-      "The parent trust decision does not automatically apply to child Pi sessions. Pass --approve to every child for this run?",
-    );
-    if (!bypassConfirmed) throw new Error("approve_confirmation_declined");
+  if (input.decisionModel !== undefined && input.dynamicPlan !== true) {
+    throw new Error("decision_model_requires_dynamic_plan");
   }
+}
 
-  return withPrivateFiles(startFileValues(startInput), async (paths) => {
-    const preview = await runCli(pi, "start", buildStartArgs(startInput, project, paths, { dryRun: true }), signal);
+async function applyDynamicPlan(ctx, input, project, signal) {
+  if (input.dynamicPlan !== true) return { input, plan: undefined };
+  const selection = selectDecisionModel(ctx, input.decisionModel);
+  const planningConfirmed = await ctx.ui.confirm(
+    "Authorize preflight decision call?",
+    decisionModelConfirmation(selection),
+  );
+  if (!planningConfirmed) throw new Error("dynamic_planning_confirmation_declined");
+  return runPreflightPlanner(ctx, input, project, selection, signal);
+}
+
+async function confirmChildApproval(ctx, input) {
+  if (!input.approveProject) return;
+  if (!ctx.isProjectTrusted()) throw new Error("approve_requires_trusted_parent_project");
+  const confirmed = await ctx.ui.confirm(
+    "Child project trust bypass",
+    "The parent trust decision does not automatically apply to child Pi sessions. Pass --approve to every child for this run?",
+  );
+  if (!confirmed) throw new Error("approve_confirmation_declined");
+}
+
+function validatePlannerPreview(data, plannerPlan) {
+  if (!plannerPlan) return;
+  if (!Array.isArray(data?.roles) || data.roles.length !== plannerPlan.roles.length) {
+    throw new Error("dynamic_planning_preview_mismatch");
+  }
+  const actual = new Map(data.roles.map((role) => [role?.name, role]));
+  if (actual.size !== data.roles.length) throw new Error("dynamic_planning_preview_mismatch");
+  for (const expected of plannerPlan.roles) {
+    const role = actual.get(expected.role);
+    if (role?.provider !== expected.provider
+        || role?.model !== expected.model
+        || role?.thinking !== expected.thinking) {
+      throw new Error("dynamic_planning_preview_mismatch");
+    }
+  }
+}
+
+async function launchConfirmedStart(pi, input, project, plannerPlan, signal, ctx) {
+  return withPrivateFiles(startFileValues(input), async (paths) => {
+    const preview = await runCli(pi, "start", buildStartArgs(input, project, paths, { dryRun: true }), signal);
+    if (plannerPlan?.usage) preview.planner_usage = plannerPlan.usage;
     if (!preview.success) return preview;
-    validateWorkerContextPreview(preview.data, startInput.workerContext);
-    const confirmed = await ctx.ui.confirm("Start tmux orchestration?", startConfirmation(preview));
+    validateWorkerContextPreview(preview.data, input.workerContext);
+    validatePlannerPreview(preview.data, plannerPlan);
+    const confirmed = await ctx.ui.confirm(
+      "Start tmux orchestration?",
+      startConfirmation(preview, plannerPlan),
+    );
     if (!confirmed) throw new Error("start_confirmation_declined");
     const skipModelCheck = previewModelsAreAvailable(ctx, preview.data?.roles);
-    return runCli(
-      pi,
-      "start",
-      buildStartArgs(startInput, project, paths, { skipModelCheck }),
-      signal,
-    );
+    const envelope = await runCli(pi, "start", buildStartArgs(input, project, paths, { skipModelCheck }), signal);
+    if (plannerPlan?.usage) envelope.planner_usage = plannerPlan.usage;
+    return envelope;
   });
+}
+
+async function runStart(pi, input, signal, ctx) {
+  validateStartRequest(input, ctx);
+  const initialInput = startInputWithParentModel(input, ctx);
+  const project = await canonicalProject(initialInput.project, ctx.cwd, {
+    requireCanonical: Boolean(initialInput.workspaceCapsule),
+  });
+  const planned = await applyDynamicPlan(ctx, initialInput, project, signal);
+  await confirmChildApproval(ctx, planned.input);
+  return launchConfirmedStart(pi, planned.input, project, planned.plan, signal, ctx);
 }
 
 function requireAttachContext(ctx) {
@@ -615,56 +678,50 @@ function notifyEnvelope(ctx, envelope) {
   return message;
 }
 
-async function executeAction(pi, input, signal, ctx, superviseStart = () => {}) {
-  let envelope;
-  try {
-    switch (input.action) {
-      case "models":
-        envelope = modelCatalogEnvelope(ctx, input.query);
-        break;
-      case "doctor": {
-        const project = await canonicalProject(input.project, ctx.cwd);
-        envelope = await runCli(pi, "doctor", ["--project", project], signal);
-        break;
-      }
-      case "list":
-        envelope = await runCli(pi, "list", [], signal);
-        break;
-      case "status":
-        envelope = await runCli(pi, "status", input.session ? [input.session] : [], signal);
-        break;
-      case "watch": {
-        const session = String(input.session || "").trim();
-        const statusEnvelope = await runCli(pi, "status", session ? [session] : [], signal);
-        if (!statusEnvelope.success) {
-          envelope = statusEnvelope;
-          break;
-        }
-        await superviseStart(statusEnvelope);
-        envelope = { ...statusEnvelope, command: "watch" };
-        break;
-      }
-      case "attach":
-        envelope = await attachAndSupervise(
-          pi,
-          input,
-          signal,
-          ctx,
-          superviseStart,
-        );
-        break;
-      case "start":
-        envelope = await runStart(pi, input, signal, ctx);
-        if (envelope.success && !envelope.data?.dry_run) {
-          void Promise.resolve(superviseStart(envelope)).catch(() => {});
-        }
-        break;
-      case "send":
-        envelope = await runSend(pi, input, signal);
-        break;
-      default:
-        throw new Error("unsupported_action");
+async function watchAction(pi, input, signal, superviseStart) {
+  const session = String(input.session || "").trim();
+  const envelope = await runCli(pi, "status", session ? [session] : [], signal);
+  if (!envelope.success) return envelope;
+  await superviseStart(envelope);
+  return { ...envelope, command: "watch" };
+}
+
+async function startAction(pi, input, signal, ctx, superviseStart) {
+  const envelope = await runStart(pi, input, signal, ctx);
+  if (envelope.success && !envelope.data?.dry_run) {
+    void Promise.resolve(superviseStart(envelope)).catch(() => {});
+  }
+  return envelope;
+}
+
+async function actionEnvelope(pi, input, signal, ctx, superviseStart) {
+  switch (input.action) {
+    case "models":
+      return modelCatalogEnvelope(ctx, input.query);
+    case "doctor": {
+      const project = await canonicalProject(input.project, ctx.cwd);
+      return runCli(pi, "doctor", ["--project", project], signal);
     }
+    case "list":
+      return runCli(pi, "list", [], signal);
+    case "status":
+      return runCli(pi, "status", input.session ? [input.session] : [], signal);
+    case "watch":
+      return watchAction(pi, input, signal, superviseStart);
+    case "attach":
+      return attachAndSupervise(pi, input, signal, ctx, superviseStart);
+    case "start":
+      return startAction(pi, input, signal, ctx, superviseStart);
+    case "send":
+      return runSend(pi, input, signal);
+    default:
+      throw new Error("unsupported_action");
+  }
+}
+
+async function executeAction(pi, input, signal, ctx, superviseStart = () => {}) {
+  try {
+    const envelope = await actionEnvelope(pi, input, signal, ctx, superviseStart);
     const summary = notifyEnvelope(ctx, envelope);
     return {
       content: [{
@@ -672,6 +729,7 @@ async function executeAction(pi, input, signal, ctx, superviseStart = () => {}) 
         text: input.action === "models" ? modelCatalogContent(envelope.data) : bounded(summary, 800),
       }],
       details: safeDetails(envelope),
+      ...(envelope.planner_usage ? { usage: envelope.planner_usage } : {}),
     };
   } catch (error) {
     throw new Error(bounded(error instanceof Error ? error.message : "orchestrator_error", 200));
@@ -744,6 +802,44 @@ async function requestedRole(pi, session, ctx) {
   return roles.includes(selected) ? selected : undefined;
 }
 
+async function commandTargetProject(ctx) {
+  if (!isControllerMode()) return undefined;
+  const project = await ctx.ui.input("Target project directory", "/absolute/path/to/project");
+  return String(project || "").trim() ? project : null;
+}
+
+async function commandChildApproval(ctx) {
+  if (!ctx.isProjectTrusted()) return false;
+  return ctx.ui.confirm(
+    "Child trust policy",
+    "Request a separately confirmed --approve bypass for child Pi sessions? No keeps native child trust prompts.",
+  );
+}
+
+async function interactiveStartRequest(args, ctx) {
+  if (!requireInteractiveTui(ctx, "or-start")) return undefined;
+  const supplied = String(args || "").trim();
+  const dynamicPlan = supplied === "--plan" || supplied.startsWith("--plan ");
+  const suppliedTask = dynamicPlan ? supplied.slice("--plan".length).trim() : supplied;
+  const task = suppliedTask || await ctx.ui.editor("Orchestration task", "");
+  if (!task?.trim()) return undefined;
+  const project = await commandTargetProject(ctx);
+  if (project === null) return undefined;
+  const runOverrides = dynamicPlan ? {} : await selectRunOverrides(ctx);
+  const approveProject = await commandChildApproval(ctx);
+  const startControls = await selectStartControls(ctx);
+  if (startControls === null) return undefined;
+  return {
+    task,
+    project,
+    dynamicPlan,
+    ...runOverrides,
+    ...startControls,
+    rpcWorkers: false,
+    approveProject,
+  };
+}
+
 function createCommandHandlers(pi, superviseStart = () => {}) {
   const models = async (args, ctx) => {
     notifyEnvelope(ctx, modelCatalogEnvelope(ctx, args));
@@ -778,39 +874,10 @@ function createCommandHandlers(pi, superviseStart = () => {}) {
   };
 
   const start = async (args, ctx) => {
-    if (!requireInteractiveTui(ctx, "or-start")) return;
-    const task = String(args || "").trim() || await ctx.ui.editor("Orchestration task", "");
-    if (!task?.trim()) return;
-    let project;
-    if (isControllerMode()) {
-      project = await ctx.ui.input("Target project directory", "/absolute/path/to/project");
-      if (!String(project || "").trim()) return;
-    }
-    const runOverrides = await selectRunOverrides(ctx);
-    const rpcWorkers = false;
-    let approveProject = false;
-    if (ctx.isProjectTrusted()) {
-      approveProject = await ctx.ui.confirm(
-        "Child trust policy",
-        "Request a separately confirmed --approve bypass for child Pi sessions? No keeps native child trust prompts.",
-      );
-    }
     try {
-      const startControls = await selectStartControls(ctx);
-      if (startControls === null) return;
-      const envelope = await runStart(
-        pi,
-        {
-          task,
-          project,
-          ...runOverrides,
-          ...startControls,
-          rpcWorkers,
-          approveProject,
-        },
-        ctx.signal,
-        ctx,
-      );
+      const request = await interactiveStartRequest(args, ctx);
+      if (!request) return;
+      const envelope = await runStart(pi, request, ctx.signal, ctx);
       if (envelope.success && !envelope.data?.dry_run) {
         void Promise.resolve(superviseStart(envelope)).catch(() => {});
       }
@@ -929,10 +996,10 @@ export default function tmuxOrchestratorExtension(pi) {
   pi.registerTool({
     name: "tmux_orchestrator",
     label: "Tmux Orchestrator",
-    description: "Supervise bounded doctor, available-model discovery, list, status, watch, attach, start, or send actions through the Pi runtime and bundled Python tmux orchestrator. Start resolves strict user-global exact-project defaults for profile/models, single or phased flow, enabled specialists, exact-project custom read-only specialists, and the workspace capsule; explicit per-run values win. It may also omit those custom specialists with projectCustomRoles=false, select deterministic or forced specialist activation, this parent Pi's current model, exact user-requested per-role provider/model/thinking overrides, strict per-run budget overrides, an opt-in additional repair-round cap, and explicit per-role retain/prune worker context. Never invent custom role IDs. The invoking Pi remains the parent; normal starts create no separate parent Pi or controller. Watch subscribes this Pi to lifecycle and final-report updates. Attach watches future transitions and switches its existing tmux client into native Pi worker panes without replaying an already-actionable initial outcome as a new parent task; prefix then L returns without stopping workers or changing this Pi's project context. New runs are watched automatically. Start always requires interactive confirmation.",
+    description: "Supervise bounded doctor, available-model discovery, list, status, watch, attach, start, or send actions through the Pi runtime and bundled Python tmux orchestrator. Start resolves strict user-global exact-project defaults for profile/models, single or phased flow, enabled specialists, exact-project custom read-only specialists, and the workspace capsule; explicit per-run values win. With dynamicPlan=true it makes one separately confirmed preflight provider call before preview to choose the bounded built-in worker roster and exact per-role model/thinking settings; an exact operator-supplied decisionModel wins, otherwise it uses the current parent model or a deterministic available fallback, and caps planning/worker thinking at medium. It never guesses or fuzzy-matches a Jev identity. It may also omit project custom specialists with projectCustomRoles=false, select deterministic or forced specialist activation, this parent Pi's current model, exact user-requested per-role provider/model/thinking overrides, strict per-run budget overrides, an opt-in additional repair-round cap, and explicit per-role retain/prune worker context. Never invent custom role IDs. The invoking Pi remains the parent; normal starts create no separate parent Pi or controller. Watch subscribes this Pi to lifecycle and final-report updates. Attach watches future transitions and switches its existing tmux client into native Pi worker panes without replaying an already-actionable initial outcome as a new parent task; prefix then L returns without stopping workers or changing this Pi's project context. New runs are watched automatically. Start always requires interactive confirmation.",
     promptSnippet: "Inspect or operate local Pi tmux orchestrations through the authoritative Python CLI",
     promptGuidelines: [
-      "Use tmux_orchestrator instead of rebuilding tmux orchestration state; before a start, synthesize a bounded contextCapsule from the current conversation when prior decisions or work matter; include only task-relevant state, constraints, acceptance criteria, paths, evidence, and open questions, never the full transcript. Enable workspaceCapsule only for an explicit cold-assignment experiment and supply only bounded existing project-relative workspaceRelevantPaths, never a repository tree; it supplements discovery and never replaces reading governing instructions. Do not claim workspace-capsule savings or correctness without authoritative provider and review evidence. Use implementationFlow=phased for complex work that benefits from read-only discovery before editing; use single for simple work or compatibility, without an extra classifier model call. Configured specialists use conservative deterministic activation gates; pass forceSpecialists only when the user explicitly requires those enabled roles to run regardless of a skip predicate. Exact-project customRoles from validated user-global configuration are included unless projectCustomRoles is false; never invent custom role identifiers, providers, models, tools, or contracts. After starting or explicitly watching a run, ensure the invoking Pi is watching it for lifecycle and final reports. Once watching, end the turn and rely on broker updates: never run sleep commands or repeatedly poll status/tmux while waiting for a watched orchestration. Attaching to an existing run watches future transitions but does not replay an already-actionable initial outcome into the current Pi; returning with tmux prefix then L does not change the current Pi's project context. Honor an explicit economy, balanced, thorough, or user-configured profile request through profile. Honor explicit user model/provider/thinking requests through useParentModel or modelOverrides; those overrides win over profile values. Use the models action to resolve available exact identifiers when needed; never invent a provider/model identifier or read provider credentials. Omitted overrides use the exact canonical project mapping, then the user's global orchestrator model configuration, selected/default profile, and packaged defaults. Honor explicit per-run budget requests through budgetOverrides; omitted values use the strict user-global budget policy and packaged warn-only defaults, and never infer hard thresholds. Honor explicit repair-round cap requests through maxRepairRounds; omission disables the cap and 0 pauses before the first repair. This is separate from observational budgets and does not cap active-assignment tokens. Continuation approval remains operator-only through the confirmed terminal CLI; never approve your own continuation. Honor explicit retain/prune requests through workerContext for enabled roles; omitted roles keep prune. Retention may increase cost, reuse hints are advisory metadata observations, and historical checks or approval never replace required verification and review. Do not infer retention, switch live policies, or request unsupported compact/fresh modes. Worker skill discovery is disabled; pass workerSkills only for exact Markdown paths the user explicitly reviewed, never infer skills. When the user asks to enter, navigate, or directly steer the live workers, use attach rather than watch; attach requires the invoking Pi to be inside tmux. Prefer native Pi TUI workers and use rpcWorkers only after an explicit request for headless panes. The invoking Pi remains responsible for interpreting reports and deciding follow-up. When a workflow needs attention, send only to a waiting role that owns the active assignment; never trigger an idle role or reviewer without a broker assignment. Never create file handoffs, poll coordination state, claim parent project trust applies to child Pi sessions, or equate command acknowledgement with task completion.",
+      "Use tmux_orchestrator instead of rebuilding tmux orchestration state; before a start, synthesize a bounded contextCapsule from the current conversation when prior decisions or work matter; include only task-relevant state, constraints, acceptance criteria, paths, evidence, and open questions, never the full transcript. Prefer dynamicPlan=true when the user asks the orchestrator to decide worker count, roles, models, or thinking before launch; that mode requires separate approval for one preflight provider call and another confirmation for launch. Use an exact decisionModel only when the user supplied it, including any canonical Jev identity; never guess or fuzzy-match Jev. Otherwise the runtime uses the current parent model or a deterministic available fallback. Dynamic planning currently selects built-in roles only and omits project custom roles. Enable workspaceCapsule only for an explicit cold-assignment experiment and supply only bounded existing project-relative workspaceRelevantPaths, never a repository tree; it supplements discovery and never replaces reading governing instructions. Do not claim workspace-capsule savings or correctness without authoritative provider and review evidence. Do not claim dynamic-planning savings or correctness without separately reviewed provider and outcome evidence. Use implementationFlow=phased for complex work that benefits from read-only discovery before editing; use single for simple work or compatibility. Configured specialists use conservative deterministic activation gates after launch; pass forceSpecialists only when the user explicitly requires that enabled role to run regardless of a skip predicate. Exact-project customRoles from validated user-global configuration are included unless projectCustomRoles is false; never invent custom role identifiers, providers, models, tools, or contracts. After starting or explicitly watching a run, ensure the invoking Pi is watching it for lifecycle and final reports. Once watching, end the turn and rely on broker updates: never run sleep commands or repeatedly poll status/tmux while waiting for a watched orchestration. Attaching to an existing run watches future transitions but does not replay an already-actionable initial outcome into the current Pi; returning with tmux prefix then L does not change the current Pi's project context. Honor an explicit economy, balanced, thorough, or user-configured profile request through profile. Honor explicit user model/provider/thinking requests through useParentModel or modelOverrides; those overrides win over profile values. Use the models action to resolve available exact identifiers when needed; never invent a provider/model identifier or read provider credentials. Omitted overrides use the exact canonical project mapping, then the user's global orchestrator model configuration, selected/default profile, and packaged defaults. Honor explicit per-run budget requests through budgetOverrides; omitted values use the strict user-global budget policy and packaged warn-only defaults, and never infer hard thresholds. Honor explicit repair-round cap requests through maxRepairRounds; omission disables the cap and 0 pauses before the first repair. This is separate from observational budgets and does not cap active-assignment tokens. Continuation approval remains operator-only through the confirmed terminal CLI; never approve your own continuation. Honor explicit retain/prune requests through workerContext for enabled roles; omitted roles keep prune. Retention may increase cost, reuse hints are advisory metadata observations, and historical checks or approval never replace required verification and review. Do not infer retention, switch live policies, or request unsupported compact/fresh modes. Worker skill discovery is disabled; pass workerSkills only for exact Markdown paths the user explicitly reviewed, never infer skills. When the user asks to enter, navigate, or directly steer the live workers, use attach rather than watch; attach requires the invoking Pi to be inside tmux. Prefer native Pi TUI workers and use rpcWorkers only after an explicit request for headless panes. The invoking Pi remains responsible for interpreting reports and deciding follow-up. When a workflow needs attention, send only to a waiting role that owns the active assignment; never trigger an idle role or reviewer without a broker assignment. Never create file handoffs, poll coordination state, claim parent project trust applies to child Pi sessions, or equate command acknowledgement with task completion.",
     ],
     parameters,
     execute(_toolCallId, input, signal, _onUpdate, ctx) {
@@ -944,7 +1011,7 @@ export default function tmuxOrchestratorExtension(pi) {
   const commands = {
     "or-models": ["List available Pi model metadata", commandHandlers.models],
     "or-dashboard": ["Open the orchestration dashboard with doctor, attach/watch, and confirmed stop", commandHandlers.dashboard],
-    "or-start": ["Confirm and start a tmux orchestration", commandHandlers.start],
+    "or-start": ["Confirm and start a tmux orchestration; prefix the task with --plan for model-guided role/model/thinking selection", commandHandlers.start],
     "or-send": ["Send a private message to one orchestration role", commandHandlers.send],
     "or-stop": ["Confirm and stop one orchestration", commandHandlers.stop],
   };
@@ -991,6 +1058,8 @@ export const testHooks = {
   parentUpdateContent,
   previewModelsAreAvailable,
   runAttach,
+  runPreflightPlanner,
+  selectDecisionModel,
   runStart,
   startInputWithParentModel,
   validateObserverFrame,

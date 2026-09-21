@@ -168,6 +168,14 @@ Run the smallest useful matrix rather than every expensive combination:
 - Run `/or-models` and open `/or-dashboard`; confirm help is concise, the About
   footer contains version/project/package/contribution details, and doctor
   appears only after `d`.
+- Opt in once with `/or-start --plan` for a bounded task. Confirm the exact
+  decision model is shown before the additional provider call, an exact
+  operator-supplied canonical Jev identity wins without name guessing or fuzzy
+  matching, fallback is explicit otherwise, selected worker models/thinking are
+  available and at most `medium`, malformed
+  output starts nothing, and launch still requires a second confirmation. This
+  first slice selects built-in roles only and is not evidence of cost or quality
+  improvement.
 - Start one small `single` workflow with only implementer and mandatory reviewer.
 - Reopen `/or-dashboard`, confirm the run and usage metadata appear, use Enter
   to attach when the parent Pi is inside tmux, and verify `x` requires explicit

@@ -118,6 +118,20 @@ observational budgets, explicitly reviewed worker skills, and the experimental
 workspace capsule. Use `/or-start`, natural language, the model tool, or the
 terminal CLI; explicit run options take precedence.
 
+For opt-in model-guided preflight selection, use `/or-start --plan TASK` or
+model-tool `dynamicPlan=true`. Before preview, the extension shows the exact
+decision model and requires approval for one additional provider call. An
+exact model-tool `decisionModel` wins; use that for Jev only after supplying its
+canonical provider/model identity. The runtime never guesses or fuzzy-matches
+Jev. Without an override it uses the current parent model or a deterministic
+available fallback. The strict one-shot decision selects only built-in roles and
+exact available per-role provider/model/thinking tuples at or below `medium`;
+roles may use different enabled providers. It cannot remove the implementer/reviewer,
+invent roles, tools, or model IDs, or start tmux/workers before the separate
+final confirmation. This first slice omits project custom roles; ordinary
+`/or-start TASK` remains the static/manual path. No cost or quality improvement
+is claimed without comparative evidence.
+
 For an opt-in repair cap, use `/or-start`'s additional repair-round input,
 `maxRepairRounds` in the model tool, or CLI `start --max-repair-rounds N`.
 Blank/omission disables the cap; `0` pauses before the first repair.

@@ -6,6 +6,8 @@ All notable changes to this project are documented here.
 
 ### Added
 
+- Added an opt-in model-guided preflight start slice: `/or-start --plan` and model-tool `dynamicPlan=true` make one separately confirmed bounded decision call before preview to select the built-in worker roster and exact available per-role model/thinking settings, with exact operator-supplied decision-model precedence, parent/current-model then deterministic available fallback, no guessed or fuzzy-matched Jev identity, a medium thinking cap, strict one-shot JSON validation, nested usage accounting for model-tool starts, and no tmux/worker launch before final confirmation; project custom roles remain outside this first slice
+
 ### Changed
 
 ### Fixed

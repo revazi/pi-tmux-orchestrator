@@ -9,6 +9,12 @@ import extension, { testHooks } from "../extensions/tmux-orchestrator.js";
 import { consumeObserverFrames } from "../extensions/orchestrator-parent-protocol.js";
 import { publicRoleContracts, validControlRole } from "../extensions/orchestrator-role-metadata.js";
 import {
+  plannerModelCandidates,
+  runPreflightPlanner,
+  selectDecisionModel,
+  validatePlannerDecision,
+} from "../extensions/orchestrator-planner.js";
+import {
   OrchestrationDashboardOverlay,
   testHooks as dashboardHooks,
 } from "../extensions/orchestrator-dashboard.js";
@@ -2753,6 +2759,297 @@ test("start keeps the invoking Pi as parent and starts no separate parent sessio
   assert.match(result.content[0].text, /This invoking Pi remains the parent/);
 });
 
+test("preflight decision model uses exact override then parent and deterministic fallback", () => {
+  const model = (provider, id, levels = {}) => ({
+    provider,
+    id,
+    reasoning: true,
+    thinkingLevelMap: levels,
+  });
+  const canonicalJev = model("zeta", "jev", { high: "high", xhigh: "xhigh" });
+  const parent = model("parent", "current");
+  const alpha = model("alpha", "fallback");
+  const ctx = {
+    model: parent,
+    scopedModels: [],
+    modelRegistry: { getAvailable: () => [alpha, parent, canonicalJev] },
+  };
+  const current = selectDecisionModel(ctx);
+  assert.equal(current.provider, "parent");
+  assert.equal(current.modelId, "current");
+  assert.equal(current.source, "parent-model-fallback");
+
+  ctx.model = { provider: "missing", id: "parent" };
+  const fallback = selectDecisionModel(ctx);
+  assert.equal(fallback.provider, "alpha");
+  assert.equal(fallback.modelId, "fallback");
+  assert.equal(fallback.source, "available-model-fallback");
+
+  const explicit = selectDecisionModel(ctx, {
+    provider: "zeta", model: "jev", thinking: "low",
+  });
+  assert.equal(explicit.source, "explicit");
+  assert.equal(explicit.modelId, "jev");
+  assert.equal(explicit.thinking, "low");
+
+  ctx.modelRegistry.getAvailable = () => [
+    ...Array.from({ length: 101 }, (_, index) => model("alpha", `model-${index}`)),
+    canonicalJev,
+  ];
+  assert.equal(selectDecisionModel(ctx, {
+    provider: "zeta", model: "jev", thinking: "medium",
+  }).modelId, "jev");
+  assert.throws(
+    () => selectDecisionModel(ctx, { provider: "parent", model: "current", thinking: "high" }),
+    /exceeds_medium_cap/,
+  );
+  assert.throws(
+    () => selectDecisionModel(ctx, { provider: "missing", model: "model" }),
+    /decision_model_unavailable/,
+  );
+});
+
+test("preflight candidate projection honors scoped thinking and strict decision validation", () => {
+  const medium = {
+    provider: "provider", id: "medium", reasoning: true,
+    thinkingLevelMap: { off: null, minimal: null, low: "low", medium: "medium", high: "high" },
+  };
+  const highOnly = { provider: "provider", id: "high-only", reasoning: true };
+  const ctx = {
+    model: medium,
+    scopedModels: [
+      { model: medium },
+      { model: highOnly, thinkingLevel: "high" },
+    ],
+    modelRegistry: { getAvailable: () => { throw new Error("scoped catalog must win"); } },
+  };
+  const candidates = plannerModelCandidates(ctx);
+  assert.deepEqual(candidates.map((item) => item.modelId), ["medium"]);
+  assert.deepEqual(candidates[0].thinkingLevels, ["low", "medium"]);
+  const input = { withProbe: false, modelOverrides: { reviewer: { thinking: "low" } } };
+  const valid = validatePlannerDecision({
+    version: 1,
+    roles: [
+      { role: "reviewer", provider: "provider", model: "medium", thinking: "low", reason: "Independent review is mandatory." },
+      { role: "implementer", provider: "provider", model: "medium", thinking: "medium", reason: "One writer handles the bounded change." },
+    ],
+  }, candidates, input);
+  assert.deepEqual(valid.roles.map((item) => item.role), ["implementer", "reviewer"]);
+  assert.throws(
+    () => validatePlannerDecision({
+      version: 1,
+      roles: [
+        { role: "implementer", provider: "provider", model: "medium", thinking: "medium", reason: "Writer." },
+        { role: "reviewer", provider: "provider", model: "medium", thinking: "medium", reason: "Reviewer." },
+      ],
+    }, candidates, input),
+    /overrode_explicit_thinking/,
+  );
+  assert.throws(
+    () => validatePlannerDecision({ version: 1, roles: [] }, candidates, input),
+    /invalid_planner_roles/,
+  );
+  assert.throws(
+    () => validatePlannerDecision({
+      version: 1,
+      roles: [
+        { role: "implementer", provider: "provider", model: "medium", thinking: "medium", reason: "Writer." },
+        { role: "reviewer", provider: "provider", model: "medium", thinking: "low", reason: "Reviewer." },
+      ],
+    }, candidates, { probeTask: "Inspect the explicit subsystem." }),
+    /planner_removed_explicit_role/,
+  );
+  assert.throws(
+    () => validatePlannerDecision({
+      version: 1,
+      roles: [
+        { role: "implementer", provider: "provider", model: "medium", thinking: "medium", reason: "Writer." },
+        { role: "reviewer", provider: "provider", model: "medium", thinking: "medium", reason: "Reviewer." },
+        { role: "probe", provider: "provider", model: "medium", thinking: "low", reason: "Probe." },
+      ],
+    }, candidates, { withProbe: false }),
+    /planner_added_disabled_role/,
+  );
+  assert.throws(
+    () => validatePlannerDecision({
+      version: 1,
+      roles: [
+        { role: "implementer", provider: "provider", model: "medium", thinking: "medium", reason: "Writer." },
+        { role: "implementer", provider: "provider", model: "medium", thinking: "low", reason: "Duplicate." },
+      ],
+    }, candidates, {}),
+    /invalid_planner_role/,
+  );
+  assert.throws(
+    () => validatePlannerDecision({
+      version: 1,
+      roles: [
+        { role: "implementer", provider: "provider", model: "medium", thinking: "medium", reason: "Writer.\u202e" },
+        { role: "reviewer", provider: "provider", model: "medium", thinking: "low", reason: "Reviewer." },
+      ],
+    }, candidates, {}),
+    /invalid_planner_reason/,
+  );
+});
+
+test("dynamic start plans a mixed-provider built-in topology before preview", async () => {
+  const privateTask = "PRIVATE_DYNAMIC_PLANNER_TASK_782f";
+  const model = {
+    provider: "xai", id: "grok-4.6", reasoning: true,
+    thinkingLevelMap: { off: null, minimal: null, low: "low", medium: "medium", high: "high" },
+  };
+  const reviewModel = {
+    provider: "openai-codex", id: "gpt-review", reasoning: true,
+    thinkingLevelMap: { off: null, minimal: null, low: "low", medium: "medium", high: "high" },
+  };
+  let completion;
+  let execCalls = 0;
+  const { tool } = harness(async (_command, args) => {
+    execCalls += 1;
+    assert.equal(args.includes(privateTask), false);
+    assert.ok(args.includes("--with-probe"));
+    assert.ok(args.includes("--no-project-custom-roles"));
+    for (const role of ["implementer", "reviewer", "probe"]) {
+      const reviewer = role === "reviewer";
+      assert.equal(args[args.indexOf(`--${role}-provider`) + 1], reviewer ? "openai-codex" : "xai");
+      assert.equal(args[args.indexOf(`--${role}-model`) + 1], reviewer ? "gpt-review" : "grok-4.6");
+      assert.equal(args[args.indexOf(`--${role}-thinking`) + 1], reviewer ? "low" : "medium");
+    }
+    const dryRun = args.includes("--dry-run");
+    return {
+      code: 0,
+      stdout: JSON.stringify(success("start", {
+        project: process.cwd(), session: "pi-dynamic-plan", dry_run: dryRun,
+        roles: [
+          { name: "implementer", provider: "xai", model: "grok-4.6", thinking: "medium" },
+          { name: "reviewer", provider: "openai-codex", model: "gpt-review", thinking: "low" },
+          { name: "probe", provider: "xai", model: "grok-4.6", thinking: "medium" },
+        ],
+        trust: { child_bypass: false },
+        paths: { state_root: "/tmp/state", coordination: dryRun ? null : "/tmp/state/run" },
+      })),
+    };
+  });
+  const ctx = context({
+    confirmations: [true, true],
+    context: {
+      model,
+      thinkingLevel: "high",
+      modelRegistry: {
+        getAvailable: () => [model, reviewModel],
+        complete: async (selected, request, options) => {
+          completion = { selected, request, options };
+          return {
+            stopReason: "stop",
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                version: 1,
+                roles: [
+                  { role: "implementer", provider: "xai", model: "grok-4.6", thinking: "medium", reason: "One writer is sufficient for the bounded implementation." },
+                  { role: "reviewer", provider: "openai-codex", model: "gpt-review", thinking: "low", reason: "Independent cross-provider review remains mandatory." },
+                  { role: "probe", provider: "xai", model: "grok-4.6", thinking: "medium", reason: "A technical probe reduces ambiguity before review." },
+                ],
+              }),
+            }],
+            usage: { input: 100, output: 50, totalTokens: 150, cost: { total: 0.01 } },
+          };
+        },
+      },
+    },
+  });
+  const result = await tool.execute(
+    "dynamic",
+    { action: "start", task: privateTask, dynamicPlan: true },
+    undefined,
+    undefined,
+    ctx,
+  );
+  assert.equal(execCalls, 2);
+  assert.equal(result.usage.totalTokens, 150);
+  assert.equal(result.details.planner_usage.cost.total, 0.01);
+  assert.equal(completion.selected, model);
+  assert.equal(completion.options.reasoning, "medium");
+  assert.equal(completion.options.maxRetries, 0);
+  assert.equal(completion.request.messages[0].content[0].text.includes(privateTask), true);
+  const plannerInput = JSON.parse(completion.request.messages[0].content[0].text);
+  assert.deepEqual(plannerInput.candidate_models.map((item) => `${item.provider}/${item.model}`), [
+    "xai/grok-4.6",
+    "openai-codex/gpt-review",
+  ]);
+  assert.equal(ctx.calls.confirmations[0].title, "Authorize preflight decision call?");
+  assert.match(ctx.calls.confirmations[0].message, /xai\/grok-4\.6/);
+  assert.equal(ctx.calls.confirmations[1].title, "Start tmux orchestration?");
+  assert.match(ctx.calls.confirmations[1].message, /Selected 3 workers/);
+  assert.match(ctx.calls.confirmations[1].message, /reviewer: openai-codex\/gpt-review thinking=low/);
+  assert.match(ctx.calls.confirmations[1].message, /probe: xai\/grok-4\.6 thinking=medium/);
+});
+
+test("dynamic planning failure or declined authorization starts nothing", async () => {
+  const model = { provider: "provider", id: "model", reasoning: true };
+  let completions = 0;
+  let executions = 0;
+  const { tool } = harness(async () => {
+    executions += 1;
+    return { code: 0, stdout: JSON.stringify(success("start")) };
+  });
+  const registry = {
+    getAvailable: () => [model],
+    complete: async () => {
+      completions += 1;
+      return { stopReason: "stop", content: [{ type: "text", text: "not json" }] };
+    },
+  };
+  await assert.rejects(
+    tool.execute("decline", { action: "start", task: "synthetic", dynamicPlan: true }, undefined, undefined,
+      context({ confirmations: [false], context: { model, modelRegistry: registry } })),
+    /dynamic_planning_confirmation_declined/,
+  );
+  assert.equal(completions, 0);
+  await assert.rejects(
+    tool.execute("cap", {
+      action: "start",
+      task: "synthetic",
+      dynamicPlan: true,
+      modelOverrides: { all: { provider: "provider", model: "model", thinking: "high" } },
+    }, undefined, undefined,
+    context({ confirmations: [true], context: { model, modelRegistry: registry } })),
+    /dynamic_planning_thinking_exceeds_medium_cap/,
+  );
+  assert.equal(completions, 0);
+  await assert.rejects(
+    tool.execute("invalid", { action: "start", task: "synthetic", dynamicPlan: true }, undefined, undefined,
+      context({ confirmations: [true], context: { model, modelRegistry: registry } })),
+    /planner_response_not_json/,
+  );
+  assert.equal(completions, 1);
+  assert.equal(executions, 0);
+
+  registry.complete = async () => ({
+    stopReason: "stop",
+    content: [{ type: "text", text: JSON.stringify({
+      version: 1,
+      roles: [
+        { role: "implementer", provider: "provider", model: "model", thinking: "medium", reason: "Writer." },
+        { role: "reviewer", provider: "provider", model: "model", thinking: "medium", reason: "Reviewer." },
+      ],
+    }) }],
+  });
+  await assert.rejects(
+    tool.execute("mismatch", { action: "start", task: "synthetic", dynamicPlan: true }, undefined, undefined,
+      context({ confirmations: [true], context: { model, modelRegistry: registry } })),
+    /dynamic_planning_preview_mismatch/,
+  );
+  assert.equal(executions, 1);
+
+  await assert.rejects(
+    tool.execute("orphan", {
+      action: "start", task: "synthetic", decisionModel: { provider: "provider", model: "model" },
+    }, undefined, undefined, context({ context: { model, modelRegistry: registry } })),
+    /decision_model_requires_dynamic_plan/,
+  );
+});
+
 test("start previews CLI policy, keeps private text out of argv, and cleans mode-0600 files", async () => {
   const canary = "PRIVATE_TASK_CANARY_49a7";
   const contextCanary = "PRIVATE_CONTEXT_CAPSULE_CANARY_72bf";
@@ -3029,6 +3326,61 @@ test("slash context input parses bounded selections and cancels or rejects befor
   await commands.get("or-start").handler("synthetic", declined);
   assert.equal(argvs.length, 1);
   assert.ok(argvs[0].includes("--dry-run"));
+});
+
+test("slash --plan uses the same preflight decision and two-gate start path", async () => {
+  const model = { provider: "provider", id: "decision", reasoning: true };
+  let completions = 0;
+  let executions = 0;
+  const { commands } = harness(async (_command, args) => {
+    executions += 1;
+    assert.ok(args.includes("--without-probe"));
+    assert.ok(args.includes("--without-playwright"));
+    assert.ok(args.includes("--without-django-expert"));
+    const dryRun = args.includes("--dry-run");
+    return {
+      code: 0,
+      stdout: JSON.stringify(success("start", {
+        project: process.cwd(), session: "pi-slash-plan", dry_run: dryRun,
+        roles: [
+          { name: "implementer", provider: "provider", model: "decision", thinking: "medium" },
+          { name: "reviewer", provider: "provider", model: "decision", thinking: "medium" },
+        ],
+        trust: { child_bypass: false },
+        paths: { state_root: "/tmp/state", coordination: dryRun ? null : "/tmp/state/run" },
+      })),
+    };
+  });
+  const ctx = context({
+    inputs: ["", ""],
+    confirmations: [true, true],
+    context: {
+      model,
+      modelRegistry: {
+        getAvailable: () => [model],
+        complete: async () => {
+          completions += 1;
+          return {
+            stopReason: "stop",
+            content: [{ type: "text", text: JSON.stringify({
+              version: 1,
+              roles: [
+                { role: "implementer", provider: "provider", model: "decision", thinking: "medium", reason: "A single writer is enough." },
+                { role: "reviewer", provider: "provider", model: "decision", thinking: "medium", reason: "Independent review is required." },
+              ],
+            }) }],
+          };
+        },
+      },
+    },
+  });
+  await commands.get("or-start").handler("--plan synthetic", ctx);
+  assert.equal(completions, 1);
+  assert.equal(executions, 2);
+  assert.deepEqual(ctx.calls.confirmations.map((item) => item.title), [
+    "Authorize preflight decision call?",
+    "Start tmux orchestration?",
+  ]);
 });
 
 test("slash start can inherit exact-project orchestration defaults", async () => {

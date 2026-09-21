@@ -22,6 +22,7 @@ EXPECTED_FILES=(
   extensions/orchestrator-context-policy.js
   extensions/orchestrator-budgets.js
   extensions/orchestrator-models.js
+  extensions/orchestrator-planner.js
   extensions/orchestrator-update.js
   extensions/orchestrator-dashboard.js
   extensions/orchestrator-parent.js

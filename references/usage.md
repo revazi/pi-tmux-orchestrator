@@ -168,6 +168,48 @@ models and never exposing authentication. Natural-language requests can use
 `useParentModel` for the current Pi provider/model/thinking or exact `all` and
 per-role `modelOverrides` after resolving ambiguous IDs with `models`.
 
+### Model-guided preflight planning (opt in)
+
+Use `/or-start --plan TASK` or model-tool `dynamicPlan=true` to request one
+bounded model decision before the ordinary dry-run preview. This is an
+additional provider call and requires its own interactive confirmation showing
+the exact decision model, thinking, selection source, and candidate count. A
+second confirmation remains required before launch. Declining either gate,
+cancellation, malformed/oversized output, unavailable models, unsupported
+thinking, or conflicting explicit constraints starts nothing.
+
+Decision-model precedence in this first slice is:
+
+1. exact model-tool `decisionModel: {provider, model, thinking?}`;
+2. the current parent Pi model when it is in the available/scoped catalog;
+3. the first deterministic provider/model-sorted available candidate.
+
+Use the explicit override for Jev only after supplying its canonical
+provider/model identity. The current catalog does not provide a known Jev
+identity, so the runtime never guesses an ID or fuzzy-matches a display name.
+The lookup does not read credentials or endpoints.
+Decision thinking and every selected worker thinking level are capped at
+`medium`; a conflicting explicit higher setting fails before the planning call.
+The planner receives the bounded task, optional structured parent capsule,
+project identity, built-in role descriptors, exact candidate model metadata,
+and explicit constraints. It gets no tools and must return one strict JSON
+object in one bounded attempt.
+
+The decision must retain exactly one implementer and the mandatory reviewer. It
+may add unique probe, Playwright, and Django roles and must choose exact available
+provider/model/thinking combinations. The candidate set may span multiple Pi-enabled
+providers, and each role may use a different provider/model tuple. Explicit enabled/disabled roles, forced
+specialists, and model/thinking constraints win. The accepted values are fed
+through the existing CLI dry-run and final model availability checks. The model
+tool reports the nested planner usage to Pi's tool-result accounting.
+
+This first slice intentionally excludes registered/project custom roles and sets
+`projectCustomRoles=false` for a dynamic start. Use ordinary `/or-start TASK` or
+the existing static model-tool start when custom roles or fully manual policy are
+required. Deterministic specialist activation remains authoritative after
+launch. No provider-cost, latency, role-selection, or quality benefit is claimed
+without the separately reviewed evaluation in #174.
+
 ### Budget policy
 
 The strict version-1 user-global file
