@@ -17,6 +17,8 @@ Provide a small, reusable, intentionally tmux-scoped Pi skill and modular standa
 - `pi_tmux_orchestrator/configuration.py`: strict user-global worker model policy
 - `pi_tmux_orchestrator/planner_policy.py`: strict versioned user-global decision-model priority policy and safe CLI projection
 - `pi_tmux_orchestrator/planner_topology.py`: bounded worker-topology constraints and trusted custom-role projection
+- `pi_tmux_orchestrator/planning.py`: strict private-input/config bindings, launch admission, and body-free retained planning provenance
+- `pi_tmux_orchestrator/terminal_planning.py`: private one-request Pi RPC adapter for the terminal dynamic-planning path
 - `pi_tmux_orchestrator/profiles.py`: immutable packaged and strict custom execution-profile policy
 - `pi_tmux_orchestrator/budgeting.py`: strict user-global and per-run usage budget policy
 - `pi_tmux_orchestrator/continuation.py`: opt-in run-wide repair admission and explicit one-round approval policy
@@ -44,6 +46,7 @@ Provide a small, reusable, intentionally tmux-scoped Pi skill and modular standa
 - `extensions/orchestrator-budgets.js`: bounded native budget override adapter
 - `extensions/orchestrator-models.js`: bounded model metadata and override adapter
 - `extensions/orchestrator-planner.js`: bounded model-guided topology selection and strict role/model/contract decision validation
+- `extensions/orchestrator-planning.js`: canonical planner binding digests and body-free accepted-record projection
 - `extensions/orchestrator-dashboard.js`: bounded cross-session Pi overlay and doctor projection
 - `extensions/orchestrator-update.js`: best-effort npm release notice
 - `extensions/orchestrator-parent.js`: parent-session observer runtime and reconnection state machine

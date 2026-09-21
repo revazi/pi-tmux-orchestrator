@@ -138,9 +138,18 @@ tuple must exist in Pi's bounded available/scoped catalog and remain at or below
 roles/contracts, grant tools or write authority, remove review, force activation,
 mutate configuration, or start tmux/workers before the separate final
 confirmation. `projectCustomRoles=false` excludes project custom candidates; an
-explicit `true` requires every eligible configured identity. Ordinary
-`/or-start TASK` remains the static/manual path. No cost or quality improvement
-is claimed without comparative evidence.
+explicit `true` requires every eligible configured identity. The terminal uses
+the same planner and validation path with `start --dynamic-plan
+--authorize-planning --yes`; planning authorization and launch authorization are
+separate and omission of either fails before any provider or launch call.
+Accepted decisions are bound to the private task/context, canonical project,
+resolved configuration, planner policy, eligible catalog, and trusted resources;
+all mutable inputs are revalidated after preview and before launch. Retained
+status/dashboard/Supervisor output contains only mode, decision identity/source,
+selected role/model/thinking/contract metadata, timestamps, request ID, and
+SHA-256 bindings—never task, prompt, provider, credential, endpoint, or custom
+resource bodies. Ordinary `/or-start TASK` remains the static/manual path. No
+cost or quality improvement is claimed without comparative evidence.
 
 For an opt-in repair cap, use `/or-start`'s additional repair-round input,
 `maxRepairRounds` in the model tool, or CLI `start --max-repair-rounds N`.

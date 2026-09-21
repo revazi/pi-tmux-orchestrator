@@ -14,6 +14,7 @@ from .configuration import (
 from .custom_role_resources import select_custom_start
 from .models import CommandResult, OrchestrationError
 from .output import human_print
+from .planning import metadata_digest
 from .profiles import resolve_execution_profile
 from .specialist_activation import SPECIALIST_ROLES
 
@@ -49,7 +50,7 @@ def _project_custom_selections(
     ]
 
 
-def planner_topology_policy(
+def planner_topology_projection(
     project: Path,
     *,
     profile_name: str | None = None,
@@ -101,23 +102,47 @@ def planner_topology_policy(
         ],
         key=lambda item: item["role"],
     )
-    return {
+    policy = {
         "version": PLANNER_TOPOLOGY_VERSION,
         "builtins": builtins,
         "optional_roles": optional_roles,
         "custom_roles": custom_roles,
     }
+    binding_digest = metadata_digest(
+        {
+            "project": str(project),
+            "model_config": configured,
+            "profile": profile,
+            "policy": policy,
+            "custom_bindings": selected,
+        }
+    )
+    return {"policy": policy, "binding_digest": binding_digest}
+
+
+def planner_topology_policy(
+    project: Path,
+    *,
+    profile_name: str | None = None,
+    include_project_custom_roles: bool = True,
+) -> dict[str, Any]:
+    return planner_topology_projection(
+        project,
+        profile_name=profile_name,
+        include_project_custom_roles=include_project_custom_roles,
+    )["policy"]
 
 
 def planner_topology_command(args: argparse.Namespace) -> CommandResult:
     project = Path(args.project).expanduser()
-    policy = planner_topology_policy(
+    projection = planner_topology_projection(
         project,
         profile_name=getattr(args, "profile", None),
         include_project_custom_roles=not getattr(
             args, "no_project_custom_roles", False
         ),
     )
+    policy = projection["policy"]
     path = model_config_path(project.resolve(strict=True))
     human_print(
         f"Planner topology: {len(policy['optional_roles'])} optional built-ins; "
@@ -126,6 +151,7 @@ def planner_topology_command(args: argparse.Namespace) -> CommandResult:
     return CommandResult(
         data={
             "config_path": str(path),
+            "binding_digest": projection["binding_digest"],
             "policy": policy,
         }
     )

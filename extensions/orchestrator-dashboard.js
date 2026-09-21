@@ -333,7 +333,7 @@ export class OrchestrationDashboardOverlay {
     const marker = selected ? purple("❯") : " ";
     const identity = `${session.session} · ${basename(session.project)}`;
     const separator = this.theme.fg("dim", "│");
-    const raw = `  ${marker} ${identity}  ${separator} ${sessionWorkflow(session)}  ${separator} ${sessionProfile(session)}  ${separator} ${sessionUsage(session)}  ${separator} ${sessionRoles(session)}`;
+    const raw = `  ${marker} ${identity}  ${separator} ${sessionWorkflow(session)}  ${separator} ${sessionProfile(session)}  ${separator} ${sessionPlanning(session)}  ${separator} ${sessionUsage(session)}  ${separator} ${sessionRoles(session)}`;
     return selected ? this.theme.bg("selectedBg", raw) : raw;
   }
 
@@ -454,6 +454,10 @@ function sessionProfile(session) {
   return session.execution_profile?.name ?? "profile unavailable";
 }
 
+function sessionPlanning(session) {
+  return session.planning?.mode === "dynamic" ? "plan dynamic" : "plan static";
+}
+
 function sessionUsage(session) {
   if (session.dashboard?.available !== true) return "usage unavailable";
   return usageText(session.dashboard.usage);
@@ -550,7 +554,7 @@ function dashboardPlainLines(snapshot) {
   const display = dashboardDisplay(snapshot);
   const lines = [`Orchestrations: ${display.sessions.length}`];
   for (const session of display.sessions) {
-    lines.push(`  ${session.session} · ${basename(session.project)} · ${sessionUsage(session)}`);
+    lines.push(`  ${session.session} · ${basename(session.project)} · ${sessionPlanning(session)} · ${sessionUsage(session)}`);
   }
   if (!display.sessions.length) lines.push("  none running");
   lines.push(`About: ${display.about.text}`);

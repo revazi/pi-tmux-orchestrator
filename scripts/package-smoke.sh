@@ -23,6 +23,7 @@ EXPECTED_FILES=(
   extensions/orchestrator-budgets.js
   extensions/orchestrator-models.js
   extensions/orchestrator-planner.js
+  extensions/orchestrator-planning.js
   extensions/orchestrator-update.js
   extensions/orchestrator-dashboard.js
   extensions/orchestrator-parent.js
@@ -58,6 +59,7 @@ EXPECTED_FILES=(
   pi_tmux_orchestrator/output.py
   pi_tmux_orchestrator/planner_policy.py
   pi_tmux_orchestrator/planner_topology.py
+  pi_tmux_orchestrator/planning.py
   pi_tmux_orchestrator/prompts.py
   pi_tmux_orchestrator/profiles.py
   pi_tmux_orchestrator/protocol.py
@@ -72,6 +74,7 @@ EXPECTED_FILES=(
   pi_tmux_orchestrator/start_commands.py
   pi_tmux_orchestrator/supervisor_api.py
   pi_tmux_orchestrator/supervisor_commands.py
+  pi_tmux_orchestrator/terminal_planning.py
   pi_tmux_orchestrator/tmux.py
   pi_tmux_orchestrator/token_efficiency.py
   pi_tmux_orchestrator/worker_resources.py

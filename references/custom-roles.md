@@ -66,7 +66,12 @@ per-run override. `/or-start` and the model tool include exact-project custom
 specialists from validated configuration unless cancelled or `projectCustomRoles`
 is false; dynamic planning may select a subset only after fresh descriptor/resource
 validation, while explicit `projectCustomRoles=true` requires all eligible mapped
-identities. They never invent custom role IDs or contracts.
+identities. Dynamic launch revalidates topology/resource bindings after the
+accepted preview; a changed descriptor, body digest, exact-project allowlist, or
+selected contract launches nothing. Retained planning provenance may name the
+selected identity and fixed contract plus an aggregate binding digest, but never
+the descriptor/resource path, resource digest, or body. They never invent custom
+role IDs or contracts.
 
 Every preview or start rereads the registry/resources and verifies their digests.
 Successful JSON includes bounded identities, explicit models, report contracts,

@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -31,7 +31,11 @@ import {
 } from "./orchestrator-models.js";
 import {
   decisionModelConfirmation,
+  metadataDigest,
+  plannerCandidateDigest,
+  plannerModelCandidates,
   plannerPlanConfirmation,
+  planningRecordForPreview,
   runPreflightPlanner,
   selectDecisionModel,
   staticPlannerFallbackConfirmation,
@@ -54,6 +58,7 @@ import {
 
 const CLI_PATH = fileURLToPath(new URL("../bin/pi-tmux-agents", import.meta.url));
 const MAX_VISIBLE_CHARS = 12_000;
+const DIGEST_PATTERN = /^[a-f0-9]{64}$/;
 const ACTIONS = ["doctor", "models", "list", "status", "watch", "attach", "start", "send"];
 
 const parameters = {
@@ -242,13 +247,14 @@ async function canonicalProject(project, cwd, { requireCanonical = false } = {})
   return canonical;
 }
 
-function startFileValues(input) {
+function startFileValues(input, plannerPlan) {
   return {
     task: input.task,
-    contextCapsule: renderContextCapsule(input.contextCapsule),
+    contextCapsule: input.renderedContextCapsule ?? renderContextCapsule(input.contextCapsule),
     probe: input.probeTask,
     playwright: input.playwrightTask,
     django: input.djangoTask,
+    planning: plannerPlan ? JSON.stringify(planningRecordForPreview(plannerPlan)) : undefined,
   };
 }
 
@@ -326,6 +332,12 @@ function appendProjectCustomRoleArgs(args, input) {
   if (input.projectCustomRoles === false) args.push("--no-project-custom-roles");
 }
 
+function appendStartIdentityArgs(args, input, paths) {
+  if (input.session) args.push("--session", input.session);
+  if (paths.contextCapsule) args.push("--context-capsule-file", paths.contextCapsule);
+  if (paths.planning) args.push("--planning-record-file", paths.planning);
+}
+
 function buildStartArgs(
   input,
   project,
@@ -333,7 +345,7 @@ function buildStartArgs(
   { dryRun = false, skipModelCheck = false } = {},
 ) {
   const args = ["--project", project, "--task-file", paths.task];
-  if (paths.contextCapsule) args.push("--context-capsule-file", paths.contextCapsule);
+  appendStartIdentityArgs(args, input, paths);
   appendSpecialistSelection(args, input, "withProbe", "--with-probe", "--without-probe");
   if (paths.probe) args.push("--probe-task-file", paths.probe);
   appendSpecialistSelection(args, input, "withPlaywright", "--with-playwright", "--without-playwright");
@@ -496,8 +508,20 @@ function validateWorkspaceCapsuleSelection(input) {
   }
 }
 
-function validateStartRequest(input, ctx) {
-  if (ctx.mode !== "tui" || !ctx.hasUI) throw new Error("start_requires_interactive_tui_confirmation");
+function validStartContext(ctx, allowRpc) {
+  if (!ctx.hasUI) return false;
+  if (ctx.mode === "tui") return true;
+  return allowRpc === true && ctx.mode === "rpc";
+}
+
+function startContextFailure(allowRpc) {
+  return allowRpc
+    ? "start_requires_interactive_confirmation"
+    : "start_requires_interactive_tui_confirmation";
+}
+
+function validateStartRequest(input, ctx, allowRpc = false) {
+  if (!validStartContext(ctx, allowRpc)) throw new Error(startContextFailure(allowRpc));
   if (!input.task || !String(input.task).trim()) throw new Error("start_requires_task");
   if (input.probeTask && input.withProbe === false) throw new Error("probe_task_requires_role");
   if (input.playwrightTask && input.withPlaywright === false) throw new Error("playwright_task_requires_role");
@@ -513,36 +537,53 @@ function validateStartRequest(input, ctx) {
   }
 }
 
-function plannerTopologyFromEnvelope(envelope) {
+function validPlannerProjectionData(data) {
+  if (!metadataRecord(data)) return false;
+  return [typeof data.config_path === "string", DIGEST_PATTERN.test(data.binding_digest)]
+    .every(Boolean);
+}
+
+function plannerTopologyProjectionFromEnvelope(envelope) {
   if (!envelope?.success) throw new Error("planner_topology_unavailable");
   const data = envelope.data;
-  if (!data || typeof data !== "object" || Array.isArray(data)
-      || typeof data.config_path !== "string") {
-    throw new Error("invalid_planner_topology_envelope");
+  if (!validPlannerProjectionData(data)) throw new Error("invalid_planner_topology_envelope");
+  return {
+    policy: validatePlannerTopology(data.policy),
+    bindingDigest: data.binding_digest,
+  };
+}
+
+function plannerTopologyFromEnvelope(envelope) {
+  return plannerTopologyProjectionFromEnvelope(envelope).policy;
+}
+
+function plannerPolicyProjectionFromEnvelope(envelope) {
+  if (!envelope?.success) throw new Error("planner_policy_unavailable");
+  const data = envelope.data;
+  if (!validPlannerProjectionData(data) || typeof data.configured !== "boolean") {
+    throw new Error("invalid_planner_policy_envelope");
   }
-  return validatePlannerTopology(data.policy);
+  return {
+    policy: validateDecisionModelPolicy(data.policy),
+    bindingDigest: data.binding_digest,
+  };
 }
 
 function plannerPolicyFromEnvelope(envelope) {
-  if (!envelope?.success) throw new Error("planner_policy_unavailable");
-  const data = envelope.data;
-  if (!data || typeof data !== "object" || Array.isArray(data)
-      || typeof data.config_path !== "string"
-      || typeof data.configured !== "boolean") {
-    throw new Error("invalid_planner_policy_envelope");
-  }
-  return validateDecisionModelPolicy(data.policy);
+  return plannerPolicyProjectionFromEnvelope(envelope).policy;
 }
 
 async function applyDynamicPlan(pi, ctx, input, project, signal) {
   if (input.dynamicPlan !== true) return { input, plan: undefined };
   const envelope = await runCli(pi, "planner-policy", ["--project", project], signal);
-  const policy = plannerPolicyFromEnvelope(envelope);
+  const policyProjection = plannerPolicyProjectionFromEnvelope(envelope);
+  const policy = policyProjection.policy;
   const topologyArgs = ["--project", project];
   if (input.profile) topologyArgs.push("--profile", input.profile);
   if (input.projectCustomRoles === false) topologyArgs.push("--no-project-custom-roles");
   const topologyEnvelope = await runCli(pi, "planner-topology", topologyArgs, signal);
-  const topology = plannerTopologyFromEnvelope(topologyEnvelope);
+  const topologyProjection = plannerTopologyProjectionFromEnvelope(topologyEnvelope);
+  const topology = topologyProjection.policy;
   const topologyModels = [
     ...Object.values(topology.builtins).map((item) => item.constraint)
       .filter((item) => item.provider !== undefined),
@@ -570,7 +611,26 @@ async function applyDynamicPlan(pi, ctx, input, project, signal) {
     ].join("\n"),
   );
   if (!planningConfirmed) throw new Error("dynamic_planning_confirmation_declined");
-  return runPreflightPlanner(ctx, input, project, selection, topology, signal);
+  const planned = await runPreflightPlanner(
+    ctx,
+    input,
+    project,
+    selection,
+    topology,
+    {
+      plannerPolicy: policyProjection.bindingDigest,
+      topologyPolicy: topologyProjection.bindingDigest,
+    },
+    signal,
+  );
+  planned.plan.revalidation = {
+    topologyArgs,
+    plannerPolicy: policyProjection.bindingDigest,
+    topologyPolicy: topologyProjection.bindingDigest,
+    candidateSet: plannerCandidateDigest(selection.candidates),
+    topologyModels,
+  };
+  return planned;
 }
 
 async function confirmChildApproval(ctx, input) {
@@ -602,34 +662,126 @@ function validatePlannerPreview(data, plannerPlan) {
   }
 }
 
-async function launchConfirmedStart(pi, input, project, plannerPlan, signal, ctx) {
-  return withPrivateFiles(startFileValues(input), async (paths) => {
-    const preview = await runCli(pi, "start", buildStartArgs(input, project, paths, { dryRun: true }), signal);
-    if (plannerPlan?.usage) preview.planner_usage = plannerPlan.usage;
-    if (!preview.success) return preview;
-    validateWorkerContextPreview(preview.data, input.workerContext);
-    validatePlannerPreview(preview.data, plannerPlan);
-    const confirmed = await ctx.ui.confirm(
-      "Start tmux orchestration?",
-      startConfirmation(preview, plannerPlan),
-    );
-    if (!confirmed) throw new Error("start_confirmation_declined");
-    const skipModelCheck = previewModelsAreAvailable(ctx, preview.data?.roles);
-    const envelope = await runCli(pi, "start", buildStartArgs(input, project, paths, { skipModelCheck }), signal);
-    if (plannerPlan?.usage) envelope.planner_usage = plannerPlan.usage;
-    return envelope;
+function metadataRecord(value) {
+  if (!value) return false;
+  if (typeof value !== "object") return false;
+  return !Array.isArray(value);
+}
+
+function validBoundPlanningShape(actual) {
+  if (!metadataRecord(actual)) return false;
+  return [actual.bindings?.input, actual.bindings?.start_config]
+    .every((value) => DIGEST_PATTERN.test(value));
+}
+
+function unboundPlanning(actual) {
+  return {
+    ...actual,
+    bindings: { ...actual.bindings, input: null, start_config: null },
+  };
+}
+
+function requireBoundPlanning(data, plannerPlan) {
+  const actual = data?.planning;
+  const expected = planningRecordForPreview(plannerPlan);
+  if (!validBoundPlanningShape(actual)) throw new Error("dynamic_planning_binding_missing");
+  if (metadataDigest(unboundPlanning(actual)) !== metadataDigest(expected)) {
+    throw new Error("dynamic_planning_binding_mismatch");
+  }
+  return actual;
+}
+
+function validatedBoundPlanning(data, plannerPlan) {
+  if (!plannerPlan) return undefined;
+  return requireBoundPlanning(data, plannerPlan);
+}
+
+function dynamicBindingsMatch(expected, policy, topology, candidates) {
+  return [
+    policy.bindingDigest === expected.plannerPolicy,
+    topology.bindingDigest === expected.topologyPolicy,
+    plannerCandidateDigest(candidates) === expected.candidateSet,
+  ].every(Boolean);
+}
+
+async function revalidateDynamicBindings(pi, ctx, project, plannerPlan, signal) {
+  if (!plannerPlan) return;
+  const expected = plannerPlan.revalidation;
+  const policyEnvelope = await runCli(pi, "planner-policy", ["--project", project], signal);
+  const policy = plannerPolicyProjectionFromEnvelope(policyEnvelope);
+  const topologyEnvelope = await runCli(pi, "planner-topology", expected.topologyArgs, signal);
+  const topology = plannerTopologyProjectionFromEnvelope(topologyEnvelope);
+  const candidates = plannerModelCandidates(ctx, expected.topologyModels);
+  if (!dynamicBindingsMatch(expected, policy, topology, candidates)) {
+    throw new Error("stale_dynamic_planning_binding");
+  }
+}
+
+async function preparedStartPreview(pi, input, project, paths, plannerPlan, signal) {
+  const preview = await runCli(
+    pi, "start", buildStartArgs(input, project, paths, { dryRun: true }), signal,
+  );
+  if (plannerPlan?.usage) preview.planner_usage = plannerPlan.usage;
+  if (!preview.success) return { preview, boundPlanning: undefined };
+  validateWorkerContextPreview(preview.data, input.workerContext);
+  validatePlannerPreview(preview.data, plannerPlan);
+  return { preview, boundPlanning: validatedBoundPlanning(preview.data, plannerPlan) };
+}
+
+async function persistBoundPlanning(path, boundPlanning) {
+  if (!boundPlanning) return;
+  await writeFile(path, JSON.stringify(boundPlanning), {
+    encoding: "utf8",
+    mode: 0o600,
+    flag: "w",
   });
 }
 
-async function runStart(pi, input, signal, ctx) {
-  validateStartRequest(input, ctx);
+async function launchAfterPreview(pi, ctx, start, prepared) {
+  const confirmed = await ctx.ui.confirm(
+    "Start tmux orchestration?",
+    startConfirmation(prepared.preview, start.plannerPlan),
+  );
+  if (!confirmed) throw new Error("start_confirmation_declined");
+  await revalidateDynamicBindings(pi, ctx, start.project, start.plannerPlan, start.signal);
+  await persistBoundPlanning(start.paths.planning, prepared.boundPlanning);
+  const skipModelCheck = previewModelsAreAvailable(ctx, prepared.preview.data?.roles);
+  const envelope = await runCli(
+    pi,
+    "start",
+    buildStartArgs(start.input, start.project, start.paths, { skipModelCheck }),
+    start.signal,
+  );
+  if (start.plannerPlan?.usage) envelope.planner_usage = start.plannerPlan.usage;
+  return envelope;
+}
+
+async function launchConfirmedStart(pi, ctx, start) {
+  return withPrivateFiles(startFileValues(start.input, start.plannerPlan), async (paths) => {
+    const prepared = await preparedStartPreview(
+      pi, start.input, start.project, paths, start.plannerPlan, start.signal,
+    );
+    if (!prepared.preview.success) return prepared.preview;
+    if (start.previewOnly) return prepared.preview;
+    return launchAfterPreview(pi, ctx, { ...start, paths }, prepared);
+  });
+}
+
+async function runStart(pi, input, signal, ctx, options = {}) {
+  validateStartRequest(input, ctx, options.allowRpc === true);
   const initialInput = startInputWithParentModel(input, ctx);
   const project = await canonicalProject(initialInput.project, ctx.cwd, {
     requireCanonical: Boolean(initialInput.workspaceCapsule),
   });
   const planned = await applyDynamicPlan(pi, ctx, initialInput, project, signal);
   await confirmChildApproval(ctx, planned.input);
-  return launchConfirmedStart(pi, planned.input, project, planned.plan, signal, ctx);
+  return launchConfirmedStart(pi, ctx, {
+    input: planned.input,
+    project,
+    plannerPlan: planned.plan,
+    signal,
+    previewOnly: options.previewOnly === true,
+  });
 }
 
 function requireAttachContext(ctx) {
@@ -998,6 +1150,76 @@ function createCommandHandlers(pi, superviseStart = () => {}) {
   return { models, dashboard, start, send, stop };
 }
 
+function terminalRequestShape(value) {
+  if (!metadataRecord(value)) return false;
+  if (!metadataRecord(value.input)) return false;
+  return [
+    value.version === 1,
+    value.input.action === "start",
+    value.input.dynamicPlan === true,
+    typeof value.previewOnly === "boolean",
+  ].every(Boolean);
+}
+
+async function readTerminalRequest(requestPath) {
+  const metadata = await stat(requestPath);
+  if (!metadata.isFile() || metadata.size > 128 * 1024) {
+    throw new Error("invalid_terminal_request");
+  }
+  const value = JSON.parse(await readFile(requestPath, "utf8"));
+  if (!terminalRequestShape(value)) throw new Error("invalid_terminal_request");
+  return value;
+}
+
+function terminalFailure(error) {
+  const reason = error instanceof Error ? error.message : "dynamic_planning_failed";
+  const safeReasons = new Set([
+    "dynamic_planning_confirmation_declined",
+    "dynamic_planning_static_fallback_declined",
+    "start_confirmation_declined",
+    "no_eligible_decision_model",
+    "stale_dynamic_planning_binding",
+  ]);
+  if (safeReasons.has(reason)) {
+    return {
+      version: 1, success: false, envelope: null,
+      error: {
+        code: reason,
+        message: "Dynamic planning or launch confirmation was declined or became stale",
+      },
+    };
+  }
+  return {
+    version: 1, success: false, envelope: null,
+    error: {
+      code: "dynamic_planning_failed",
+      message: "Dynamic planning failed before launch",
+    },
+  };
+}
+
+async function terminalStartCommand(pi, ctx, requestPath, outputPath) {
+  let result;
+  try {
+    const value = await readTerminalRequest(requestPath);
+    const envelope = await runStart(
+      pi,
+      value.input,
+      ctx.signal,
+      ctx,
+      { allowRpc: true, previewOnly: value.previewOnly },
+    );
+    result = { version: 1, success: true, envelope, error: null };
+  } catch (error) {
+    result = terminalFailure(error);
+  }
+  await writeFile(outputPath, JSON.stringify(result), {
+    encoding: "utf8",
+    mode: 0o600,
+    flag: "w",
+  });
+}
+
 export default function tmuxOrchestratorExtension(pi) {
   const observers = new Map();
   let shuttingDown = false;
@@ -1071,6 +1293,20 @@ export default function tmuxOrchestratorExtension(pi) {
     },
   });
 
+  const terminalRequest = process.env.PI_TMUX_ORCHESTRATOR_TERMINAL_REQUEST;
+  const terminalOutput = process.env.PI_TMUX_ORCHESTRATOR_TERMINAL_OUTPUT;
+  if (terminalRequest && terminalOutput) {
+    pi.registerCommand("or-terminal-start", {
+      description: "Internal confirmed terminal dynamic-planning adapter",
+      handler: async (_args, ctx) => terminalStartCommand(
+        pi,
+        ctx,
+        terminalRequest,
+        terminalOutput,
+      ),
+    });
+  }
+
   const commandHandlers = createCommandHandlers(pi, superviseStart);
   const commands = {
     "or-models": ["List available Pi model metadata", commandHandlers.models],
@@ -1083,7 +1319,7 @@ export default function tmuxOrchestratorExtension(pi) {
     pi.registerCommand(name, { description, handler });
   }
   pi.on("session_start", (_event, ctx) => {
-    scheduleOrchestratorUpdateNotice(ctx);
+    if (!terminalRequest) scheduleOrchestratorUpdateNotice(ctx);
   });
   pi.on("session_shutdown", () => {
     shuttingDown = true;

@@ -1,6 +1,16 @@
 import { randomUUID } from "node:crypto";
 import { availableThinkingLevels } from "./orchestrator-models.js";
+import {
+  metadataDigest,
+  plannerCandidateDigest,
+} from "./orchestrator-planning.js";
 import { validCustomRoleId } from "./orchestrator-worker-roles.js";
+
+export {
+  metadataDigest,
+  plannerCandidateDigest,
+  planningRecordForPreview,
+} from "./orchestrator-planning.js";
 
 const ROLE_ORDER = ["implementer", "reviewer", "probe", "playwright", "django"];
 const REQUIRED_ROLES = new Set(["implementer", "reviewer"]);
@@ -237,7 +247,8 @@ export function decisionModelConfirmation(selection) {
     `Thinking: ${selection.thinking} (dynamic-planning cap=${THINKING_CAP})`,
     `Source: ${selection.source}`,
     `Eligible model candidates: ${selection.candidateCount}`,
-    "This makes one additional provider-backed call before preview. It sends the bounded task/context and eligible role/model metadata, starts no workers, and may incur provider usage.",
+    "Payload categories: bounded task/context, canonical project identity, fixed role/contract authority, exact candidate model/thinking metadata, and locked operator/config constraints.",
+    "No credentials, endpoints, custom resource bodies, tools, or configuration mutation surface are sent. This additional call starts no workers and may incur provider usage.",
   ].join("\n");
 }
 
@@ -316,17 +327,53 @@ function roleIsExplicitlyRequired(input, role, field) {
     || Boolean(input[OPTIONAL_TASK_FIELDS[role]]);
 }
 
+function validRequiredCustomRoleIds(value) {
+  if (!Array.isArray(value)) return false;
+  if (value.length > MAX_CUSTOM_ROLES) return false;
+  if (new Set(value).size !== value.length) return false;
+  return value.every((role) => validCustomRoleId(role));
+}
+
+function validateRequiredCustomRolePolicy(input, roleIds) {
+  if (input.projectCustomRoles === false && roleIds.length) {
+    throw new Error("dynamic_planning_custom_role_constraint_conflict");
+  }
+}
+
+function validateRequiredCustomRoleAllowlist(topology, roleIds) {
+  const configured = new Set(topology.customRoles.map((role) => role.role));
+  if (roleIds.some((role) => !configured.has(role))) {
+    throw new Error("dynamic_planning_custom_role_not_allowlisted");
+  }
+}
+
+function requiredCustomRoleIds(input, topology) {
+  if (input.requiredCustomRoleIds === undefined) return [];
+  const roleIds = input.requiredCustomRoleIds;
+  if (!validRequiredCustomRoleIds(roleIds)) {
+    throw new Error("dynamic_planning_custom_role_constraint_invalid");
+  }
+  validateRequiredCustomRolePolicy(input, roleIds);
+  validateRequiredCustomRoleAllowlist(topology, roleIds);
+  return roleIds;
+}
+
+function admitCustomRole(input, candidates, required, requiredIds, role) {
+  const candidate = exactCandidate(candidates, role.provider, role.model);
+  const eligible = candidate?.thinkingLevels.includes(role.thinking) === true;
+  const explicitlyRequired = input.projectCustomRoles === true || requiredIds.includes(role.role);
+  if (!explicitlyRequired) return eligible;
+  if (!eligible) throw new Error("dynamic_planning_custom_role_model_unavailable");
+  required.add(role.role);
+  return true;
+}
+
 function eligibleCustomRoles(input, topology, candidates, required) {
+  const requiredIds = requiredCustomRoleIds(input, topology);
   if (input.projectCustomRoles === false) return [];
-  return topology.customRoles.filter((role) => {
-    const candidate = exactCandidate(candidates, role.provider, role.model);
-    const eligible = candidate?.thinkingLevels.includes(role.thinking) === true;
-    if (input.projectCustomRoles === true && !eligible) {
-      throw new Error("dynamic_planning_custom_role_model_unavailable");
-    }
-    if (input.projectCustomRoles === true) required.add(role.role);
-    return eligible;
-  });
+  return topology.customRoles.filter(
+    (role) => admitCustomRole(input, candidates, required, requiredIds, role),
+  );
 }
 
 function eligiblePlannerRoles(input, topology, candidates) {
@@ -373,7 +420,7 @@ function plannerPayload(input, project, candidates, policy, topology) {
   return {
     task: String(input.task),
     role_tasks: roleTasks,
-    context_capsule: input.contextCapsule ?? null,
+    context_capsule: plannerContextCapsule(input),
     project,
     eligible_roles: policy.roles.map((role) => {
       const custom = policy.custom.get(role);
@@ -560,6 +607,24 @@ function parsePlannerResponse(response, candidates, input, policy, topology) {
   return validatePlannerDecision(value, candidates, input, policy, topology);
 }
 
+function plannerContextCapsule(input) {
+  if (input.renderedContextCapsule !== undefined) return input.renderedContextCapsule;
+  return input.contextCapsule ?? null;
+}
+
+function planningOverrideSummary(input) {
+  const roleValues = Object.entries(OPTIONAL_FIELDS)
+    .filter(([, field]) => typeof input[field] === "boolean")
+    .map(([role, field]) => `${role}=${input[field] ? "required" : "disabled"}`);
+  const projectCustom = new Map([
+    [true, ["project-custom=required"]],
+    [false, ["project-custom=disabled"]],
+  ]).get(input.projectCustomRoles) || [];
+  const modelRoles = Object.keys(input.modelOverrides || {}).sort();
+  const models = modelRoles.length ? [`model-overrides=${modelRoles.join(",")}`] : [];
+  return [...roleValues, ...projectCustom, ...models];
+}
+
 function plannedStartInput(input, decision) {
   const selected = new Map(decision.roles.map((role) => [role.role, role]));
   const plannedOverrides = Object.fromEntries(decision.roles
@@ -582,21 +647,16 @@ function plannedStartInput(input, decision) {
   };
 }
 
-export async function runPreflightPlanner(ctx, input, project, selection, topologyValue, signal) {
-  if (typeof ctx?.modelRegistry?.complete !== "function") {
-    throw new Error("decision_model_completion_unavailable");
-  }
-  const topology = topologyValue;
-  const candidates = selection.candidates;
-  if (!Array.isArray(candidates) || !candidates.length) {
-    throw new Error("decision_model_candidates_unavailable");
-  }
-  const policy = eligiblePlannerRoles(input, topology, candidates);
-  validatePlannerInputConstraints(input, candidates, policy, topology);
-  const payload = plannerPayload(input, project, candidates, policy, topology);
-  const serialized = JSON.stringify(payload);
-  if (utf8Bytes(serialized) > MAX_PROMPT_BYTES) throw new Error("planner_input_too_large");
-  const response = await ctx.modelRegistry.complete(
+function resolvedPlannerBindings(bindingDigests, topology) {
+  if (bindingDigests) return bindingDigests;
+  return {
+    plannerPolicy: metadataDigest({ version: 1 }),
+    topologyPolicy: metadataDigest(topology),
+  };
+}
+
+async function completePlannerDecision(ctx, selection, serialized, requestId, signal) {
+  return ctx.modelRegistry.complete(
     selection.model,
     {
       systemPrompt: SYSTEM_PROMPT,
@@ -612,11 +672,40 @@ export async function runPreflightPlanner(ctx, input, project, selection, topolo
       timeoutMs: PLANNER_TIMEOUT_MS,
       maxRetries: 0,
       cacheRetention: "none",
-      sessionId: randomUUID(),
+      sessionId: requestId,
       signal,
     },
   );
+}
+
+export async function runPreflightPlanner(
+  ctx,
+  input,
+  project,
+  selection,
+  topologyValue,
+  bindingDigests,
+  signal,
+) {
+  if (typeof ctx?.modelRegistry?.complete !== "function") {
+    throw new Error("decision_model_completion_unavailable");
+  }
+  const topology = topologyValue;
+  const candidates = selection.candidates;
+  const resolvedBindings = resolvedPlannerBindings(bindingDigests, topology);
+  if (!Array.isArray(candidates) || !candidates.length) {
+    throw new Error("decision_model_candidates_unavailable");
+  }
+  const policy = eligiblePlannerRoles(input, topology, candidates);
+  validatePlannerInputConstraints(input, candidates, policy, topology);
+  const payload = plannerPayload(input, project, candidates, policy, topology);
+  const serialized = JSON.stringify(payload);
+  if (utf8Bytes(serialized) > MAX_PROMPT_BYTES) throw new Error("planner_input_too_large");
+  const requestId = randomUUID().replaceAll("-", "");
+  const createdAtMs = Date.now();
+  const response = await completePlannerDecision(ctx, selection, serialized, requestId, signal);
   const decision = parsePlannerResponse(response, candidates, input, policy, topology);
+  const acceptedAtMs = Date.now();
   return {
     input: plannedStartInput(input, decision),
     plan: {
@@ -629,17 +718,28 @@ export async function runPreflightPlanner(ctx, input, project, selection, topolo
       },
       roles: decision.roles,
       usage: response.usage,
+      requestId,
+      createdAtMs,
+      acceptedAtMs,
+      bindings: {
+        plannerPolicy: resolvedBindings.plannerPolicy,
+        topologyPolicy: resolvedBindings.topologyPolicy,
+        candidateSet: plannerCandidateDigest(candidates),
+      },
+      operatorOverrides: planningOverrideSummary(input),
     },
   };
 }
 
 export function plannerPlanConfirmation(plan) {
   if (!plan) return "Static/manual policy (no preflight model call)";
-  const roles = plan.roles.map(
-    (role) => `${role.role}: ${role.provider}/${role.model} thinking=${role.thinking} — ${role.reason}`,
-  );
+  const roles = plan.roles.map((role) => {
+    const contract = role.specialistContract ? ` contract=${role.specialistContract}` : "";
+    return `${role.role}:${contract} ${role.provider}/${role.model} thinking=${role.thinking} — ${role.reason}`;
+  });
   return [
     `Decision model: ${plan.decisionModel.provider}/${plan.decisionModel.model} thinking=${plan.decisionModel.thinking} source=${plan.decisionModel.source}`,
+    `Operator planning constraints: ${plan.operatorOverrides.length ? plan.operatorOverrides.join("; ") : "none"}`,
     `Selected ${plan.roles.length} workers:`,
     ...roles,
   ].join("\n");

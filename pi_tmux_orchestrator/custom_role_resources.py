@@ -156,7 +156,7 @@ def validate_custom_policy(value: object) -> dict[str, str]:
 def retained_custom_definitions(manifest: dict[str, Any]) -> dict[str, Any]:
     """Strict versioned binding, without consulting ambient policy or live files."""
     version = manifest.get("version")
-    if type(version) is not int or version not in {1, 2, 3, 4, 5, 6, 7}:
+    if type(version) is not int or version not in {1, 2, 3, 4, 5, 6, 7, 8, 9}:
         raise OrchestrationError("Unsupported custom role binding manifest version")
     project = Path(manifest["project"])
     roles = manifest["roles"]
@@ -165,9 +165,9 @@ def retained_custom_definitions(manifest: dict[str, Any]) -> dict[str, Any]:
     ):
         raise OrchestrationError("Retained worker roles are invalid")
     custom = {name: role for name, role in roles.items() if valid_custom_role_id(name)}
-    if manifest["version"] < 6:
+    if manifest["version"] not in {6, 7, 9}:
         if custom or "custom_role_registry" in manifest:
-            raise OrchestrationError("Legacy manifests cannot bind custom roles")
+            raise OrchestrationError("This manifest version cannot bind custom roles")
         return {}
     if "custom_role_registry" not in manifest or len(custom) > MAX_CUSTOM_ROLES:
         raise OrchestrationError("Retained custom role registry binding is invalid")
