@@ -82,27 +82,30 @@ function candidateKey(candidate) {
   return `${candidate.provider}\0${candidate.modelId}`;
 }
 
-function candidatePriority(candidate, preferredKey, parentKey) {
-  const key = candidateKey(candidate);
-  if (preferredKey && key === preferredKey) return 0;
-  if (key === parentKey) return 1;
-  return 2;
+function candidatePriorities(prioritized = []) {
+  return new Map(prioritized.map((item, index) => [
+    `${item.provider}\0${item.model}`,
+    index,
+  ]));
 }
 
-export function plannerModelCandidates(ctx, preferred) {
+export function plannerModelCandidates(ctx, prioritized = []) {
   const { scoped, source } = selectedModels(ctx);
   const unique = new Map();
+  const seenIdentities = new Set();
   for (const entry of source.slice(0, MAX_MODEL_SCAN)) {
+    const model = scoped ? entry?.model : entry;
+    if (!boundedIdentifier(model?.provider) || !boundedIdentifier(model?.id)) continue;
+    const key = `${model.provider}\0${model.id}`;
+    if (seenIdentities.has(key)) throw new Error("ambiguous_decision_model_catalog");
+    seenIdentities.add(key);
     const candidate = catalogCandidate(entry, scoped);
-    if (!candidate) continue;
-    const key = candidateKey(candidate);
-    if (!unique.has(key)) unique.set(key, candidate);
+    if (candidate) unique.set(key, candidate);
   }
-  const preferredKey = preferred ? `${preferred.provider}\0${preferred.model}` : undefined;
-  const parentKey = `${ctx?.model?.provider || ""}\0${ctx?.model?.id || ""}`;
+  const priorities = candidatePriorities(prioritized);
   return [...unique.values()]
-    .sort((left, right) => candidatePriority(left, preferredKey, parentKey)
-      - candidatePriority(right, preferredKey, parentKey)
+    .sort((left, right) => (priorities.get(candidateKey(left)) ?? Number.MAX_SAFE_INTEGER)
+      - (priorities.get(candidateKey(right)) ?? Number.MAX_SAFE_INTEGER)
       || `${left.provider}/${left.modelId}`.localeCompare(`${right.provider}/${right.modelId}`))
     .slice(0, MAX_PLANNER_MODELS);
 }
@@ -117,9 +120,12 @@ function highestThinking(levels) {
   )[0];
 }
 
-function decisionModelShape(value) {
-  return value && typeof value === "object" && !Array.isArray(value)
-    && Object.keys(value).every((field) => ["provider", "model", "thinking"].includes(field));
+function decisionModelShape(value, exact = false) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const fields = Object.keys(value);
+  const allowed = ["provider", "model", "thinking"];
+  return fields.every((field) => allowed.includes(field))
+    && (!exact || fields.length === allowed.length && allowed.every((field) => Object.hasOwn(value, field)));
 }
 
 function requestedDecisionModel(value) {
@@ -135,29 +141,42 @@ function requestedDecisionModel(value) {
   if (THINKING_ORDER.indexOf(value.thinking ?? "off") > THINKING_ORDER.indexOf(THINKING_CAP)) {
     throw new Error("decision_model_thinking_exceeds_medium_cap");
   }
-  return value;
+  return { ...value };
 }
 
-export function selectDecisionModel(ctx, requested) {
-  const explicit = requestedDecisionModel(requested);
-  const candidates = plannerModelCandidates(ctx, explicit);
-  if (!candidates.length) throw new Error("no_eligible_decision_model");
-  let candidate;
-  let source;
-  if (explicit) {
-    candidate = exactCandidate(candidates, explicit.provider, explicit.model);
-    source = "explicit";
-    if (!candidate) throw new Error("decision_model_unavailable");
-  } else {
-    candidate = exactCandidate(candidates, ctx?.model?.provider, ctx?.model?.id);
-    source = candidate ? "parent-model-fallback" : "available-model-fallback";
-    candidate ??= candidates[0];
+function configuredDecisionModel(value) {
+  if (!decisionModelShape(value, true)
+      || !boundedIdentifier(value.provider)
+      || !boundedIdentifier(value.model)
+      || !THINKING_ORDER.includes(value.thinking)
+      || THINKING_ORDER.indexOf(value.thinking) > THINKING_ORDER.indexOf(THINKING_CAP)) {
+    throw new Error("invalid_planner_policy_projection");
   }
-  const thinking = explicit?.thinking ?? highestThinking(candidate.thinkingLevels);
-  if (!candidate.thinkingLevels.includes(thinking)) {
-    throw new Error("decision_model_thinking_unsupported");
+  return { provider: value.provider, model: value.model, thinking: value.thinking };
+}
+
+export function validateDecisionModelPolicy(value) {
+  if (!exactFields(value, ["version", "preferred", "fallbacks", "no_eligible"])
+      || value.version !== 1
+      || (value.preferred !== null && !decisionModelShape(value.preferred, true))
+      || !Array.isArray(value.fallbacks)
+      || value.fallbacks.length > 16
+      || !["cancel", "static"].includes(value.no_eligible)) {
+    throw new Error("invalid_planner_policy_projection");
   }
+  const preferred = value.preferred === null ? null : configuredDecisionModel(value.preferred);
+  const fallbacks = value.fallbacks.map(configuredDecisionModel);
+  const identities = [...(preferred ? [preferred] : []), ...fallbacks]
+    .map((item) => `${item.provider}\0${item.model}`);
+  if (new Set(identities).size !== identities.length) {
+    throw new Error("duplicate_planner_policy_identity");
+  }
+  return { version: 1, preferred, fallbacks, noEligible: value.no_eligible };
+}
+
+function selectedDecision(candidate, thinking, source, candidates) {
   return {
+    kind: "model",
     model: candidate.model,
     provider: candidate.provider,
     modelId: candidate.modelId,
@@ -168,13 +187,62 @@ export function selectDecisionModel(ctx, requested) {
   };
 }
 
+function explicitDecision(candidates, explicit) {
+  const candidate = exactCandidate(candidates, explicit.provider, explicit.model);
+  if (!candidate) throw new Error("decision_model_unavailable");
+  const thinking = explicit.thinking ?? highestThinking(candidate.thinkingLevels);
+  if (!candidate.thinkingLevels.includes(thinking)) {
+    throw new Error("decision_model_thinking_unsupported");
+  }
+  return selectedDecision(candidate, thinking, "per-run", candidates);
+}
+
+function configuredDecision(candidates, policy, ordered) {
+  for (let index = 0; index < ordered.length; index += 1) {
+    const configured = ordered[index];
+    const candidate = exactCandidate(candidates, configured.provider, configured.model);
+    if (!candidate || !candidate.thinkingLevels.includes(configured.thinking)) continue;
+    const preferred = index === 0 && policy.preferred;
+    const source = preferred ? "configured-preferred" : "configured-fallback";
+    return selectedDecision(candidate, configured.thinking, source, candidates);
+  }
+  if (policy.noEligible !== "static") throw new Error("no_eligible_decision_model");
+  return {
+    kind: "static",
+    source: "configured-static-fallback",
+    candidateCount: candidates.length,
+  };
+}
+
+export function selectDecisionModel(ctx, requested, configuredPolicy) {
+  const explicit = requestedDecisionModel(requested);
+  const policy = validateDecisionModelPolicy(configuredPolicy);
+  const ordered = explicit
+    ? [explicit]
+    : [...(policy.preferred ? [policy.preferred] : []), ...policy.fallbacks];
+  const candidates = plannerModelCandidates(ctx, ordered);
+  return explicit
+    ? explicitDecision(candidates, explicit)
+    : configuredDecision(candidates, policy, ordered);
+}
+
 export function decisionModelConfirmation(selection) {
+  if (selection.kind !== "model") throw new Error("decision_model_not_selected");
   return [
     `Decision model: ${selection.provider}/${selection.modelId}`,
     `Thinking: ${selection.thinking} (dynamic-planning cap=${THINKING_CAP})`,
     `Source: ${selection.source}`,
     `Eligible model candidates: ${selection.candidateCount}`,
     "This makes one additional provider-backed call before preview. It sends the bounded task/context and eligible role/model metadata, starts no workers, and may incur provider usage.",
+  ].join("\n");
+}
+
+export function staticPlannerFallbackConfirmation(selection) {
+  if (selection.kind !== "static") throw new Error("invalid_static_planner_fallback");
+  return [
+    "No configured decision-model identity is eligible in Pi's current available/scoped catalog.",
+    `Configured action: static/manual start (source=${selection.source}).`,
+    "Continuing makes no preflight provider call. The ordinary CLI preview and final launch confirmation still apply.",
   ].join("\n");
 }
 
