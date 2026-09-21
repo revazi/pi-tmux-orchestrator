@@ -21,6 +21,7 @@ class JsonMainTests(JsonCliFixture):
         cases = {
             "doctor": ["doctor"],
             "planner-policy": ["planner-policy"],
+            "planner-topology": ["planner-topology"],
             "role-registry": ["role-registry"],
             "controller": ["controller", "status"],
             "supervisor": ["supervisor", "capabilities"],

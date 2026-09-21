@@ -127,11 +127,18 @@ ordered exact cross-provider fallbacks. Use the preferred slot for Jev only afte
 its canonical provider/model identity is known; the runtime never guesses or
 fuzzy-matches Jev. If no configured identity is eligible, policy either cancels
 or offers an explicitly confirmed static/manual start without a planning call.
-The strict one-shot decision selects only built-in roles and
-exact available per-role provider/model/thinking tuples at or below `medium`;
-roles may use different enabled providers. It cannot remove the implementer/reviewer,
-invent roles, tools, or model IDs, or start tmux/workers before the separate
-final confirmation. This first slice omits project custom roles; ordinary
+The strict one-shot decision retains exactly one built-in implementer and
+mandatory built-in reviewer, may select unique eligible built-in specialists,
+and may select only exact-project custom specialists whose registered resources
+and fixed read-only contracts validate before the provider call. Exact per-run
+choices win over exact-project constraints, user-global constraints/defaults,
+planner choices, and packaged fallback. Every selected provider/model/thinking
+tuple must exist in Pi's bounded available/scoped catalog and remain at or below
+`medium`; roles may use different enabled providers. The planner cannot invent
+roles/contracts, grant tools or write authority, remove review, force activation,
+mutate configuration, or start tmux/workers before the separate final
+confirmation. `projectCustomRoles=false` excludes project custom candidates; an
+explicit `true` requires every eligible configured identity. Ordinary
 `/or-start TASK` remains the static/manual path. No cost or quality improvement
 is claimed without comparative evidence.
 
@@ -165,7 +172,8 @@ provider behavior. Explicit CLI selection can be previewed with
 `start --dry-run --custom-role ID PROVIDER MODEL THINKING` (repeatable, at most
 eight). Version-4 exact-project `customRoles` can also select the same registered
 identities for one canonical directory; `--no-project-custom-roles` omits them,
-and explicit `--custom-role` wins. Provider/model values are always explicit.
+`--project-custom-role ID` selects an allowlisted subset for the bounded planner
+adapter, and explicit `--custom-role` wins. Provider/model values are always explicit.
 Thinking accepts an explicit level or `profile` to opt into the same identity's
 user-global custom-profile mapping; profile mappings never select workers and
 project profile selections cannot configure custom thinking. Selected roles use
@@ -325,6 +333,7 @@ The Python CLI provides the complete operational surface:
 
 ```bash
 pi-tmux-agents --json planner-policy --project /absolute/project
+pi-tmux-agents --json planner-topology --project /absolute/project
 pi-tmux-agents list
 pi-tmux-agents status SESSION
 pi-tmux-agents attach SESSION

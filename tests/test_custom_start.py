@@ -13,6 +13,7 @@ from unittest import mock
 from pi_tmux_orchestrator import commands, runtime, start_commands
 from pi_tmux_orchestrator.custom_role_resources import select_custom_start
 from pi_tmux_orchestrator.models import OrchestrationError
+from pi_tmux_orchestrator.planner_topology import planner_topology_policy
 from pi_tmux_orchestrator.profiles import (
     PACKAGED_EXECUTION_PROFILES,
     resolve_custom_thinking,
@@ -574,6 +575,105 @@ class CustomStartTests(CustomRoleResourceFixture):
             "exact-project-or-explicit-with-optional-profile-thinking",
         )
         self.assertNotIn(str(self.registry), raw)
+        self.assert_no_start()
+
+    def test_planner_topology_projects_only_digest_verified_project_roles(self):
+        self.write_project_custom_roles(
+            [
+                {
+                    "id": self.name,
+                    "provider": self.spec[1],
+                    "model": self.spec[2],
+                    "thinking": self.spec[3],
+                }
+            ]
+        )
+        with mock.patch.dict(
+            os.environ,
+            {"PI_TMUX_ORCHESTRATOR_ROLE_REGISTRY": str(self.registry)},
+        ):
+            policy = planner_topology_policy(self.project)
+            omitted = planner_topology_policy(
+                self.project, include_project_custom_roles=False
+            )
+            code, envelope, raw, stderr = test_json_cli.JsonMainTests.run_main(
+                self,
+                [
+                    "--json",
+                    "planner-topology",
+                    "--project",
+                    str(self.project),
+                ],
+            )
+        self.assertEqual(
+            policy["custom_roles"],
+            [
+                {
+                    "role": self.name,
+                    "contract": "probe",
+                    "provider": self.spec[1],
+                    "model": self.spec[2],
+                    "thinking": self.spec[3],
+                }
+            ],
+        )
+        self.assertEqual(omitted["custom_roles"], [])
+        self.assertEqual((code, stderr), (0, ""), raw)
+        self.assertEqual(envelope["data"]["policy"], policy)
+        for private_path in (self.registry, self.prompt["path"], self.skill["path"]):
+            self.assertNotIn(str(private_path), raw)
+        self.assertNotIn("PRIVATE_", raw)
+        Path(self.skill["path"]).write_text("mutated", encoding="utf-8")
+        with (
+            mock.patch.dict(
+                os.environ,
+                {"PI_TMUX_ORCHESTRATOR_ROLE_REGISTRY": str(self.registry)},
+            ),
+            self.assertRaises(OrchestrationError),
+        ):
+            planner_topology_policy(self.project)
+
+    def test_exact_project_custom_role_selection_accepts_allowlisted_identity(self):
+        self.write_project_custom_roles(
+            [
+                {
+                    "id": self.name,
+                    "provider": self.spec[1],
+                    "model": self.spec[2],
+                    "thinking": self.spec[3],
+                }
+            ]
+        )
+        code, envelope, raw, _ = self.run_start(
+            "--role-registry",
+            str(self.registry),
+            "--project-custom-role",
+            self.name,
+            custom=False,
+        )
+        self.assertEqual(code, 0, raw)
+        self.assertEqual(
+            [role["name"] for role in envelope["data"]["roles"]],
+            ["implementer", "reviewer", self.name],
+        )
+        self.assert_no_start()
+
+    def test_exact_project_custom_role_selection_rejects_unallowlisted_identity(self):
+        self.write_project_custom_roles(
+            [
+                {
+                    "id": self.name,
+                    "provider": self.spec[1],
+                    "model": self.spec[2],
+                    "thinking": self.spec[3],
+                }
+            ]
+        )
+        code, envelope, raw, _ = self.run_start(
+            "--project-custom-role", "custom-missing", custom=False
+        )
+        self.assertEqual(code, 2, raw)
+        self.assertEqual(envelope["error"]["code"], "invalid_arguments")
         self.assert_no_start()
 
     def test_no_project_custom_roles_omits_configured_identities(self):

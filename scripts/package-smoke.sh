@@ -57,6 +57,7 @@ EXPECTED_FILES=(
   pi_tmux_orchestrator/models.py
   pi_tmux_orchestrator/output.py
   pi_tmux_orchestrator/planner_policy.py
+  pi_tmux_orchestrator/planner_topology.py
   pi_tmux_orchestrator/prompts.py
   pi_tmux_orchestrator/profiles.py
   pi_tmux_orchestrator/protocol.py

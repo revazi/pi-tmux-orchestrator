@@ -27,6 +27,7 @@ class SkillMetadataTests(unittest.TestCase):
             "configuration.py",
             "controller.py",
             "planner_policy.py",
+            "planner_topology.py",
             "prompts.py",
             "profiles.py",
             "protocol.py",

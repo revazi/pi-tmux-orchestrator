@@ -396,15 +396,37 @@ def start_command(args: argparse.Namespace) -> CommandResult:
         raise OrchestrationError(f"Project directory does not exist: {project}")
     configured_models = load_model_config(project=project)
     matched_project = project_model_config(configured_models, project)
-    project_custom_selections = (
-        [
-            [role["id"], role["provider"], role["model"], role["thinking"]]
-            for role in matched_project.get("custom_roles", [])
-        ]
-        if matched_project is not None
-        and getattr(args, "project_custom_roles", None) is not False
-        else []
+    configured_project_roles = (
+        matched_project.get("custom_roles", []) if matched_project is not None else []
     )
+    requested_project_roles = getattr(args, "project_custom_role", None)
+    if requested_project_roles is not None:
+        if (
+            explicit_custom_selections
+            or getattr(args, "project_custom_roles", None) is False
+            or len(requested_project_roles) > len(configured_project_roles)
+            or len(set(requested_project_roles)) != len(requested_project_roles)
+        ):
+            raise OrchestrationError(
+                "Project custom role selection is invalid", "invalid_arguments"
+            )
+        configured_by_id = {role["id"]: role for role in configured_project_roles}
+        if not set(requested_project_roles) <= set(configured_by_id):
+            raise OrchestrationError(
+                "Project custom role selection is not allowlisted for this project",
+                "invalid_arguments",
+            )
+        selected_project_roles = [
+            configured_by_id[role] for role in requested_project_roles
+        ]
+    elif getattr(args, "project_custom_roles", None) is not False:
+        selected_project_roles = configured_project_roles
+    else:
+        selected_project_roles = []
+    project_custom_selections = [
+        [role["id"], role["provider"], role["model"], role["thinking"]]
+        for role in selected_project_roles
+    ]
     custom_selections = (
         explicit_custom_selections
         if explicit_custom_selections

@@ -235,25 +235,38 @@ fuzzy-matches a model/display name. The lookup does not read credentials or
 endpoints. Decision thinking and every selected worker thinking level are capped
 at `medium`; a conflicting explicit higher setting fails before the planning
 call.
-The planner receives the bounded task, optional structured parent capsule,
-project identity, built-in role descriptors, exact candidate model metadata,
-and explicit constraints. It gets no tools and must return one strict JSON
-object in one bounded attempt.
+Before the provider call, the authoritative `planner-topology` boundary resolves
+strict external model/profile/project configuration and freshly validates any
+exact-project custom-role registry descriptors and pinned resources. The planner
+receives the bounded task, optional structured parent capsule, project identity,
+fixed role/contract/authority descriptors, exact candidate model metadata, and
+explicit constraints. It receives no resource paths or bodies, credentials,
+endpoints, tools, or configuration mutation surface. It gets no tools and must
+return one strict JSON object in one bounded attempt.
 
-The decision must retain exactly one implementer and the mandatory reviewer. It
-may add unique probe, Playwright, and Django roles and must choose exact available
-provider/model/thinking combinations. The candidate set may span multiple Pi-enabled
-providers, and each role may use a different provider/model tuple. Explicit enabled/disabled roles, forced
-specialists, and model/thinking constraints win. The accepted values are fed
-through the existing CLI dry-run and final model availability checks. The model
-tool reports the nested planner usage to Pi's tool-result accounting.
+The decision must retain exactly one built-in implementer and the mandatory
+built-in reviewer. It may add unique eligible probe, Playwright, and Django roles
+and up to eight exact trusted custom specialists. Custom roles retain their fixed
+probe/Playwright/Django contract and read-only policy. Registry presence alone
+never makes a role eligible: it must also be allowlisted by the exact-project
+`customRoles` map and pass fresh resource verification. `projectCustomRoles=false`
+omits all such candidates; explicit `true` requires every eligible configured
+identity, while omission lets the planner select a subset.
 
-This first slice intentionally excludes registered/project custom roles and sets
-`projectCustomRoles=false` for a dynamic start. Use ordinary `/or-start TASK` or
-the existing static model-tool start when custom roles or fully manual policy are
-required. Deterministic specialist activation remains authoritative after
-launch. No provider-cost, latency, role-selection, or quality benefit is claimed
-without the separately reviewed evaluation in #174.
+Every role must choose an exact available provider/model/thinking combination.
+The candidate set may span multiple Pi-enabled providers, and each role may use a
+different tuple. Precedence is explicit per-run role/model choices, exact-project
+constraints, user-global constraints/defaults, accepted planner values, then
+packaged fallback. Explicit enabled/disabled roles, forced selections, profiles,
+and model/thinking constraints win. Unsupported, unavailable, duplicate,
+over-cap, stale, or ambiguous choices fail before the provider call or before
+launch; unsafe optional candidates are omitted without weakening mandatory
+review. The accepted topology is fed through CLI dry-run, custom resource
+revalidation, exact preview matching, and final model availability checks.
+Deterministic specialist activation remains authoritative after launch; the
+planner cannot force it. The model tool reports nested planner usage to Pi's
+tool-result accounting. No provider-cost, latency, role-selection, or quality
+benefit is claimed without the separately reviewed evaluation in #174.
 
 ### Budget policy
 
@@ -817,6 +830,15 @@ or provider responses and never makes a provider call. The project defaults to
 the current directory and is used only to reject a policy path inside the target
 project.
 
+### `planner-topology [--project PATH] [--profile NAME] [--no-project-custom-roles]`
+
+Validates and emits the metadata-only version-1 worker-topology policy used by
+dynamic planning: fixed built-in constraints, exact-project optional built-ins,
+and freshly verified custom identity/contract/model bindings. It never emits
+resource paths/bodies, tasks, credentials, endpoints, or provider responses and
+never makes a provider call. This is a validation projection, not authorization
+to launch; selected custom resources are verified again by dry-run and launch.
+
 ### `doctor [--project PATH]`
 
 Checks Pi, Python, tmux, tmux extended-key settings, model and budget
@@ -835,7 +857,9 @@ explicit level or `profile`, which opts into that identity's mapping in the sele
 user-global custom profile; an explicit level wins. Version-4 exact-project
 `customRoles` select the same registered identities for one canonical directory
 through the normal start flow; `--no-project-custom-roles` omits them for one run,
-and explicit `--custom-role` replaces the project list. Optional `--role-registry
+`--project-custom-role ID` selects only an exact-project allowlisted subset (and
+is used by the bounded planner adapter), and explicit `--custom-role` replaces
+the project list. Optional `--role-registry
 PATH` selects the user-owned registry; a missing selection with no project or
 explicit custom roles means no registry lookup.
 Both TUI and `--rpc-workers` preserve the built-in implementer and mandatory

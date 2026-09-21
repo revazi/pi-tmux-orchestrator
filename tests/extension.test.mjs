@@ -14,6 +14,7 @@ import {
   selectDecisionModel,
   validateDecisionModelPolicy,
   validatePlannerDecision,
+  validatePlannerTopology,
 } from "../extensions/orchestrator-planner.js";
 import {
   OrchestrationDashboardOverlay,
@@ -74,6 +75,26 @@ function plannerPolicyEnvelope(policy = plannerPolicy()) {
   return success("planner-policy", {
     config_path: "/external/tmux-orchestrator-planner.json",
     configured: true,
+    policy,
+  });
+}
+
+function plannerTopology({ constraints = {}, optionalRoles = ["probe", "playwright", "django"], customRoles = [] } = {}) {
+  const roles = ["implementer", "reviewer", "probe", "playwright", "django"];
+  return {
+    version: 1,
+    builtins: Object.fromEntries(roles.map((role) => [
+      role,
+      { constraint: constraints[role] || {} },
+    ])),
+    optional_roles: optionalRoles,
+    custom_roles: customRoles,
+  };
+}
+
+function plannerTopologyEnvelope(policy = plannerTopology()) {
+  return success("planner-topology", {
+    config_path: "/external/tmux-orchestrator.json",
     policy,
   });
 }
@@ -2956,7 +2977,92 @@ test("preflight candidate projection honors scoped thinking and strict decision 
   );
 });
 
-test("dynamic start plans a mixed-provider built-in topology before preview", async () => {
+test("trusted custom topology is bounded, contract-locked, and selected by exact identity", async () => {
+  const candidateModel = {
+    provider: "provider", id: "worker", reasoning: true,
+    thinkingLevelMap: { off: null, minimal: null, low: "low", medium: "medium" },
+  };
+  const candidates = plannerModelCandidates({
+    scopedModels: [{ model: candidateModel }],
+    modelRegistry: { getAvailable: () => [] },
+  });
+  const customRoles = Array.from({ length: 8 }, (_, index) => ({
+    role: `custom-security-${index}`, contract: "probe", provider: "provider", model: "worker", thinking: "low",
+  }));
+  const topology = validatePlannerTopology(plannerTopology({ customRoles }));
+  let payload;
+  const responseRoles = [
+    { role: "implementer", provider: "provider", model: "worker", thinking: "medium", reason: "One bounded writer." },
+    { role: "reviewer", provider: "provider", model: "worker", thinking: "low", reason: "Mandatory independent review." },
+    { role: "probe", provider: "provider", model: "worker", thinking: "low", reason: "Built-in technical inspection." },
+    { role: "playwright", provider: "provider", model: "worker", thinking: "low", reason: "Built-in browser inspection." },
+    { role: "django", provider: "provider", model: "worker", thinking: "low", reason: "Built-in framework inspection." },
+    ...customRoles.map((item) => ({
+      role: item.role, provider: item.provider, model: item.model, thinking: item.thinking,
+      reason: "Trusted custom inspection.",
+    })),
+  ];
+  const result = await runPreflightPlanner({
+    modelRegistry: {
+      complete: async (_model, request) => {
+        payload = JSON.parse(request.messages[0].content[0].text);
+        return {
+          stopReason: "stop",
+          content: [{ type: "text", text: JSON.stringify({ version: 1, roles: responseRoles }) }],
+          usage: { input: 1, output: 1 },
+        };
+      },
+    },
+  }, {
+    task: "Inspect and implement.", projectCustomRoles: true,
+  }, "/project", {
+    provider: "provider", modelId: "worker", thinking: "low", source: "preferred",
+    model: candidateModel, candidates,
+  }, topology);
+  assert.equal(payload.eligible_roles.length, 13);
+  assert.deepEqual(payload.eligible_roles.slice(0, 5).map((item) => item.role), [
+    "implementer", "reviewer", "probe", "playwright", "django",
+  ]);
+  assert.equal(payload.mandatory_roles.length, 10);
+  assert.equal(result.plan.roles.length, 13);
+  assert.deepEqual(result.input.plannedCustomRoleIds, customRoles.map((item) => item.role));
+  assert.equal(result.input.modelOverrides[customRoles[0].role], undefined);
+  assert.equal(result.plan.roles.at(-1).specialistContract, "probe");
+
+  let staleCompletions = 0;
+  const staleTopology = validatePlannerTopology(plannerTopology({
+    customRoles: [{
+      role: "custom-stale", contract: "probe", provider: "provider", model: "missing", thinking: "low",
+    }],
+  }));
+  await assert.rejects(
+    runPreflightPlanner({
+      modelRegistry: { complete: async () => { staleCompletions += 1; } },
+    }, { task: "Inspect.", projectCustomRoles: true }, "/project", {
+      provider: "provider", modelId: "worker", thinking: "low", source: "preferred",
+      model: candidateModel, candidates,
+    }, staleTopology),
+    /dynamic_planning_custom_role_model_unavailable/,
+  );
+  assert.equal(staleCompletions, 0);
+
+  assert.throws(
+    () => validatePlannerTopology(plannerTopology({
+      customRoles: [...customRoles, {
+        role: "custom-excess", contract: "probe", provider: "provider", model: "worker", thinking: "low",
+      }],
+    })),
+    /invalid_planner_topology_projection/,
+  );
+  assert.throws(
+    () => validatePlannerTopology(plannerTopology({ customRoles: [
+      { role: "custom-reviewer", contract: "probe", provider: "provider", model: "worker", thinking: "low" },
+    ] })),
+    /invalid_planner_custom_role/,
+  );
+});
+
+test("dynamic start plans mixed-provider built-in and trusted custom topology before preview", async () => {
   const privateTask = "PRIVATE_DYNAMIC_PLANNER_TASK_782f";
   const model = {
     provider: "xai", id: "grok-4.6", reasoning: true,
@@ -2967,6 +3073,8 @@ test("dynamic start plans a mixed-provider built-in topology before preview", as
     thinkingLevelMap: { off: null, minimal: null, low: "low", medium: "medium", high: "high" },
   };
   let completion;
+  let catalogReads = 0;
+  let catalogReadsAtCompletion = 0;
   let execCalls = 0;
   const { tool } = harness(async (_command, args) => {
     if (args[2] === "planner-policy") {
@@ -2978,10 +3086,20 @@ test("dynamic start plans a mixed-provider built-in topology before preview", as
         }))),
       };
     }
+    if (args[2] === "planner-topology") {
+      return {
+        code: 0,
+        stdout: JSON.stringify(plannerTopologyEnvelope(plannerTopology({
+          customRoles: [{
+            role: "custom-security", contract: "probe", provider: "xai", model: "grok-4.6", thinking: "low",
+          }],
+        }))),
+      };
+    }
     execCalls += 1;
     assert.equal(args.includes(privateTask), false);
     assert.ok(args.includes("--with-probe"));
-    assert.ok(args.includes("--no-project-custom-roles"));
+    assert.equal(args[args.indexOf("--project-custom-role") + 1], "custom-security");
     for (const role of ["implementer", "reviewer", "probe"]) {
       const reviewer = role === "reviewer";
       assert.equal(args[args.indexOf(`--${role}-provider`) + 1], reviewer ? "openai-codex" : "xai");
@@ -2997,6 +3115,7 @@ test("dynamic start plans a mixed-provider built-in topology before preview", as
           { name: "implementer", provider: "xai", model: "grok-4.6", thinking: "medium" },
           { name: "reviewer", provider: "openai-codex", model: "gpt-review", thinking: "low" },
           { name: "probe", provider: "xai", model: "grok-4.6", thinking: "medium" },
+          { name: "custom-security", provider: "xai", model: "grok-4.6", thinking: "low", specialist_contract: "probe" },
         ],
         trust: { child_bypass: false },
         paths: { state_root: "/tmp/state", coordination: dryRun ? null : "/tmp/state/run" },
@@ -3009,8 +3128,12 @@ test("dynamic start plans a mixed-provider built-in topology before preview", as
       model,
       thinkingLevel: "high",
       modelRegistry: {
-        getAvailable: () => [model, reviewModel],
+        getAvailable: () => {
+          catalogReads += 1;
+          return [model, reviewModel];
+        },
         complete: async (selected, request, options) => {
+          catalogReadsAtCompletion = catalogReads;
           completion = { selected, request, options };
           return {
             stopReason: "stop",
@@ -3022,6 +3145,7 @@ test("dynamic start plans a mixed-provider built-in topology before preview", as
                   { role: "implementer", provider: "xai", model: "grok-4.6", thinking: "medium", reason: "One writer is sufficient for the bounded implementation." },
                   { role: "reviewer", provider: "openai-codex", model: "gpt-review", thinking: "low", reason: "Independent cross-provider review remains mandatory." },
                   { role: "probe", provider: "xai", model: "grok-4.6", thinking: "medium", reason: "A technical probe reduces ambiguity before review." },
+                  { role: "custom-security", provider: "xai", model: "grok-4.6", thinking: "low", reason: "The trusted contract adds focused security review." },
                 ],
               }),
             }],
@@ -3039,6 +3163,8 @@ test("dynamic start plans a mixed-provider built-in topology before preview", as
     ctx,
   );
   assert.equal(execCalls, 2);
+  assert.equal(catalogReadsAtCompletion, 1);
+  assert.equal(catalogReads, 2);
   assert.equal(result.usage.totalTokens, 150);
   assert.equal(result.details.planner_usage.cost.total, 0.01);
   assert.equal(completion.selected, model);
@@ -3053,9 +3179,10 @@ test("dynamic start plans a mixed-provider built-in topology before preview", as
   assert.equal(ctx.calls.confirmations[0].title, "Authorize preflight decision call?");
   assert.match(ctx.calls.confirmations[0].message, /xai\/grok-4\.6/);
   assert.equal(ctx.calls.confirmations[1].title, "Start tmux orchestration?");
-  assert.match(ctx.calls.confirmations[1].message, /Selected 3 workers/);
+  assert.match(ctx.calls.confirmations[1].message, /Selected 4 workers/);
   assert.match(ctx.calls.confirmations[1].message, /reviewer: openai-codex\/gpt-review thinking=low/);
   assert.match(ctx.calls.confirmations[1].message, /probe: xai\/grok-4\.6 thinking=medium/);
+  assert.match(ctx.calls.confirmations[1].message, /custom-security: xai\/grok-4\.6 thinking=low/);
 });
 
 test("dynamic planning failure or declined authorization starts nothing", async () => {
@@ -3065,12 +3192,16 @@ test("dynamic planning failure or declined authorization starts nothing", async 
   let selectedPolicy = plannerPolicy({
     preferred: { provider: "provider", model: "model", thinking: "medium" },
   });
+  let selectedTopology = plannerTopology();
   const { tool } = harness(async (_command, args) => {
     if (args[2] === "planner-policy") {
       return {
         code: 0,
         stdout: JSON.stringify(plannerPolicyEnvelope(selectedPolicy)),
       };
+    }
+    if (args[2] === "planner-topology") {
+      return { code: 0, stdout: JSON.stringify(plannerTopologyEnvelope(selectedTopology)) };
     }
     executions += 1;
     return { code: 0, stdout: JSON.stringify(success("start")) };
@@ -3151,6 +3282,22 @@ test("dynamic planning failure or declined authorization starts nothing", async 
   assert.equal(completions, 1);
   assert.equal(executions, 1);
 
+  selectedPolicy = plannerPolicy({
+    preferred: { provider: "provider", model: "model", thinking: "medium" },
+  });
+  const duplicate = {
+    role: "custom-security", contract: "probe", provider: "provider", model: "model", thinking: "low",
+  };
+  selectedTopology = plannerTopology({ customRoles: [duplicate, duplicate] });
+  await assert.rejects(
+    tool.execute("invalid-topology", {
+      action: "start", task: "synthetic", dynamicPlan: true,
+    }, undefined, undefined, context({ context: { model, modelRegistry: registry } })),
+    /duplicate_planner_custom_role/,
+  );
+  assert.equal(completions, 1);
+  assert.equal(executions, 1);
+
   await assert.rejects(
     tool.execute("orphan", {
       action: "start", task: "synthetic", decisionModel: { provider: "provider", model: "model" },
@@ -3210,6 +3357,9 @@ test("zero eligible models require explicit configured static fallback and final
           noEligible: "static",
         }))),
       };
+    }
+    if (args[2] === "planner-topology") {
+      return { code: 0, stdout: JSON.stringify(plannerTopologyEnvelope()) };
     }
     startCalls += 1;
     const dryRun = args.includes("--dry-run");
@@ -3544,6 +3694,9 @@ test("slash --plan uses the same preflight decision and two-gate start path", as
           preferred: { provider: "provider", model: "decision", thinking: "medium" },
         }))),
       };
+    }
+    if (args[2] === "planner-topology") {
+      return { code: 0, stdout: JSON.stringify(plannerTopologyEnvelope()) };
     }
     executions += 1;
     assert.ok(args.includes("--without-probe"));
