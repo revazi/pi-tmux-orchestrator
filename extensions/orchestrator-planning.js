@@ -49,7 +49,12 @@ function planningUsage(value) {
 
 function retainedDecisionSource(source) {
   if (source === "per-run") return "explicit";
-  if (["configured-preferred", "configured-fallback", "typesafe-environment"].includes(source)) return source;
+  if ([
+    "configured-preferred",
+    "configured-fallback",
+    "typesafe-auth",
+    "typesafe-environment",
+  ].includes(source)) return source;
   throw new Error("invalid_planning_decision_source");
 }
 

@@ -458,6 +458,8 @@ export default function orchestratorWorker(pi) {
     applyActiveToolPolicy();
     connect();
   });
+  // Pi 0.87+ omits system/tool-declaration messages from `context` and restores
+  // them after handlers run. This filter only prunes conversation messages.
   pi.on("context", (event) => ({
     messages: filterWorkerContext(event.messages, contextMode),
   }));

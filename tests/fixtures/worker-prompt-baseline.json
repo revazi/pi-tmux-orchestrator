@@ -1,28 +1,46 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "metric_scope": "model-free-built-worker-system-prompt",
-  "caveat": "Normalized serialized characters and UTF-8 bytes are deterministic prompt-size proxies, not provider tokens, billing, cache efficiency, or production-wire acceptance.",
-  "pi_version": "0.84.4",
+  "caveat": "Normalized serialized characters and UTF-8 bytes are deterministic prompt-size proxies, not provider tokens, billing, cache efficiency, or production-wire acceptance. Pi's default/appended coding prompt size is observation-only; the equality gate is the orchestrator lean-prompt contract.",
   "role": "reviewer",
-  "before": {
-    "characters": 5000,
-    "utf8_bytes": 5000,
-    "skill_discovery": true,
-    "loaded_skills": [
-      "discovered"
-    ]
-  },
-  "after": {
-    "characters": 2480,
-    "utf8_bytes": 2482,
+  "contract": {
+    "custom_prompt": "lean-role-system-prompt",
+    "append_system_prompt": false,
     "skill_discovery": false,
     "loaded_skills": [
       "opted"
-    ]
+    ],
+    "keeps_governing_context": true,
+    "read_only_tools": true,
+    "includes_report_tool": true,
+    "lean_prompt_is_prefix": true
   },
-  "reduction": {
-    "characters": 2520,
-    "utf8_bytes": 2518,
-    "character_percent": 50.4
+  "lean_prompt": {
+    "characters": 1708,
+    "utf8_bytes": 1710
+  },
+  "last_observation": {
+    "pi_version": "0.87.1",
+    "before": {
+      "characters": 5046,
+      "utf8_bytes": 5046,
+      "skill_discovery": true,
+      "loaded_skills": [
+        "discovered"
+      ]
+    },
+    "after": {
+      "characters": 2482,
+      "utf8_bytes": 2484,
+      "skill_discovery": false,
+      "loaded_skills": [
+        "opted"
+      ]
+    },
+    "reduction": {
+      "characters": 2564,
+      "utf8_bytes": 2562,
+      "character_percent": 50.8
+    }
   }
 }

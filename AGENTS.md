@@ -47,7 +47,7 @@ Provide a small, reusable, intentionally tmux-scoped Pi skill and modular standa
 - `extensions/orchestrator-models.js`: bounded model metadata and override adapter
 - `extensions/orchestrator-planner.js`: bounded model-guided topology selection and strict role/model/contract decision validation
 - `extensions/orchestrator-planning.js`: canonical planner binding digests and body-free accepted-record projection
-- `extensions/orchestrator-typesafe.js`: fixed-endpoint dependency-free TypeSafe Jev HTTPS transport with bounded secret-safe responses
+- `extensions/orchestrator-typesafe.js`: auth-only Pi provider registration plus fixed-endpoint dependency-free TypeSafe Jev HTTPS transport with bounded secret-safe responses
 - `extensions/orchestrator-dashboard.js`: bounded cross-session Pi overlay and doctor projection
 - `extensions/orchestrator-update.js`: best-effort npm release notice
 - `extensions/orchestrator-parent.js`: parent-session observer runtime and reconnection state machine
@@ -76,7 +76,7 @@ Provide a small, reusable, intentionally tmux-scoped Pi skill and modular standa
 - Keep coordination state outside target repositories.
 - Keep supervisor reads independent from tmux runtime observation; never infer liveness from retained PIDs.
 - Treat project instructions and explicit trust as mandatory boundaries.
-- Never access or copy Pi/provider credentials; the sole direct-provider exception is consuming `TYPESAFE_API_KEY` in memory for the explicitly authorized fixed-endpoint Jev preflight call, without retaining, logging, displaying, or forwarding it to broker/workers.
+- Never read or copy Pi/provider credential files; the sole direct-provider exception is resolving the auth-only TypeSafe credential through Pi's model registry (or `TYPESAFE_API_KEY` environment fallback) in memory for the explicitly authorized fixed-endpoint Jev preflight call, without retaining it in orchestration state, logging, displaying, or forwarding it to broker/workers.
 - Never put private project payloads in handoff or status output.
 - Never claim synthetic probes are production wire acceptance.
 - Fail safely rather than replace an existing tmux session.

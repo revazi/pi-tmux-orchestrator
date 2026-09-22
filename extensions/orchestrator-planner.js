@@ -41,7 +41,7 @@ const MAX_REASON_CHARS = 240;
 const PLANNER_TIMEOUT_MS = 60_000;
 const PLANNER_MAX_TOKENS = 4096;
 const TYPESAFE_PROVIDER = "typesafe";
-const TYPESAFE_SOURCE = "typesafe-environment";
+const TYPESAFE_SOURCE = "typesafe-auth";
 const TYPESAFE_MAX_CHOICE_OPTIONS = 255;
 const TYPESAFE_MODEL_PATTERN = /^jev-[a-z0-9.-]+$/;
 
@@ -277,7 +277,7 @@ export function decisionModelConfirmation(selection) {
   if (selection.kind === "typesafe") {
     return [
       `Decision model: TypeSafe/${selection.modelId}`,
-      `Source: ${selection.source} (TYPESAFE_API_KEY is configured; value is not retained)`,
+      `Source: ${selection.source} (TypeSafe authentication is configured; credential value is not retained in the plan)`,
       `Eligible Pi worker-model candidates: ${selection.candidateCount}`,
       "Payload categories: bounded task/context, canonical project identity, fixed role/contract authority, exact candidate model/thinking metadata, and locked operator/config constraints.",
       "The credential is used only as an in-memory HTTPS Authorization header. No credential, endpoint, custom resource body, tool, or configuration mutation surface is included in the planning state. This one TypeSafe call starts no workers and may incur provider usage.",

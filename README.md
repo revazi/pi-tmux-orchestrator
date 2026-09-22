@@ -20,7 +20,7 @@ agents in a monitorable tmux grid.
 
 ## Install
 
-Requirements: Pi, Python 3.11+, tmux 3.2+, and macOS or Linux.
+Requirements: Pi, Python 3.11+, tmux 3.2+, and macOS or Linux. Worker adapters are verified against Pi 0.87.1; other Pi versions are not covered by a compatibility matrix. The lean `--system-prompt` / `--no-skills` launch contract does not freeze Pi's default prompt size.
 
 ```bash
 pi install npm:pi-tmux-orchestrator
@@ -121,14 +121,15 @@ terminal CLI; explicit run options take precedence.
 For opt-in model-guided preflight selection, use `/or-start --plan TASK` or
 model-tool `dynamicPlan=true`. Before preview, the extension shows the exact
 decision service and requires approval for one additional provider call. When
-`TYPESAFE_API_KEY` is set, the bundled dependency-free HTTPS adapter uses
-TypeSafe `jev-latest` directly at the fixed
+TypeSafe authentication is configured through Pi's native `/login typesafe`
+flow or the `TYPESAFE_API_KEY` environment fallback, the bundled dependency-free
+HTTPS adapter uses TypeSafe `jev-latest` directly at the fixed
 `https://api.typesafe.ai/v1/systemone` endpoint. Jev is a typed System One
 decision model, not a Pi chat model: it chooses from bounded role and exact
 worker-model/thinking options, and deterministic code constructs the normal
-strict plan. When the key is absent, an exact model-tool `decisionModel`
-selects a Pi chat model for that run. Without either, the strict version-1
-user-global planner policy selects an exact configured Pi preferred identity,
+strict plan. When TypeSafe authentication is absent, an exact model-tool
+`decisionModel` selects a Pi chat model for that run. Without either, the strict
+version-1 user-global planner policy selects an exact configured Pi preferred identity,
 then ordered exact cross-provider fallbacks. If no configured identity is
 eligible, policy either cancels or offers an explicitly confirmed static/manual
 start without a planning call.
@@ -245,21 +246,30 @@ globs, prefix matches, repository-name matches, or symlink components. Custom ro
 IDs must already exist in the user-global registry. Explicit run options override
 an exact project mapping.
 
-Pi remains authoritative for worker and Pi-fallback provider authentication. The
-one narrow exception is the direct Jev planner adapter: it reads
-`TYPESAFE_API_KEY` from the already-running parent process, trims and validates
-it, and uses it only in the in-memory HTTPS Authorization header after planning
-confirmation. The key is never accepted in configuration or arguments, retained,
-logged, shown, or forwarded into broker/worker tmux environments. The fixed
-TypeSafe endpoint cannot be overridden. Start Pi from a shell containing the key:
+Pi remains authoritative for worker, Pi-fallback, and TypeSafe authentication.
+The extension registers TypeSafe as an auth-only provider with no chat models.
+Configure it once through Pi's masked native prompt:
 
-```bash
-TYPESAFE_API_KEY='…' pi
+```text
+/login typesafe
 ```
 
-Jev takes precedence whenever the key is configured. Unset the variable to use
-an explicit Pi `decisionModel`, or the configured Pi preferred/fallback policy
-when no per-run decision model is supplied.
+Pi persists that credential in its normal user-global credential store and it
+takes effect immediately without restarting Pi; the orchestrator never reads the
+auth file directly. At planning time it asks Pi's
+model registry for the resolved credential, trims and validates it, and uses it
+only in the in-memory HTTPS Authorization header after planning confirmation.
+Use `/logout` and select `TypeSafe Jev Planner` to remove the stored credential.
+`TYPESAFE_API_KEY` remains an optional environment override for automation. The
+key is never accepted in orchestrator configuration or arguments, retained in
+orchestration state,
+logged, shown, or forwarded into broker/worker tmux environments. The fixed
+TypeSafe endpoint cannot be overridden.
+
+Jev takes precedence whenever TypeSafe authentication is configured. Log out and
+unset the environment fallback to use an explicit Pi `decisionModel`, or the
+configured Pi preferred/fallback policy when no per-run decision model is
+supplied.
 
 Dynamic planning uses a separate strict user-global file,
 `~/.pi/agent/tmux-orchestrator-planner.json`:
@@ -281,8 +291,9 @@ Dynamic planning uses a separate strict user-global file,
 ```
 
 This file is validated for every dynamic start, but its identities configure
-only the Pi-model fallback path used when `TYPESAFE_API_KEY` and an explicit Pi
-decision model are both absent. Resolve every identity from `/or-models`; display
+only the Pi-model fallback path used when TypeSafe authentication and an
+explicit Pi decision model are both absent. Resolve every identity from
+`/or-models`; display
 names never match. `preferred`
 may be `null`, fallbacks are tried in listed order (for example, exact Grok and
 OpenAI identities discovered from the current catalog), every thinking level is

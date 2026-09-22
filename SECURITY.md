@@ -14,11 +14,14 @@ unrelated session logs.
 
 Pi Tmux Orchestrator launches local Pi and Python processes under the current
 operating-system account. It uses configured Pi worker and fallback-planner
-providers without reading or copying Pi authentication files. The direct
-TypeSafe planner is the narrow exception: after explicit authorization it reads
-`TYPESAFE_API_KEY` from the parent process and uses it only as an in-memory
-Bearer header to the fixed TypeSafe System One endpoint. It is not an
-operating-system sandbox between same-user workers.
+providers without reading or copying Pi authentication files. The extension
+registers an auth-only TypeSafe provider so Pi can collect the key through the
+masked `/login typesafe` flow and persist it in Pi's normal user-global
+credential store. The orchestrator never reads that file directly: after
+explicit planning authorization it asks Pi's model registry for the resolved
+credential and uses it only as an in-memory Bearer header to the fixed TypeSafe
+System One endpoint. `TYPESAFE_API_KEY` remains an optional environment fallback.
+It is not an operating-system sandbox between same-user workers.
 
 Only the implementer receives normal Pi write tools. Reviewer, probe,
 Playwright, and Django roles omit `edit` and `write` but retain `bash`; their
@@ -42,13 +45,15 @@ authentication material. Jev is not projected as a Pi model: its typed choices
 are converted deterministically into the same bounded worker topology, whose
 models must still exist in Pi's catalog.
 
-The TypeSafe adapter accepts no credential or endpoint argument/configuration,
-follows no redirects, retries no call, bounds request and response bodies, and
-discards provider response bodies after strict validation. It never surfaces raw
-provider errors. The key is not retained in plans, manifests, SQLite, status,
-logs, or errors. Before any broker or worker pane starts, the new tmux session
-unsets `TYPESAFE_API_KEY`; TUI and RPC worker launchers remove it again as
-defense in depth.
+The TypeSafe adapter accepts no credential or endpoint argument/orchestrator
+configuration, follows no redirects, retries no call, bounds request and response
+bodies, and discards provider response bodies after strict validation. It never
+surfaces raw provider errors. Pi may retain a `/login typesafe` credential in its
+own auth store; the orchestrator never copies it into plans, manifests, SQLite,
+status, logs, or errors. Before any broker or worker pane starts, the new tmux
+session unsets the optional `TYPESAFE_API_KEY`; TUI and RPC worker launchers
+remove it again as defense in depth. The auth-only TypeSafe provider is registered
+only in the parent control extension and exposes no chat model.
 
 ## Broker boundary
 

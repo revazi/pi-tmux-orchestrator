@@ -10,6 +10,32 @@ const fixturePath = resolve(root, "tests/fixtures/worker-prompt-baseline.json");
 const beforePromptPath = resolve(root, "tests/fixtures/worker-prompt-before.md");
 const tools = "read,bash,grep,find,ls,orchestrator_report";
 
+const WORKER_PROMPT_CONTRACT = {
+  custom_prompt: "lean-role-system-prompt",
+  append_system_prompt: false,
+  skill_discovery: false,
+  loaded_skills: ["opted"],
+  keeps_governing_context: true,
+  read_only_tools: true,
+  includes_report_tool: true,
+  lean_prompt_is_prefix: true,
+};
+
+export function presentPromptText(value) {
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+export function gatedWorkerPromptBaseline(value) {
+  return {
+    schema_version: value.schema_version,
+    metric_scope: value.metric_scope,
+    caveat: value.caveat,
+    role: value.role,
+    contract: value.contract,
+    lean_prompt: value.lean_prompt,
+  };
+}
+
 function checked(result, label) {
   if (result.status !== 0) {
     throw new Error(`${label} failed (${result.status}): ${result.stderr || result.stdout}`);
@@ -97,11 +123,12 @@ async function prepareFixture(temporaryRoot) {
       pi.registerCommand("capture-worker-prompt", {
         handler: async (_args, ctx) => {
           const options = ctx.getSystemPromptOptions();
+          const present = (value) => typeof value === "string" && value.length > 0 ? value : null;
           writeFileSync(process.env.WORKER_PROMPT_CAPTURE, JSON.stringify({
             prompt: ctx.getSystemPrompt(),
             options: {
-              customPrompt: options.customPrompt ?? null,
-              appendSystemPrompt: options.appendSystemPrompt ?? null,
+              customPrompt: present(options.customPrompt),
+              appendSystemPrompt: present(options.appendSystemPrompt),
               selectedTools: options.selectedTools ?? [],
               contextFiles: (options.contextFiles ?? []).map((item) => ({ path: item.path, content: item.content })),
               skills: (options.skills ?? []).map((item) => ({ name: item.name, path: item.filePath })),
@@ -119,9 +146,9 @@ function ensure(condition, message) {
 }
 
 function validateBefore(before) {
-  ensure(before.options.customPrompt === null, "before fixture unexpectedly used a custom prompt");
+  ensure(presentPromptText(before.options.customPrompt) === null, "before fixture unexpectedly used a custom prompt");
   ensure(
-    before.options.appendSystemPrompt?.includes("Role: `reviewer`"),
+    presentPromptText(before.options.appendSystemPrompt)?.includes("Role: `reviewer`"),
     "before fixture did not append role guidance",
   );
   ensure(
@@ -132,7 +159,7 @@ function validateBefore(before) {
 
 function validateAfter(after, generated) {
   ensure(after.options.customPrompt === generated, "after fixture did not use the lean custom worker prompt");
-  ensure(after.options.appendSystemPrompt === null, "after fixture unexpectedly appended role guidance");
+  ensure(presentPromptText(after.options.appendSystemPrompt) === null, "after fixture unexpectedly appended role guidance");
   ensure(after.options.skills.length === 1, "after fixture loaded multiple skills");
   ensure(after.options.skills[0].name === "opted", "after fixture omitted the explicit skill");
   ensure(
@@ -149,21 +176,25 @@ function validateAfter(after, generated) {
   ensure(after.prompt.includes("WORKER_CONTEXT_CANARY"), "Pi omitted governing context");
 }
 
-function baselineData(piVersion, beforePrompt, afterPrompt) {
+function baselineData(piVersion, beforePrompt, afterPrompt, generated) {
   const beforeSize = size(beforePrompt);
   const afterSize = size(afterPrompt);
   return {
-    schema_version: 1,
+    schema_version: 2,
     metric_scope: "model-free-built-worker-system-prompt",
-    caveat: "Normalized serialized characters and UTF-8 bytes are deterministic prompt-size proxies, not provider tokens, billing, cache efficiency, or production-wire acceptance.",
-    pi_version: piVersion,
+    caveat: "Normalized serialized characters and UTF-8 bytes are deterministic prompt-size proxies, not provider tokens, billing, cache efficiency, or production-wire acceptance. Pi's default/appended coding prompt size is observation-only; the equality gate is the orchestrator lean-prompt contract.",
     role: "reviewer",
-    before: { ...beforeSize, skill_discovery: true, loaded_skills: ["discovered"] },
-    after: { ...afterSize, skill_discovery: false, loaded_skills: ["opted"] },
-    reduction: {
-      characters: beforeSize.characters - afterSize.characters,
-      utf8_bytes: beforeSize.utf8_bytes - afterSize.utf8_bytes,
-      character_percent: Number((((beforeSize.characters - afterSize.characters) / beforeSize.characters) * 100).toFixed(1)),
+    contract: { ...WORKER_PROMPT_CONTRACT },
+    lean_prompt: size(generated),
+    last_observation: {
+      pi_version: piVersion,
+      before: { ...beforeSize, skill_discovery: true, loaded_skills: ["discovered"] },
+      after: { ...afterSize, skill_discovery: false, loaded_skills: ["opted"] },
+      reduction: {
+        characters: beforeSize.characters - afterSize.characters,
+        utf8_bytes: beforeSize.utf8_bytes - afterSize.utf8_bytes,
+        character_percent: Number((((beforeSize.characters - afterSize.characters) / beforeSize.characters) * 100).toFixed(1)),
+      },
     },
   };
 }
@@ -185,11 +216,17 @@ async function buildWorkerPromptBaseline() {
     );
     validateBefore(before);
     validateAfter(after, generated);
-    return baselineData(
+    const baseline = baselineData(
       runPi(["--version"]).trim(),
       normalizePrompt(before.prompt, temporaryRoot),
       normalizePrompt(after.prompt, temporaryRoot),
+      generated,
     );
+    ensure(
+      baseline.last_observation.after.characters < baseline.last_observation.before.characters,
+      "lean worker prompt did not reduce serialized prompt size",
+    );
+    return baseline;
   } finally {
     await rm(temporaryRoot, { recursive: true, force: true });
   }
@@ -211,10 +248,15 @@ async function writeBaseline(baseline) {
 
 async function checkBaseline(baseline) {
   const expected = JSON.parse(await readFile(fixturePath, "utf8"));
-  if (canonical(expected) !== canonical(baseline)) {
-    throw new Error("Worker prompt baseline drifted; inspect and use --write only for intentional prompt/resource changes.");
+  if (canonical(gatedWorkerPromptBaseline(expected)) !== canonical(gatedWorkerPromptBaseline(baseline))) {
+    throw new Error(
+      "Worker prompt contract drifted; inspect and use --write only for intentional orchestrator prompt/resource changes. Pi-owned default prompt size is observation-only.",
+    );
   }
-  console.log(`Verified worker prompt baseline: ${baseline.before.characters} -> ${baseline.after.characters} normalized characters.`);
+  const observed = baseline.last_observation;
+  console.log(
+    `Verified worker prompt contract; last observation on Pi ${observed.pi_version}: ${observed.before.characters} -> ${observed.after.characters} normalized characters.`,
+  );
 }
 
 function modeHandler(mode) {

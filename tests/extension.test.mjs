@@ -21,6 +21,7 @@ import {
 import {
   normalizedTypeSafeApiKey,
   requestTypeSafe,
+  resolvedTypeSafeApiKey,
   typesafeTestHooks,
 } from "../extensions/orchestrator-typesafe.js";
 import {
@@ -47,7 +48,11 @@ import { buildTokenEfficiencyBaseline } from "../scripts/token-efficiency-baseli
 import { buildResultVolumeBaseline } from "../scripts/result-volume-baseline.mjs";
 import { buildExecutionProfileBaseline } from "../scripts/execution-profile-baseline.mjs";
 import { buildPhasedImplementationBaseline } from "../scripts/phased-implementation-baseline.mjs";
-import { buildWorkerPromptBaselineIfAvailable } from "../scripts/worker-prompt-baseline.mjs";
+import {
+  buildWorkerPromptBaselineIfAvailable,
+  gatedWorkerPromptBaseline,
+  presentPromptText,
+} from "../scripts/worker-prompt-baseline.mjs";
 import { istanbulCoverage } from "../scripts/node-coverage-reporter.mjs";
 
 const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
@@ -127,17 +132,21 @@ function harness(exec) {
   const commands = new Map();
   const events = new Map();
   const messages = [];
+  const providers = [];
   const shortcuts = new Map();
   const pi = {
     exec,
     sendMessage(message, options) { messages.push({ message, options }); },
     registerTool(tool) { tools.push(tool); },
+    registerProvider(provider) { providers.push(provider); },
     registerCommand(name, command) { commands.set(name, command); },
     registerShortcut(name, shortcut) { shortcuts.set(name, shortcut); },
     on(name, handler) { events.set(name, handler); },
   };
   extension(pi);
-  return { pi, tool: tools[0], tools, commands, shortcuts, events, messages };
+  return {
+    pi, tool: tools[0], tools, providers, commands, shortcuts, events, messages,
+  };
 }
 
 function context(overrides = {}) {
@@ -226,10 +235,44 @@ test("coverage conversion merges repeated module instances into Istanbul functio
   assert.equal(coverage.fnMap[1].name, "reportText");
 });
 
-test("registers one bounded model tool and the exact short-only command surface without shortcuts", () => {
-  const { tool, tools, commands, shortcuts, events } = harness(async () => ({ code: 0, stdout: "" }));
+test("registers one bounded model tool, auth-only TypeSafe provider, and exact commands", async () => {
+  const {
+    tool, tools, providers, commands, shortcuts, events,
+  } = harness(async () => ({ code: 0, stdout: "" }));
   assert.equal(tools.length, 1);
   assert.equal(tool.name, "tmux_orchestrator");
+  assert.equal(providers.length, 1);
+  const [typesafe] = providers;
+  assert.equal(typesafe.id, "typesafe");
+  assert.equal(typesafe.name, "TypeSafe Jev Planner");
+  assert.deepEqual(typesafe.getModels(), []);
+  const prompts = [];
+  const credential = await typesafe.auth.apiKey.login({
+    prompt: async (prompt) => {
+      prompts.push(prompt);
+      return "  stored-typesafe-key  ";
+    },
+  });
+  assert.deepEqual(prompts, [{ type: "secret", message: "TypeSafe API key" }]);
+  assert.deepEqual(credential, { type: "api_key", key: "stored-typesafe-key" });
+  assert.deepEqual(
+    await typesafe.auth.apiKey.resolve({ credential, ctx: { env: async () => undefined } }),
+    { auth: { apiKey: "stored-typesafe-key" }, source: "stored API key" },
+  );
+  assert.deepEqual(
+    await typesafe.auth.apiKey.resolve({
+      credential,
+      ctx: { env: async () => "env-key" },
+    }),
+    { auth: { apiKey: "env-key" }, source: "TYPESAFE_API_KEY" },
+  );
+  assert.deepEqual(
+    await typesafe.auth.apiKey.check({
+      credential: undefined,
+      ctx: { env: async (name) => (name === "TYPESAFE_API_KEY" ? "env-key" : undefined) },
+    }),
+    { type: "api_key", source: "TYPESAFE_API_KEY" },
+  );
   assert.deepEqual(tool.parameters.properties.action.enum, ["doctor", "models", "list", "status", "watch", "attach", "start", "send"]);
   assert.equal(tool.parameters.properties.action.enum.includes("restart"), false);
   assert.equal(tool.parameters.properties.action.enum.includes("stop"), false);
@@ -1121,17 +1164,37 @@ test("assignment guardrail warning is bounded and restart state prevents duplica
   });
 });
 
-test("actual Pi prompt options keep context, explicit skills, and read-only tools while reducing serialized overhead", async () => {
+test("empty Pi appendSystemPrompt is treated as absent", () => {
+  assert.equal(presentPromptText(""), null);
+  assert.equal(presentPromptText(undefined), null);
+  assert.equal(presentPromptText(null), null);
+  assert.equal(presentPromptText("Role: `reviewer`"), "Role: `reviewer`");
+});
+
+test("actual Pi prompt options keep the lean contract without freezing Pi-owned default prompt size", async () => {
   const checkedIn = JSON.parse(
     await readFile(new URL("fixtures/worker-prompt-baseline.json", import.meta.url), "utf8"),
   );
   const measured = await buildWorkerPromptBaselineIfAvailable();
-  if (measured) assert.deepEqual(measured, checkedIn);
+  assert.equal(checkedIn.schema_version, 2);
   assert.equal(checkedIn.metric_scope, "model-free-built-worker-system-prompt");
-  assert.equal(checkedIn.after.skill_discovery, false);
-  assert.deepEqual(checkedIn.after.loaded_skills, ["opted"]);
-  assert.ok(checkedIn.after.characters < checkedIn.before.characters);
-  assert.match(checkedIn.caveat, /not provider tokens, billing, cache efficiency/);
+  assert.equal(checkedIn.contract.append_system_prompt, false);
+  assert.equal(checkedIn.contract.skill_discovery, false);
+  assert.deepEqual(checkedIn.contract.loaded_skills, ["opted"]);
+  assert.ok(checkedIn.lean_prompt.characters > 0);
+  assert.ok(
+    checkedIn.last_observation.after.characters < checkedIn.last_observation.before.characters,
+  );
+  assert.match(checkedIn.caveat, /equality gate is the orchestrator lean-prompt contract/);
+  if (measured) {
+    assert.deepEqual(
+      gatedWorkerPromptBaseline(measured),
+      gatedWorkerPromptBaseline(checkedIn),
+    );
+    assert.ok(
+      measured.last_observation.after.characters < measured.last_observation.before.characters,
+    );
+  }
 });
 
 test("worker queues baseline context before a triggered assignment turn", () => {
@@ -1472,6 +1535,34 @@ test("explicit retain keeps prior assignments and tool pairs but replaces rollin
   assert.equal(pruned.includes(toolResult), false);
   assert.deepEqual(workerHooks.filterWorkerContext(messages), pruned);
   assert.equal(JSON.stringify(messages), original);
+});
+
+test("worker context pruning does not depend on system messages", () => {
+  const system = { role: "system", content: "Pi restores this after context handlers" };
+  const prior = { role: "assistant", content: "completed investigation" };
+  const current = { role: "assistant", content: "active assignment turn" };
+  const conversation = [
+    workerMessage({
+      kind: "assignment",
+      assignment_id: FIRST_ASSIGNMENT,
+      assignment_kind: "implementation",
+      round: 1,
+    }, "prior"),
+    prior,
+    workerMessage({
+      kind: "assignment",
+      assignment_id: "b".repeat(32),
+      assignment_kind: "implementation",
+      round: 2,
+    }, "current"),
+    current,
+  ];
+  const withoutSystem = workerHooks.filterWorkerContext(conversation);
+  assert.equal(withoutSystem.includes(prior), false);
+  assert.equal(withoutSystem.includes(current), true);
+  const withSystem = workerHooks.filterWorkerContext([system, ...conversation]);
+  assert.equal(withSystem[0], system);
+  assert.equal(withSystem.includes(prior), false);
 });
 
 test("context selection rejects unsupported modes and preserves unknown messages", () => {
@@ -2921,11 +3012,37 @@ test("TypeSafe Jev precedes explicit Pi decision models and configured fallback"
   assert.equal(jev.kind, "typesafe");
   assert.equal(jev.provider, "typesafe");
   assert.equal(jev.modelId, "jev-latest");
-  assert.equal(jev.source, "typesafe-environment");
+  assert.equal(jev.source, "typesafe-auth");
   assert.equal(Object.hasOwn(jev, "apiKey"), false);
   assert.equal(normalizedTypeSafeApiKey("  test-typesafe-key  "), "test-typesafe-key");
   assert.throws(() => normalizedTypeSafeApiKey("bad key"), /invalid_typesafe_api_key/);
   assert.throws(() => normalizedTypeSafeApiKey("x".repeat(4097)), /invalid_typesafe_api_key/);
+  assert.equal(
+    await resolvedTypeSafeApiKey({
+      modelRegistry: {
+        getProviderAuth: async (provider) => {
+          assert.equal(provider, "typesafe");
+          return { auth: { apiKey: "stored-typesafe-key" } };
+        },
+      },
+    }),
+    "stored-typesafe-key",
+  );
+  assert.equal(
+    await resolvedTypeSafeApiKey({
+      modelRegistry: {
+        getProviderAuth: async () => assert.fail("environment key must win"),
+      },
+    }, "environment-typesafe-key"),
+    "environment-typesafe-key",
+  );
+  await assert.rejects(
+    resolvedTypeSafeApiKey({
+      modelRegistry: { getProviderAuth: async () => { throw new Error("private path"); } },
+    }),
+    (error) => error.message === "typesafe_credential_unavailable"
+      && !error.message.includes("private path"),
+  );
 
   const jevOverExplicit = selectDecisionModel(
     ctx,
@@ -2935,7 +3052,7 @@ test("TypeSafe Jev precedes explicit Pi decision models and configured fallback"
     { typesafeApiKey: "test-typesafe-key" },
   );
   assert.equal(jevOverExplicit.kind, "typesafe");
-  assert.equal(jevOverExplicit.source, "typesafe-environment");
+  assert.equal(jevOverExplicit.source, "typesafe-auth");
   const explicitWithoutJev = selectDecisionModel(
     ctx,
     { provider: "worker-provider", model: "worker-model", thinking: "low" },
@@ -3002,7 +3119,7 @@ test("TypeSafe Jev precedes explicit Pi decision models and configured fallback"
     provider: "typesafe",
     model: "jev-1.13.0",
     thinking: "off",
-    source: "typesafe-environment",
+    source: "typesafe-auth",
   });
   assert.equal(result.plan.usage.totalTokens, 366);
   assert.equal(JSON.stringify(result).includes("test-typesafe-key"), false);
@@ -3123,8 +3240,9 @@ test("malformed TypeSafe planning fails before the Python start boundary", async
   });
   const previousKey = process.env.TYPESAFE_API_KEY;
   const previousFetch = globalThis.fetch;
-  process.env.TYPESAFE_API_KEY = "test-typesafe-key";
+  delete process.env.TYPESAFE_API_KEY;
   globalThis.fetch = async (_url, options) => {
+    assert.equal(options.headers.authorization, "Bearer stored-typesafe-key");
     const request = JSON.parse(options.body);
     const answers = Object.fromEntries(Object.entries(request.questions).map(
       ([questionId, question]) => [questionId, {
@@ -3147,7 +3265,13 @@ test("malformed TypeSafe planning fails before the Python start boundary", async
         confirmations: [true],
         context: {
           model: worker,
-          modelRegistry: { getAvailable: () => [worker] },
+          modelRegistry: {
+            getAvailable: () => [worker],
+            getProviderAuth: async () => ({
+              auth: { apiKey: "stored-typesafe-key" },
+              source: "stored API key",
+            }),
+          },
         },
       })),
       /typesafe_answer_invalid/,

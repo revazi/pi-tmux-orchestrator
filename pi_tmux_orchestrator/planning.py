@@ -24,6 +24,7 @@ PLANNING_SOURCES = frozenset(
         "explicit",
         "configured-preferred",
         "configured-fallback",
+        "typesafe-auth",
         "typesafe-environment",
     }
 )
