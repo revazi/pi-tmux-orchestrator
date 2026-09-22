@@ -10,6 +10,7 @@ from unittest import mock
 
 from json_cli_support import JsonCliFixture
 from pi_tmux_orchestrator import terminal_planning
+from pi_tmux_orchestrator.models import OrchestrationError
 from pi_tmux_orchestrator.planning import (
     metadata_digest,
     validate_planning_record,
@@ -105,6 +106,33 @@ class PlanningAdmissionTests(JsonCliFixture):
         self.assertEqual(planning["status"], "accepted")
         self.assertNotIn("PRIVATE_PLAN_TASK", raw)
         validate_planning_record(planning)
+
+    def test_typesafe_jev_provenance_is_body_free_and_strict(self):
+        roles = [
+            {
+                "name": "implementer",
+                "provider": "worker-provider",
+                "model": "worker-model",
+                "thinking": "medium",
+            },
+            {
+                "name": "reviewer",
+                "provider": "worker-provider",
+                "model": "worker-model",
+                "thinking": "low",
+            },
+        ]
+        record = planning_record(roles)
+        record["decision_model"] = {
+            "provider": "typesafe",
+            "model": "jev-1.13.0",
+            "thinking": "off",
+            "source": "typesafe-environment",
+        }
+        record["usage"]["cost_total"] = None
+        validated = validate_planning_record(record, allow_unbound=True)
+        self.assertEqual(validated["decision_model"], record["decision_model"])
+        self.assertNotIn("api_key", json.dumps(validated))
 
     def test_changed_task_rejects_bound_plan_before_state_creation(self):
         code, static, raw, _ = self.start("ORIGINAL_PRIVATE_TASK", "--dry-run")
@@ -261,6 +289,38 @@ class PlanningAdmissionTests(JsonCliFixture):
         self.assertTrue(request["previewOnly"])
         self.assertIn("PRIVATE_TERMINAL_TASK", request["input"]["task"])
         self.assertNotIn("PRIVATE_TERMINAL_TASK", raw)
+
+    def test_terminal_rpc_timeout_fails_before_start_delivery(self):
+        process = mock.MagicMock()
+        process.stdout = io.StringIO()
+        process.poll.return_value = None
+
+        class EmptySelector:
+            def register(self, *_args):
+                pass
+
+            def select(self, *, timeout):
+                self.timeout = timeout
+                return []
+
+            def close(self):
+                pass
+
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            mock.patch.object(terminal_planning, "TERMINAL_TIMEOUT_SECONDS", 0),
+            mock.patch.object(
+                terminal_planning.selectors,
+                "DefaultSelector",
+                return_value=EmptySelector(),
+            ),
+        ):
+            output = Path(directory) / "result.json"
+            output.write_text("", encoding="utf-8")
+            with self.assertRaisesRegex(OrchestrationError, "did not complete safely"):
+                terminal_planning._read_terminal_result(
+                    process, output, mock.MagicMock()
+                )
 
     def test_terminal_rpc_adapter_keeps_private_input_out_of_process_arguments(self):
         private_task = "PRIVATE_RPC_ADAPTER_TASK_91e2"

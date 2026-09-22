@@ -13,10 +13,13 @@ Keep these results distinct:
    staged package.
 2. **Provider-free actual-Pi acceptance** proves Pi loads the staged extension,
    commands, model tool, and skill, and connects staged-package custom TUI/RPC
-   workers through startup, broker reconnection, restart, revocation, and cleanup
-   without sending a prompt. It does not claim generated reports.
-3. **Local tmux acceptance** exercises broker, panes, routing, restart, and
-   retained metadata on the local machine; model-free peers cover report paths.
+   workers from a fixed accepted planning record through startup, broker
+   reconnection, restart, revocation, retained provenance, and cleanup without
+   sending a prompt. It does not exercise planner inference or claim generated
+   reports.
+3. **Local tmux acceptance** exercises fixed accepted v8/v9 plans across TUI/RPC
+   broker panes, routing, rollback, restart, cleanup, and retained metadata;
+   model-free peers cover report paths.
 4. **Provider-backed acceptance** measures real model behavior and usage. It can
    incur cost and must be explicitly chosen.
 
@@ -78,6 +81,28 @@ state and a non-secret local model catalog, and fails if its provider-request
 sentinel receives traffic. It covers actual-Pi custom TUI/RPC startup and recovery,
 not inference or a complete report round. If Pi is unavailable, that layer is
 reported as skipped rather than replaced by synthetic evidence.
+
+### Automated provider-free planning gate
+
+`scripts/test.sh` is the authoritative model-free gate. Its planning coverage
+includes strict preferred/fallback and scoped-catalog selection; minimum/maximum
+built-in and trusted-custom topologies; malformed and oversized responses;
+unsupported thinking, unavailable or ambiguous models, duplicate/excess roles,
+stale task/config/topology/catalog/resource bindings, declined confirmations,
+and planner/RPC timeout failures. Fake completion fixtures exercise strict parsing
+and shared start admission but are not production inference evidence.
+
+The real-tmux layer injects a fixed accepted decision, binds it through dry-run
+and launch, and exercises manifest v8/v9 TUI/RPC startup, custom startup rollback,
+broker and worker restart, exact cleanup, and retained status/Supervisor reads.
+The staged actual-Pi layer repeats custom TUI/RPC lifecycle acceptance with a
+local no-inference catalog and a network request sentinel. Security assertions
+keep task/context/custom-resource bodies out of argv, manifests, SQLite, status,
+dashboards, and Supervisor projections; require owner-only temporary files;
+retain one writer plus mandatory built-in review; and revalidate target-project
+custom trust before restart. These checks do not access real credentials or
+endpoints and do not establish Jev availability, planner quality, worker quality,
+provider cost, or latency.
 
 ## 1. Stage the exact local package
 
@@ -185,18 +210,90 @@ cd /absolute/path/to/inspected-test-project
 pi --no-extensions --no-skills -e "$PACKAGE_ROOT" --no-session
 ```
 
-Run the smallest useful matrix rather than every expensive combination:
+Run the smallest useful matrix rather than every expensive combination.
+Provider-backed planning evaluation is **not authorized by this guide**. Before
+making any call, record separate owner approval and freeze this paired benchmark:
+
+| Case | Fixed task class | Static/manual arm | Dynamic arm |
+| --- | --- | --- | --- |
+| 1 | simple bounded change with no specialist need | built-in implementer + reviewer | planner may not remove either built-in role |
+| 2 | one clearly specialist-relevant change | same explicitly enabled specialist candidate set | planner chooses from that exact set |
+| 3 | ambiguous cross-cutting change | all reviewed optional candidates available | planner chooses the smallest accepted roster |
+
+Use the same reviewed project revision, task class, profile, model availability,
+budget policy, required checks, and acceptance rubric for both arms. Run one pair
+per case first; any repeat or broader matrix needs fresh approval. Record only
+the bounded facts listed in section F plus planner latency, corrections, invalid
+choices, false specialist omissions, and unnecessary specialists. Report direct
+TypeSafe Jev and Pi-fallback evidence separately; never substitute a Pi
+display-name match for the direct typed Jev transport.
+Stop the benchmark on a trust/authority violation, private-body leak, invalid
+model choice, failed mandatory review, or unexpected provider request. Synthetic
+and fixed-output runs remain lifecycle evidence only and never fill a quality or
+cost cell.
+
+#### Issue #174 fallback benchmark evidence
+
+One explicitly authorized provider-backed run of the frozen three-case matrix was
+completed on Pi 0.84.4 against disposable dependency-free fixtures before the
+direct TypeSafe adapter existed. The Pi catalog returned no exact `Jev` match, so
+this remains **Pi-fallback evidence only** and must not be relabeled as Jev
+evidence. The strict configured fallback was `xai/grok-4.6` at `low` for
+three planner calls; worker roles were constrained to that exact model with the
+packaged `economy` thinking map. No task, prompt, rationale, report, diff, log,
+credential, endpoint, or source body is retained here. An excluded readiness
+pilot also found two catalog-present identities that were not runtime-eligible in
+this environment: `openai-codex/gpt-5.4` was rejected for the active account type,
+and `google/gemini-2.5-flash` rejected the configured key. The paired matrix was
+therefore frozen on a separately verified xAI identity. Catalog/auth presence is
+not production-readiness evidence, which is another reason default rollout
+remains blocked.
+
+| Case/arm | Roles | Planner cost | Worker calls/cost | End-to-end wall time | Review outcome |
+| --- | ---: | ---: | ---: | ---: | --- |
+| simple static | 2 | — | 11 / $0.056918 | 47.209 s | approved; 0 findings; checks passed |
+| simple dynamic | 2 | $0.007076 | 16 / $0.116418 | 106.744 s | approved; 2 findings; checks passed |
+| specialist static | 3 | — | 34 / $0.369352 | 351.112 s | 1 revision; approved; 5 reviewer findings; checks passed |
+| specialist dynamic | 2 | $0.009144 | 16 / $0.133418 | 169.349 s | approved; 3 findings; checks passed |
+| ambiguous static | 5 | — | 29 / $0.322824 | 258.259 s | approved; 2 findings; checks passed |
+| ambiguous dynamic | 2 | $0.007602 | 14 / $0.225416 | 262.975 s | approved; 3 findings; checks passed |
+
+Dynamic pre-launch planning/preview/launch elapsed times were 8.911 s, 14.674 s,
+and 10.857 s. Aggregate static worker usage was 74 calls, 174,801 input,
+42,262 output, 291,840 cache-read, 0 cache-write tokens, and $0.749094. Aggregate
+dynamic usage was 3 planner calls (5,170 input, 2,119 output, 1,536 cache-read,
+0 cache-write tokens, $0.023822) plus 46 worker calls (98,656 input, 29,790
+output, 198,400 cache-read, 0 cache-write tokens, $0.475252). In this single
+sample, dynamic total cost was 33.4% lower, provider calls 33.8% lower, and wall
+time 17.9% lower; the simple case was materially worse on all three measures and
+the ambiguous case had slightly higher wall time. These are observations, not a
+rollout claim.
+
+All six paired runs reached the retained `ready` state, passed the required test
+command, preserved one writer plus mandatory review, made no invalid model
+choice, and required no operator correction: planning failure 0/3, workflow
+failure 0/6, correction rate 0/6. The dynamic planner chose only implementer and
+reviewer in every case. Count the omitted probe in the predeclared
+specialist-relevant case as one false specialist omission even though checks and
+review passed. The static ambiguous arm also ran Playwright and Django against a
+dependency-free CLI fixture; count those two as unnecessary specialists. Direct
+TypeSafe `jev-latest` evidence remains unavailable until the new adapter is run
+under separate provider-call authorization with `TYPESAFE_API_KEY`. No default
+rollout is authorized.
 
 ### A. Command and parent supervision
 
 - Run `/or-models` and open `/or-dashboard`; confirm help is concise, the About
   footer contains version/project/package/contribution details, and doctor
   appears only after `d`.
-- Opt in once with `/or-start --plan` for a bounded task. Confirm the exact
-  decision model is shown before the additional provider call, an exact
-  operator-supplied canonical Jev identity wins without name guessing or fuzzy
-  matching, fallback is explicit otherwise, selected worker models/thinking are
-  available and at most `medium`, malformed output starts nothing, and launch
+- Opt in once with `/or-start --plan` for a bounded task. With a separately
+  authorized `TYPESAFE_API_KEY`, confirm direct TypeSafe `jev-latest` is shown
+  before the additional provider call; without the key, confirm the exact
+  configured Pi fallback is shown. Confirm Jev wins over an operator-supplied Pi
+  decision model while the key is configured, and that the exact Pi decision
+  model wins over configured identities after the key is removed. Confirm
+  selected worker models/thinking are available and at most `medium`, malformed
+  output starts nothing, and launch
   still requires a second confirmation. If exact-project custom specialists are
   configured, confirm only freshly verified allowlisted identities/contracts are
   candidates and an accepted subset remains read-only. This is not evidence of

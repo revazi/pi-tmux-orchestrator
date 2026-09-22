@@ -187,6 +187,66 @@ class UtilityTests(unittest.TestCase):
             capture=True,
         )
 
+    def test_worker_grid_strips_typesafe_key_before_launch(self) -> None:
+        calls: list[list[str]] = []
+        launch_environments: list[dict[str, str]] = []
+
+        def fake_tmux(
+            arguments: list[str], **kwargs: object
+        ) -> subprocess.CompletedProcess[str]:
+            calls.append(arguments)
+            if arguments[0] == "new-session":
+                launch_environments.append(kwargs["env"])
+            stdout = ""
+            if arguments[0] == "list-panes":
+                stdout = "0\t%1\n1\t%2\n2\t%3\n"
+            return subprocess.CompletedProcess(arguments, 0, stdout, "")
+
+        roles = ["implementer", "reviewer"]
+        manifest = {
+            "version": 9,
+            "roles": {
+                role: {
+                    "provider": "provider",
+                    "model": "model",
+                    "thinking": "low",
+                }
+                for role in roles
+            },
+        }
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            mock.patch.dict(os.environ, {"TYPESAFE_API_KEY": "private-key"}),
+            mock.patch.object(ORCHESTRATOR, "tmux", side_effect=fake_tmux),
+            mock.patch.object(ORCHESTRATOR, "save_manifest"),
+        ):
+            root = Path(directory)
+            ORCHESTRATOR.create_tmux_grid(
+                "pi-typesafe-boundary",
+                root,
+                root / "state" / "session" / "run",
+                roles,
+                manifest,
+            )
+        self.assertNotIn("TYPESAFE_API_KEY", launch_environments[0])
+        new_session = next(call for call in calls if call[0] == "new-session")
+        self.assertEqual(
+            new_session[new_session.index("-e") + 1],
+            "TYPESAFE_API_KEY=",
+        )
+        unset = [
+            "set-environment",
+            "-u",
+            "-t",
+            "=pi-typesafe-boundary",
+            "TYPESAFE_API_KEY",
+        ]
+        self.assertIn(unset, calls)
+        self.assertLess(
+            calls.index(unset),
+            min(index for index, call in enumerate(calls) if call[0] == "respawn-pane"),
+        )
+
     def test_attach_and_stop_use_exact_session_targets(self) -> None:
         with (
             mock.patch.dict(os.environ, {"TMUX": "active"}),
@@ -1126,6 +1186,7 @@ class ControllerTests(unittest.TestCase):
                     "PI_TMUX_CONTROLLER": "1",
                     "PI_TMUX_CONTROLLER_HOME": "/private/controller",
                     "PI_TMUX_ORCHESTRATOR_SPECIALIST_CONTRACT": "probe",
+                    "TYPESAFE_API_KEY": "private-jev-key",
                 },
             ),
             mock.patch.object(ORCHESTRATOR, "load_manifest", return_value=manifest),
@@ -1140,6 +1201,7 @@ class ControllerTests(unittest.TestCase):
         self.assertNotIn("PI_TMUX_CONTROLLER", environment)
         self.assertNotIn("PI_TMUX_CONTROLLER_HOME", environment)
         self.assertNotIn("PI_TMUX_ORCHESTRATOR_SPECIALIST_CONTRACT", environment)
+        self.assertNotIn("TYPESAFE_API_KEY", environment)
         self.assertEqual(environment["PI_TELEMETRY"], "0")
 
     def test_controller_launch_failure_kills_only_its_exact_partial_session(

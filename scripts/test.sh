@@ -7,6 +7,7 @@ TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/pi-tmux-orchestrator-tests.XXXXXX")
 TEST_ROOT=$(cd "$TEST_ROOT" && pwd -P)
 export PI_TMUX_ORCHESTRATOR_CONFIG="$TEST_ROOT/missing-model-config.json"
 export PI_TMUX_ORCHESTRATOR_BUDGET_CONFIG="$TEST_ROOT/missing-budget-config.json"
+unset TYPESAFE_API_KEY TYPESAFE_BASE_URL TYPESAFE_DEFAULT_MODEL
 
 cleanup() {
   if [[ -n "${TEMP_BIN:-}" ]]; then
@@ -97,7 +98,7 @@ package_root = path.parent / value["package_root"]
 if not (package_root / "extensions" / "tmux-orchestrator.js").is_file():
     raise SystemExit("pre-release stage omitted the installed extension")
 PY
-printf '%s\n' '==> Provider-free staged-package actual-Pi custom lifecycle smoke'
+printf '%s\n' '==> Provider-free staged-package actual-Pi fixed-plan custom lifecycle smoke'
 python3 "$ROOT/tests/actual_pi_custom_lifecycle.py" \
   "$PRERELEASE_STAGE/package-host/node_modules/pi-tmux-orchestrator"
 printf '\nlocal tamper probe\n' >> \

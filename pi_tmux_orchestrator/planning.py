@@ -20,7 +20,12 @@ MAX_PLANNING_ROLES = len(KNOWN_ROLES) + 8
 DIGEST_PATTERN = re.compile(r"[a-f0-9]{64}")
 REQUEST_ID_PATTERN = re.compile(r"[a-f0-9]{32}")
 PLANNING_SOURCES = frozenset(
-    {"explicit", "configured-preferred", "configured-fallback"}
+    {
+        "explicit",
+        "configured-preferred",
+        "configured-fallback",
+        "typesafe-environment",
+    }
 )
 PLANNING_FIELDS = frozenset(
     {

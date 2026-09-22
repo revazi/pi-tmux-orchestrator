@@ -5,6 +5,11 @@ import {
   plannerCandidateDigest,
 } from "./orchestrator-planning.js";
 import { validCustomRoleId } from "./orchestrator-worker-roles.js";
+import {
+  normalizedTypeSafeApiKey,
+  requestTypeSafe,
+  TYPESAFE_MODEL,
+} from "./orchestrator-typesafe.js";
 
 export {
   metadataDigest,
@@ -35,6 +40,10 @@ const MAX_RESPONSE_BYTES = 12 * 1024;
 const MAX_REASON_CHARS = 240;
 const PLANNER_TIMEOUT_MS = 60_000;
 const PLANNER_MAX_TOKENS = 4096;
+const TYPESAFE_PROVIDER = "typesafe";
+const TYPESAFE_SOURCE = "typesafe-environment";
+const TYPESAFE_MAX_CHOICE_OPTIONS = 255;
+const TYPESAFE_MODEL_PATTERN = /^jev-[a-z0-9.-]+$/;
 
 const SYSTEM_PROMPT = `You are the preflight decision-maker for Pi Tmux Orchestrator.
 Choose the smallest useful bounded worker roster and exact model/thinking setting for each selected role.
@@ -228,21 +237,52 @@ function configuredDecision(candidates, policy, ordered) {
   };
 }
 
-export function selectDecisionModel(ctx, requested, configuredPolicy, candidatePriorities = []) {
+function typesafeDecision(candidates) {
+  return {
+    kind: "typesafe",
+    provider: TYPESAFE_PROVIDER,
+    modelId: TYPESAFE_MODEL,
+    thinking: "off",
+    source: TYPESAFE_SOURCE,
+    candidateCount: candidates.length,
+    candidates,
+  };
+}
+
+export function selectDecisionModel(
+  ctx,
+  requested,
+  configuredPolicy,
+  candidatePriorities = [],
+  options = {},
+) {
   const explicit = requestedDecisionModel(requested);
   const policy = validateDecisionModelPolicy(configuredPolicy);
-  const ordered = explicit
-    ? [explicit]
-    : [...(policy.preferred ? [policy.preferred] : []), ...policy.fallbacks];
+  const useTypeSafe = Boolean(normalizedTypeSafeApiKey(options.typesafeApiKey));
+  const ordered = useTypeSafe
+    ? []
+    : (explicit
+      ? [explicit]
+      : [...(policy.preferred ? [policy.preferred] : []), ...policy.fallbacks]);
   const resolvedPriorities = [...ordered, ...candidatePriorities];
   const candidates = plannerModelCandidates(ctx, resolvedPriorities);
-  const selection = explicit
-    ? explicitDecision(candidates, explicit)
-    : configuredDecision(candidates, policy, ordered);
+  let selection;
+  if (useTypeSafe) selection = typesafeDecision(candidates);
+  else if (explicit) selection = explicitDecision(candidates, explicit);
+  else selection = configuredDecision(candidates, policy, ordered);
   return { ...selection, candidatePriorities: resolvedPriorities };
 }
 
 export function decisionModelConfirmation(selection) {
+  if (selection.kind === "typesafe") {
+    return [
+      `Decision model: TypeSafe/${selection.modelId}`,
+      `Source: ${selection.source} (TYPESAFE_API_KEY is configured; value is not retained)`,
+      `Eligible Pi worker-model candidates: ${selection.candidateCount}`,
+      "Payload categories: bounded task/context, canonical project identity, fixed role/contract authority, exact candidate model/thinking metadata, and locked operator/config constraints.",
+      "The credential is used only as an in-memory HTTPS Authorization header. No credential, endpoint, custom resource body, tool, or configuration mutation surface is included in the planning state. This one TypeSafe call starts no workers and may incur provider usage.",
+    ].join("\n");
+  }
   if (selection.kind !== "model") throw new Error("decision_model_not_selected");
   return [
     `Decision model: ${selection.provider}/${selection.modelId}`,
@@ -444,6 +484,277 @@ function plannerPayload(input, project, candidates, policy, topology) {
     locked_role_constraints: lockedRoleConstraints(input, policy, topology),
     thinking_cap: THINKING_CAP,
   };
+}
+
+function typesafeAssignmentOptions(role, candidates, input, policy, topology) {
+  const locked = roleConstraint(input, role, policy, topology);
+  const options = [];
+  for (const candidate of candidates) {
+    if (locked.provider !== undefined
+        && (candidate.provider !== locked.provider || candidate.modelId !== locked.model)) {
+      continue;
+    }
+    for (const thinking of candidate.thinkingLevels) {
+      if (locked.thinking !== undefined && thinking !== locked.thinking) continue;
+      const id = `option_${String(options.length).padStart(3, "0")}`;
+      options.push({
+        id,
+        provider: candidate.provider,
+        model: candidate.modelId,
+        thinking,
+        description: `${candidate.provider}/${candidate.modelId} with thinking=${thinking}`,
+      });
+      if (options.length === TYPESAFE_MAX_CHOICE_OPTIONS) return options;
+    }
+  }
+  if (!options.length) throw new Error("typesafe_assignment_options_unavailable");
+  return options;
+}
+
+function typesafeQuestionState(payload) {
+  const { candidate_models: _candidateModels, ...state } = payload;
+  return {
+    ...state,
+    worker_model_candidate_count: payload.candidate_models.length,
+  };
+}
+
+function typesafeDecisionRequest(payload, candidates, input, policy, topology) {
+  const questions = {};
+  const inclusions = new Map();
+  const assignments = new Map();
+  const fixedAssignments = new Map();
+  for (const [index, role] of policy.roles.entries()) {
+    const descriptor = payload.eligible_roles.find((item) => item.role === role);
+    if (!descriptor) throw new Error("typesafe_role_descriptor_missing");
+    if (!policy.required.has(role)) {
+      const questionId = `include_${String(index).padStart(2, "0")}`;
+      questions[questionId] = {
+        type: "choice",
+        instructions: {
+          decision: "Choose include only when this specialist materially improves the task; otherwise choose omit. Keep the worker roster as small as useful.",
+          role,
+          contract: descriptor.contract,
+          authority: descriptor.authority,
+        },
+        criteria: {
+          include: "Include this exact read-only specialist.",
+          omit: "Omit this specialist from the run.",
+        },
+      };
+      inclusions.set(questionId, role);
+    }
+    const options = typesafeAssignmentOptions(role, candidates, input, policy, topology);
+    if (options.length === 1) {
+      fixedAssignments.set(role, options[0]);
+      continue;
+    }
+    const questionId = `assignment_${String(index).padStart(2, "0")}`;
+    questions[questionId] = {
+      type: "choice",
+      instructions: {
+        decision: "Choose the smallest sufficient exact worker model and thinking combination for this role. Respect the role authority and favor reliable completion without unnecessary cost or latency.",
+        role,
+        contract: descriptor.contract,
+        authority: descriptor.authority,
+      },
+      criteria: Object.fromEntries(options.map((option) => [option.id, option.description])),
+    };
+    assignments.set(questionId, {
+      role,
+      options: new Map(options.map((option) => [option.id, option])),
+    });
+  }
+  let lockedConfirmation;
+  if (!Object.keys(questions).length) {
+    lockedConfirmation = "locked_plan";
+    questions[lockedConfirmation] = {
+      type: "choice",
+      instructions: "Decide whether the fully locked mandatory worker topology is suitable for the supplied task and constraints.",
+      criteria: {
+        accept: "The locked plan is suitable.",
+        reject: "The locked plan is unsafe or materially unsuitable.",
+      },
+    };
+  }
+  return {
+    request: {
+      state: typesafeQuestionState(payload),
+      model: TYPESAFE_MODEL,
+      questions,
+    },
+    questions,
+    inclusions,
+    assignments,
+    fixedAssignments,
+    lockedConfirmation,
+  };
+}
+
+function typesafeChoiceAnswer(value, options) {
+  if (!exactFields(value, ["type", "choice", "confidence", "probabilities"])
+      || value.type !== "choice" || typeof value.choice !== "string"
+      || !options.has(value.choice)
+      || typeof value.confidence !== "number" || !Number.isFinite(value.confidence)
+      || value.confidence < 0 || value.confidence > 1
+      || !value.probabilities || typeof value.probabilities !== "object"
+      || Array.isArray(value.probabilities)) {
+    throw new Error("typesafe_answer_invalid");
+  }
+  const probabilityKeys = Object.keys(value.probabilities);
+  if (probabilityKeys.length !== options.size
+      || probabilityKeys.some((choice) => !options.has(choice))
+      || probabilityKeys.some((choice) => {
+        const probability = value.probabilities[choice];
+        return typeof probability !== "number" || !Number.isFinite(probability)
+          || probability < 0 || probability > 1;
+      })) {
+    throw new Error("typesafe_answer_invalid");
+  }
+  return { choice: value.choice, confidence: value.confidence };
+}
+
+function validatedTypeSafeModel(value) {
+  if (!boundedIdentifier(value) || !TYPESAFE_MODEL_PATTERN.test(value)) {
+    throw new Error("typesafe_response_invalid");
+  }
+  return value;
+}
+
+function validatedTypeSafeAnswers(value, expectedQuestions) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("typesafe_response_invalid");
+  }
+  const expected = Object.keys(expectedQuestions).sort();
+  const actual = Object.keys(value).sort();
+  if (expected.length !== actual.length
+      || expected.some((question, index) => question !== actual[index])) {
+    throw new Error("typesafe_answers_incomplete");
+  }
+  return value;
+}
+
+function validatedTypeSafeUsage(value) {
+  if (!exactFields(value, ["input_tokens", "output_tokens"])) {
+    throw new Error("typesafe_response_invalid");
+  }
+  const input = value.input_tokens;
+  const output = value.output_tokens;
+  if (!Number.isSafeInteger(input) || input < 0 || !Number.isSafeInteger(output) || output < 0
+      || !Number.isSafeInteger(input + output)) {
+    throw new Error("typesafe_usage_invalid");
+  }
+  return {
+    input,
+    output,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: input + output,
+    cost: { total: null },
+  };
+}
+
+function typesafeResponse(value, expectedQuestions) {
+  if (!exactFields(value, ["model", "answers", "usage"])) {
+    throw new Error("typesafe_response_invalid");
+  }
+  return {
+    model: validatedTypeSafeModel(value.model),
+    answers: validatedTypeSafeAnswers(value.answers, expectedQuestions),
+    usage: validatedTypeSafeUsage(value.usage),
+  };
+}
+
+function typesafeReason(required, inclusionConfidence, assignmentConfidence) {
+  const signals = [];
+  if (inclusionConfidence !== undefined) {
+    signals.push(`roster confidence=${inclusionConfidence.toFixed(2)}`);
+  }
+  if (assignmentConfidence !== undefined) {
+    signals.push(`assignment confidence=${assignmentConfidence.toFixed(2)}`);
+  }
+  const selection = required ? "retained the required role" : "included this specialist";
+  return `Jev ${selection}${signals.length ? ` (${signals.join(", ")})` : " with a locked assignment"}.`;
+}
+
+function parseTypeSafeDecision(responseValue, requestValue, candidates, input, policy, topology) {
+  const response = typesafeResponse(responseValue, requestValue.questions);
+  const inclusionByRole = new Map();
+  for (const [questionId, role] of requestValue.inclusions) {
+    const answer = typesafeChoiceAnswer(
+      response.answers[questionId],
+      new Set(["include", "omit"]),
+    );
+    inclusionByRole.set(role, answer);
+  }
+  const assignmentByRole = new Map(requestValue.fixedAssignments);
+  const assignmentConfidence = new Map();
+  for (const [questionId, assignment] of requestValue.assignments) {
+    const answer = typesafeChoiceAnswer(
+      response.answers[questionId],
+      new Set(assignment.options.keys()),
+    );
+    assignmentByRole.set(assignment.role, assignment.options.get(answer.choice));
+    assignmentConfidence.set(assignment.role, answer.confidence);
+  }
+  if (requestValue.lockedConfirmation) {
+    const answer = typesafeChoiceAnswer(
+      response.answers[requestValue.lockedConfirmation],
+      new Set(["accept", "reject"]),
+    );
+    if (answer.choice !== "accept") throw new Error("typesafe_locked_plan_rejected");
+  }
+  const roles = [];
+  for (const role of policy.roles) {
+    const inclusion = inclusionByRole.get(role);
+    if (!policy.required.has(role) && inclusion?.choice !== "include") continue;
+    const assignment = assignmentByRole.get(role);
+    if (!assignment) throw new Error("typesafe_assignment_missing");
+    roles.push({
+      role,
+      provider: assignment.provider,
+      model: assignment.model,
+      thinking: assignment.thinking,
+      reason: typesafeReason(
+        policy.required.has(role),
+        inclusion?.confidence,
+        assignmentConfidence.get(role),
+      ),
+    });
+  }
+  const decision = validatePlannerDecision(
+    { version: 1, roles },
+    candidates,
+    input,
+    policy,
+    topology,
+  );
+  return { decision, model: response.model, usage: response.usage };
+}
+
+async function completeTypeSafeDecision(
+  payload,
+  candidates,
+  input,
+  policy,
+  topology,
+  signal,
+  adapter,
+) {
+  const requestValue = typesafeDecisionRequest(payload, candidates, input, policy, topology);
+  const response = await requestTypeSafe(requestValue.request, {
+    apiKey: adapter.typesafeApiKey,
+    fetchImpl: adapter.typesafeFetch,
+    signal,
+  });
+  return parseTypeSafeDecision(
+    response,
+    requestValue,
+    candidates,
+    input,
+    policy,
+    topology,
+  );
 }
 
 function exactFields(value, fields) {
@@ -688,10 +999,8 @@ export async function runPreflightPlanner(
   topologyValue,
   bindingDigests,
   signal,
+  adapter = {},
 ) {
-  if (typeof ctx?.modelRegistry?.complete !== "function") {
-    throw new Error("decision_model_completion_unavailable");
-  }
   const topology = topologyValue;
   const candidates = selection.candidates;
   const resolvedBindings = resolvedPlannerBindings(bindingDigests, topology);
@@ -705,8 +1014,30 @@ export async function runPreflightPlanner(
   if (utf8Bytes(serialized) > MAX_PROMPT_BYTES) throw new Error("planner_input_too_large");
   const requestId = randomUUID().replaceAll("-", "");
   const createdAtMs = Date.now();
-  const response = await completePlannerDecision(ctx, selection, serialized, requestId, signal);
-  const decision = parsePlannerResponse(response, candidates, input, policy, topology);
+  let decision;
+  let usage;
+  let decisionModel = selection.modelId;
+  if (selection.kind === "typesafe") {
+    const completed = await completeTypeSafeDecision(
+      payload,
+      candidates,
+      input,
+      policy,
+      topology,
+      signal,
+      adapter,
+    );
+    decision = completed.decision;
+    usage = completed.usage;
+    decisionModel = completed.model;
+  } else {
+    if (typeof ctx?.modelRegistry?.complete !== "function") {
+      throw new Error("decision_model_completion_unavailable");
+    }
+    const response = await completePlannerDecision(ctx, selection, serialized, requestId, signal);
+    decision = parsePlannerResponse(response, candidates, input, policy, topology);
+    usage = response.usage;
+  }
   const acceptedAtMs = Date.now();
   return {
     input: plannedStartInput(input, decision),
@@ -714,12 +1045,12 @@ export async function runPreflightPlanner(
       version: decision.version,
       decisionModel: {
         provider: selection.provider,
-        model: selection.modelId,
+        model: decisionModel,
         thinking: selection.thinking,
         source: selection.source,
       },
       roles: decision.roles,
-      usage: response.usage,
+      usage,
       requestId,
       createdAtMs,
       acceptedAtMs,
@@ -739,8 +1070,11 @@ export function plannerPlanConfirmation(plan) {
     const contract = role.specialistContract ? ` contract=${role.specialistContract}` : "";
     return `${role.role}:${contract} ${role.provider}/${role.model} thinking=${role.thinking} — ${role.reason}`;
   });
+  const decision = plan.decisionModel.provider === TYPESAFE_PROVIDER
+    ? `Decision model: TypeSafe/${plan.decisionModel.model} source=${plan.decisionModel.source}`
+    : `Decision model: ${plan.decisionModel.provider}/${plan.decisionModel.model} thinking=${plan.decisionModel.thinking} source=${plan.decisionModel.source}`;
   return [
-    `Decision model: ${plan.decisionModel.provider}/${plan.decisionModel.model} thinking=${plan.decisionModel.thinking} source=${plan.decisionModel.source}`,
+    decision,
     `Operator planning constraints: ${plan.operatorOverrides.length ? plan.operatorOverrides.join("; ") : "none"}`,
     `Selected ${plan.roles.length} workers:`,
     ...roles,
@@ -755,4 +1089,7 @@ export const plannerTestHooks = {
   ROLE_ORDER,
   SYSTEM_PROMPT,
   THINKING_CAP,
+  TYPESAFE_MAX_CHOICE_OPTIONS,
+  TYPESAFE_PROVIDER,
+  TYPESAFE_SOURCE,
 };

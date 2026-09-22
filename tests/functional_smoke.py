@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from pi_tmux_orchestrator.planning import metadata_digest  # noqa: E402
 from tests.support import ORCHESTRATOR  # noqa: E402
 
 SCRIPT = ROOT / "bin" / "pi-tmux-agents"
@@ -173,6 +174,60 @@ def assert_attach_detach_reuses_invoking_parent() -> None:
                 pass
 
 
+def fixed_planning_record(roles: list[dict[str, object]]) -> dict[str, object]:
+    retained_roles = [
+        {
+            "id": role["name"],
+            "contract": role.get("specialist_contract", role["name"]),
+            "provider": role["provider"],
+            "model": role["model"],
+            "thinking": role["thinking"],
+        }
+        for role in roles
+    ]
+    return {
+        "version": 1,
+        "mode": "dynamic",
+        "request_id": "a" * 32,
+        "status": "accepted",
+        "created_at_ms": 1_800_000_000_000,
+        "accepted_at_ms": 1_800_000_000_001,
+        "decision_schema_version": 1,
+        "decision_model": {
+            "provider": "fixture",
+            "model": "fixed-no-inference",
+            "thinking": "off",
+            "source": "explicit",
+        },
+        "roles": retained_roles,
+        "bindings": {
+            "input": None,
+            "start_config": None,
+            "planner_policy": "b" * 64,
+            "topology_policy": "c" * 64,
+            "candidate_set": "d" * 64,
+            "decision": metadata_digest({"version": 1, "roles": retained_roles}),
+        },
+        "usage": None,
+    }
+
+
+def bind_fixed_planning(arguments: argparse.Namespace, path: Path) -> dict[str, object]:
+    preview_args = argparse.Namespace(**vars(arguments))
+    preview_args.dry_run = True
+    preview_args.planning_record_file = None
+    static_preview = ORCHESTRATOR.start_command(preview_args)
+    path.write_text(
+        json.dumps(fixed_planning_record(static_preview.data["roles"])),
+        encoding="utf-8",
+    )
+    preview_args.planning_record_file = str(path)
+    planned_preview = ORCHESTRATOR.start_command(preview_args)
+    planning = planned_preview.data["planning"]
+    path.write_text(json.dumps(planning), encoding="utf-8")
+    return planning
+
+
 def main() -> int:
     if not shutil.which("tmux"):
         print("tmux is required for the functional smoke", file=sys.stderr)
@@ -300,6 +355,7 @@ def main() -> int:
         attach=False,
         dry_run=False,
         skip_model_check=True,
+        planning_record_file=None,
         **{
             f"{role}_{field}": None
             for role in ("implementer", "reviewer", "probe", "playwright", "django")
@@ -313,6 +369,9 @@ def main() -> int:
             raise AssertionError("controller did not start")
         ORCHESTRATOR.controller_stop_command(argparse.Namespace(confirm=True))
 
+        rpc_planning_path = temporary_root / "rpc-planning.json"
+        rpc_planning = bind_fixed_planning(arguments, rpc_planning_path)
+        arguments.planning_record_file = str(rpc_planning_path)
         ORCHESTRATOR.start_command(arguments)
         coord = Path(
             subprocess.run(
@@ -346,8 +405,14 @@ def main() -> int:
             capture_output=True,
         )
         roles = {"implementer", "reviewer", "probe", "playwright", "django"}
-        if manifest["version"] != 5 or manifest["coordination"] != "broker-v1":
-            raise AssertionError("new run did not use manifest v5 broker coordination")
+        if (
+            manifest["version"] != 8
+            or manifest["coordination"] != "broker-v1"
+            or manifest["planning"] != rpc_planning
+        ):
+            raise AssertionError(
+                "new run did not retain fixed accepted planning provenance"
+            )
         if manifest["execution_profile"] != {
             "name": "thorough",
             "kind": "packaged",
@@ -694,6 +759,7 @@ def main() -> int:
             or status.data["files"]
             or status.data["paths"].get("observer_socket")
             != str(ORCHESTRATOR.broker_paths(coord)["socket"])
+            or status.data["planning"] != rpc_planning
         ):
             raise AssertionError("status did not expose broker-only metadata")
         supervisor = ORCHESTRATOR.supervisor_snapshot(session, coord.name)
@@ -707,6 +773,7 @@ def main() -> int:
         if (
             supervisor["host_adapter"]["runtime_status"] != "not_observed"
             or supervisor["coordination"] != "broker-v1"
+            or supervisor["planning"] != rpc_planning
             or len(batch["roles"]) != 2
         ):
             raise AssertionError("Supervisor API v2 broker reads failed")
@@ -858,6 +925,9 @@ def main() -> int:
         tui_arguments.playwright_task = None
         tui_arguments.with_django_expert = False
         tui_arguments.django_task = None
+        tui_planning_path = temporary_root / "tui-planning.json"
+        tui_planning = bind_fixed_planning(tui_arguments, tui_planning_path)
+        tui_arguments.planning_record_file = str(tui_planning_path)
         ORCHESTRATOR.start_command(tui_arguments)
         tui_coord = Path(
             subprocess.run(
@@ -878,8 +948,12 @@ def main() -> int:
         if (
             tui_manifest["transport"] != "tui"
             or tui_manifest["coordination"] != "broker-v1"
+            or tui_manifest["version"] != 8
+            or tui_manifest["planning"] != tui_planning
         ):
-            raise AssertionError("TUI did not share broker protocol")
+            raise AssertionError(
+                "TUI did not share broker protocol and fixed planning provenance"
+            )
         deadline = time.time() + 3
         tui_argv_path = temporary_root / "tui-implementer.json"
         while not tui_argv_path.exists() and time.time() < deadline:
@@ -905,7 +979,10 @@ def main() -> int:
         print("OK invoking Pi remains the parent across repeated attach/detach")
         print("OK detach returns the exact client without stopping worker panes")
         print("OK controller lifecycle")
-        print("OK TUI and RPC presentations share manifest-v5 broker-v1")
+        print(
+            "OK TUI and RPC presentations share manifest-v8 broker-v1 with "
+            "fixed accepted planning provenance"
+        )
         print("OK RPC panes render assistant progress plus tool inputs and outputs")
         print("OK owner-only broker accepted five authenticated role bridges")
         print("OK broker pane rendered the metadata-only adaptive dashboard")
