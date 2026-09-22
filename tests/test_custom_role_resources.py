@@ -413,7 +413,11 @@ class CustomRoleResourceTests(CustomRoleResourceFixture):
             save_manifest(self.coord, self.manifest)
             with (
                 mock.patch.dict(
-                    os.environ, {"PI_TMUX_ORCHESTRATOR_SPECIALIST_CONTRACT": "reviewer"}
+                    os.environ,
+                    {
+                        "PI_TMUX_ORCHESTRATOR_SPECIALIST_CONTRACT": "reviewer",
+                        "TYPESAFE_API_KEY": "private-jev-key",
+                    },
                 ),
                 mock.patch.object(commands, "broker_role_generation", return_value=1),
                 mock.patch.object(commands, "worker_guardrail_policy", return_value={}),
@@ -459,6 +463,7 @@ class CustomRoleResourceTests(CustomRoleResourceFixture):
                 argv[argv.index("--tools") + 1], "read,grep,find,ls,orchestrator_report"
             )
             self.assertIn("--no-extensions", argv)
+            self.assertNotIn("TYPESAFE_API_KEY", environment)
             self.assertNotIn("PRIVATE_", json.dumps(environment))
             self.assertNotIn("PRIVATE_", json.dumps(argv))
 

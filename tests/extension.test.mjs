@@ -19,6 +19,11 @@ import {
   validatePlannerTopology,
 } from "../extensions/orchestrator-planner.js";
 import {
+  normalizedTypeSafeApiKey,
+  requestTypeSafe,
+  typesafeTestHooks,
+} from "../extensions/orchestrator-typesafe.js";
+import {
   OrchestrationDashboardOverlay,
   testHooks as dashboardHooks,
 } from "../extensions/orchestrator-dashboard.js";
@@ -2892,6 +2897,267 @@ test("preflight decision model uses exact per-run, preferred, then cross-provide
     () => selectDecisionModel(ctx, undefined, configured),
     /no_eligible_decision_model/,
   );
+});
+
+test("TypeSafe Jev precedes explicit Pi decision models and configured fallback", async () => {
+  const worker = {
+    provider: "worker-provider", id: "worker-model", reasoning: true,
+    thinkingLevelMap: { off: "off", low: "low", medium: "medium", high: "high" },
+  };
+  const ctx = {
+    scopedModels: [],
+    modelRegistry: { getAvailable: () => [worker] },
+  };
+  const configured = plannerPolicy({
+    preferred: { provider: "worker-provider", model: "worker-model", thinking: "low" },
+  });
+  const jev = selectDecisionModel(
+    ctx,
+    undefined,
+    configured,
+    [],
+    { typesafeApiKey: "  test-typesafe-key  " },
+  );
+  assert.equal(jev.kind, "typesafe");
+  assert.equal(jev.provider, "typesafe");
+  assert.equal(jev.modelId, "jev-latest");
+  assert.equal(jev.source, "typesafe-environment");
+  assert.equal(Object.hasOwn(jev, "apiKey"), false);
+  assert.equal(normalizedTypeSafeApiKey("  test-typesafe-key  "), "test-typesafe-key");
+  assert.throws(() => normalizedTypeSafeApiKey("bad key"), /invalid_typesafe_api_key/);
+  assert.throws(() => normalizedTypeSafeApiKey("x".repeat(4097)), /invalid_typesafe_api_key/);
+
+  const jevOverExplicit = selectDecisionModel(
+    ctx,
+    { provider: "unavailable", model: "ignored-while-jev-is-configured", thinking: "low" },
+    configured,
+    [],
+    { typesafeApiKey: "test-typesafe-key" },
+  );
+  assert.equal(jevOverExplicit.kind, "typesafe");
+  assert.equal(jevOverExplicit.source, "typesafe-environment");
+  const explicitWithoutJev = selectDecisionModel(
+    ctx,
+    { provider: "worker-provider", model: "worker-model", thinking: "low" },
+    configured,
+  );
+  assert.equal(explicitWithoutJev.kind, "model");
+  assert.equal(explicitWithoutJev.source, "per-run");
+
+  let calls = 0;
+  let capturedRequest;
+  const result = await runPreflightPlanner(
+    ctx,
+    {
+      task: "Choose a bounded topology.",
+      withPlaywright: false,
+      withDjangoExpert: false,
+    },
+    "/project",
+    jev,
+    validatePlannerTopology(plannerTopology({ optionalRoles: ["probe"] })),
+    undefined,
+    undefined,
+    {
+      typesafeApiKey: "test-typesafe-key",
+      typesafeFetch: async (url, options) => {
+        calls += 1;
+        assert.equal(url, typesafeTestHooks.TYPESAFE_ENDPOINT);
+        assert.equal(options.redirect, "error");
+        assert.equal(options.headers.authorization, "Bearer test-typesafe-key");
+        capturedRequest = JSON.parse(options.body);
+        const answers = Object.fromEntries(Object.entries(capturedRequest.questions).map(
+          ([questionId, question]) => {
+            const choices = Object.keys(question.criteria);
+            const choice = choices.includes("include") ? "include" : choices[0];
+            return [questionId, {
+              type: "choice",
+              choice,
+              confidence: 0.91,
+              probabilities: Object.fromEntries(choices.map((item) => [
+                item, item === choice ? 1 : 0,
+              ])),
+            }];
+          },
+        ));
+        return new Response(JSON.stringify({
+          model: "jev-1.13.0",
+          answers,
+          usage: { input_tokens: 321, output_tokens: 45 },
+        }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      },
+    },
+  );
+  assert.equal(calls, 1);
+  assert.equal(capturedRequest.model, "jev-latest");
+  assert.equal(capturedRequest.state.task, "Choose a bounded topology.");
+  assert.equal(Object.hasOwn(capturedRequest.state, "candidate_models"), false);
+  assert.deepEqual(result.plan.roles.map((role) => role.role), [
+    "implementer", "reviewer", "probe",
+  ]);
+  assert.deepEqual(result.plan.decisionModel, {
+    provider: "typesafe",
+    model: "jev-1.13.0",
+    thinking: "off",
+    source: "typesafe-environment",
+  });
+  assert.equal(result.plan.usage.totalTokens, 366);
+  assert.equal(JSON.stringify(result).includes("test-typesafe-key"), false);
+  assert.match(result.plan.roles[0].reason, /Jev retained the required role/);
+
+  const manyModels = Array.from({ length: 100 }, (_, index) => ({
+    provider: "many", id: `model-${index}`, reasoning: true,
+  }));
+  const manyContext = {
+    scopedModels: [],
+    modelRegistry: { getAvailable: () => manyModels },
+  };
+  const manySelection = selectDecisionModel(
+    manyContext,
+    undefined,
+    plannerPolicy(),
+    [],
+    { typesafeApiKey: "test-typesafe-key" },
+  );
+  let largestChoice = 0;
+  await runPreflightPlanner(
+    manyContext,
+    { task: "Bound every TypeSafe choice." },
+    "/project",
+    manySelection,
+    validatePlannerTopology(plannerTopology({ optionalRoles: [] })),
+    undefined,
+    undefined,
+    {
+      typesafeApiKey: "test-typesafe-key",
+      typesafeFetch: async (_url, options) => {
+        const request = JSON.parse(options.body);
+        const answers = Object.fromEntries(Object.entries(request.questions).map(
+          ([questionId, question]) => {
+            const choices = Object.keys(question.criteria);
+            largestChoice = Math.max(largestChoice, choices.length);
+            return [questionId, {
+              type: "choice",
+              choice: choices[0],
+              confidence: 1,
+              probabilities: Object.fromEntries(choices.map((choice, index) => [
+                choice, index === 0 ? 1 : 0,
+              ])),
+            }];
+          },
+        ));
+        return new Response(JSON.stringify({
+          model: "jev-1.13.0",
+          answers,
+          usage: { input_tokens: 1, output_tokens: 1 },
+        }), { status: 200 });
+      },
+    },
+  );
+  assert.equal(largestChoice, 255);
+
+  const safeRequest = { state: "safe", model: "jev-latest", questions: {} };
+  await assert.rejects(
+    requestTypeSafe(safeRequest, {
+      apiKey: "test-typesafe-key",
+      fetchImpl: async () => new Response("private provider body", { status: 401 }),
+    }),
+    (error) => error.message === "typesafe_authentication_failed"
+      && !error.message.includes("private provider body"),
+  );
+  await assert.rejects(
+    requestTypeSafe(safeRequest, {
+      apiKey: "test-typesafe-key",
+      timeoutMs: 1,
+      fetchImpl: async (_url, { signal }) => new Promise((_resolve, reject) => {
+        signal.addEventListener("abort", () => {
+          const error = new Error("aborted");
+          error.name = "AbortError";
+          reject(error);
+        }, { once: true });
+      }),
+    }),
+    /typesafe_request_timeout/,
+  );
+  const aborted = new AbortController();
+  aborted.abort();
+  await assert.rejects(
+    requestTypeSafe(safeRequest, {
+      apiKey: "test-typesafe-key",
+      signal: aborted.signal,
+      fetchImpl: async () => assert.fail("aborted request must not call fetch"),
+    }),
+    /typesafe_request_aborted/,
+  );
+  await assert.rejects(
+    requestTypeSafe(safeRequest, {
+      apiKey: "test-typesafe-key",
+      fetchImpl: async () => new Response(
+        "x".repeat(typesafeTestHooks.MAX_TYPESAFE_RESPONSE_BYTES + 1),
+      ),
+    }),
+    /typesafe_response_invalid_size/,
+  );
+});
+
+test("malformed TypeSafe planning fails before the Python start boundary", async () => {
+  const worker = {
+    provider: "worker-provider",
+    id: "worker-model",
+    reasoning: true,
+    thinkingLevelMap: { off: "off", low: "low", medium: "medium", high: "high" },
+  };
+  let startCalls = 0;
+  const { tool } = harness(async (_command, args) => {
+    if (args[2] === "planner-policy") {
+      return { code: 0, stdout: JSON.stringify(plannerPolicyEnvelope(plannerPolicy())) };
+    }
+    if (args[2] === "planner-topology") {
+      return { code: 0, stdout: JSON.stringify(plannerTopologyEnvelope(plannerTopology())) };
+    }
+    startCalls += 1;
+    return { code: 0, stdout: JSON.stringify(success("start")) };
+  });
+  const previousKey = process.env.TYPESAFE_API_KEY;
+  const previousFetch = globalThis.fetch;
+  process.env.TYPESAFE_API_KEY = "test-typesafe-key";
+  globalThis.fetch = async (_url, options) => {
+    const request = JSON.parse(options.body);
+    const answers = Object.fromEntries(Object.entries(request.questions).map(
+      ([questionId, question]) => [questionId, {
+        type: "choice",
+        choice: Object.keys(question.criteria)[0],
+        confidence: 1,
+      }],
+    ));
+    return new Response(JSON.stringify({
+      model: "jev-1.13.0",
+      answers,
+      usage: { input_tokens: 1, output_tokens: 1 },
+    }), { status: 200 });
+  };
+  try {
+    await assert.rejects(
+      tool.execute("malformed-typesafe", {
+        action: "start", task: "Synthetic", dynamicPlan: true,
+      }, undefined, undefined, context({
+        confirmations: [true],
+        context: {
+          model: worker,
+          modelRegistry: { getAvailable: () => [worker] },
+        },
+      })),
+      /typesafe_answer_invalid/,
+    );
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousKey === undefined) delete process.env.TYPESAFE_API_KEY;
+    else process.env.TYPESAFE_API_KEY = previousKey;
+  }
+  assert.equal(startCalls, 0);
 });
 
 test("preflight candidate projection honors scoped thinking and strict decision validation", () => {

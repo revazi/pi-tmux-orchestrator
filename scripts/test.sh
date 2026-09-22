@@ -7,6 +7,7 @@ TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/pi-tmux-orchestrator-tests.XXXXXX")
 TEST_ROOT=$(cd "$TEST_ROOT" && pwd -P)
 export PI_TMUX_ORCHESTRATOR_CONFIG="$TEST_ROOT/missing-model-config.json"
 export PI_TMUX_ORCHESTRATOR_BUDGET_CONFIG="$TEST_ROOT/missing-budget-config.json"
+unset TYPESAFE_API_KEY TYPESAFE_BASE_URL TYPESAFE_DEFAULT_MODEL
 
 cleanup() {
   if [[ -n "${TEMP_BIN:-}" ]]; then

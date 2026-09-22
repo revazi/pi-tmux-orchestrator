@@ -33,12 +33,14 @@ def run(
     check: bool = True,
     capture: bool = False,
     cwd: str | None = None,
+    env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     capture_output = capture or runtime.JSON_MODE
     return subprocess.run(
         args,
         check=check,
         cwd=cwd,
+        env=env,
         text=True,
         stdout=subprocess.PIPE if capture_output else None,
         stderr=subprocess.PIPE if capture_output else None,
@@ -46,9 +48,13 @@ def run(
 
 
 def tmux(
-    args: list[str], *, check: bool = True, capture: bool = False
+    args: list[str],
+    *,
+    check: bool = True,
+    capture: bool = False,
+    env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    return run([command_path("tmux"), *args], check=check, capture=capture)
+    return run([command_path("tmux"), *args], check=check, capture=capture, env=env)
 
 
 def slugify(value: str) -> str:

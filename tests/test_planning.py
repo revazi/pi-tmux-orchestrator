@@ -107,6 +107,33 @@ class PlanningAdmissionTests(JsonCliFixture):
         self.assertNotIn("PRIVATE_PLAN_TASK", raw)
         validate_planning_record(planning)
 
+    def test_typesafe_jev_provenance_is_body_free_and_strict(self):
+        roles = [
+            {
+                "name": "implementer",
+                "provider": "worker-provider",
+                "model": "worker-model",
+                "thinking": "medium",
+            },
+            {
+                "name": "reviewer",
+                "provider": "worker-provider",
+                "model": "worker-model",
+                "thinking": "low",
+            },
+        ]
+        record = planning_record(roles)
+        record["decision_model"] = {
+            "provider": "typesafe",
+            "model": "jev-1.13.0",
+            "thinking": "off",
+            "source": "typesafe-environment",
+        }
+        record["usage"]["cost_total"] = None
+        validated = validate_planning_record(record, allow_unbound=True)
+        self.assertEqual(validated["decision_model"], record["decision_model"])
+        self.assertNotIn("api_key", json.dumps(validated))
+
     def test_changed_task_rejects_bound_plan_before_state_creation(self):
         code, static, raw, _ = self.start("ORIGINAL_PRIVATE_TASK", "--dry-run")
         self.assertEqual(code, 0, raw)

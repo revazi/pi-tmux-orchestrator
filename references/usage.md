@@ -173,24 +173,30 @@ per-role `modelOverrides` after resolving ambiguous IDs with `models`.
 Use `/or-start --plan TASK`, model-tool `dynamicPlan=true`, or terminal
 `start --dynamic-plan --authorize-planning --yes` to request one bounded model
 decision before the ordinary dry-run preview. Terminal planning runs a private
-one-request Pi RPC adapter with no tools; task/context travel in a mode-0600
-request file, never argv. Planning authorization and launch authorization are
-separate: `--authorize-planning` permits the provider call and `--yes` permits
-launch. Omission of either fails before any call. The interactive path likewise
-requires its own confirmation showing the exact decision model, thinking,
-selection source, candidate count, and bounded payload categories, then a
-second confirmation after validation showing selected identities, locked custom
-contracts, exact model/thinking values, rationale summaries, and operator
+one-request Pi RPC control adapter with no tools; task/context travel in a
+mode-0600 request file, never argv. Planning authorization and launch
+authorization are separate: `--authorize-planning` permits the provider call and
+`--yes` permits launch. Omission of either fails before any call. The interactive
+path likewise requires its own confirmation showing the exact decision service,
+selection source, candidate count, and bounded payload categories, then a second
+confirmation after validation showing selected identities, locked custom
+contracts, exact model/thinking values, bounded decision reasons, and operator
 constraints. Declining either gate, cancellation, malformed/oversized policy or
 output, unavailable models, unsupported thinking, ambiguity, or conflicting
 explicit constraints starts nothing.
 
-Decision-model precedence is:
+Decision-service precedence is:
 
-1. exact model-tool `decisionModel: {provider, model, thinking?}`;
-2. exact `preferred` identity from the strict user-global planner policy;
-3. the first eligible identity in the policy's ordered `fallbacks` array;
-4. configured `noEligible: "static"` with explicit confirmation, or cancellation.
+1. direct TypeSafe `jev-latest` when `TYPESAFE_API_KEY` is present and valid;
+2. exact model-tool `decisionModel: {provider, model, thinking?}` selects a Pi
+   chat model when the TypeSafe key is absent;
+3. exact `preferred` Pi identity from the strict user-global planner policy;
+4. the first eligible Pi identity in the policy's ordered `fallbacks` array;
+5. configured `noEligible: "static"` with explicit confirmation, or cancellation.
+
+This is selection precedence, not automatic request-error failover. Once a
+service is selected, authentication, transport, timeout, malformed-response, or
+provider failures stop before launch and never trigger a second provider call.
 
 The policy is read through the authoritative Python boundary from
 `~/.pi/agent/tmux-orchestrator-planner.json`. An absolute
@@ -224,31 +230,53 @@ versioned empty `cancel` policy. `pi-tmux-agents --json planner-policy --project
 /absolute/project` validates and projects only the path, configured flag, and
 bounded identity policy; it does not expose auth or endpoint data.
 
-At runtime each identity is matched exactly against Pi's bounded
-available/scoped catalog and its model-specific thinking support. An unavailable
-or unsupported configured candidate is ineligible and the next configured entry
-is considered. Duplicate catalog identities are ambiguous and reject the whole
-start. `noEligible: "cancel"` rejects before a provider or orchestration call;
-`"static"` offers an explicit no-provider-call fallback to the ordinary
-static/manual preview and final confirmation. An unavailable or unsupported
-exact per-run override fails immediately and never falls through to configured
-entries.
+The policy configures only the Pi fallback path. At runtime each configured Pi
+identity is matched exactly against Pi's bounded available/scoped catalog and
+its model-specific thinking support. An unavailable or unsupported configured
+candidate is ineligible and the next configured entry is considered. Duplicate
+catalog identities are ambiguous and reject the whole start. `noEligible:
+"cancel"` rejects before a provider or orchestration call; `"static"` offers an
+explicit no-provider-call fallback to the ordinary static/manual preview and
+final confirmation. An unavailable or unsupported exact per-run override fails
+immediately and never falls through to configured entries. Jev has already been
+excluded at that point because the TypeSafe key is absent. Pi decision thinking
+and every selected worker thinking level are capped at `medium`; a
+conflicting explicit higher setting fails before the planning call.
 
-Use the preferred slot or explicit override for Jev only after supplying its
-canonical provider/model identity. The canonical Jev identity remains unknown,
-so no default or placeholder is shipped and the runtime never guesses an ID or
-fuzzy-matches a model/display name. The lookup does not read credentials or
-endpoints. Decision thinking and every selected worker thinking level are capped
-at `medium`; a conflicting explicit higher setting fails before the planning
-call.
+Jev is not registered as a Pi model and needs no Pi package, `models.json`, or
+`/login`. The bundled dependency-free adapter posts one request to the fixed
+`https://api.typesafe.ai/v1/systemone` endpoint with model alias `jev-latest`.
+It expresses optional-role inclusion and exact worker model/thinking assignments
+as bounded TypeSafe Choice questions, validates every returned answer, and
+constructs the ordinary version-1 planner decision deterministically. The
+versioned Jev model returned by TypeSafe is retained as provenance; `thinking:
+"off"` is the compatibility value because System One has no Pi thinking level.
+TypeSafe reports input/output tokens but not a monetary cost in this API, so
+retained cost remains unavailable rather than estimated.
+
+Set the credential only in the parent process environment before starting Pi:
+
+```bash
+TYPESAFE_API_KEY='…' pi
+```
+
+The adapter trims and validates the key, sends it only in the in-memory Bearer
+header after explicit planning confirmation, follows no redirects, performs no
+retry, bounds request/response bodies, and never includes provider error bodies
+in surfaced failures. The key is never accepted in CLI/configuration, written to
+a file, retained, logged, displayed, or forwarded into the broker or worker tmux
+environments. The endpoint and model alias are not environment-overridable.
+Unset the variable to exercise the configured Pi fallback path.
+
 Before the provider call, the authoritative `planner-topology` boundary resolves
 strict external model/profile/project configuration and freshly validates any
 exact-project custom-role registry descriptors and pinned resources. The planner
-receives the bounded task, optional structured parent capsule, project identity,
-fixed role/contract/authority descriptors, exact candidate model metadata, and
-explicit constraints. It receives no resource paths or bodies, credentials,
-endpoints, tools, or configuration mutation surface. It gets no tools and must
-return one strict JSON object in one bounded attempt.
+state contains the bounded task, optional structured parent capsule, project
+identity, fixed role/contract/authority descriptors, exact candidate model
+metadata, and explicit constraints. It contains no resource paths or bodies,
+credentials, endpoints, tools, or configuration mutation surface. The Pi
+fallback gets no tools and must return one strict JSON object in one bounded
+attempt; Jev receives only typed questions and bounded state.
 
 The decision must retain exactly one built-in implementer and the mandatory
 built-in reviewer. It may add unique eligible probe, Playwright, and Django roles

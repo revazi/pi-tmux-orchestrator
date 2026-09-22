@@ -120,13 +120,18 @@ terminal CLI; explicit run options take precedence.
 
 For opt-in model-guided preflight selection, use `/or-start --plan TASK` or
 model-tool `dynamicPlan=true`. Before preview, the extension shows the exact
-decision model and requires approval for one additional provider call. An
-exact model-tool `decisionModel` wins. Otherwise the strict version-1
-user-global planner policy selects an exact configured preferred identity, then
-ordered exact cross-provider fallbacks. Use the preferred slot for Jev only after
-its canonical provider/model identity is known; the runtime never guesses or
-fuzzy-matches Jev. If no configured identity is eligible, policy either cancels
-or offers an explicitly confirmed static/manual start without a planning call.
+decision service and requires approval for one additional provider call. When
+`TYPESAFE_API_KEY` is set, the bundled dependency-free HTTPS adapter uses
+TypeSafe `jev-latest` directly at the fixed
+`https://api.typesafe.ai/v1/systemone` endpoint. Jev is a typed System One
+decision model, not a Pi chat model: it chooses from bounded role and exact
+worker-model/thinking options, and deterministic code constructs the normal
+strict plan. When the key is absent, an exact model-tool `decisionModel`
+selects a Pi chat model for that run. Without either, the strict version-1
+user-global planner policy selects an exact configured Pi preferred identity,
+then ordered exact cross-provider fallbacks. If no configured identity is
+eligible, policy either cancels or offers an explicitly confirmed static/manual
+start without a planning call.
 The strict one-shot decision retains exactly one built-in implementer and
 mandatory built-in reviewer, may select unique eligible built-in specialists,
 and may select only exact-project custom specialists whose registered resources
@@ -240,8 +245,21 @@ globs, prefix matches, repository-name matches, or symlink components. Custom ro
 IDs must already exist in the user-global registry. Explicit run options override
 an exact project mapping.
 
-Pi remains authoritative for provider authentication. The orchestrator does not
-read or copy provider credentials.
+Pi remains authoritative for worker and Pi-fallback provider authentication. The
+one narrow exception is the direct Jev planner adapter: it reads
+`TYPESAFE_API_KEY` from the already-running parent process, trims and validates
+it, and uses it only in the in-memory HTTPS Authorization header after planning
+confirmation. The key is never accepted in configuration or arguments, retained,
+logged, shown, or forwarded into broker/worker tmux environments. The fixed
+TypeSafe endpoint cannot be overridden. Start Pi from a shell containing the key:
+
+```bash
+TYPESAFE_API_KEY='…' pi
+```
+
+Jev takes precedence whenever the key is configured. Unset the variable to use
+an explicit Pi `decisionModel`, or the configured Pi preferred/fallback policy
+when no per-run decision model is supplied.
 
 Dynamic planning uses a separate strict user-global file,
 `~/.pi/agent/tmux-orchestrator-planner.json`:
@@ -262,7 +280,10 @@ Dynamic planning uses a separate strict user-global file,
 }
 ```
 
-Resolve every identity from `/or-models`; display names never match. `preferred`
+This file is validated for every dynamic start, but its identities configure
+only the Pi-model fallback path used when `TYPESAFE_API_KEY` and an explicit Pi
+decision model are both absent. Resolve every identity from `/or-models`; display
+names never match. `preferred`
 may be `null`, fallbacks are tried in listed order (for example, exact Grok and
 OpenAI identities discovered from the current catalog), every thinking level is
 explicit and capped at `medium`, and `noEligible` is exactly `cancel` or

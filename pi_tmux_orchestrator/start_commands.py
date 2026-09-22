@@ -278,6 +278,8 @@ def create_tmux_grid(
     manifest: dict[str, Any],
 ) -> None:
     total_panes = len(roles) + 1
+    tmux_environment = os.environ.copy()
+    tmux_environment.pop("TYPESAFE_API_KEY", None)
     tmux(
         [
             "new-session",
@@ -288,15 +290,21 @@ def create_tmux_grid(
             "80",
             "-s",
             session,
+            "-e",
+            "TYPESAFE_API_KEY=",
             "-n",
             WINDOW,
             "-c",
             str(project),
-        ]
+        ],
+        env=tmux_environment,
     )
     session_target = exact_session_target(session)
     window_target = exact_window_target(session)
     try:
+        # The dedicated Jev credential is consumed only by the confirmed parent
+        # preflight call and must never enter broker or worker pane environments.
+        tmux(["set-environment", "-u", "-t", session_target, "TYPESAFE_API_KEY"])
         for _ in range(total_panes - 1):
             tmux(["split-window", "-d", "-t", window_target, "-c", str(project)])
         tmux(["select-layout", "-t", window_target, "tiled"])

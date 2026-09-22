@@ -1062,6 +1062,7 @@ def run_agent_command(args: argparse.Namespace) -> int:
     environment.pop("PI_TMUX_CONTROLLER", None)
     environment.pop("PI_TMUX_CONTROLLER_HOME", None)
     environment.pop("PI_TMUX_ORCHESTRATOR_SPECIALIST_CONTRACT", None)
+    environment.pop("TYPESAFE_API_KEY", None)
     if specialist_contract is not None:
         environment["PI_TMUX_ORCHESTRATOR_SPECIALIST_CONTRACT"] = specialist_contract
     environment["PI_SKIP_VERSION_CHECK"] = "1"

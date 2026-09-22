@@ -13,9 +13,12 @@ unrelated session logs.
 ## Trust and process boundaries
 
 Pi Tmux Orchestrator launches local Pi and Python processes under the current
-operating-system account. It uses configured Pi providers without reading or
-copying authentication files. It is not an operating-system sandbox between
-same-user workers.
+operating-system account. It uses configured Pi worker and fallback-planner
+providers without reading or copying Pi authentication files. The direct
+TypeSafe planner is the narrow exception: after explicit authorization it reads
+`TYPESAFE_API_KEY` from the parent process and uses it only as an in-memory
+Bearer header to the fixed TypeSafe System One endpoint. It is not an
+operating-system sandbox between same-user workers.
 
 Only the implementer receives normal Pi write tools. Reviewer, probe,
 Playwright, and Django roles omit `edit` and `write` but retain `bash`; their
@@ -35,7 +38,17 @@ defaults using exact matching only. It cannot grant trust, tools, writer/reviewe
 authority, forced execution, prompts, or skills. Credential, endpoint, header,
 and arbitrary extra fields are rejected. Pi's own model registry and
 authentication remain authoritative. Bounded model discovery returns no
-authentication material.
+authentication material. Jev is not projected as a Pi model: its typed choices
+are converted deterministically into the same bounded worker topology, whose
+models must still exist in Pi's catalog.
+
+The TypeSafe adapter accepts no credential or endpoint argument/configuration,
+follows no redirects, retries no call, bounds request and response bodies, and
+discards provider response bodies after strict validation. It never surfaces raw
+provider errors. The key is not retained in plans, manifests, SQLite, status,
+logs, or errors. Before any broker or worker pane starts, the new tmux session
+unsets `TYPESAFE_API_KEY`; TUI and RPC worker launchers remove it again as
+defense in depth.
 
 ## Broker boundary
 
@@ -180,7 +193,9 @@ The npm package declares no dependencies or lifecycle scripts and does not
 bundle Pi. Deterministic package checks exclude tests, CI files, generated
 sessions/state, credentials, caches, `node_modules`, and authentication data.
 Model-free acceptance uses isolated Pi/npm homes, offline package operations,
-and no provider prompt. Pre-release staging writes only to a new canonical
+and no provider prompt. `scripts/test.sh` explicitly unsets the TypeSafe key so
+a developer's ambient credential can never turn a test into a provider call.
+Pre-release staging writes only to a new canonical
 operator-selected directory outside the checkout, records bounded Git/tarball
 provenance, and proves Pi resource discovery from the staged package path. The
 default manual runner uses a disposable Pi home with no real auth. Any later

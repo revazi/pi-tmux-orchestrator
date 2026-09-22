@@ -224,8 +224,9 @@ Use the same reviewed project revision, task class, profile, model availability,
 budget policy, required checks, and acceptance rubric for both arms. Run one pair
 per case first; any repeat or broader matrix needs fresh approval. Record only
 the bounded facts listed in section F plus planner latency, corrections, invalid
-choices, false specialist omissions, and unnecessary specialists. Report exact
-Jev and fallback evidence separately; never substitute a display-name match.
+choices, false specialist omissions, and unnecessary specialists. Report direct
+TypeSafe Jev and Pi-fallback evidence separately; never substitute a Pi
+display-name match for the direct typed Jev transport.
 Stop the benchmark on a trust/authority violation, private-body leak, invalid
 model choice, failed mandatory review, or unexpected provider request. Synthetic
 and fixed-output runs remain lifecycle evidence only and never fill a quality or
@@ -234,9 +235,10 @@ cost cell.
 #### Issue #174 fallback benchmark evidence
 
 One explicitly authorized provider-backed run of the frozen three-case matrix was
-completed on Pi 0.84.4 against disposable dependency-free fixtures. The available
-catalog returned no exact `Jev` match, so this is **Jev-unavailable fallback
-evidence only**. The strict configured fallback was `xai/grok-4.6` at `low` for
+completed on Pi 0.84.4 against disposable dependency-free fixtures before the
+direct TypeSafe adapter existed. The Pi catalog returned no exact `Jev` match, so
+this remains **Pi-fallback evidence only** and must not be relabeled as Jev
+evidence. The strict configured fallback was `xai/grok-4.6` at `low` for
 three planner calls; worker roles were constrained to that exact model with the
 packaged `economy` thinking map. No task, prompt, rationale, report, diff, log,
 credential, endpoint, or source body is retained here. An excluded readiness
@@ -274,20 +276,24 @@ failure 0/6, correction rate 0/6. The dynamic planner chose only implementer and
 reviewer in every case. Count the omitted probe in the predeclared
 specialist-relevant case as one false specialist omission even though checks and
 review passed. The static ambiguous arm also ran Playwright and Django against a
-dependency-free CLI fixture; count those two as unnecessary specialists. Exact
-Jev-available evidence remains unavailable until the owner supplies a canonical
-supported provider/model identity. No default rollout is authorized.
+dependency-free CLI fixture; count those two as unnecessary specialists. Direct
+TypeSafe `jev-latest` evidence remains unavailable until the new adapter is run
+under separate provider-call authorization with `TYPESAFE_API_KEY`. No default
+rollout is authorized.
 
 ### A. Command and parent supervision
 
 - Run `/or-models` and open `/or-dashboard`; confirm help is concise, the About
   footer contains version/project/package/contribution details, and doctor
   appears only after `d`.
-- Opt in once with `/or-start --plan` for a bounded task. Confirm the exact
-  decision model is shown before the additional provider call, an exact
-  operator-supplied canonical Jev identity wins without name guessing or fuzzy
-  matching, fallback is explicit otherwise, selected worker models/thinking are
-  available and at most `medium`, malformed output starts nothing, and launch
+- Opt in once with `/or-start --plan` for a bounded task. With a separately
+  authorized `TYPESAFE_API_KEY`, confirm direct TypeSafe `jev-latest` is shown
+  before the additional provider call; without the key, confirm the exact
+  configured Pi fallback is shown. Confirm Jev wins over an operator-supplied Pi
+  decision model while the key is configured, and that the exact Pi decision
+  model wins over configured identities after the key is removed. Confirm
+  selected worker models/thinking are available and at most `medium`, malformed
+  output starts nothing, and launch
   still requires a second confirmation. If exact-project custom specialists are
   configured, confirm only freshly verified allowlisted identities/contracts are
   candidates and an accepted subset remains read-only. This is not evidence of
