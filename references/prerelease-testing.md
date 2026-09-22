@@ -278,20 +278,23 @@ specialist-relevant case as one false specialist omission even though checks and
 review passed. The static ambiguous arm also ran Playwright and Django against a
 dependency-free CLI fixture; count those two as unnecessary specialists. Direct
 TypeSafe `jev-latest` evidence remains unavailable until the new adapter is run
-under separate provider-call authorization with `TYPESAFE_API_KEY`. No default
-rollout is authorized.
+under separate provider-call authorization with `/login typesafe` or the
+`TYPESAFE_API_KEY` automation fallback. No default rollout is authorized.
 
 ### A. Command and parent supervision
 
 - Run `/or-models` and open `/or-dashboard`; confirm help is concise, the About
   footer contains version/project/package/contribution details, and doctor
   appears only after `d`.
-- Opt in once with `/or-start --plan` for a bounded task. With a separately
-  authorized `TYPESAFE_API_KEY`, confirm direct TypeSafe `jev-latest` is shown
-  before the additional provider call; without the key, confirm the exact
-  configured Pi fallback is shown. Confirm Jev wins over an operator-supplied Pi
-  decision model while the key is configured, and that the exact Pi decision
-  model wins over configured identities after the key is removed. Confirm
+- Configure the credential once with `/login typesafe`, then opt in with
+  `/or-start --plan` for a bounded task. With separately authorized TypeSafe
+  authentication, confirm direct `jev-latest` is shown before the additional
+  provider call; after `/logout` and selecting `TypeSafe Jev Planner`, with no
+  environment fallback, confirm
+  the exact configured Pi fallback is shown. Confirm Jev wins over an
+  operator-supplied Pi decision model while TypeSafe auth is configured, and that
+  the exact Pi decision model wins over configured identities after TypeSafe
+  auth is removed. Confirm
   selected worker models/thinking are available and at most `medium`, malformed
   output starts nothing, and launch
   still requires a second confirmation. If exact-project custom specialists are

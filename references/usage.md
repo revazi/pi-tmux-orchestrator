@@ -187,9 +187,10 @@ explicit constraints starts nothing.
 
 Decision-service precedence is:
 
-1. direct TypeSafe `jev-latest` when `TYPESAFE_API_KEY` is present and valid;
+1. direct TypeSafe `jev-latest` when authentication is configured through
+   `/login typesafe` or the `TYPESAFE_API_KEY` environment fallback;
 2. exact model-tool `decisionModel: {provider, model, thinking?}` selects a Pi
-   chat model when the TypeSafe key is absent;
+   chat model when TypeSafe authentication is absent;
 3. exact `preferred` Pi identity from the strict user-global planner policy;
 4. the first eligible Pi identity in the policy's ordered `fallbacks` array;
 5. configured `noEligible: "static"` with explicit confirmation, or cancellation.
@@ -239,13 +240,15 @@ catalog identities are ambiguous and reject the whole start. `noEligible:
 explicit no-provider-call fallback to the ordinary static/manual preview and
 final confirmation. An unavailable or unsupported exact per-run override fails
 immediately and never falls through to configured entries. Jev has already been
-excluded at that point because the TypeSafe key is absent. Pi decision thinking
-and every selected worker thinking level are capped at `medium`; a
+excluded at that point because TypeSafe authentication is absent. Pi decision
+thinking and every selected worker thinking level are capped at `medium`; a
 conflicting explicit higher setting fails before the planning call.
 
-Jev is not registered as a Pi model and needs no Pi package, `models.json`, or
-`/login`. The bundled dependency-free adapter posts one request to the fixed
-`https://api.typesafe.ai/v1/systemone` endpoint with model alias `jev-latest`.
+Jev is not registered as a Pi chat model and needs no `models.json` entry or
+additional package. The extension registers an auth-only provider so the key can
+use Pi's native credential flow, while the bundled dependency-free adapter posts
+one request directly to the fixed `https://api.typesafe.ai/v1/systemone`
+endpoint with model alias `jev-latest`.
 It expresses optional-role inclusion and exact worker model/thinking assignments
 as bounded TypeSafe Choice questions, validates every returned answer, and
 constructs the ordinary version-1 planner decision deterministically. The
@@ -254,19 +257,27 @@ versioned Jev model returned by TypeSafe is retained as provenance; `thinking:
 TypeSafe reports input/output tokens but not a monetary cost in this API, so
 retained cost remains unavailable rather than estimated.
 
-Set the credential only in the parent process environment before starting Pi:
+Configure the credential once through Pi's masked native prompt:
 
-```bash
-TYPESAFE_API_KEY='…' pi
+```text
+/login typesafe
 ```
 
-The adapter trims and validates the key, sends it only in the in-memory Bearer
-header after explicit planning confirmation, follows no redirects, performs no
-retry, bounds request/response bodies, and never includes provider error bodies
-in surfaced failures. The key is never accepted in CLI/configuration, written to
-a file, retained, logged, displayed, or forwarded into the broker or worker tmux
-environments. The endpoint and model alias are not environment-overridable.
-Unset the variable to exercise the configured Pi fallback path.
+Pi persists it in the normal user-global credential store. Use `/logout` and
+select `TypeSafe Jev Planner` to remove it. The orchestrator does not read the
+auth file; it resolves the key through Pi's model registry only for a confirmed
+planning call. For automation,
+`TYPESAFE_API_KEY` remains an optional environment override and takes precedence
+over the stored key.
+
+The adapter trims and validates the resolved key, sends it only in the in-memory
+Bearer header after explicit planning confirmation, follows no redirects,
+performs no retry, bounds request/response bodies, and never includes provider
+error bodies in surfaced failures. The key is never accepted in orchestrator
+CLI/configuration, copied into orchestration state, logged, displayed, or
+forwarded into broker or worker tmux environments. The endpoint and model alias
+are not environment-overridable. Log out and unset the environment fallback to
+exercise the configured Pi fallback path.
 
 Before the provider call, the authoritative `planner-topology` boundary resolves
 strict external model/profile/project configuration and freshly validates any

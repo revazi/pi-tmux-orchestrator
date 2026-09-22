@@ -1,5 +1,6 @@
 const TYPESAFE_ENDPOINT = "https://api.typesafe.ai/v1/systemone";
 const TYPESAFE_MODEL = "jev-latest";
+const TYPESAFE_PROVIDER_ID = "typesafe";
 const TYPESAFE_TIMEOUT_MS = 60_000;
 const MAX_TYPESAFE_REQUEST_BYTES = 96 * 1024;
 const MAX_TYPESAFE_RESPONSE_BYTES = 512 * 1024;
@@ -16,6 +17,65 @@ export function normalizedTypeSafeApiKey(value) {
     throw new Error("invalid_typesafe_api_key");
   }
   return key;
+}
+
+async function providerCredential(input) {
+  const environment = normalizedTypeSafeApiKey(await input.ctx.env("TYPESAFE_API_KEY"));
+  if (environment) return { key: environment, source: "TYPESAFE_API_KEY" };
+  const stored = normalizedTypeSafeApiKey(input.credential?.key);
+  return stored ? { key: stored, source: "stored API key" } : undefined;
+}
+
+function unsupportedTypeSafeStream() {
+  throw new Error("typesafe_is_not_a_chat_provider");
+}
+
+export function typeSafeAuthProvider() {
+  return {
+    id: TYPESAFE_PROVIDER_ID,
+    name: "TypeSafe Jev Planner",
+    baseUrl: "https://api.typesafe.ai",
+    auth: {
+      apiKey: {
+        name: "TypeSafe API key",
+        async login(interaction) {
+          const key = normalizedTypeSafeApiKey(await interaction.prompt({
+            type: "secret",
+            message: "TypeSafe API key",
+          }));
+          if (!key) throw new Error("typesafe_api_key_unavailable");
+          return { type: "api_key", key };
+        },
+        async check(input) {
+          const resolved = await providerCredential(input);
+          return resolved ? { type: "api_key", source: resolved.source } : undefined;
+        },
+        async resolve(input) {
+          const resolved = await providerCredential(input);
+          return resolved
+            ? { auth: { apiKey: resolved.key }, source: resolved.source }
+            : undefined;
+        },
+      },
+    },
+    getModels() {
+      return [];
+    },
+    stream: unsupportedTypeSafeStream,
+    streamSimple: unsupportedTypeSafeStream,
+  };
+}
+
+export async function resolvedTypeSafeApiKey(ctx, environmentValue) {
+  const environment = normalizedTypeSafeApiKey(environmentValue);
+  if (environment) return environment;
+  if (typeof ctx?.modelRegistry?.getProviderAuth !== "function") return undefined;
+  try {
+    const result = await ctx.modelRegistry.getProviderAuth(TYPESAFE_PROVIDER_ID);
+    return normalizedTypeSafeApiKey(result?.auth?.apiKey);
+  } catch {
+    throw new Error("typesafe_credential_unavailable");
+  }
 }
 
 function validateContentLength(headers) {
@@ -184,4 +244,4 @@ export const typesafeTestHooks = {
   TYPESAFE_TIMEOUT_MS,
 };
 
-export { TYPESAFE_MODEL };
+export { TYPESAFE_MODEL, TYPESAFE_PROVIDER_ID };
