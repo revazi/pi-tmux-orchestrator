@@ -44,7 +44,7 @@ Provide a small, reusable, intentionally tmux-scoped Pi skill and modular standa
 - `extensions/orchestrator-context.js`: structured parent context-capsule schema and renderer
 - `extensions/orchestrator-context-policy.js`: bounded Pi retain/prune start inputs and CLI-resolved confirmation
 - `extensions/orchestrator-budgets.js`: bounded native budget override adapter
-- `extensions/orchestrator-models.js`: bounded model metadata and override adapter
+- `extensions/orchestrator-models.js`: bounded model metadata, canonical non-secret capability projection, and override adapter
 - `extensions/orchestrator-planner.js`: bounded model-guided topology selection and strict role/model/contract decision validation
 - `extensions/orchestrator-planning.js`: canonical planner binding digests and body-free accepted-record projection
 - `extensions/orchestrator-typesafe.js`: auth-only Pi provider registration plus fixed-endpoint dependency-free TypeSafe Jev HTTPS transport with bounded secret-safe responses

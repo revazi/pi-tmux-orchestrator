@@ -1,6 +1,13 @@
 const MAX_VISIBLE_CHARS = 12_000;
 const MAX_MODEL_RESULTS = 100;
 const MAX_MODEL_SCAN = 4096;
+const MAX_COST_TIERS = 16;
+const MAX_INPUT_MODALITIES = 16;
+const MAX_CATALOG_RATE = 1_000_000;
+const MISSING = "missing";
+const ZERO = "zero";
+const DECLARED = "declared";
+const UNAVAILABLE = "unavailable";
 
 export const ROLES = ["implementer", "reviewer", "probe", "playwright", "django"];
 export const MODEL_ROLES = ["all", ...ROLES];
@@ -80,6 +87,164 @@ export function availableThinkingLevels(model, pinnedThinking) {
   const extended = ["xhigh", "max"]
     .filter((level) => typeof levelMap[level] === "string");
   return [...standard, ...extended];
+}
+
+function catalogStatus(value) {
+  if (value === undefined || value === null) return MISSING;
+  return UNAVAILABLE;
+}
+
+function catalogInteger(value) {
+  if (value === undefined || value === null) return { status: MISSING, tokens: null };
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    return { status: UNAVAILABLE, tokens: null };
+  }
+  if (value === 0) return { status: ZERO, tokens: 0 };
+  return { status: DECLARED, tokens: value };
+}
+
+function catalogRate(value) {
+  if (value === undefined || value === null) return { status: MISSING, amount: null };
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > MAX_CATALOG_RATE) {
+    return { status: UNAVAILABLE, amount: null };
+  }
+  if (value === 0) return { status: ZERO, amount: 0 };
+  return { status: DECLARED, amount: value };
+}
+
+function catalogBooleanFlag(value) {
+  if (value === true) return true;
+  if (value === false) return false;
+  return catalogStatus(value);
+}
+
+function projectInputSupport(value) {
+  if (value === undefined || value === null) {
+    return { text: MISSING, image: MISSING };
+  }
+  if (!Array.isArray(value) || value.length > MAX_INPUT_MODALITIES) {
+    return { text: UNAVAILABLE, image: UNAVAILABLE };
+  }
+  const known = new Set();
+  for (const item of value) {
+    if (item === "text" || item === "image") known.add(item);
+  }
+  return {
+    text: known.has("text"),
+    image: known.has("image"),
+  };
+}
+
+function projectCostRates(cost) {
+  const input = catalogRate(cost.input);
+  const output = catalogRate(cost.output);
+  const cacheRead = catalogRate(cost.cacheRead);
+  const cacheWrite = catalogRate(cost.cacheWrite);
+  if ([input, output, cacheRead, cacheWrite].some((item) => item.status !== DECLARED && item.status !== ZERO)) {
+    return undefined;
+  }
+  return {
+    input: input.amount,
+    output: output.amount,
+    cache_read: cacheRead.amount,
+    cache_write: cacheWrite.amount,
+    zero: [input, output, cacheRead, cacheWrite].every((item) => item.amount === 0),
+  };
+}
+
+function projectCostTier(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const threshold = catalogInteger(value.inputTokensAbove);
+  const rates = projectCostRates(value);
+  if (!rates || threshold.status === MISSING || threshold.status === UNAVAILABLE) return undefined;
+  return {
+    input_tokens_above: threshold.tokens,
+    input: rates.input,
+    output: rates.output,
+    cache_read: rates.cache_read,
+    cache_write: rates.cache_write,
+  };
+}
+
+function projectCostTiers(value) {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value) || value.length > MAX_COST_TIERS) return undefined;
+  const tiers = [];
+  const seen = new Set();
+  for (const item of value) {
+    const tier = projectCostTier(item);
+    if (!tier) return undefined;
+    if (seen.has(tier.input_tokens_above)) return undefined;
+    seen.add(tier.input_tokens_above);
+    tiers.push(tier);
+  }
+  tiers.sort((left, right) => left.input_tokens_above - right.input_tokens_above);
+  return tiers;
+}
+
+function projectDeclaredCost(value) {
+  const empty = {
+    status: UNAVAILABLE,
+    input: null,
+    output: null,
+    cache_read: null,
+    cache_write: null,
+    tiers: null,
+  };
+  if (value === undefined || value === null) return { ...empty, status: MISSING };
+  if (typeof value !== "object" || Array.isArray(value)) return empty;
+  const rates = projectCostRates(value);
+  const tiers = projectCostTiers(value.tiers);
+  if (!rates || tiers === undefined) return empty;
+  const zero = rates.zero && tiers.every((tier) => (
+    tier.input === 0
+    && tier.output === 0
+    && tier.cache_read === 0
+    && tier.cache_write === 0
+  ));
+  return {
+    status: zero ? ZERO : DECLARED,
+    input: rates.input,
+    output: rates.output,
+    cache_read: rates.cache_read,
+    cache_write: rates.cache_write,
+    tiers,
+  };
+}
+
+function retentionPresence(value) {
+  if (value === undefined || value === null) return false;
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return UNAVAILABLE;
+  return true;
+}
+
+function projectPromptCacheRetention(value) {
+  if (value === undefined || value === null) {
+    return { status: MISSING, short: false, long: false };
+  }
+  if (typeof value !== "object" || Array.isArray(value)) {
+    return { status: UNAVAILABLE, short: UNAVAILABLE, long: UNAVAILABLE };
+  }
+  const short = retentionPresence(value.short);
+  const long = retentionPresence(value.long);
+  if (short === UNAVAILABLE || long === UNAVAILABLE) {
+    return { status: UNAVAILABLE, short, long };
+  }
+  if (short === false && long === false) {
+    return { status: MISSING, short: false, long: false };
+  }
+  return { status: DECLARED, short, long };
+}
+
+export function projectModelCapabilities(model) {
+  return {
+    reasoning: catalogBooleanFlag(model?.reasoning),
+    input: projectInputSupport(model?.input),
+    context_window: catalogInteger(model?.contextWindow),
+    max_output_tokens: catalogInteger(model?.maxTokens),
+    declared_cost: projectDeclaredCost(model?.cost),
+    prompt_cache_retention: projectPromptCacheRetention(model?.promptCache),
+  };
 }
 
 function registryModels(ctx) {

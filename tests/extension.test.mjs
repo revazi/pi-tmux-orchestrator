@@ -12,6 +12,8 @@ import {
   metadataDigest,
   plannerCandidateDigest,
   plannerModelCandidates,
+  projectModelCapabilities,
+  publicPlannerCandidate,
   runPreflightPlanner,
   selectDecisionModel,
   validateDecisionModelPolicy,
@@ -3112,6 +3114,10 @@ test("TypeSafe Jev precedes explicit Pi decision models and configured fallback"
   assert.equal(capturedRequest.model, "jev-latest");
   assert.equal(capturedRequest.state.task, "Choose a bounded topology.");
   assert.equal(Object.hasOwn(capturedRequest.state, "candidate_models"), false);
+  assert.deepEqual(
+    capturedRequest.state.candidate_model_capabilities,
+    jev.candidates.map((candidate) => publicPlannerCandidate(candidate)),
+  );
   assert.deepEqual(result.plan.roles.map((role) => role.role), [
     "implementer", "reviewer", "probe",
   ]);
@@ -3208,6 +3214,17 @@ test("TypeSafe Jev precedes explicit Pi decision models and configured fallback"
       fetchImpl: async () => assert.fail("aborted request must not call fetch"),
     }),
     /typesafe_request_aborted/,
+  );
+  await assert.rejects(
+    requestTypeSafe({
+      state: "x".repeat(typesafeTestHooks.MAX_TYPESAFE_REQUEST_BYTES + 1),
+      model: "jev-latest",
+      questions: {},
+    }, {
+      apiKey: "test-typesafe-key",
+      fetchImpl: async () => assert.fail("oversized request must fail before fetch"),
+    }),
+    /typesafe_request_invalid_size/,
   );
   await assert.rejects(
     requestTypeSafe(safeRequest, {
@@ -3401,6 +3418,270 @@ test("preflight candidate projection honors scoped thinking and strict decision 
     }, candidates, {}),
     /invalid_planner_reason/,
   );
+});
+
+test("capability-informed planner projection is bounded, redacted, and identical across transports", async () => {
+  const secretFields = {
+    api: "anthropic-messages",
+    baseUrl: "https://secret.example/v1",
+    headers: { Authorization: "Bearer catalog-secret" },
+    apiKey: "catalog-secret",
+    compat: { supportsStore: true, maxTokensField: "max_tokens" },
+    samplingParams: { temperature: 0.2 },
+    inputLimits: { maxRequestBytes: 4096 },
+    name: "Secret Opus Quality Label",
+    customConfig: { body: "private-custom-body" },
+  };
+  const declared = {
+    provider: "anthropic",
+    id: "claude-declared",
+    reasoning: true,
+    thinkingLevelMap: { off: "off", low: "low", medium: "medium", high: "high" },
+    input: ["text", "image", "audio"],
+    contextWindow: 200000,
+    maxTokens: 8192,
+    cost: {
+      input: 3,
+      output: 15,
+      cacheRead: 0.3,
+      cacheWrite: 3.75,
+      extra: "do-not-project",
+      tiers: [
+        { inputTokensAbove: 200000, input: 6, output: 30, cacheRead: 0.6, cacheWrite: 7.5 },
+        { inputTokensAbove: 128000, input: 4.5, output: 22.5, cacheRead: 0.45, cacheWrite: 5.625 },
+      ],
+    },
+    promptCache: { short: 300, long: 3600, extra: 12 },
+    ...secretFields,
+  };
+  const zeroCost = {
+    provider: "local",
+    id: "zero-cost",
+    reasoning: false,
+    input: ["text"],
+    contextWindow: 0,
+    maxTokens: 0,
+    cost: {
+      input: 0, output: 0, cacheRead: 0, cacheWrite: 0,
+      tiers: [{ inputTokensAbove: 128000, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }],
+    },
+  };
+  const missing = {
+    provider: "missing",
+    id: "no-metadata",
+    reasoning: true,
+    thinkingLevelMap: { low: "low", medium: "medium" },
+  };
+  const malformed = {
+    provider: "broken",
+    id: "malformed",
+    reasoning: "yes",
+    input: Array(17).fill("text"),
+    contextWindow: "200000",
+    maxTokens: Number.POSITIVE_INFINITY,
+    cost: { input: Number.NaN, output: -1, cacheRead: "1", cacheWrite: 1e12 },
+    promptCache: { short: "300", long: -5 },
+    ...secretFields,
+  };
+  const ctx = {
+    scopedModels: [],
+    modelRegistry: { getAvailable: () => [malformed, zeroCost, declared, missing] },
+  };
+  const candidates = plannerModelCandidates(ctx);
+  assert.deepEqual(candidates.map((item) => `${item.provider}/${item.modelId}`), [
+    "anthropic/claude-declared",
+    "broken/malformed",
+    "local/zero-cost",
+    "missing/no-metadata",
+  ]);
+  const projected = candidates.map((candidate) => publicPlannerCandidate(candidate));
+  assert.deepEqual(projected[0], {
+    provider: "anthropic",
+    model: "claude-declared",
+    thinking_levels: ["off", "minimal", "low", "medium"],
+    capabilities: {
+      reasoning: true,
+      input: { text: true, image: true },
+      context_window: { status: "declared", tokens: 200000 },
+      max_output_tokens: { status: "declared", tokens: 8192 },
+      declared_cost: {
+        status: "declared",
+        input: 3,
+        output: 15,
+        cache_read: 0.3,
+        cache_write: 3.75,
+        tiers: [
+          { input_tokens_above: 128000, input: 4.5, output: 22.5, cache_read: 0.45, cache_write: 5.625 },
+          { input_tokens_above: 200000, input: 6, output: 30, cache_read: 0.6, cache_write: 7.5 },
+        ],
+      },
+      prompt_cache_retention: { status: "declared", short: true, long: true },
+    },
+  });
+  assert.equal(projected[0].capabilities.prompt_cache_retention.short, true);
+  assert.equal(Object.hasOwn(projected[0].capabilities.prompt_cache_retention, "seconds"), false);
+  assert.deepEqual(projected[1].capabilities, {
+    reasoning: "unavailable",
+    input: { text: "unavailable", image: "unavailable" },
+    context_window: { status: "unavailable", tokens: null },
+    max_output_tokens: { status: "unavailable", tokens: null },
+    declared_cost: {
+      status: "unavailable",
+      input: null,
+      output: null,
+      cache_read: null,
+      cache_write: null,
+      tiers: null,
+    },
+    prompt_cache_retention: { status: "unavailable", short: "unavailable", long: "unavailable" },
+  });
+  assert.deepEqual(projected[2].capabilities.declared_cost.status, "zero");
+  assert.deepEqual(projected[2].capabilities.context_window, { status: "zero", tokens: 0 });
+  assert.deepEqual(projected[2].capabilities.max_output_tokens, { status: "zero", tokens: 0 });
+  assert.deepEqual(projected[2].capabilities.input, { text: true, image: false });
+  assert.deepEqual(projected[3].capabilities.declared_cost.status, "missing");
+  assert.deepEqual(projected[3].capabilities.input, { text: "missing", image: "missing" });
+  assert.deepEqual(projected[3].capabilities.prompt_cache_retention, {
+    status: "missing", short: false, long: false,
+  });
+  assert.deepEqual(projectModelCapabilities(declared), projected[0].capabilities);
+  const serialized = JSON.stringify(projected);
+  for (const leak of [
+    "https://secret.example/v1",
+    "catalog-secret",
+    "private-custom-body",
+    "supportsStore",
+    "max_tokens",
+    "Secret Opus Quality Label",
+    "do-not-project",
+    "audio",
+  ]) {
+    assert.equal(serialized.includes(leak), false, leak);
+  }
+
+  const reversed = plannerCandidateDigest([candidates[3], candidates[0], candidates[2], candidates[1]]);
+  assert.equal(reversed, plannerCandidateDigest(candidates));
+  const drifted = {
+    ...candidates[0],
+    capabilities: projectModelCapabilities({ ...declared, cost: { input: 9, output: 15, cacheRead: 0.3, cacheWrite: 3.75 } }),
+  };
+  assert.notEqual(plannerCandidateDigest([drifted, ...candidates.slice(1)]), plannerCandidateDigest(candidates));
+
+  const topology = validatePlannerTopology(plannerTopology({
+    optionalRoles: [],
+    customRoles: [{
+      role: "custom-security", contract: "probe",
+      provider: "anthropic", model: "claude-declared", thinking: "low",
+    }],
+  }));
+  const lockedInput = {
+    task: "Choose from listed capabilities.",
+    withPlaywright: false,
+    withDjangoExpert: false,
+    withProbe: false,
+    projectCustomRoles: true,
+    modelOverrides: {
+      reviewer: { provider: "local", model: "zero-cost", thinking: "off" },
+    },
+  };
+  let piPayload;
+  const piSelection = selectDecisionModel(ctx, {
+    provider: "anthropic", model: "claude-declared", thinking: "low",
+  }, plannerPolicy());
+  const piResult = await runPreflightPlanner({
+    modelRegistry: {
+      complete: async (_model, request) => {
+        piPayload = JSON.parse(request.messages[0].content[0].text);
+        assert.match(request.systemPrompt, /Do not infer quality, coding skill, latency, or reliability from model names/);
+        assert.match(request.systemPrompt, /smallest sufficient model/);
+        return {
+          stopReason: "stop",
+          content: [{
+            type: "text",
+            text: JSON.stringify({
+              version: 1,
+              roles: [
+                { role: "implementer", provider: "anthropic", model: "claude-declared", thinking: "medium", reason: "Writer uses listed context and cost hints." },
+                { role: "reviewer", provider: "local", model: "zero-cost", thinking: "off", reason: "Exact reviewer lock remains authoritative." },
+                { role: "custom-security", provider: "anthropic", model: "claude-declared", thinking: "low", reason: "Trusted custom binding is unchanged." },
+              ],
+            }),
+          }],
+          usage: { input: 1, output: 1 },
+        };
+      },
+    },
+  }, lockedInput, "/project", piSelection, topology);
+  assert.deepEqual(piPayload.candidate_models, projected);
+  assert.equal(piResult.input.modelOverrides.reviewer.model, "zero-cost");
+  assert.deepEqual(piResult.input.plannedCustomRoleIds, ["custom-security"]);
+  assert.equal(JSON.stringify(piPayload).includes("catalog-secret"), false);
+  assert.equal(Object.hasOwn(piResult.plan, "candidate_models"), false);
+
+  const jev = selectDecisionModel(ctx, undefined, plannerPolicy(), [], {
+    typesafeApiKey: "test-typesafe-key",
+  });
+  let typesafeRequest;
+  await runPreflightPlanner(ctx, lockedInput, "/project", jev, topology, undefined, undefined, {
+    typesafeApiKey: "test-typesafe-key",
+    typesafeFetch: async (_url, options) => {
+      typesafeRequest = JSON.parse(options.body);
+      const answers = Object.fromEntries(Object.entries(typesafeRequest.questions).map(
+        ([questionId, question]) => {
+          const choices = Object.keys(question.criteria);
+          const choice = choices.includes("include") ? "include" : choices[0];
+          return [questionId, {
+            type: "choice",
+            choice,
+            confidence: 1,
+            probabilities: Object.fromEntries(choices.map((item) => [item, item === choice ? 1 : 0])),
+          }];
+        },
+      ));
+      return new Response(JSON.stringify({
+        model: "jev-1.13.0",
+        answers,
+        usage: { input_tokens: 2, output_tokens: 2 },
+      }), { status: 200 });
+    },
+  });
+  assert.equal(Object.hasOwn(typesafeRequest.state, "candidate_models"), false);
+  assert.deepEqual(typesafeRequest.state.candidate_model_capabilities, projected);
+  const assignment = Object.values(typesafeRequest.questions).find((question) => (
+    question.instructions?.role === "implementer"
+  ));
+  assert.match(assignment.instructions.decision, /Do not infer quality, coding skill, latency, or reliability from model names/);
+  assert.match(assignment.instructions.decision, /candidate_model_capabilities/);
+  for (const text of Object.values(assignment.criteria)) {
+    assert.match(text, /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+ thinking=(off|minimal|low|medium)$/);
+  }
+  const declaredOption = Object.values(assignment.criteria).find((text) => (
+    text.includes("anthropic/claude-declared") && text.includes("thinking=low")
+  ));
+  assert.equal(declaredOption, "anthropic/claude-declared thinking=low");
+  assert.equal(
+    typesafeRequest.state.candidate_model_capabilities[0].capabilities.prompt_cache_retention.short,
+    true,
+  );
+  assert.equal(JSON.stringify(typesafeRequest.state.candidate_model_capabilities).includes("300"), false);
+  assert.equal(JSON.stringify(typesafeRequest).includes("catalog-secret"), false);
+  assert.equal(JSON.stringify(typesafeRequest).includes("https://secret.example/v1"), false);
+
+  const scoped = plannerModelCandidates({
+    scopedModels: [{ model: declared, thinkingLevel: "low" }],
+    modelRegistry: { getAvailable: () => { throw new Error("scoped catalog must win"); } },
+  });
+  assert.deepEqual(scoped.map((item) => item.modelId), ["claude-declared"]);
+  assert.deepEqual(scoped[0].thinkingLevels, ["low"]);
+
+  const highOnly = {
+    provider: "provider", id: "high-only", reasoning: true,
+    thinkingLevelMap: { high: "high" },
+  };
+  assert.deepEqual(plannerModelCandidates({
+    scopedModels: [{ model: highOnly, thinkingLevel: "high" }],
+    modelRegistry: { getAvailable: () => [highOnly] },
+  }), []);
 });
 
 test("trusted custom topology is bounded, contract-locked, and selected by exact identity", async () => {
@@ -3751,6 +4032,74 @@ test("dynamic launch rejects available-model thinking changed after accepted pre
     /stale_dynamic_planning_binding/,
   );
   assert.equal(startCalls, 1);
+});
+
+test("dynamic launch rejects capability metadata changed after accepted preview", async () => {
+  const model = {
+    provider: "provider", id: "model", reasoning: true,
+    thinkingLevelMap: { off: null, minimal: null, low: "low", medium: "medium" },
+    cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
+    contextWindow: 200000,
+    maxTokens: 8192,
+    input: ["text"],
+  };
+  let startCalls = 0;
+  const { tool } = harness(async (_command, args) => {
+    if (args[2] === "planner-policy") {
+      return {
+        code: 0,
+        stdout: JSON.stringify(plannerPolicyEnvelope(plannerPolicy({
+          preferred: { provider: "provider", model: "model", thinking: "medium" },
+        }))),
+      };
+    }
+    if (args[2] === "planner-topology") {
+      return { code: 0, stdout: JSON.stringify(plannerTopologyEnvelope(plannerTopology())) };
+    }
+    startCalls += 1;
+    const planning = await boundPlanningFromArgs(args);
+    model.cost = { input: 9, output: 15, cacheRead: 0.3, cacheWrite: 3.75 };
+    return {
+      code: 0,
+      stdout: JSON.stringify(success("start", {
+        project: process.cwd(), session: "pi-stale-capability", dry_run: true,
+        roles: [
+          { name: "implementer", provider: "provider", model: "model", thinking: "medium" },
+          { name: "reviewer", provider: "provider", model: "model", thinking: "low" },
+        ],
+        planning,
+        trust: { child_bypass: false },
+        paths: { state_root: "/tmp/state", coordination: null },
+      })),
+    };
+  });
+  const ctx = context({
+    confirmations: [true, true],
+    context: {
+      model,
+      modelRegistry: {
+        getAvailable: () => [model],
+        complete: async () => ({
+          stopReason: "stop",
+          content: [{ type: "text", text: JSON.stringify({
+            version: 1,
+            roles: [
+              { role: "implementer", provider: "provider", model: "model", thinking: "medium", reason: "One writer." },
+              { role: "reviewer", provider: "provider", model: "model", thinking: "low", reason: "Mandatory review." },
+            ],
+          }) }],
+        }),
+      },
+    },
+  });
+  await assert.rejects(
+    tool.execute("stale-capability", {
+      action: "start", task: "Synthetic", dynamicPlan: true,
+    }, undefined, undefined, ctx),
+    /stale_dynamic_planning_binding/,
+  );
+  assert.equal(startCalls, 1);
+  assert.match(ctx.calls.confirmations[0].message, /declared catalog cost hints/);
 });
 
 test("dynamic planning failure or declined authorization starts nothing", async () => {

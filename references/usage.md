@@ -250,10 +250,23 @@ use Pi's native credential flow, while the bundled dependency-free adapter posts
 one request directly to the fixed `https://api.typesafe.ai/v1/systemone`
 endpoint with model alias `jev-latest`.
 It expresses optional-role inclusion and exact worker model/thinking assignments
-as bounded TypeSafe Choice questions, validates every returned answer, and
-constructs the ordinary version-1 planner decision deterministically. The
-versioned Jev model returned by TypeSafe is retained as provenance; `thinking:
-"off"` is the compatibility value because System One has no Pi thinking level.
+as bounded TypeSafe Choice questions. Assignment option criteria stay identity-only
+(`provider/model thinking=level`) so the 255-option Choice bound stays compact;
+the same canonical capability objects and declared catalog cost hints are sent
+once as `state.candidate_model_capabilities`. Instructions tell Jev to use that
+state, pick the smallest sufficient listed combination, and never infer quality,
+coding skill, latency, or reliability from model names. The adapter validates
+every returned answer and constructs the ordinary version-1 planner decision
+deterministically. Direct TypeSafe Jev and the Pi fallback receive the same
+canonical bounded capability projection; there is no operator model allowlist
+or alternative candidate set. TypeSafe currently caps each role's exact
+model/thinking Choice options at 255, so an unusually broad bounded catalog can
+leave later tuples capability-visible and digest-bound but not selectable;
+#185 tracks a lossless representation. Capability-heavy requests that exceed
+the fixed 96 KiB request bound fail before HTTP rather than dropping metadata.
+The versioned Jev model returned by TypeSafe is retained as provenance;
+`thinking: "off"` is the compatibility value because System One has no Pi
+thinking level.
 TypeSafe reports input/output tokens but not a monetary cost in this API, so
 retained cost remains unavailable rather than estimated.
 
@@ -283,9 +296,19 @@ Before the provider call, the authoritative `planner-topology` boundary resolves
 strict external model/profile/project configuration and freshly validates any
 exact-project custom-role registry descriptors and pinned resources. The planner
 state contains the bounded task, optional structured parent capsule, project
-identity, fixed role/contract/authority descriptors, exact candidate model
-metadata, and explicit constraints. It contains no resource paths or bodies,
-credentials, endpoints, tools, or configuration mutation surface. The Pi
+identity, fixed role/contract/authority descriptors, exact candidate
+model/thinking/capability metadata, declared catalog cost hints, and explicit
+constraints. Capability fields are identity, reasoning and supported thinking
+levels, text/image input support, context window, max output tokens, declared
+input/output/cache-read/cache-write rates and tiers, and prompt-cache retention
+presence. Missing, zero, or malformed catalog numbers are explicit
+`missing`/`zero`/`unavailable` values and are never coerced. It contains no
+resource paths or bodies, credentials, endpoints, `baseUrl`, headers,
+compatibility internals, custom configuration bodies, tools, or configuration
+mutation surface. Declared rates are catalog hints, not billing, observed spend,
+quality, or runtime eligibility. Planners must choose the smallest sufficient
+model from those technical facts and must not infer quality, coding skill,
+latency, or reliability from model names. The Pi
 fallback gets no tools and must return one strict JSON object in one bounded
 attempt; Jev receives only typed questions and bounded state.
 
@@ -311,8 +334,10 @@ revalidation, exact preview matching, and final model availability checks.
 Before launch, the adapter rereads policy/topology configuration, recomputes the
 eligible catalog and thinking support, and compares SHA-256 bindings for the
 private task/context, canonical project, complete resolved start configuration,
-planner policy, topology policy, and candidate set. Any changed task, config,
-registry resource, catalog availability, selected tuple, or preview projection
+planner policy, topology policy, and candidate set, including digest-bound
+capability metadata. Any changed task, config,
+registry resource, catalog availability, capability/cost-hint metadata, selected
+tuple, or preview projection
 fails with no launch. The accepted record has a bounded request ID and cannot
 admit duplicate tmux sessions; interrupted pre-launch requests retain no run
 state. Temporary request/decision files are owner-only and removed on every

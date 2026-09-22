@@ -1,8 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { availableThinkingLevels } from "./orchestrator-models.js";
+import {
+  availableThinkingLevels,
+  projectModelCapabilities,
+} from "./orchestrator-models.js";
 import {
   metadataDigest,
   plannerCandidateDigest,
+  publicPlannerCandidate,
 } from "./orchestrator-planning.js";
 import { validCustomRoleId } from "./orchestrator-worker-roles.js";
 import {
@@ -15,7 +19,9 @@ export {
   metadataDigest,
   plannerCandidateDigest,
   planningRecordForPreview,
+  publicPlannerCandidate,
 } from "./orchestrator-planning.js";
+export { projectModelCapabilities } from "./orchestrator-models.js";
 
 const ROLE_ORDER = ["implementer", "reviewer", "probe", "playwright", "django"];
 const REQUIRED_ROLES = new Set(["implementer", "reviewer"]);
@@ -46,7 +52,7 @@ const TYPESAFE_MAX_CHOICE_OPTIONS = 255;
 const TYPESAFE_MODEL_PATTERN = /^jev-[a-z0-9.-]+$/;
 
 const SYSTEM_PROMPT = `You are the preflight decision-maker for Pi Tmux Orchestrator.
-Choose the smallest useful bounded worker roster and exact model/thinking setting for each selected role.
+Choose the smallest useful bounded worker roster and the smallest sufficient exact model/thinking setting for each selected role.
 
 Hard rules:
 - Return exactly one JSON object and no Markdown or commentary.
@@ -56,7 +62,12 @@ Hard rules:
 - Optional roles are only the exact identities listed in eligible_roles.
 - Custom identities are fixed read-only specialists with the listed contract; never create an identity or change a contract.
 - Choose only provider/model/thinking combinations listed in candidate_models.
-- Honor every locked role, enabled/disabled role, model, and thinking constraint.
+- Use only listed technical capabilities and declared catalog cost hints.
+- Prefer the smallest sufficient model for the role's technical needs and declared cost.
+- Do not infer quality, coding skill, latency, or reliability from model names.
+- Declared rates are catalog hints, not billing, observed spend, or runtime eligibility.
+- Treat missing, zero, or unavailable capability/cost metadata as explicit unknowns; never guess or fill them in.
+- Honor every locked role, enabled/disabled role, model, and thinking constraint. Locked exact overrides remain authoritative even when another candidate looks cheaper or larger.
 - Keep the roster as small as the task permits. The implementer is the only writer and reviewer is mandatory.
 - reason must be one concise printable line of at most 240 characters and must not quote private task text.
 - Do not choose workflow flow, tools, skills, budgets, context policy, trust, or continuation policy.`;
@@ -98,6 +109,7 @@ function catalogCandidate(entry, scoped) {
     provider: model.provider,
     modelId: model.id,
     thinkingLevels,
+    capabilities: projectModelCapabilities(model),
   };
 }
 
@@ -279,7 +291,8 @@ export function decisionModelConfirmation(selection) {
       `Decision model: TypeSafe/${selection.modelId}`,
       `Source: ${selection.source} (TypeSafe authentication is configured; credential value is not retained in the plan)`,
       `Eligible Pi worker-model candidates: ${selection.candidateCount}`,
-      "Payload categories: bounded task/context, canonical project identity, fixed role/contract authority, exact candidate model/thinking metadata, and locked operator/config constraints.",
+      "Payload categories: bounded task/context, canonical project identity, fixed role/contract authority, exact candidate model/thinking/capability metadata, declared catalog cost hints, and locked operator/config constraints.",
+      "Declared catalog rates are hints, not observed spend, billing, quality, or runtime eligibility. No model-name quality inference is used.",
       "The credential is used only as an in-memory HTTPS Authorization header. No credential, endpoint, custom resource body, tool, or configuration mutation surface is included in the planning state. This one TypeSafe call starts no workers and may incur provider usage.",
     ].join("\n");
   }
@@ -289,7 +302,8 @@ export function decisionModelConfirmation(selection) {
     `Thinking: ${selection.thinking} (dynamic-planning cap=${THINKING_CAP})`,
     `Source: ${selection.source}`,
     `Eligible model candidates: ${selection.candidateCount}`,
-    "Payload categories: bounded task/context, canonical project identity, fixed role/contract authority, exact candidate model/thinking metadata, and locked operator/config constraints.",
+    "Payload categories: bounded task/context, canonical project identity, fixed role/contract authority, exact candidate model/thinking/capability metadata, declared catalog cost hints, and locked operator/config constraints.",
+    "Declared catalog rates are hints, not observed spend, billing, quality, or runtime eligibility. No model-name quality inference is used.",
     "No credentials, endpoints, custom resource bodies, tools, or configuration mutation surface are sent. This additional call starts no workers and may incur provider usage.",
   ].join("\n");
 }
@@ -476,11 +490,7 @@ function plannerPayload(input, project, candidates, policy, topology) {
     }),
     mandatory_roles: [...policy.required],
     optional_role_constraints: enabled,
-    candidate_models: candidates.map((candidate) => ({
-      provider: candidate.provider,
-      model: candidate.modelId,
-      thinking_levels: candidate.thinkingLevels,
-    })),
+    candidate_models: candidates.map((candidate) => publicPlannerCandidate(candidate)),
     locked_role_constraints: lockedRoleConstraints(input, policy, topology),
     thinking_cap: THINKING_CAP,
   };
@@ -502,7 +512,7 @@ function typesafeAssignmentOptions(role, candidates, input, policy, topology) {
         provider: candidate.provider,
         model: candidate.modelId,
         thinking,
-        description: `${candidate.provider}/${candidate.modelId} with thinking=${thinking}`,
+        description: `${candidate.provider}/${candidate.modelId} thinking=${thinking}`,
       });
       if (options.length === TYPESAFE_MAX_CHOICE_OPTIONS) return options;
     }
@@ -512,10 +522,11 @@ function typesafeAssignmentOptions(role, candidates, input, policy, topology) {
 }
 
 function typesafeQuestionState(payload) {
-  const { candidate_models: _candidateModels, ...state } = payload;
+  const { candidate_models: candidateModels, ...state } = payload;
   return {
     ...state,
-    worker_model_candidate_count: payload.candidate_models.length,
+    worker_model_candidate_count: candidateModels.length,
+    candidate_model_capabilities: candidateModels,
   };
 }
 
@@ -553,7 +564,7 @@ function typesafeDecisionRequest(payload, candidates, input, policy, topology) {
     questions[questionId] = {
       type: "choice",
       instructions: {
-        decision: "Choose the smallest sufficient exact worker model and thinking combination for this role. Respect the role authority and favor reliable completion without unnecessary cost or latency.",
+        decision: "Choose the smallest sufficient exact worker model and thinking combination for this role. Use candidate_model_capabilities and declared catalog cost hints. Do not infer quality, coding skill, latency, or reliability from model names. Missing, zero, or unavailable metadata is unknown; never guess. Declared rates are catalog hints, not billing or observed spend. Honor locked exact overrides.",
         role,
         contract: descriptor.contract,
         authority: descriptor.authority,
