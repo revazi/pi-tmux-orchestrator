@@ -222,6 +222,11 @@ making any call, record separate owner approval and freeze this paired benchmark
 | 2 | one clearly specialist-relevant change | same explicitly enabled specialist candidate set | planner chooses from that exact set |
 | 3 | ambiguous cross-cutting change | all reviewed optional candidates available | planner chooses the smallest accepted roster |
 
+Dynamic planning considers Pi's bounded currently available/scoped catalog
+through a capability and declared-cost-hint projection; do not add an operator
+model allowlist, and do not infer quality from model names. Catalog rates are not
+observed spend and must not fill a savings or quality cell.
+
 Use the same reviewed project revision, task class, profile, model availability,
 budget policy, required checks, and acceptance rubric for both arms. Run one pair
 per case first; any repeat or broader matrix needs fresh approval. Record only

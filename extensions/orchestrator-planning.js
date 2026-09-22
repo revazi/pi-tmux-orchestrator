@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { projectModelCapabilities } from "./orchestrator-models.js";
 
 const DIGEST_PATTERN = /^[a-f0-9]{64}$/;
 
@@ -16,12 +17,17 @@ export function metadataDigest(value) {
   return createHash("sha256").update(JSON.stringify(canonicalValue(value)), "utf8").digest("hex");
 }
 
-export function plannerCandidateDigest(candidates) {
-  const projected = candidates.map((candidate) => ({
+export function publicPlannerCandidate(candidate) {
+  return {
     provider: candidate.provider,
     model: candidate.modelId,
     thinking_levels: candidate.thinkingLevels,
-  }));
+    capabilities: candidate.capabilities ?? projectModelCapabilities(candidate.model),
+  };
+}
+
+export function plannerCandidateDigest(candidates) {
+  const projected = candidates.map((candidate) => publicPlannerCandidate(candidate));
   projected.sort((left, right) => {
     const leftIdentity = `${left.provider}\0${left.model}`;
     const rightIdentity = `${right.provider}\0${right.model}`;

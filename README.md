@@ -125,9 +125,10 @@ TypeSafe authentication is configured through Pi's native `/login typesafe`
 flow or the `TYPESAFE_API_KEY` environment fallback, the bundled dependency-free
 HTTPS adapter uses TypeSafe `jev-latest` directly at the fixed
 `https://api.typesafe.ai/v1/systemone` endpoint. Jev is a typed System One
-decision model, not a Pi chat model: it chooses from bounded role and exact
-worker-model/thinking options, and deterministic code constructs the normal
-strict plan. When TypeSafe authentication is absent, an exact model-tool
+decision model, not a Pi chat model: it chooses from bounded role questions and
+identity-only worker-model/thinking options, while the same canonical capability
+facts as the Pi fallback path are sent once in request state, and deterministic
+code constructs the normal strict plan. When TypeSafe authentication is absent, an exact model-tool
 `decisionModel` selects a Pi chat model for that run. Without either, the strict
 version-1 user-global planner policy selects an exact configured Pi preferred identity,
 then ordered exact cross-provider fallbacks. If no configured identity is
@@ -139,8 +140,20 @@ and may select only exact-project custom specialists whose registered resources
 and fixed read-only contracts validate before the provider call. Exact per-run
 choices win over exact-project constraints, user-global constraints/defaults,
 planner choices, and packaged fallback. Every selected provider/model/thinking
-tuple must exist in Pi's bounded available/scoped catalog and remain at or below
-`medium`; roles may use different enabled providers. The planner cannot invent
+tuple must exist in Pi's bounded currently available/scoped catalog and remain at or below
+`medium`; there is no operator model allowlist or alternative candidate set. Dynamic
+planning receives a bounded non-secret Pi 0.87.1 capability projection—identity,
+reasoning and supported thinking levels, text/image input support, context
+window, max output tokens, declared input/output/cache-read/cache-write rates
+and tiers, and prompt-cache retention presence—and must choose the smallest
+sufficient model from technical needs and declared catalog cost hints without
+inferring quality, coding skill, latency, or reliability from model names.
+Declared rates are catalog hints, not billing, observed spend, or runtime
+eligibility; missing, zero, or malformed metadata stays explicit and is never
+guessed. Capability metadata is digest-bound in the candidate set so catalog
+drift after preview rejects launch. Roles may use different enabled providers.
+Exact per-role overrides, project/profile constraints, custom-role bindings,
+role authority, and the medium thinking cap remain authoritative. The planner cannot invent
 roles/contracts, grant tools or write authority, remove review, force activation,
 mutate configuration, or start tmux/workers before the separate final
 confirmation. `projectCustomRoles=false` excludes project custom candidates; an
@@ -155,7 +168,8 @@ status/dashboard/Supervisor output contains only mode, decision identity/source,
 selected role/model/thinking/contract metadata, timestamps, request ID, and
 SHA-256 bindings—never task, prompt, provider, credential, endpoint, or custom
 resource bodies. Ordinary `/or-start TASK` remains the static/manual path. No
-cost or quality improvement is claimed without comparative evidence.
+cost, savings, or quality improvement is claimed from catalog rates, model
+names, or the extra planning call without comparative evidence.
 
 For an opt-in repair cap, use `/or-start`'s additional repair-round input,
 `maxRepairRounds` in the model tool, or CLI `start --max-repair-rounds N`.
