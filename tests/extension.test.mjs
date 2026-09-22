@@ -48,7 +48,11 @@ import { buildTokenEfficiencyBaseline } from "../scripts/token-efficiency-baseli
 import { buildResultVolumeBaseline } from "../scripts/result-volume-baseline.mjs";
 import { buildExecutionProfileBaseline } from "../scripts/execution-profile-baseline.mjs";
 import { buildPhasedImplementationBaseline } from "../scripts/phased-implementation-baseline.mjs";
-import { buildWorkerPromptBaselineIfAvailable } from "../scripts/worker-prompt-baseline.mjs";
+import {
+  buildWorkerPromptBaselineIfAvailable,
+  gatedWorkerPromptBaseline,
+  presentPromptText,
+} from "../scripts/worker-prompt-baseline.mjs";
 import { istanbulCoverage } from "../scripts/node-coverage-reporter.mjs";
 
 const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
@@ -1160,17 +1164,37 @@ test("assignment guardrail warning is bounded and restart state prevents duplica
   });
 });
 
-test("actual Pi prompt options keep context, explicit skills, and read-only tools while reducing serialized overhead", async () => {
+test("empty Pi appendSystemPrompt is treated as absent", () => {
+  assert.equal(presentPromptText(""), null);
+  assert.equal(presentPromptText(undefined), null);
+  assert.equal(presentPromptText(null), null);
+  assert.equal(presentPromptText("Role: `reviewer`"), "Role: `reviewer`");
+});
+
+test("actual Pi prompt options keep the lean contract without freezing Pi-owned default prompt size", async () => {
   const checkedIn = JSON.parse(
     await readFile(new URL("fixtures/worker-prompt-baseline.json", import.meta.url), "utf8"),
   );
   const measured = await buildWorkerPromptBaselineIfAvailable();
-  if (measured) assert.deepEqual(measured, checkedIn);
+  assert.equal(checkedIn.schema_version, 2);
   assert.equal(checkedIn.metric_scope, "model-free-built-worker-system-prompt");
-  assert.equal(checkedIn.after.skill_discovery, false);
-  assert.deepEqual(checkedIn.after.loaded_skills, ["opted"]);
-  assert.ok(checkedIn.after.characters < checkedIn.before.characters);
-  assert.match(checkedIn.caveat, /not provider tokens, billing, cache efficiency/);
+  assert.equal(checkedIn.contract.append_system_prompt, false);
+  assert.equal(checkedIn.contract.skill_discovery, false);
+  assert.deepEqual(checkedIn.contract.loaded_skills, ["opted"]);
+  assert.ok(checkedIn.lean_prompt.characters > 0);
+  assert.ok(
+    checkedIn.last_observation.after.characters < checkedIn.last_observation.before.characters,
+  );
+  assert.match(checkedIn.caveat, /equality gate is the orchestrator lean-prompt contract/);
+  if (measured) {
+    assert.deepEqual(
+      gatedWorkerPromptBaseline(measured),
+      gatedWorkerPromptBaseline(checkedIn),
+    );
+    assert.ok(
+      measured.last_observation.after.characters < measured.last_observation.before.characters,
+    );
+  }
 });
 
 test("worker queues baseline context before a triggered assignment turn", () => {
@@ -1511,6 +1535,34 @@ test("explicit retain keeps prior assignments and tool pairs but replaces rollin
   assert.equal(pruned.includes(toolResult), false);
   assert.deepEqual(workerHooks.filterWorkerContext(messages), pruned);
   assert.equal(JSON.stringify(messages), original);
+});
+
+test("worker context pruning does not depend on system messages", () => {
+  const system = { role: "system", content: "Pi restores this after context handlers" };
+  const prior = { role: "assistant", content: "completed investigation" };
+  const current = { role: "assistant", content: "active assignment turn" };
+  const conversation = [
+    workerMessage({
+      kind: "assignment",
+      assignment_id: FIRST_ASSIGNMENT,
+      assignment_kind: "implementation",
+      round: 1,
+    }, "prior"),
+    prior,
+    workerMessage({
+      kind: "assignment",
+      assignment_id: "b".repeat(32),
+      assignment_kind: "implementation",
+      round: 2,
+    }, "current"),
+    current,
+  ];
+  const withoutSystem = workerHooks.filterWorkerContext(conversation);
+  assert.equal(withoutSystem.includes(prior), false);
+  assert.equal(withoutSystem.includes(current), true);
+  const withSystem = workerHooks.filterWorkerContext([system, ...conversation]);
+  assert.equal(withSystem[0], system);
+  assert.equal(withSystem.includes(prior), false);
 });
 
 test("context selection rejects unsupported modes and preserves unknown messages", () => {

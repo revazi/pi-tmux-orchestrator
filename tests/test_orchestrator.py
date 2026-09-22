@@ -116,6 +116,24 @@ class PromptTests(unittest.TestCase):
         self.assertIn("Review independently", prompt)
         self.assertNotIn("inspect/plan assignment", prompt)
 
+    def test_reviewer_lean_prompt_size_matches_worker_prompt_contract(self) -> None:
+        prompt = ORCHESTRATOR.role_system_prompt(Path("<PROJECT>"), "reviewer")
+        fixture = json.loads(
+            (
+                Path(__file__).resolve().parent
+                / "fixtures"
+                / "worker-prompt-baseline.json"
+            ).read_text(encoding="utf-8")
+        )
+        self.assertEqual(len(prompt), fixture["lean_prompt"]["characters"])
+        self.assertEqual(
+            len(prompt.encode("utf-8")), fixture["lean_prompt"]["utf8_bytes"]
+        )
+        self.assertEqual(
+            fixture["contract"]["custom_prompt"], "lean-role-system-prompt"
+        )
+        self.assertFalse(fixture["contract"]["append_system_prompt"])
+
     def test_probe_prompt(self) -> None:
         prompt = ORCHESTRATOR.role_system_prompt(self.project, "probe")
         self.assert_normalized(prompt, "probe")

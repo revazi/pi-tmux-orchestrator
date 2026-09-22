@@ -1,7 +1,7 @@
 ---
 name: tmux-agent-orchestrator
 description: Starts and coordinates multiple Pi coding agents in a monitorable tmux grid through an event-driven private broker, with one writer, independent review, optional technical probe, Playwright tester, Django expert, structured reports, token usage, messaging, restart, and cleanup. Use for delegated implementer/reviewer loops or specialist review across projects.
-compatibility: Requires Pi, Python 3.11+, and tmux 3.2+. tmux 3.5+ with extended-keys csi-u is recommended.
+compatibility: Requires Pi (verified with 0.87.1), Python 3.11+, and tmux 3.2+. Other Pi versions are not covered by a compatibility matrix. tmux 3.5+ with extended-keys csi-u is recommended.
 ---
 
 # Pi Tmux Orchestrator

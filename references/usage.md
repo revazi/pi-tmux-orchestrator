@@ -664,12 +664,24 @@ restart fail closed if a selected file disappears or changes. Skills cannot
 expand a role's tool allowlist, so read-only roles stay without `edit`/`write`.
 
 Workers replace Pi's general coding prompt plus appended role prompt with one
-lean role prompt. The stable common prefix contains active-tool guidance before
-role/project-specific authority and safety rules. Pi still appends governing
-`AGENTS.md`/`CLAUDE.md` context and any explicitly selected skill. The
-model-free built-prompt fixture for Pi 0.84.1 records 5,000 before and 2,479
-after normalized reviewer characters (50.4%); these are serialized prompt-size
-proxies, not provider tokens, cost, cache efficiency, or production acceptance.
+lean role prompt (`--system-prompt`, not `--append-system-prompt`). The stable
+common prefix contains active-tool guidance before role/project-specific
+authority and safety rules. Pi still appends governing `AGENTS.md`/`CLAUDE.md`
+context and any explicitly selected skill. Pi 0.87.1 normalizes a missing
+append to an empty string; the live check treats that as absent rather than as
+appended role guidance. The equality gate is that lean-prompt contract plus the
+orchestrator-owned reviewer prompt size. Pi's default coding-prompt size is
+owned by Pi and is recorded only as a last observation: on 0.87.1 the
+model-free built prompt measured 5,046 before and 2,482 after normalized
+reviewer characters (50.8%). Those figures are serialized prompt-size proxies,
+not provider tokens, cost, cache efficiency, or production acceptance, and they
+must not be used to silence a semantic contract failure.
+
+Workers inherit the user-global Pi `cacheWarming` setting. The Pi default is
+`streaming` during active runs; `idle` warming between runs is not the default.
+Cache-warm usage is a non-context session entry and is not counted as a worker
+provider call. Waiting workers can refresh eligible caches only if idle warming
+is enabled globally.
 
 #### Implementer inspect/plan reports
 

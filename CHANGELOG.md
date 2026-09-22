@@ -15,6 +15,8 @@ All notable changes to this project are documented here.
 
 ### Changed
 
+- Split the actual-Pi worker-prompt baseline so live 0.87.1 checks prove the lean `--system-prompt` contract, including Pi's empty normalized `appendSystemPrompt`, instead of freezing Pi-owned default prompt size from 0.84.4
+
 ### Fixed
 
 ## 0.10.0 - 2026-09-21

@@ -25,7 +25,9 @@ Keep these results distinct:
 
 Model-free fixtures and serialized-byte/operation counts are proxies. They do
 not prove provider cost, cache behavior, reviewer quality, or production-wire
-acceptance. The suite also validates the strict user-global planner-policy
+acceptance. The worker-prompt `--check` gates the lean `--system-prompt`
+contract and orchestrator-owned reviewer prompt size, not Pi's default coding
+prompt length. The suite also validates the strict user-global planner-policy
 parser/projection and selection against synthetic available/scoped catalogs;
 these checks make no provider call and do not identify Jev.
 

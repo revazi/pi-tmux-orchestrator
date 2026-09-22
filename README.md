@@ -20,7 +20,7 @@ agents in a monitorable tmux grid.
 
 ## Install
 
-Requirements: Pi, Python 3.11+, tmux 3.2+, and macOS or Linux.
+Requirements: Pi, Python 3.11+, tmux 3.2+, and macOS or Linux. Worker adapters are verified against Pi 0.87.1; other Pi versions are not covered by a compatibility matrix. The lean `--system-prompt` / `--no-skills` launch contract does not freeze Pi's default prompt size.
 
 ```bash
 pi install npm:pi-tmux-orchestrator
