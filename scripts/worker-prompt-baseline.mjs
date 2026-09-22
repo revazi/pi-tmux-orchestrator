@@ -10,7 +10,7 @@ const fixturePath = resolve(root, "tests/fixtures/worker-prompt-baseline.json");
 const beforePromptPath = resolve(root, "tests/fixtures/worker-prompt-before.md");
 const tools = "read,bash,grep,find,ls,orchestrator_report";
 
-export const WORKER_PROMPT_CONTRACT = {
+const WORKER_PROMPT_CONTRACT = {
   custom_prompt: "lean-role-system-prompt",
   append_system_prompt: false,
   skill_discovery: false,
