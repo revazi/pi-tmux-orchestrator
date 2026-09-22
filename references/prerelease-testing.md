@@ -231,6 +231,53 @@ model choice, failed mandatory review, or unexpected provider request. Synthetic
 and fixed-output runs remain lifecycle evidence only and never fill a quality or
 cost cell.
 
+#### Issue #174 fallback benchmark evidence
+
+One explicitly authorized provider-backed run of the frozen three-case matrix was
+completed on Pi 0.84.4 against disposable dependency-free fixtures. The available
+catalog returned no exact `Jev` match, so this is **Jev-unavailable fallback
+evidence only**. The strict configured fallback was `xai/grok-4.6` at `low` for
+three planner calls; worker roles were constrained to that exact model with the
+packaged `economy` thinking map. No task, prompt, rationale, report, diff, log,
+credential, endpoint, or source body is retained here. An excluded readiness
+pilot also found two catalog-present identities that were not runtime-eligible in
+this environment: `openai-codex/gpt-5.4` was rejected for the active account type,
+and `google/gemini-2.5-flash` rejected the configured key. The paired matrix was
+therefore frozen on a separately verified xAI identity. Catalog/auth presence is
+not production-readiness evidence, which is another reason default rollout
+remains blocked.
+
+| Case/arm | Roles | Planner cost | Worker calls/cost | End-to-end wall time | Review outcome |
+| --- | ---: | ---: | ---: | ---: | --- |
+| simple static | 2 | — | 11 / $0.056918 | 47.209 s | approved; 0 findings; checks passed |
+| simple dynamic | 2 | $0.007076 | 16 / $0.116418 | 106.744 s | approved; 2 findings; checks passed |
+| specialist static | 3 | — | 34 / $0.369352 | 351.112 s | 1 revision; approved; 5 reviewer findings; checks passed |
+| specialist dynamic | 2 | $0.009144 | 16 / $0.133418 | 169.349 s | approved; 3 findings; checks passed |
+| ambiguous static | 5 | — | 29 / $0.322824 | 258.259 s | approved; 2 findings; checks passed |
+| ambiguous dynamic | 2 | $0.007602 | 14 / $0.225416 | 262.975 s | approved; 3 findings; checks passed |
+
+Dynamic pre-launch planning/preview/launch elapsed times were 8.911 s, 14.674 s,
+and 10.857 s. Aggregate static worker usage was 74 calls, 174,801 input,
+42,262 output, 291,840 cache-read, 0 cache-write tokens, and $0.749094. Aggregate
+dynamic usage was 3 planner calls (5,170 input, 2,119 output, 1,536 cache-read,
+0 cache-write tokens, $0.023822) plus 46 worker calls (98,656 input, 29,790
+output, 198,400 cache-read, 0 cache-write tokens, $0.475252). In this single
+sample, dynamic total cost was 33.4% lower, provider calls 33.8% lower, and wall
+time 17.9% lower; the simple case was materially worse on all three measures and
+the ambiguous case had slightly higher wall time. These are observations, not a
+rollout claim.
+
+All six paired runs reached the retained `ready` state, passed the required test
+command, preserved one writer plus mandatory review, made no invalid model
+choice, and required no operator correction: planning failure 0/3, workflow
+failure 0/6, correction rate 0/6. The dynamic planner chose only implementer and
+reviewer in every case. Count the omitted probe in the predeclared
+specialist-relevant case as one false specialist omission even though checks and
+review passed. The static ambiguous arm also ran Playwright and Django against a
+dependency-free CLI fixture; count those two as unnecessary specialists. Exact
+Jev-available evidence remains unavailable until the owner supplies a canonical
+supported provider/model identity. No default rollout is authorized.
+
 ### A. Command and parent supervision
 
 - Run `/or-models` and open `/or-dashboard`; confirm help is concise, the About
