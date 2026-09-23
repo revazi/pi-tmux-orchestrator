@@ -215,9 +215,29 @@ The policy is read through the authoritative Python boundary from
     { "provider": "provider-b", "model": "exact-model-b", "thinking": "low" },
     { "provider": "provider-c", "model": "exact-model-c", "thinking": "medium" }
   ],
-  "noEligible": "cancel"
+  "noEligible": "cancel",
+  "jevGuidance": "Prefer the smallest useful roster. Use deeper thinking only for ambiguous, security-sensitive, or high-risk work."
 }
 ```
+
+`jevGuidance` is optional natural-language text in this same planner policy file;
+it may also be `null`. It expresses preferences such as roster economy,
+specialist thresholds, model-cost posture, or thinking depth. The text is sent
+only to the direct TypeSafe Jev request as `state.jev_behavior_guidance`. Every
+typed question explicitly makes it subordinate to the exact candidate scope,
+fixed role authority, hard rules, and locked constraints. It cannot add a
+role/model, create an operator model allowlist, direct selection by model name,
+grant write access, remove review, or override validation. The planning
+confirmation shows only whether guidance is configured and a short digest;
+accepted planning provenance binds the full digest without retaining or
+displaying the text. Missing or `null` guidance uses the packaged behavior. The
+Pi-chat fallback does not receive this Jev-only field.
+
+Guidance is limited to 16 KiB within the existing 32 KiB policy-file limit.
+Empty, whitespace-padded, control-character-bearing, or oversized guidance fails
+before the planning call. The planner policy's existing external-path,
+regular-file, non-symlink, UTF-8, and target-project exclusion rules protect the
+whole file, including this field.
 
 `preferred` may be `null`; at most 16 fallbacks are accepted. The ordered list
 may span enabled providers—for example exact Grok and OpenAI identities resolved
@@ -229,11 +249,14 @@ Unknown/duplicate fields, duplicate identities, partial entries, unsupported
 thinking, non-regular/symlinked/oversized files, and
 policy files inside the target project fail closed. A missing policy is the
 versioned empty `cancel` policy. `pi-tmux-agents --json planner-policy --project
-/absolute/project` validates and projects only the path, configured flag, and
-bounded identity policy; it does not expose auth or endpoint data.
+/absolute/project` validates and projects the path, configured flag, bounded
+identity policy, and Jev guidance projection used by the parent extension;
+it does not expose auth or endpoint data. Retained manifests, previews, status,
+and dashboard output never contain the guidance body.
 
-The policy configures only the Pi fallback path. At runtime each configured Pi
-identity is matched exactly against Pi's bounded available/scoped catalog and
+The policy's preferred/fallback identities configure only the Pi fallback path.
+At runtime each configured Pi identity is matched exactly against Pi's bounded
+available/scoped catalog and
 its model-specific thinking support. An unavailable or unsupported configured
 candidate is ineligible and the next configured entry is considered. Duplicate
 catalog identities are ambiguous and reject the whole start. `noEligible:
@@ -298,8 +321,9 @@ exercise the configured Pi fallback path.
 Before the provider call, the authoritative `planner-topology` boundary resolves
 strict external model/profile/project configuration and freshly validates any
 exact-project custom-role registry descriptors and pinned resources. The planner
-state contains the bounded task, optional structured parent capsule, project
-identity, fixed role/contract/authority descriptors, exact candidate
+state contains the bounded task, optional structured parent capsule, optional
+Jev-only operator behavior guidance, project identity, fixed
+role/contract/authority descriptors, exact candidate
 model/thinking/capability metadata, declared catalog cost hints, and explicit
 constraints. Capability fields are identity, reasoning and supported thinking
 levels, text/image input support, context window, max output tokens, declared
@@ -307,8 +331,9 @@ input/output/cache-read/cache-write rates and tiers, and prompt-cache retention
 presence. Missing, zero, or malformed catalog numbers are explicit
 `missing`/`zero`/`unavailable` values and are never coerced. It contains no
 resource paths or bodies, credentials, endpoints, `baseUrl`, headers,
-compatibility internals, custom configuration bodies, tools, or configuration
-mutation surface. Declared rates are catalog hints, not billing, observed spend,
+compatibility internals, unrelated custom configuration bodies, tools, or
+configuration mutation surface. Declared rates are catalog hints, not billing,
+observed spend,
 quality, or runtime eligibility. Planners must choose the smallest sufficient
 model from those technical facts and must not infer quality, coding skill,
 latency, or reliability from model names. The Pi
@@ -944,8 +969,9 @@ remain under `~/.pi/agent/orchestrations/`.
 ### `planner-policy [--project PATH]`
 
 Validates the external strict planner policy and emits its bounded normalized
-identity/thinking projection. It does not inspect credentials, endpoints, tasks,
-or provider responses and never makes a provider call. The project defaults to
+identity/thinking and Jev-guidance projection for the parent extension. It does
+not inspect credentials, endpoints, tasks, or provider responses and never makes
+a provider call. The project defaults to
 the current directory and is used only to reject a policy path inside the target
 project.
 

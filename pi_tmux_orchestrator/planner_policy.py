@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import stat
+import unicodedata
 from pathlib import Path
 from typing import Any
 
@@ -17,11 +18,14 @@ from .planning import metadata_digest
 PLANNER_POLICY_VERSION = 1
 MAX_PLANNER_POLICY_BYTES = 32 * 1024
 MAX_PLANNER_FALLBACKS = 16
+JEV_GUIDANCE_VERSION = 1
+MAX_JEV_GUIDANCE_BYTES = 16 * 1024
 PLANNER_THINKING_LEVELS = frozenset(
     {"off", "minimal", "low", "medium", "high", "xhigh", "max"}
 )
 PLANNER_NO_ELIGIBLE = frozenset({"cancel", "static"})
 PLANNER_POLICY_FIELDS = frozenset({"version", "preferred", "fallbacks", "noEligible"})
+PLANNER_POLICY_OPTIONAL_FIELDS = frozenset({"jevGuidance"})
 PLANNER_MODEL_FIELDS = frozenset({"provider", "model", "thinking"})
 PLANNER_POLICY_ENV = "PI_TMUX_ORCHESTRATOR_PLANNER_CONFIG"
 
@@ -59,6 +63,7 @@ def empty_planner_policy() -> dict[str, Any]:
         "preferred": None,
         "fallbacks": [],
         "no_eligible": "cancel",
+        "jev_guidance": None,
     }
 
 
@@ -101,10 +106,37 @@ def _decision_model(value: object, label: str) -> dict[str, str]:
     }
 
 
-def validate_planner_policy(value: object) -> dict[str, Any]:
-    if not isinstance(value, dict) or set(value) != PLANNER_POLICY_FIELDS:
+def _jev_guidance(value: object) -> str | None:
+    if value is None:
+        return None
+    try:
+        encoded = value.encode("utf-8") if isinstance(value, str) else b""
+    except UnicodeEncodeError as error:
         raise OrchestrationError(
-            "Planner policy must contain exactly version, preferred, fallbacks, and noEligible"
+            "Planner policy jevGuidance must be bounded natural-language text or null"
+        ) from error
+    if (
+        not isinstance(value, str)
+        or not value
+        or value.strip() != value
+        or len(encoded) > MAX_JEV_GUIDANCE_BYTES
+        or any(unicodedata.category(character) in {"Cc", "Cs"} for character in value)
+    ):
+        raise OrchestrationError(
+            "Planner policy jevGuidance must be bounded natural-language text or null"
+        )
+    return value
+
+
+def validate_planner_policy(value: object) -> dict[str, Any]:
+    fields = set(value) if isinstance(value, dict) else set()
+    if (
+        not isinstance(value, dict)
+        or not PLANNER_POLICY_FIELDS.issubset(fields)
+        or not fields.issubset(PLANNER_POLICY_FIELDS | PLANNER_POLICY_OPTIONAL_FIELDS)
+    ):
+        raise OrchestrationError(
+            "Planner policy must contain version, preferred, fallbacks, and noEligible, with optional jevGuidance"
         )
     if value.get("version") != PLANNER_POLICY_VERSION:
         raise OrchestrationError(
@@ -142,6 +174,7 @@ def validate_planner_policy(value: object) -> dict[str, Any]:
         "preferred": preferred,
         "fallbacks": fallbacks,
         "no_eligible": no_eligible,
+        "jev_guidance": _jev_guidance(value.get("jevGuidance")),
     }
 
 
@@ -196,17 +229,43 @@ def planner_policy_command(args: argparse.Namespace) -> CommandResult:
         raise OrchestrationError(f"Project directory does not exist: {project}")
     path = planner_policy_path(project)
     configured = path.exists()
-    policy = load_planner_policy(path, project=project)
+    loaded_policy = load_planner_policy(path, project=project)
+    guidance_text = loaded_policy["jev_guidance"]
+    policy = {
+        key: value for key, value in loaded_policy.items() if key != "jev_guidance"
+    }
+    guidance = {
+        "version": JEV_GUIDANCE_VERSION,
+        "config_path": str(path),
+        "configured": guidance_text is not None,
+        "digest": metadata_digest(
+            {"version": JEV_GUIDANCE_VERSION, "text": guidance_text}
+        ),
+        "text": guidance_text,
+    }
     human_print(
-        f"Planner policy: {path} ({'configured' if configured else 'default cancel'})"
+        f"Planner policy: {path} "
+        f"({'configured' if configured else 'default cancel'}; "
+        f"Jev guidance {'configured' if guidance['configured'] else 'default'})"
     )
     return CommandResult(
         data={
             "config_path": str(path),
             "configured": configured,
             "binding_digest": metadata_digest(
-                {"config_path": str(path), "configured": configured, "policy": policy}
+                {
+                    "config_path": str(path),
+                    "configured": configured,
+                    "policy": policy,
+                    "jev_guidance": {
+                        "version": guidance["version"],
+                        "config_path": guidance["config_path"],
+                        "configured": guidance["configured"],
+                        "digest": guidance["digest"],
+                    },
+                }
             ),
             "policy": policy,
+            "jev_guidance": guidance,
         }
     )

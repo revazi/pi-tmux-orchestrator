@@ -86,14 +86,62 @@ function plannerPolicy({ preferred = null, fallbacks = [], noEligible = "cancel"
   };
 }
 
-function plannerPolicyEnvelope(policy = plannerPolicy()) {
+function jevGuidance(text = null) {
+  return {
+    version: 1,
+    config_path: "/external/tmux-orchestrator-planner.json",
+    configured: text !== null,
+    digest: metadataDigest({ version: 1, text }),
+    text,
+  };
+}
+
+function plannerPolicyEnvelope(policy = plannerPolicy(), guidance = jevGuidance()) {
   return success("planner-policy", {
     config_path: "/external/tmux-orchestrator-planner.json",
     configured: true,
-    binding_digest: metadataDigest(policy),
+    binding_digest: metadataDigest({ policy, guidance: guidance.digest }),
     policy,
+    jev_guidance: guidance,
   });
 }
+
+test("Jev natural-language guidance projection is bounded and digest-verified", () => {
+  const text = "Prefer a small roster. Use deeper thinking for high-risk work.";
+  const projected = testHooks.validateJevGuidanceProjection(jevGuidance(text));
+  assert.equal(projected.configured, true);
+  assert.equal(projected.text, text);
+  assert.throws(
+    () => testHooks.validateJevGuidanceProjection({
+      ...jevGuidance(text),
+      digest: "0".repeat(64),
+    }),
+    /invalid_jev_guidance_projection/,
+  );
+  for (const invalid of [
+    "bad\u0000guidance",
+    "bad\tguidance",
+    "bad\nguidance",
+    "bad\u0085guidance",
+    "bad\ud800guidance",
+  ]) {
+    assert.throws(
+      () => testHooks.validateJevGuidanceProjection(jevGuidance(invalid)),
+      /invalid_jev_guidance_projection/,
+    );
+  }
+  assert.equal(
+    testHooks.validateJevGuidanceProjection(jevGuidance("x".repeat(16 * 1024))).text.length,
+    16 * 1024,
+  );
+  assert.throws(
+    () => testHooks.validateJevGuidanceProjection(jevGuidance("x".repeat(16 * 1024 + 1))),
+    /invalid_jev_guidance_projection/,
+  );
+  const absent = testHooks.validateJevGuidanceProjection(undefined);
+  assert.equal(absent.configured, false);
+  assert.equal(absent.text, null);
+});
 
 function plannerTopology({ constraints = {}, optionalRoles = ["probe", "playwright", "django"], customRoles = [] } = {}) {
   const roles = ["implementer", "reviewer", "probe", "playwright", "django"];
@@ -3350,6 +3398,9 @@ test("TypeSafe Jev precedes explicit Pi decision models and configured fallback"
     undefined,
     {
       typesafeApiKey: "test-typesafe-key",
+      jevGuidance: jevGuidance(
+        "Prefer a compact roster. Use deeper thinking only for high-risk work.",
+      ),
       typesafeFetch: async (url, options) => {
         calls += 1;
         assert.equal(url, typesafeTestHooks.TYPESAFE_ENDPOINT);
@@ -3384,6 +3435,14 @@ test("TypeSafe Jev precedes explicit Pi decision models and configured fallback"
   assert.equal(calls, 1);
   assert.equal(capturedRequest.model, "jev-latest");
   assert.equal(capturedRequest.state.task, "Choose a bounded topology.");
+  assert.equal(
+    capturedRequest.state.jev_behavior_guidance,
+    "Prefer a compact roster. Use deeper thinking only for high-risk work.",
+  );
+  assert.match(
+    capturedRequest.questions.include_02.instructions.decision,
+    /cannot add roles\/models, create an operator model allowlist/,
+  );
   assert.equal(Object.hasOwn(capturedRequest.state, "candidate_models"), false);
   assert.deepEqual(
     capturedRequest.state.candidate_model_capabilities,
@@ -3400,6 +3459,7 @@ test("TypeSafe Jev precedes explicit Pi decision models and configured fallback"
   });
   assert.equal(result.plan.usage.totalTokens, 366);
   assert.equal(JSON.stringify(result).includes("test-typesafe-key"), false);
+  assert.equal(JSON.stringify(result).includes("Prefer a compact roster"), false);
   assert.match(result.plan.roles[0].reason, /Jev retained the required role/);
 
   const manyModels = Array.from({ length: 30 }, (_, index) => ({
@@ -3802,7 +3862,13 @@ test("malformed TypeSafe planning fails before the Python start boundary", async
   let startCalls = 0;
   const { tool } = harness(async (_command, args) => {
     if (args[2] === "planner-policy") {
-      return { code: 0, stdout: JSON.stringify(plannerPolicyEnvelope(plannerPolicy())) };
+      return {
+        code: 0,
+        stdout: JSON.stringify(plannerPolicyEnvelope(
+          plannerPolicy(),
+          jevGuidance("Prefer a small roster and conservative risk handling."),
+        )),
+      };
     }
     if (args[2] === "planner-topology") {
       return { code: 0, stdout: JSON.stringify(plannerTopologyEnvelope(plannerTopology())) };
@@ -3816,6 +3882,10 @@ test("malformed TypeSafe planning fails before the Python start boundary", async
   globalThis.fetch = async (_url, options) => {
     assert.equal(options.headers.authorization, "Bearer stored-typesafe-key");
     const request = JSON.parse(options.body);
+    assert.equal(
+      request.state.jev_behavior_guidance,
+      "Prefer a small roster and conservative risk handling.",
+    );
     const answers = Object.fromEntries(Object.entries(request.questions).map(
       ([questionId, question]) => [questionId, {
         type: "choice",
@@ -3829,23 +3899,24 @@ test("malformed TypeSafe planning fails before the Python start boundary", async
       usage: { input_tokens: 1, output_tokens: 1 },
     }), { status: 200 });
   };
+  const startContext = context({
+    confirmations: [true],
+    context: {
+      model: worker,
+      modelRegistry: {
+        getAvailable: () => [worker],
+        getProviderAuth: async () => ({
+          auth: { apiKey: "stored-typesafe-key" },
+          source: "stored API key",
+        }),
+      },
+    },
+  });
   try {
     await assert.rejects(
       tool.execute("malformed-typesafe", {
         action: "start", task: "Synthetic", dynamicPlan: true,
-      }, undefined, undefined, context({
-        confirmations: [true],
-        context: {
-          model: worker,
-          modelRegistry: {
-            getAvailable: () => [worker],
-            getProviderAuth: async () => ({
-              auth: { apiKey: "stored-typesafe-key" },
-              source: "stored API key",
-            }),
-          },
-        },
-      })),
+      }, undefined, undefined, startContext),
       /typesafe_answer_invalid/,
     );
   } finally {
@@ -3854,6 +3925,14 @@ test("malformed TypeSafe planning fails before the Python start boundary", async
     else process.env.TYPESAFE_API_KEY = previousKey;
   }
   assert.equal(startCalls, 0);
+  assert.match(
+    startContext.calls.confirmations[0].message,
+    /Jev behavior guidance: configured \([a-f0-9]{12}…\)/,
+  );
+  assert.equal(
+    startContext.calls.confirmations[0].message.includes("Prefer a small roster"),
+    false,
+  );
 });
 
 test("preflight candidate projection honors scoped thinking and strict decision validation", () => {
@@ -4181,8 +4260,12 @@ test("capability-informed planner projection is bounded, redacted, and identical
         };
       },
     },
-  }, lockedInput, "/project", piSelection, topology);
+  }, lockedInput, "/project", piSelection, topology, undefined, undefined, {
+    jevGuidance: jevGuidance("This Jev-only guidance must not reach the Pi chat fallback."),
+  });
   assert.deepEqual(piPayload.candidate_models, projected);
+  assert.equal(Object.hasOwn(piPayload, "jev_behavior_guidance"), false);
+  assert.equal(JSON.stringify(piPayload).includes("Jev-only guidance"), false);
   assert.deepEqual(piPayload.worker_thinking_levels, ["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
   assert.deepEqual(piPayload.locked_role_constraints.find((item) => item.role === "reviewer"), {
     role: "reviewer", provider: "local", model: "zero-cost", thinking: "off",
@@ -4540,6 +4623,76 @@ test("dynamic launch rejects a topology binding changed after accepted preview",
     /stale_dynamic_planning_binding/,
   );
   assert.equal(topologyReads, 2);
+  assert.equal(startCalls, 1);
+});
+
+test("dynamic launch rejects Jev guidance changed after accepted preview", async () => {
+  const model = {
+    provider: "provider", id: "model", reasoning: true,
+    thinkingLevelMap: { low: "low", medium: "medium" },
+  };
+  let policyReads = 0;
+  let startCalls = 0;
+  const { tool } = harness(async (_command, args) => {
+    if (args[2] === "planner-policy") {
+      policyReads += 1;
+      const text = policyReads === 1
+        ? "Prefer the smallest useful roster."
+        : "Prefer deeper thinking for ambiguous work.";
+      return {
+        code: 0,
+        stdout: JSON.stringify(plannerPolicyEnvelope(
+          plannerPolicy({
+            preferred: { provider: "provider", model: "model", thinking: "medium" },
+          }),
+          jevGuidance(text),
+        )),
+      };
+    }
+    if (args[2] === "planner-topology") {
+      return { code: 0, stdout: JSON.stringify(plannerTopologyEnvelope(plannerTopology())) };
+    }
+    startCalls += 1;
+    return {
+      code: 0,
+      stdout: JSON.stringify(success("start", {
+        project: process.cwd(), session: "pi-stale-guidance", dry_run: true,
+        roles: [
+          { name: "implementer", provider: "provider", model: "model", thinking: "medium" },
+          { name: "reviewer", provider: "provider", model: "model", thinking: "low" },
+        ],
+        planning: await boundPlanningFromArgs(args),
+        trust: { child_bypass: false },
+        paths: { state_root: "/tmp/state", coordination: null },
+      })),
+    };
+  });
+  const ctx = context({
+    confirmations: [true, true],
+    context: {
+      model,
+      modelRegistry: {
+        getAvailable: () => [model],
+        complete: async () => ({
+          stopReason: "stop",
+          content: [{ type: "text", text: JSON.stringify({
+            version: 1,
+            roles: [
+              { role: "implementer", provider: "provider", model: "model", thinking: "medium", reason: "One writer." },
+              { role: "reviewer", provider: "provider", model: "model", thinking: "low", reason: "Mandatory review." },
+            ],
+          }) }],
+        }),
+      },
+    },
+  });
+  await assert.rejects(
+    tool.execute("stale-guidance", {
+      action: "start", task: "Synthetic", dynamicPlan: true,
+    }, undefined, undefined, ctx),
+    /stale_dynamic_planning_binding/,
+  );
+  assert.equal(policyReads, 2);
   assert.equal(startCalls, 1);
 });
 

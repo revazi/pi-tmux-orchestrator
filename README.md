@@ -138,7 +138,13 @@ canonical capability facts as the Pi fallback path are sent once in request
 state. The catalog is limited to 100 models and seven supported thinking levels;
 each question has at most 255 options and the request at most 255 questions.
 The complete serialized request is limited to 96 KiB UTF-8. If it cannot fit,
-planning fails before HTTP rather than omitting candidates.
+planning fails before HTTP rather than omitting candidates. Optional user-global
+natural-language preferences for Jev use the `jevGuidance` text field in the
+existing `~/.pi/agent/tmux-orchestrator-planner.json` policy. The text is
+bounded, digest-bound, and subordinate to candidate, role-authority, and
+locked-constraint rules—it cannot add identities, create a model allowlist,
+direct selection by model name, or weaken validation. Missing or `null` guidance
+keeps the packaged behavior.
 Deterministic code constructs the normal strict plan. When TypeSafe authentication is absent, an exact model-tool
 `decisionModel` selects a Pi chat model for that run. Without either, the strict
 version-1 user-global planner policy selects an exact configured Pi preferred identity,
@@ -314,10 +320,13 @@ Dynamic planning uses a separate strict user-global file,
     { "provider": "provider-b", "model": "exact-model-b", "thinking": "low" },
     { "provider": "provider-c", "model": "exact-model-c", "thinking": "medium" }
   ],
-  "noEligible": "cancel"
+  "noEligible": "cancel",
+  "jevGuidance": "Prefer the smallest useful roster. Use deeper thinking only for ambiguous, security-sensitive, or high-risk work."
 }
 ```
 
+`jevGuidance` is optional and may be `null`; it affects only direct TypeSafe Jev
+and remains subordinate to the exact candidate scope and hard planning rules.
 This file is validated for every dynamic start, but its identities configure
 only the Pi-model fallback path used when TypeSafe authentication and an
 explicit Pi decision model are both absent. Resolve every identity from

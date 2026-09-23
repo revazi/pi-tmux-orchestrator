@@ -21,6 +21,7 @@ class PlannerPolicyTests(TestCase):
                     "preferred": None,
                     "fallbacks": [],
                     "no_eligible": "cancel",
+                    "jev_guidance": None,
                 },
             )
 
@@ -133,6 +134,49 @@ class PlannerPolicyTests(TestCase):
                 with self.assertRaises(OrchestrationError):
                     planner_policy.planner_policy_path(project)
 
+    def test_jev_guidance_is_bounded_natural_language_in_planner_policy(self) -> None:
+        base = {
+            "version": 1,
+            "preferred": None,
+            "fallbacks": [],
+            "noEligible": "cancel",
+        }
+        text = "Prefer a smaller worker roster and deeper thinking for risky work."
+        configured = planner_policy.validate_planner_policy(
+            {**base, "jevGuidance": text}
+        )
+        self.assertEqual(configured["jev_guidance"], text)
+        self.assertEqual(
+            planner_policy.validate_planner_policy(
+                {
+                    **base,
+                    "jevGuidance": "x" * planner_policy.MAX_JEV_GUIDANCE_BYTES,
+                }
+            )["jev_guidance"],
+            "x" * planner_policy.MAX_JEV_GUIDANCE_BYTES,
+        )
+        self.assertIsNone(planner_policy.validate_planner_policy(base)["jev_guidance"])
+        self.assertIsNone(
+            planner_policy.validate_planner_policy({**base, "jevGuidance": None})[
+                "jev_guidance"
+            ]
+        )
+        for invalid in (
+            "",
+            " surrounding whitespace ",
+            "bad\x00guidance",
+            "bad\tguidance",
+            "bad\nguidance",
+            "bad\x85guidance",
+            "bad\ud800guidance",
+            "x" * (planner_policy.MAX_JEV_GUIDANCE_BYTES + 1),
+        ):
+            with (
+                self.subTest(value=invalid[:20]),
+                self.assertRaises(OrchestrationError),
+            ):
+                planner_policy.validate_planner_policy({**base, "jevGuidance": invalid})
+
     def test_cli_projection_contains_only_path_flag_and_strict_policy(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()
@@ -150,22 +194,37 @@ class PlannerPolicyTests(TestCase):
                         },
                         "fallbacks": [],
                         "noEligible": "cancel",
+                        "jevGuidance": (
+                            "Prefer the smallest sufficient roster and explain "
+                            "uncertainty."
+                        ),
                     }
                 ),
                 encoding="utf-8",
             )
             with mock.patch.dict(
-                os.environ, {planner_policy.PLANNER_POLICY_ENV: str(path)}
+                os.environ,
+                {planner_policy.PLANNER_POLICY_ENV: str(path)},
             ):
                 args = type("Args", (), {"project": str(project)})()
                 result = planner_policy.planner_policy_command(args)
         self.assertEqual(result.code, 0)
         self.assertEqual(
             set(result.data or {}),
-            {"config_path", "configured", "binding_digest", "policy"},
+            {
+                "config_path",
+                "configured",
+                "binding_digest",
+                "policy",
+                "jev_guidance",
+            },
         )
         self.assertTrue(result.data["configured"])
         self.assertRegex(result.data["binding_digest"], r"^[a-f0-9]{64}$")
+        self.assertEqual(
+            result.data["jev_guidance"]["text"],
+            "Prefer the smallest sufficient roster and explain uncertainty.",
+        )
         serialized = json.dumps(result.data)
         for forbidden in ("apiKey", "endpoint", "task", "response"):
             self.assertNotIn(forbidden, serialized)
@@ -175,7 +234,10 @@ class PlannerPolicyTests(TestCase):
             previous = runtime.PI_HOME
             runtime.PI_HOME = Path(directory).resolve()
             self.addCleanup(setattr, runtime, "PI_HOME", previous)
-            with mock.patch.dict(os.environ, {planner_policy.PLANNER_POLICY_ENV: ""}):
+            with mock.patch.dict(
+                os.environ,
+                {planner_policy.PLANNER_POLICY_ENV: ""},
+            ):
                 self.assertEqual(
                     planner_policy.planner_policy_path(),
                     runtime.PI_HOME / "tmux-orchestrator-planner.json",

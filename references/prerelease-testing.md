@@ -303,7 +303,12 @@ under separate provider-call authorization with `/login typesafe` or the
   the exact Pi decision model wins over configured identities after TypeSafe
   auth is removed. Confirm
   selected worker model/thinking tuples are available and use only each model's
-  advertised supported levels through `max`, malformed output starts nothing, and launch
+  advertised supported levels through `max`. Repeat once with bounded natural-
+  language `jevGuidance` in `tmux-orchestrator-planner.json` and confirm the
+  authorization shows its digest, direct Jev receives the preferences, the
+  retained plan omits their body, and malformed or oversized guidance fails
+  before HTTP.
+  Confirm malformed output starts nothing, and launch
   still requires a second confirmation. If exact-project custom specialists are
   configured, confirm only freshly verified allowlisted identities/contracts are
   candidates and an accepted subset remains read-only. This is not evidence of

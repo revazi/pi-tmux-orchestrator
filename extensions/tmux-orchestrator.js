@@ -561,6 +561,43 @@ function plannerTopologyFromEnvelope(envelope) {
   return plannerTopologyProjectionFromEnvelope(envelope).policy;
 }
 
+function validatedJevGuidanceProjection(value) {
+  if (value === undefined) {
+    return {
+      version: 1,
+      configPath: null,
+      configured: false,
+      digest: metadataDigest({ version: 1, text: null }),
+      text: null,
+    };
+  }
+  if (!metadataRecord(value)
+      || Object.keys(value).length !== 5
+      || !["version", "config_path", "configured", "digest", "text"]
+        .every((field) => Object.hasOwn(value, field))
+      || value.version !== 1
+      || typeof value.config_path !== "string"
+      || !value.config_path
+      || typeof value.configured !== "boolean"
+      || !DIGEST_PATTERN.test(value.digest)
+      || (value.configured
+        ? typeof value.text !== "string" || !value.text
+          || value.text.trim() !== value.text
+          || Buffer.byteLength(value.text, "utf8") > 16 * 1024
+          || /[\p{Cc}\p{Cs}]/u.test(value.text)
+        : value.text !== null)
+      || value.digest !== metadataDigest({ version: 1, text: value.text })) {
+    throw new Error("invalid_jev_guidance_projection");
+  }
+  return {
+    version: 1,
+    configPath: value.config_path,
+    configured: value.configured,
+    digest: value.digest,
+    text: value.text,
+  };
+}
+
 function plannerPolicyProjectionFromEnvelope(envelope) {
   if (!envelope?.success) throw new Error("planner_policy_unavailable");
   const data = envelope.data;
@@ -570,6 +607,7 @@ function plannerPolicyProjectionFromEnvelope(envelope) {
   return {
     policy: validateDecisionModelPolicy(data.policy),
     bindingDigest: data.binding_digest,
+    jevGuidance: validatedJevGuidanceProjection(data.jev_guidance),
   };
 }
 
@@ -611,12 +649,18 @@ async function applyDynamicPlan(pi, ctx, input, project, signal) {
     if (!confirmed) throw new Error("dynamic_planning_static_fallback_declined");
     return { input: { ...input, dynamicPlan: false }, plan: undefined };
   }
+  const guidanceConfirmation = selection.kind === "typesafe"
+    ? `Jev behavior guidance: ${policyProjection.jevGuidance.configured
+      ? "configured"
+      : "default"} (${policyProjection.jevGuidance.digest.slice(0, 12)}…).`
+    : undefined;
   const planningConfirmed = await ctx.ui.confirm(
     "Authorize preflight decision call?",
     [
       decisionModelConfirmation(selection),
       `Topology policy: ${topology.optionalRoles.length} optional built-ins; ${topology.customRoles.length} trusted custom candidates.`,
-    ].join("\n"),
+      guidanceConfirmation,
+    ].filter(Boolean).join("\n"),
   );
   if (!planningConfirmed) throw new Error("dynamic_planning_confirmation_declined");
   const planned = await runPreflightPlanner(
@@ -630,7 +674,7 @@ async function applyDynamicPlan(pi, ctx, input, project, signal) {
       topologyPolicy: topologyProjection.bindingDigest,
     },
     signal,
-    { typesafeApiKey },
+    { typesafeApiKey, jevGuidance: policyProjection.jevGuidance },
   );
   planned.plan.revalidation = {
     topologyArgs,
@@ -1374,6 +1418,7 @@ export const testHooks = {
   selectDecisionModel,
   runStart,
   startInputWithParentModel,
+  validateJevGuidanceProjection: validatedJevGuidanceProjection,
   validateObserverFrame,
   withPrivateFiles,
 };

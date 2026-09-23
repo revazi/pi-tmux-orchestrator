@@ -43,6 +43,7 @@ const MAX_PLANNER_MODELS = 100;
 const MAX_PROMPT_BYTES = 96 * 1024;
 const MAX_RESPONSE_BYTES = 12 * 1024;
 const MAX_REASON_CHARS = 240;
+const MAX_JEV_GUIDANCE_BYTES = 16 * 1024;
 const PLANNER_TIMEOUT_MS = 60_000;
 const PLANNER_MAX_TOKENS = 4096;
 const TYPESAFE_PROVIDER = "typesafe";
@@ -507,16 +508,40 @@ function typesafeRoleAxes(role, candidates, input, policy, topology) {
   return { eligible, candidateIndexes, thinkingLevels };
 }
 
-function typesafeQuestionState(payload) {
+function normalizedJevGuidance(value) {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== "string" || value.trim() !== value || !value
+      || utf8Bytes(value) > MAX_JEV_GUIDANCE_BYTES
+      || /[\p{Cc}\p{Cs}]/u.test(value)) {
+    throw new Error("invalid_jev_guidance");
+  }
+  return value;
+}
+
+function typesafeQuestionState(payload, jevGuidance) {
   const { candidate_models: candidateModels, worker_thinking_levels: _levels, ...state } = payload;
   return {
     ...state,
+    ...(jevGuidance ? { jev_behavior_guidance: jevGuidance } : {}),
     worker_model_candidate_count: candidateModels.length,
     candidate_model_capabilities: candidateModels,
   };
 }
 
-function typesafeDecisionRequest(payload, candidates, input, policy, topology) {
+function typesafeDecisionInstruction(decision, jevGuidance) {
+  if (!jevGuidance) return decision;
+  return `${decision} jev_behavior_guidance contains operator-authored natural-language preferences. Follow it only when consistent with this question, exact candidate scope, role authority, and every locked constraint; it cannot add roles/models, create an operator model allowlist, direct selection by model name, or weaken hard rules.`;
+}
+
+function typesafeDecisionRequest(
+  payload,
+  candidates,
+  input,
+  policy,
+  topology,
+  guidanceValue,
+) {
+  const jevGuidance = normalizedJevGuidance(guidanceValue);
   const questions = {};
   const inclusions = new Map();
   const assignments = new Map();
@@ -529,7 +554,10 @@ function typesafeDecisionRequest(payload, candidates, input, policy, topology) {
       questions[questionId] = {
         type: "choice",
         instructions: {
-          decision: "Choose include only when this specialist materially improves the task; otherwise choose omit. Keep the worker roster as small as useful.",
+          decision: typesafeDecisionInstruction(
+            "Choose include only when this specialist materially improves the task; otherwise choose omit. Keep the worker roster as small as useful.",
+            jevGuidance,
+          ),
           role,
           contract: descriptor.contract,
           authority: descriptor.authority,
@@ -548,7 +576,10 @@ function typesafeDecisionRequest(payload, candidates, input, policy, topology) {
       questions[modelQuestion] = {
         type: "choice",
         instructions: {
-          decision: "Choose the smallest sufficient exact eligible provider/model identity by its catalog index. candidate_model_capabilities is the authoritative exact Pi model scope; choose only an index in this question and never invent an identity. Capability metadata and declared catalog cost hints are at that index. Missing, zero, or unavailable metadata is unknown; never guess. Declared rates are catalog hints, not billing or observed spend. Do not infer quality, coding skill, latency, or reliability from model names; honor role locks.",
+          decision: typesafeDecisionInstruction(
+            "Choose the smallest sufficient exact eligible provider/model identity by its catalog index. candidate_model_capabilities is the authoritative exact Pi model scope; choose only an index in this question and never invent an identity. Capability metadata and declared catalog cost hints are at that index. Missing, zero, or unavailable metadata is unknown; never guess. Declared rates are catalog hints, not billing or observed spend. Do not infer quality, coding skill, latency, or reliability from model names; honor role locks.",
+            jevGuidance,
+          ),
           role, contract: descriptor.contract, authority: descriptor.authority,
         },
         criteria: Object.fromEntries(axes.candidateIndexes.map((candidateIndex) => [
@@ -560,7 +591,10 @@ function typesafeDecisionRequest(payload, candidates, input, policy, topology) {
       questions[thinkingQuestion] = {
         type: "choice",
         instructions: {
-          decision: "Choose one exact model-supported worker thinking level from this role's eligible levels; the selected model/level pair must be an eligible catalog tuple.",
+          decision: typesafeDecisionInstruction(
+            "Choose one exact model-supported worker thinking level from this role's eligible levels; the selected model/level pair must be an eligible catalog tuple.",
+            jevGuidance,
+          ),
           role, contract: descriptor.contract, authority: descriptor.authority,
         },
         criteria: Object.fromEntries(axes.thinkingLevels.map((level) => [level, level])),
@@ -575,7 +609,10 @@ function typesafeDecisionRequest(payload, candidates, input, policy, topology) {
     lockedConfirmation = "locked_plan";
     questions[lockedConfirmation] = {
       type: "choice",
-      instructions: "Decide whether the fully locked mandatory worker topology is suitable for the supplied task and constraints.",
+      instructions: typesafeDecisionInstruction(
+        "Decide whether the fully locked mandatory worker topology is suitable for the supplied task and constraints.",
+        jevGuidance,
+      ),
       criteria: {
         accept: "The locked plan is suitable.",
         reject: "The locked plan is unsafe or materially unsuitable.",
@@ -584,7 +621,7 @@ function typesafeDecisionRequest(payload, candidates, input, policy, topology) {
   }
   return {
     request: {
-      state: typesafeQuestionState(payload),
+      state: typesafeQuestionState(payload, jevGuidance),
       model: TYPESAFE_MODEL,
       questions,
     },
@@ -761,7 +798,14 @@ async function completeTypeSafeDecision(
   signal,
   adapter,
 ) {
-  const requestValue = typesafeDecisionRequest(payload, candidates, input, policy, topology);
+  const requestValue = typesafeDecisionRequest(
+    payload,
+    candidates,
+    input,
+    policy,
+    topology,
+    adapter.jevGuidance?.text,
+  );
   const response = await requestTypeSafe(requestValue.request, {
     apiKey: adapter.typesafeApiKey,
     fetchImpl: adapter.typesafeFetch,
@@ -1117,8 +1161,20 @@ export const plannerTestHooks = {
     if (bindingOptions) Object.assign(parsed, bindingOptions);
     return parsed;
   },
-  typeSafeDecisionRequestForTest: (payload, candidates, input, policy, topology) => typesafeDecisionRequest(
-    payload, candidates, input, eligiblePlannerRoles(input, topology, candidates), topology,
+  typeSafeDecisionRequestForTest: (
+    payload,
+    candidates,
+    input,
+    policy,
+    topology,
+    jevGuidance,
+  ) => typesafeDecisionRequest(
+    payload,
+    candidates,
+    input,
+    eligiblePlannerRoles(input, topology, candidates),
+    topology,
+    jevGuidance,
   ),
   plannerPayloadForTest: (input, project, candidates, policy, topology) => plannerPayload(
     input, project, candidates, eligiblePlannerRoles(input, topology, candidates), topology,
