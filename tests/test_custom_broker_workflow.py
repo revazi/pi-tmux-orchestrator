@@ -12,7 +12,7 @@ import unittest
 from types import MethodType
 from unittest import mock
 
-from pi_tmux_orchestrator import broker_store
+from pi_tmux_orchestrator import broker_store, commands
 from pi_tmux_orchestrator.broker import Broker
 from pi_tmux_orchestrator.constants import MAX_RUN_STATE_BYTES
 from pi_tmux_orchestrator.context_capsules import render_run_state_capsule
@@ -21,6 +21,7 @@ from pi_tmux_orchestrator.models import OrchestrationError
 from pi_tmux_orchestrator.evidence_reuse import EvidenceReuse
 from pi_tmux_orchestrator.protocol import encode_frame
 from pi_tmux_orchestrator.role_contracts import validate_assignment_kind
+from pi_tmux_orchestrator.storage import save_manifest
 from test_broker import assignment_usage_snapshot
 from test_broker_workflow import WorkflowHarness
 from test_custom_role_resources import CustomRoleResourceFixture
@@ -57,6 +58,7 @@ class CustomBrokerWorkflowTests(
         # Exercise only the lower workflow boundary; public initialization and
         # Broker construction intentionally still reject this worker set.
         retained_custom_contracts(self.manifest, self.coord)
+        save_manifest(self.coord, self.manifest)
         broker_store.initialize_broker_database(
             self.coord,
             self.manifest,
@@ -238,6 +240,45 @@ class CustomBrokerWorkflowTests(
         self.assertEqual(
             {call.args[0] for call in workflow.assign.await_args_list},
             set(workflow.custom_contracts),
+        )
+
+    async def test_custom_runtime_identity_matches_launch_assignment(self):
+        workflow = self.workflow(count=1, version=7)
+        role = next(iter(workflow.custom_contracts))
+        kind = workflow.custom_contracts[role]
+        config = self.manifest["roles"][role]
+        assignment_id = workflow.create_assignment(role, kind)
+        with mock.patch.object(workflow, "route_report", new=mock.AsyncMock()):
+            await workflow.handle_report(
+                workflow.clients[role],
+                {
+                    "id": secrets.token_hex(16),
+                    "assignment_id": assignment_id,
+                    "report": {"kind": kind, "summary": "custom identity check"},
+                    "runtime_identity": {
+                        "provider": config["provider"],
+                        "model": config["model"],
+                        "thinking": config["thinking"],
+                    },
+                },
+            )
+        event = workflow.broadcast.await_args.args[0]
+        self.assertEqual(event["role"], role)
+        self.assertEqual(event["runtime_identity_status"], "matching")
+        self.assertEqual(
+            event["authoritative_assignment"],
+            {
+                "name": role,
+                "provider": config["provider"],
+                "model": config["model"],
+                "thinking": config["thinking"],
+                "transport": "tui",
+                "specialist_contract": kind,
+            },
+        )
+        self.assertEqual(
+            commands.status_roles(self.coord, self.manifest)[-1]["specialist_contract"],
+            kind,
         )
 
     async def test_report_usage_is_atomic_idempotent_and_body_free(self):

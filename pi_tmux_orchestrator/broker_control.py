@@ -13,6 +13,7 @@ from .constants import BROKER_PROTOCOL_VERSION, MAX_RPC_COMMANDS, RPC_TOKEN_PATT
 from .models import OrchestrationError
 from .continuation import approved_repair_extension
 from .role_registry import valid_custom_role_id
+from .storage import load_manifest
 from .worker_resources import revalidate_worker_resources
 
 
@@ -198,6 +199,19 @@ class BrokerControlSupport:
                             raise OrchestrationError(
                                 "Custom restart contract is not bound"
                             )
+                    current_manifest = load_manifest(
+                        self.coord, expected_session=self.manifest["session"]
+                    )
+                    try:
+                        current_role = current_manifest["roles"][role]
+                        launched = self.manifest["roles"][role]
+                        launched["provider"] = current_role["provider"]
+                        launched["model"] = current_role["model"]
+                        launched["thinking"] = current_role["thinking"]
+                    except (KeyError, TypeError) as error:
+                        raise OrchestrationError(
+                            "Restart launch metadata is unavailable"
+                        ) from error
                     restarted_client = self.clients[role]
                     database.execute(
                         "UPDATE roles SET generation=generation+1,state='restarting',"

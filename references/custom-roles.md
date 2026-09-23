@@ -394,7 +394,8 @@ a read-only badge, and an omission count in short panes rather than colliding
 
 The parent observer pins its selected identities/contracts from the CLI status or
 start projection before connecting. Snapshots and reports cannot register roles
-or replace that binding. Custom reports must match the specialist contract and
+or replace that binding. Parent ready/needs-attention content renders those
+launch assignments, including custom contracts, before untrusted reports. Custom reports must match the specialist contract and
 cannot contain changed paths or writer/reviewer verdicts. Duplicate snapshot
 identities fail closed; `restarting` and `recovering` remain distinct states.
 Legacy envelopes without role metadata remain built-in-only. Parent updates stay

@@ -7,7 +7,7 @@ import net from "node:net";
 import { test } from "node:test";
 import extension, { testHooks } from "../extensions/tmux-orchestrator.js";
 import { consumeObserverFrames } from "../extensions/orchestrator-parent-protocol.js";
-import { publicRoleContracts, validControlRole } from "../extensions/orchestrator-role-metadata.js";
+import { publicRoleAssignments, publicRoleContracts, validControlRole } from "../extensions/orchestrator-role-metadata.js";
 import {
   metadataDigest,
   plannerCandidateDigest,
@@ -697,6 +697,26 @@ test("worker facade preserves extracted context, protocol, reporting, and usage 
     generation: 1,
     guardrailPolicy: {},
   }), false);
+  assert.deepEqual(workerHooks.workerRuntimeIdentity({
+    model: { provider: "xai", id: "grok-4.6" },
+    thinkingLevel: "medium",
+  }), { provider: "xai", model: "grok-4.6", thinking: "medium" });
+  assert.deepEqual(workerHooks.workerRuntimeIdentity({}), { availability: "unavailable" });
+  assert.deepEqual(workerHooks.workerRuntimeIdentity({
+    model: { provider: "xai", id: "grok-4.6" },
+  }), { availability: "unavailable" });
+  const spoofed = workerHooks.prepareReportArguments({
+    kind: "implementation",
+    summary: "done",
+    provider: "openai",
+    model: "gpt-5.6",
+    runtime_identity: { provider: "openai", model: "gpt-5.6", thinking: "medium" },
+  });
+  assert.equal(spoofed.provider, "openai");
+  assert.throws(
+    () => workerHooks.normalizeReport(spoofed, "implementation", "implementer"),
+    /invalid_report_fields/,
+  );
 });
 
 test("worker delivery envelopes reject malformed assignment and context metadata", async () => {
@@ -2190,8 +2210,18 @@ test("authenticated broker observer steers progress and returns structured final
   const socketPath = join(directory, "broker.sock");
   await writeFile(join(directory, "control.token"), `${token}\n`, { mode: 0o600 });
   const session = "pi-parent-observer-test";
-  const custom = customSurfaceRoles(1).at(-1);
-  const retainedRoles = [{ name: "implementer" }, { name: "reviewer" }, custom];
+  const custom = {
+    ...customSurfaceRoles(1).at(-1),
+    provider: "xai",
+    model: "grok-4.6",
+    thinking: "medium",
+    transport: "tui",
+  };
+  const retainedRoles = [
+    { name: "implementer", provider: "xai", model: "grok-4.6", thinking: "medium", transport: "tui" },
+    { name: "reviewer", provider: "xai", model: "grok-4.6", thinking: "medium", transport: "tui" },
+    custom,
+  ];
   const reportId = "b".repeat(32);
   const assignmentId = "c".repeat(32);
   let server;
@@ -2240,6 +2270,13 @@ test("authenticated broker observer steers progress and returns structured final
           role: "reviewer",
           round: 2,
           report: { kind: "review", summary: "The implementation is ready.", verdict: "approved" },
+          authoritative_assignment: {
+            name: "reviewer",
+            provider: "openai",
+            model: "gpt-5.6",
+            thinking: "medium",
+            transport: "tui",
+          },
           usage: {
             providerCalls: 1,
             input: 40,
@@ -2292,6 +2329,11 @@ test("authenticated broker observer steers progress and returns structured final
     assert.match(delivered.message.content, /reviewer report \(round 2\)/);
     assert.match(delivered.message.content, /The implementation is ready/);
     assert.match(delivered.message.content, /reviewer: waiting/);
+    assert.match(delivered.message.content, /Authoritative worker assignments/);
+    assert.match(delivered.message.content, /implementer: provider=xai model=grok-4.6 thinking=medium transport=tui/);
+    assert.match(delivered.message.content, /reviewer: provider=openai model=gpt-5.6 thinking=medium transport=tui/);
+    assert.match(delivered.message.content, /custom-security-0: provider=xai model=grok-4.6 thinking=medium transport=tui contract=probe/);
+    assert.match(delivered.message.content, /Runtime identity: omitted/);
     assert.deepEqual(delivered.options, { triggerTurn: true, deliverAs: "steer" });
     assert.equal(stopped, true);
     const progress = deliveredMessages.filter(({ message }) => message.details.event);
@@ -2304,6 +2346,90 @@ test("authenticated broker observer steers progress and returns structured final
     assert.match(progress[1].message.content, /custom-security-0 submitted/);
     assert.match(progress[2].message.content, /reviewer is now waiting/);
     assert.doesNotMatch(progress[3].message.content, /The implementation is ready/);
+  } finally {
+    await new Promise((resolve) => server?.close(resolve) ?? resolve());
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("parent attach keeps CLI assignments over replayed report projections", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "pi-tmux-assignment-replay-test-"));
+  await chmod(directory, 0o700);
+  const token = "a".repeat(32);
+  const socketPath = join(directory, "broker.sock");
+  await writeFile(join(directory, "control.token"), `${token}\n`, { mode: 0o600 });
+  const session = "pi-assignment-replay-test";
+  const retainedRoles = [
+    { name: "implementer", provider: "xai", model: "grok-4.6", thinking: "medium", transport: "tui" },
+    { name: "reviewer", provider: "xai", model: "grok-4.6", thinking: "medium", transport: "tui" },
+  ];
+  let server;
+  try {
+    server = net.createServer((socket) => {
+      socket.once("data", (chunk) => {
+        const size = chunk.readUInt32BE(0);
+        const hello = JSON.parse(chunk.subarray(4, size + 4).toString("utf8"));
+        socket.write(testHooks.brokerFrame({
+          version: 1, type: "response", id: hello.id, success: true, status: "observing",
+        }));
+        socket.write(testHooks.brokerFrame({
+          version: 1,
+          type: "report",
+          session,
+          id: "b".repeat(32),
+          assignment_id: "c".repeat(32),
+          role: "reviewer",
+          round: 2,
+          report: { kind: "review", summary: "old generation claim", verdict: "approved" },
+          authoritative_assignment: {
+            name: "reviewer", provider: "openai", model: "gpt-5.6", thinking: "medium", transport: "tui",
+          },
+        }));
+        socket.write(testHooks.brokerFrame({
+          version: 1,
+          type: "snapshot",
+          session,
+          state: "active",
+          round: 2,
+          roles: [
+            { role: "implementer", state: "idle" },
+            { role: "reviewer", state: "idle" },
+          ],
+          report_count: 1,
+          report_replay_complete: true,
+        }));
+        socket.write(testHooks.brokerFrame({
+          version: 1, type: "workflow", session, state: "ready", round: 2,
+        }));
+      });
+    });
+    await new Promise((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(socketPath, resolve);
+    });
+    const observer = { closed: false, socket: undefined, timer: undefined, stop: () => {} };
+    const delivered = await new Promise((resolve) => {
+      void testHooks.attachParentObserver(
+        {
+          sendMessage: (message, options) => {
+            if (message.details.state === "ready") resolve({ message, options });
+          },
+        },
+        {
+          data: {
+            session,
+            roles: retainedRoles,
+            paths: { coordination: directory, observer_socket: socketPath },
+          },
+        },
+        observer,
+        () => {},
+        { triggerInitialActionable: false },
+      );
+    });
+    assert.match(delivered.message.content, /reviewer: provider=xai model=grok-4.6 thinking=medium transport=tui/);
+    assert.doesNotMatch(delivered.message.content, /reviewer: provider=openai model=gpt-5.6/);
+    assert.match(delivered.message.content, /old generation claim/);
   } finally {
     await new Promise((resolve) => server?.close(resolve) ?? resolve());
     await rm(directory, { recursive: true, force: true });
@@ -2444,6 +2570,19 @@ test("public custom metadata and control identities are bounded and cannot confe
     [...required, { name: "custom-reviewer", specialist_contract: "probe" }],
     [{ name: "implementer", specialist_contract: "probe" }, { name: "reviewer" }],
   ]) assert.throws(() => publicRoleContracts(invalid));
+
+  const assigned = customSurfaceRoles(1).map((role) => ({
+    ...role, provider: "xai", model: "grok-4.6", thinking: "medium", transport: "tui",
+  }));
+  const projections = publicRoleAssignments(assigned);
+  assert.equal(projections.at(-1).specialist_contract, "probe");
+  assert.equal(Object.hasOwn(projections.at(-1), "tool_policy"), false);
+  for (const invalid of [
+    assigned.map((role, index) => index ? role : { ...role, provider: "bad\nprovider" }),
+    assigned.map((role, index) => index ? role : { ...role, model: "" }),
+    assigned.map((role, index) => index ? role : { ...role, thinking: "ultra" }),
+    assigned.map((role, index) => index ? role : { ...role, transport: "shell" }),
+  ]) assert.throws(() => publicRoleAssignments(invalid), /invalid_public_role_assignment/);
 });
 
 test("observer custom frames require retained selection and matching read-only contracts", () => {
@@ -2559,6 +2698,55 @@ test("observer report usage is bounded numeric metadata", () => {
     }, "pi-test", "c".repeat(32)),
     /invalid_observer_report/,
   );
+  const matching = {
+    ...value,
+    runtime_identity_status: "matching",
+    runtime_identity: { provider: "xai", model: "grok-4.6", thinking: "medium" },
+  };
+  assert.equal(testHooks.validateObserverFrame(matching, "pi-test", "c".repeat(32)), matching);
+  const assigned = {
+    ...matching,
+    authoritative_assignment: {
+      name: "reviewer", provider: "xai", model: "grok-4.6", thinking: "medium", transport: "tui",
+    },
+  };
+  assert.equal(testHooks.validateObserverFrame(assigned, "pi-test", "c".repeat(32)), assigned);
+  for (const authoritative_assignment of [
+    { ...assigned.authoritative_assignment, name: "implementer" },
+    { ...assigned.authoritative_assignment, provider: "bad\nprovider" },
+    { ...assigned.authoritative_assignment, transport: "shell" },
+    { ...assigned.authoritative_assignment, private_body: "forbidden" },
+  ]) assert.throws(
+    () => testHooks.validateObserverFrame({
+      ...matching, authoritative_assignment,
+    }, "pi-test", "c".repeat(32)),
+    /invalid_observer_report/,
+  );
+  assert.equal(testHooks.validateObserverFrame({
+    ...value,
+    runtime_identity_status: "omitted",
+  }, "pi-test", "c".repeat(32)).runtime_identity_status, "omitted");
+  assert.throws(
+    () => testHooks.validateObserverFrame({
+      ...value,
+      runtime_identity: { provider: "openai", model: "gpt-5.6", thinking: "medium" },
+    }, "pi-test", "c".repeat(32)),
+    /invalid_observer_report/,
+  );
+  assert.throws(
+    () => testHooks.validateObserverFrame({
+      ...matching,
+      runtime_identity: { ...matching.runtime_identity, role: "reviewer" },
+    }, "pi-test", "c".repeat(32)),
+    /invalid_observer_report/,
+  );
+  assert.throws(
+    () => testHooks.validateObserverFrame({
+      ...value,
+      runtime_identity_status: "forged",
+    }, "pi-test", "c".repeat(32)),
+    /invalid_observer_report/,
+  );
 });
 
 test("parent lifecycle progress is bounded and makes completion state legible", () => {
@@ -2618,6 +2806,57 @@ test("parent attention updates identify the waiting assignment owner", () => {
   assert.match(update.content, /Send guidance only to a listed waiting role/);
   assert.match(update.content, /Do not trigger an idle role or the reviewer/);
   assert.ok(update.content.length <= 192 * 1024);
+});
+
+test("parent ready content keeps launch assignments authoritative over report prose", () => {
+  const assignments = [
+    { name: "implementer", provider: "xai", model: "grok-4.6", thinking: "medium", transport: "tui" },
+    { name: "reviewer", provider: "xai", model: "grok-4.6", thinking: "medium", transport: "rpc" },
+    {
+      name: "custom-security-0", provider: "xai", model: "grok-4.6", thinking: "medium",
+      transport: "tui", specialist_contract: "probe",
+    },
+  ];
+  const events = [
+    {
+      role: "implementer", round: 1,
+      runtime_identity_status: "matching",
+      runtime_identity: { provider: "xai", model: "grok-4.6", thinking: "medium" },
+      report: { kind: "implementation", summary: "Used GPT-5.6 Sol and Grok 4.7." },
+    },
+    {
+      role: "reviewer", round: 1,
+      runtime_identity_status: "conflicting",
+      runtime_identity: { provider: "openai", model: "gpt-5.6", thinking: "medium" },
+      report: { kind: "review", summary: "Approved on Grok 4.7.", verdict: "approved" },
+    },
+    {
+      role: "custom-security-0", round: 1,
+      runtime_identity_status: "unavailable",
+      runtime_identity: { availability: "unavailable" },
+      report: { kind: "probe", summary: "Read-only custom evidence." },
+    },
+  ];
+  const update = testHooks.parentUpdateContent("pi-test", "ready", 1, events, [], assignments);
+  const authoritative = update.content.split("##")[0];
+  assert.match(authoritative, /Authoritative worker assignments/);
+  assert.match(authoritative, /implementer: provider=xai model=grok-4.6 thinking=medium transport=tui/);
+  assert.match(authoritative, /reviewer: provider=xai model=grok-4.6 thinking=medium transport=rpc/);
+  assert.match(authoritative, /custom-security-0: provider=xai model=grok-4.6 thinking=medium transport=tui contract=probe/);
+  assert.doesNotMatch(authoritative, /GPT-5\.6/);
+  assert.doesNotMatch(authoritative, /Grok 4\.7/);
+  assert.match(update.content, /Runtime identity: matching/);
+  assert.match(update.content, /Runtime identity: conflicting/);
+  assert.match(update.content, /Claimed process identity: provider=openai model=gpt-5.6 thinking=medium/);
+  assert.match(update.content, /does not replace the authoritative launch assignment/);
+  assert.match(update.content, /Runtime identity: unavailable/);
+  assert.match(update.content, /untrusted prose/);
+  assert.match(update.content, /GPT-5\.6 Sol/);
+  const omitted = testHooks.parentUpdateContent("pi-test", "needs_attention", 1, [{
+    role: "implementer", round: 1, report: { kind: "implementation", summary: "no identity" },
+  }], [{ role: "implementer", state: "waiting" }], assignments);
+  assert.match(omitted.content, /Runtime identity: omitted/);
+  assert.match(omitted.content, /Authoritative worker assignments/);
 });
 
 test("session picker lists valid running orchestrations and returns the exact selection", async () => {

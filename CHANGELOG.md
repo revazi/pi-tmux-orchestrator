@@ -6,6 +6,7 @@ All notable changes to this project are documented here.
 
 ### Added
 
+- Added a bounded machine-readable worker runtime-identity sibling on broker-v1 reports, derived from the Pi process model/thinking configuration rather than `orchestrator_report` arguments; the broker compares exact provider/model/thinking fields against immutable per-generation launch metadata and fans out matching, omitted, unavailable, or conflicting without storing the claim or changing public role assignments, while a confirmed restart refreshes that role's launch assignment from current manifest metadata before the new generation reports
 - Added capability-informed dynamic worker-model selection: both direct TypeSafe Jev and Pi fallback planning receive one canonical bounded non-secret Pi 0.87.1 capability projection (identity, reasoning and supported thinking levels, text/image input, context window, max output tokens, declared input/output/cache-read/cache-write rates and tiers, and prompt-cache retention presence) over Pi's bounded available/scoped catalog, with no operator model allowlist or alternative set; planners must choose the smallest sufficient model from technical needs and declared catalog cost hints without inferring quality, skill, latency, or reliability from names, while exact role overrides, project/profile constraints, custom-role bindings, role authority, and the medium thinking cap remain authoritative
 - Added a dependency-free direct TypeSafe Jev preflight adapter and auth-only Pi provider: `/login typesafe` stores the key through Pi's masked native credential flow, `TYPESAFE_API_KEY` remains an automation override, and configured TypeSafe auth selects one confirmed fixed-endpoint `jev-latest` typed Choice request before the existing Pi-model fallback policy; the adapter deterministically projects bounded role/model/thinking selections into the strict plan, retains body-free versioned provenance and token usage, fails closed without retries or raw provider errors, and strips the environment fallback before any broker or TUI/RPC worker launch
 - Added provider-free fixed-plan lifecycle acceptance across real-tmux TUI/RPC v8/v9 starts, custom startup rollback, broker/worker restart, exact cleanup, retained planning reads, and staged actual-Pi custom workers; planner timeout and oversized-output failures now have explicit no-launch regressions, and a separately authorized pre-adapter three-case provider benchmark records bounded Pi-fallback evidence without authorizing default rollout or claiming general cost or quality improvement
@@ -20,6 +21,8 @@ All notable changes to this project are documented here.
 - Split the actual-Pi worker-prompt baseline so live 0.87.1 checks prove the lean `--system-prompt` contract, including Pi's empty normalized `appendSystemPrompt`, instead of freezing Pi-owned default prompt size from 0.84.4
 
 ### Fixed
+
+- Parent ready and needs-attention updates now render authoritative launch role/provider/model/thinking/transport/contract assignments before untrusted reports, and they label provider/model prose in report bodies as non-authoritative so historical identity mismatches cannot be mistaken for selected models
 
 ## 0.10.0 - 2026-09-21
 

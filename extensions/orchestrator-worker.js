@@ -11,6 +11,7 @@ import {
   validWorkerEnvironment,
   validDeliveryEnvelope,
   workerFrame,
+  workerRuntimeIdentity,
   WORKER_MESSAGE_TYPE as MESSAGE_TYPE,
   WORKER_PROTOCOL_VERSION as VERSION,
 } from "./orchestrator-worker-protocol.js";
@@ -347,6 +348,7 @@ export default function orchestratorWorker(pi) {
         assignment_id: assignment.id,
         report,
         usage,
+        runtime_identity: workerRuntimeIdentity(ctx),
       }));
       if (!response.success) throw new Error("orchestration_report_rejected");
       pi.appendEntry(DELIVERY_ENTRY, { kind: "report", assignment_id: assignment.id, report_id: response.id });
@@ -506,4 +508,5 @@ export const testHooks = {
   restoreGuardrailState,
   restoreWorkerState,
   totalUsage,
+  workerRuntimeIdentity,
 };

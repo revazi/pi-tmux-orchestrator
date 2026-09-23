@@ -162,6 +162,23 @@ class DashboardRenderingTests(DashboardFixture):
         self.assertIn("pi-tmux-agents stop pi-dashboard-test --yes", rendered)
         self.assertIn("prefix + L return", rendered)
 
+    def test_dashboard_uses_manifest_launch_models_not_snapshot_claims(self) -> None:
+        snapshot = copy.deepcopy(self.snapshot)
+        snapshot["roles"][0]["provider"] = "openai"
+        snapshot["roles"][0]["model"] = "gpt-5.6"
+        rendered = render_dashboard(
+            self.manifest,
+            snapshot,
+            self.events,
+            width=180,
+            height=30,
+            color=False,
+        )
+        self.assertIn("anthropic/claude-sonnet-4-6", rendered)
+        self.assertIn("google/gemini-3.1-pro-preview", rendered)
+        self.assertNotIn("gpt-5.6", rendered)
+        self.assertNotIn("runtime_identity", rendered)
+
     def test_now_flow_shows_active_to_waiting_handoff_without_bodies(self) -> None:
         rendered = render_dashboard(
             self.manifest,

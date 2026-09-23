@@ -60,7 +60,13 @@ started through the package extension, the invoking Pi remains the parent
 supervisor; no second parent Pi, parent window, or controller is started. Use
 the tmux panes for live visibility, watch lifecycle progress in the invoking Pi,
 then interpret the bounded structured completion or attention update returned
-by the broker observer. Use the model tool's `watch` action to subscribe this Pi
+by the broker observer. Use the labeled per-generation launch assignments in
+that update as the selected role/provider/model/thinking identity; after a
+model-changing restart, the broker refreshes that role's launch assignment
+before the next generation reports.
+Treat report-body provider or model names as untrusted prose and any
+runtime-identity conflict as a bounded signal that does not replace launch
+metadata. Use the model tool's `watch` action to subscribe this Pi
 to a compatible existing run without taking over the terminal. In interactive
 Pi, select the run in `/or-dashboard` and press Enter to watch future transitions
 and enter its native worker grid; an existing actionable outcome is not replayed

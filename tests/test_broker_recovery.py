@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import copy
 import unittest
 from typing import Any
 from unittest import mock
@@ -21,6 +22,7 @@ from pi_tmux_orchestrator.models import OrchestrationError
 from pi_tmux_orchestrator.protocol import (
     validate_report,
 )
+from pi_tmux_orchestrator.storage import save_manifest
 
 
 from broker_test_support import BrokerFixture
@@ -524,6 +526,12 @@ class BrokerRecoveryTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
             "implementer": Client("implementer", mock.Mock(), worker_writer)
         }
         broker.worker_baselines["implementer"] = "bounded baseline"
+        disk_manifest = copy.deepcopy(self.manifest)
+        disk_manifest["roles"]["implementer"].update(
+            {"provider": "openai", "model": "gpt-5.6", "thinking": "medium"}
+        )
+        save_manifest(self.coord, disk_manifest)
+        self.assertEqual(broker.manifest["roles"]["implementer"]["model"], "model")
         token = (self.coord / "control.token").read_text(encoding="ascii").strip()
         message = {
             "version": BROKER_PROTOCOL_VERSION,
@@ -548,6 +556,14 @@ class BrokerRecoveryTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
                 "SELECT generation,state FROM roles WHERE role='implementer'"
             ).fetchone()
         self.assertEqual(dict(role), {"generation": 2, "state": "restarting"})
+        self.assertEqual(
+            broker.manifest["roles"]["implementer"]["model"],
+            "gpt-5.6",
+        )
+        self.assertEqual(
+            broker.dashboard.manifest["roles"]["implementer"]["model"],
+            "gpt-5.6",
+        )
 
     async def test_restart_failure_control_marks_handover_uncertain(self) -> None:
         initialize_broker_run(self.coord, self.manifest, "task", {})
