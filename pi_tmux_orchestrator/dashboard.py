@@ -970,7 +970,9 @@ def _narrow_layout(
                         presentation_frame=presentation_frame,
                     ),
                     "active",
-                ) if role.get("state") == "active" else Span(""),
+                )
+                if role.get("state") == "active"
+                else Span(""),
                 Span(f"  {token_text}  {_format_context(role)}"),
             ]
         )
