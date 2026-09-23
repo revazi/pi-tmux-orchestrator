@@ -300,7 +300,7 @@ export class OrchestrationDashboardOverlay {
   renderLoading(rows) {
     if (!this.loading || this.sessions.length) return false;
     rows.frame(`${this.theme.fg("accent", this.theme.bold("◌ Loading sessions"))}  ${this.theme.fg("dim", "Reading bounded orchestration metadata…")}`);
-    rows.frame(this.theme.fg("muted", "  Use r to retry · q to close"));
+    rows.frame(this.theme.fg("muted", "  Existing sessions stay selectable during refresh; r retries · q closes"));
     return true;
   }
 
@@ -341,9 +341,10 @@ export class OrchestrationDashboardOverlay {
     const marker = selected ? purple(DASHBOARD_ICONS.selected) : " ";
     const identity = `${session.session} · ${basename(session.project)}`;
     const available = session.dashboard?.available === true;
-    const stateIcon = available ? DASHBOARD_ICONS.linked : DASHBOARD_ICONS.unavailable;
+    const workflow = session.dashboard?.workflow?.state;
+    const stateIcon = available ? dashboardStateIcon(workflow) : DASHBOARD_ICONS.unavailable;
     const separator = this.theme.fg("dim", "│");
-    const primary = `${this.theme.fg(available ? "accent" : "warning", `${stateIcon} ${sessionWorkflow(session)}`)}  ${this.theme.fg("dim", `${sessionRoles(session)} · ${sessionProfile(session)}`)}`;
+    const primary = `${this.theme.fg(available ? dashboardStateColor(workflow) : "warning", `${stateIcon} ${sessionWorkflow(session)}`)}  ${this.theme.fg("dim", `${sessionRoles(session)} · ${sessionProfile(session)}`)}`;
     const secondary = `${sessionPlanning(session)}  ${separator} ${sessionUsage(session)}`;
     const raw = `  ${marker} ${identity}  ${separator} ${primary}  ${separator} ${secondary}`;
     return selected ? this.theme.bg("selectedBg", raw) : raw;
@@ -460,6 +461,21 @@ class DashboardRows {
 function sessionWorkflow(session) {
   if (session.dashboard?.available !== true) return "state unavailable";
   return `${session.dashboard.workflow.state} r${session.dashboard.workflow.round}`;
+}
+
+function dashboardStateIcon(state) {
+  if (["ready", "completed"].includes(state)) return "✓";
+  if (["needs_attention", "uncertain"].includes(state)) return DASHBOARD_ICONS.warning;
+  if (["failed", "error", "aborted"].includes(state)) return "✕";
+  if (["active", "starting", "connecting", "initializing", "routing"].includes(state)) return "◌";
+  return DASHBOARD_ICONS.linked;
+}
+
+function dashboardStateColor(state) {
+  if (["ready", "completed"].includes(state)) return "success";
+  if (["needs_attention", "uncertain"].includes(state)) return "warning";
+  if (["failed", "error", "aborted"].includes(state)) return "error";
+  return "accent";
 }
 
 function sessionProfile(session) {

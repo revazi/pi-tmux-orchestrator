@@ -143,11 +143,13 @@ launching Pi once per role. The overlay never tails pane output or starts a
 refresh timer. Each running session row keeps exact session/project identity, workflow state/round,
 profile, linked-role count, planning mode, calls, operational tokens, complete
 provider-reported cost, and maximum available role context pressure. The state
-and role-availability marker lead the row; profile/role summary and then planning
-and usage form secondary detail. Missing provider values render as unavailable.
-The initial load explains that it reads bounded metadata and offers retry/close
-keys; an empty result offers an explicit refresh hint. These messages are static:
-the overlay does not animate or schedule list/status/doctor/provider calls.
+and role-availability marker lead the row; success, attention, active, failure,
+and unavailable states use distinct redundant icons/colors. Profile/role summary
+and then planning and usage form secondary detail. Missing provider values render
+as unavailable. The initial load explains that it reads bounded metadata and
+offers retry/close keys; an empty result offers an explicit refresh hint. Existing
+rows remain selectable while an explicit refresh is pending. These messages are
+static: the overlay does not animate or schedule list/status/doctor/provider calls.
 
 Arrows or `j`/`k` select; Enter closes the overlay and attaches while watching
 future transitions without replaying an existing actionable outcome as a new
