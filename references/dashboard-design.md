@@ -140,10 +140,14 @@ already cached by the startup notice. Pressing `d` explicitly starts the
 current-project doctor operation and displays its bounded result. Doctor model
 discovery is shared per distinct provider within that CLI operation rather than
 launching Pi once per role. The overlay never tails pane output or starts a
-refresh timer. Each running session row keeps exact session/project identity,
-workflow state/round, profile, linked-role count, calls, operational tokens,
-complete provider-reported cost, and maximum available role context pressure.
-Missing provider values render as unavailable.
+refresh timer. Each running session row keeps exact session/project identity, workflow state/round,
+profile, linked-role count, planning mode, calls, operational tokens, complete
+provider-reported cost, and maximum available role context pressure. The state
+and role-availability marker lead the row; profile/role summary and then planning
+and usage form secondary detail. Missing provider values render as unavailable.
+The initial load explains that it reads bounded metadata and offers retry/close
+keys; an empty result offers an explicit refresh hint. These messages are static:
+the overlay does not animate or schedule list/status/doctor/provider calls.
 
 Arrows or `j`/`k` select; Enter closes the overlay and attaches while watching
 future transitions without replaying an existing actionable outcome as a new

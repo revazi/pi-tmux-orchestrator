@@ -466,7 +466,10 @@ test("dashboard loads doctor only on demand, shows help, refreshes sessions, and
     3,
     { matches: () => false },
   );
-  assert.match(overlay.render(100).join("\n"), /Loading running orchestrations/);
+  const loading = overlay.render(100).join("\n");
+  assert.match(loading, /Loading sessions/);
+  assert.match(loading, /Reading bounded orchestration metadata/);
+  assert.match(loading, /Use r to retry/);
   await overlay.refresh();
   assert.equal(listLoads, 1);
   assert.equal(doctorLoads, 0);
@@ -475,6 +478,9 @@ test("dashboard loads doctor only on demand, shows help, refreshes sessions, and
   const lines = overlay.render(100);
   assert.ok(lines.every((line) => dashboardHooks.visibleWidth(line) <= 100));
   assert.match(lines.join("\n"), /Orchestration Dashboard/);
+  assert.match(lines.join("\n"), /● active r2/);
+  assert.match(lines.join("\n"), /2\/2 linked · balanced/);
+  assert.match(lines.join("\n"), /○ state unavailable.*economy/);
   assert.doesNotMatch(lines.join("\n"), /Doctor passed|Running doctor/);
   assert.equal(dashboardHooks.visibleWidth(overlay.render(3)[0]), 3);
 

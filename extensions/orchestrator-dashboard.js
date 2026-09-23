@@ -7,6 +7,13 @@ const DASHBOARD_STATIC_ROWS = 10;
 const DOCTOR_FIXED_ROWS = 2;
 const HELP_SECTION_ROWS = 3;
 const CLOSE_KEYS = new Set(["q", "Q"]);
+const DASHBOARD_ICONS = Object.freeze({
+  brand: "✦",
+  selected: "❯",
+  linked: "●",
+  unavailable: "○",
+  warning: "⚠",
+});
 const HELP_LINES = [
   "Enter watches and attaches; x confirms stopping the selected orchestration.",
   "d runs doctor on demand; version and project links stay in the About footer.",
@@ -292,17 +299,18 @@ export class OrchestrationDashboardOverlay {
 
   renderLoading(rows) {
     if (!this.loading || this.sessions.length) return false;
-    rows.frame(this.theme.fg("dim", "  Loading running orchestrations…"));
+    rows.frame(`${this.theme.fg("accent", this.theme.bold("◌ Loading sessions"))}  ${this.theme.fg("dim", "Reading bounded orchestration metadata…")}`);
+    rows.frame(this.theme.fg("muted", "  Use r to retry · q to close"));
     return true;
   }
 
   renderSessionError(rows) {
-    if (this.error) rows.frame(`  ${this.theme.fg("warning", `⚠ ${this.error}`)}`);
+    if (this.error) rows.frame(`  ${this.theme.fg("warning", `${DASHBOARD_ICONS.warning} ${this.error}`)}`);
   }
 
   renderEmpty(rows) {
     if (this.sessions.length) return false;
-    rows.frame(this.theme.fg("muted", "  No running orchestrations."));
+    rows.frame(`${this.theme.fg("muted", "  No running orchestrations.")} ${this.theme.fg("dim", "Press r to check again.")}`);
     return true;
   }
 
@@ -330,10 +338,14 @@ export class OrchestrationDashboardOverlay {
 
   sessionLine(session, index) {
     const selected = index === this.selected;
-    const marker = selected ? purple("❯") : " ";
+    const marker = selected ? purple(DASHBOARD_ICONS.selected) : " ";
     const identity = `${session.session} · ${basename(session.project)}`;
+    const available = session.dashboard?.available === true;
+    const stateIcon = available ? DASHBOARD_ICONS.linked : DASHBOARD_ICONS.unavailable;
     const separator = this.theme.fg("dim", "│");
-    const raw = `  ${marker} ${identity}  ${separator} ${sessionWorkflow(session)}  ${separator} ${sessionProfile(session)}  ${separator} ${sessionPlanning(session)}  ${separator} ${sessionUsage(session)}  ${separator} ${sessionRoles(session)}`;
+    const primary = `${this.theme.fg(available ? "accent" : "warning", `${stateIcon} ${sessionWorkflow(session)}`)}  ${this.theme.fg("dim", `${sessionRoles(session)} · ${sessionProfile(session)}`)}`;
+    const secondary = `${sessionPlanning(session)}  ${separator} ${sessionUsage(session)}`;
+    const raw = `  ${marker} ${identity}  ${separator} ${primary}  ${separator} ${secondary}`;
     return selected ? this.theme.bg("selectedBg", raw) : raw;
   }
 
