@@ -466,6 +466,8 @@ class DashboardTerminalModeTests(DashboardFixture):
         )
         snapshot = copy.deepcopy(self.snapshot)
         snapshot["roles"][0].pop("activity", None)
+        reads = []
+        dashboard.refresh_from_store = lambda coord: reads.append(coord)
         with dashboard:
             dashboard.refresh(snapshot, self.events)
             before = stream.getvalue().count("\x1b[H")
@@ -476,6 +478,7 @@ class DashboardTerminalModeTests(DashboardFixture):
         self.assertEqual(dashboard._presentation_frame, 2)
         self.assertIn("active", output)
         self.assertIn("LIVE", output)
+        self.assertEqual(reads, [])
 
     def test_presentation_tick_animates_loading_but_not_static_or_plain(self) -> None:
         for tty in (True, False):
