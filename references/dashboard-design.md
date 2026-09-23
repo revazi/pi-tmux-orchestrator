@@ -2,9 +2,11 @@
 
 This document is the review contract for the `BROKER + STATUS` pane. The
 broker remains the authoritative state writer and event source; tmux only hosts
-and displays this projection. A dashboard refresh is requested by broker state
-transitions or a supported terminal resize signal, never by a timer, polling
-loop, or model turn.
+and displays this projection. Broker metadata refreshes are requested by state
+transitions or a supported terminal resize signal. While an interactive pane
+shows loading or active work, a bounded 250ms presentation ticker repaints cached
+metadata only; it does not read broker state or imply provider/workflow progress.
+Static states and non-TTY output suppress these local animation frames.
 
 ## Operator hierarchy
 
@@ -12,6 +14,8 @@ The pane answers these questions in order:
 
 1. **Where am I?** Product, exact session, project (when space permits).
 2. **What needs attention?** Workflow state and round are the strongest line.
+   Starting, connecting, and initializing include a presentation-only `LOADING`
+   spinner even before any worker emits streaming activity.
 3. **How is it coordinated?** Worker transport, broker protocol, and actual
    provider-reported run tokens.
 4. **Who is doing what right now?** A NOW flow line names the active worker,
@@ -114,10 +118,11 @@ The dashboard is a control-plane summary, not another worker log:
 - Cost, detailed token categories, full timestamps, and long model identifiers
   yield to state and role legibility at constrained sizes; exact retained data
   remains available through status/Supervisor APIs.
-- Timer-driven spinners, progress estimates, and hard-budget gauges are omitted
-  because they would imply polling or precision the broker does not have. The
-  bouncing `LIVE` bar is an activity marker, not percent-complete. It advances
-  only on real worker events. A compact `G~`/`G!`
+- Progress estimates and hard-budget gauges are omitted because they would imply
+  precision the broker does not have. The bouncing `LIVE` bar is an activity
+  marker, not percent-complete. It advances on authoritative worker pulses or a
+  local presentation-only frame; that frame does not change phase, reports,
+  usage, or event history. A compact `G~`/`G!`
   prefix denotes a retained assignment warning/hard fact without presenting it
   as a live gauge.
 

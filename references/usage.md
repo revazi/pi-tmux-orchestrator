@@ -557,9 +557,13 @@ monitor, and optional probe, Playwright, and Django roles. The monitor is an
 in-place, event-driven dashboard with full, compact, and narrow layouts. A NOW
 flow line names the active worker, a bouncing `LIVE` activity bar (not
 completion), and the waiting next role. Worker turn, stream, tool, and report
-events refresh that bar and the LIVE phase marker; phase *changes* also appear
-on the metadata event rail. The monitor does not tail worker output, wait for a handoff, or poll
-broker state.
+events update the authoritative phase marker; phase *changes* also appear on
+the metadata event rail. During loading or active work in an interactive pane, a
+bounded 250ms local ticker animates the presentation marker from cached metadata
+without polling the broker or changing phase, reports, usage, or event history.
+Starting, connecting, and initializing show a `LOADING` spinner before worker
+streaming begins. Static states and non-TTY output suppress animation. The monitor
+does not tail worker output or wait for a handoff.
 
 Required:
 
