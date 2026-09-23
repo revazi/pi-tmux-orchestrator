@@ -133,9 +133,13 @@ flow or the `TYPESAFE_API_KEY` environment fallback, the bundled dependency-free
 HTTPS adapter uses TypeSafe `jev-latest` directly at the fixed
 `https://api.typesafe.ai/v1/systemone` endpoint. Jev is a typed System One
 decision model, not a Pi chat model: it chooses from bounded role questions and
-identity-only worker-model/thinking options, while the same canonical capability
-facts as the Pi fallback path are sent once in request state, and deterministic
-code constructs the normal strict plan. When TypeSafe authentication is absent, an exact model-tool
+factorized exact model-identity and thinking-level choices, while the same
+canonical capability facts as the Pi fallback path are sent once in request
+state. The catalog is limited to 100 models and seven supported thinking levels;
+each question has at most 255 options and the request at most 255 questions.
+The complete serialized request is limited to 96 KiB UTF-8. If it cannot fit,
+planning fails before HTTP rather than omitting candidates.
+Deterministic code constructs the normal strict plan. When TypeSafe authentication is absent, an exact model-tool
 `decisionModel` selects a Pi chat model for that run. Without either, the strict
 version-1 user-global planner policy selects an exact configured Pi preferred identity,
 then ordered exact cross-provider fallbacks. If no configured identity is
@@ -147,8 +151,9 @@ and may select only exact-project custom specialists whose registered resources
 and fixed read-only contracts validate before the provider call. Exact per-run
 choices win over exact-project constraints, user-global constraints/defaults,
 planner choices, and packaged fallback. Every selected provider/model/thinking
-tuple must exist in Pi's bounded currently available/scoped catalog and remain at or below
-`medium`; there is no operator model allowlist or alternative candidate set. Dynamic
+tuple must exist in Pi's bounded currently available/scoped catalog at one of that
+model's supported thinking levels, through `max` where available; there is no operator
+model allowlist or alternative candidate set. Dynamic
 planning receives a bounded non-secret Pi 0.87.1 capability projection—identity,
 reasoning and supported thinking levels, text/image input support, context
 window, max output tokens, declared input/output/cache-read/cache-write rates
@@ -160,7 +165,7 @@ eligibility; missing, zero, or malformed metadata stays explicit and is never
 guessed. Capability metadata is digest-bound in the candidate set so catalog
 drift after preview rejects launch. Roles may use different enabled providers.
 Exact per-role overrides, project/profile constraints, custom-role bindings,
-role authority, and the medium thinking cap remain authoritative. The planner cannot invent
+role authority, and model-supported worker thinking constraints remain authoritative. The planner cannot invent
 roles/contracts, grant tools or write authority, remove review, force activation,
 mutate configuration, or start tmux/workers before the separate final
 confirmation. `projectCustomRoles=false` excludes project custom candidates; an
@@ -317,8 +322,8 @@ explicit Pi decision model are both absent. Resolve every identity from
 `/or-models`; display
 names never match. `preferred`
 may be `null`, fallbacks are tried in listed order (for example, exact Grok and
-OpenAI identities discovered from the current catalog), every thinking level is
-explicit and capped at `medium`, and `noEligible` is exactly `cancel` or
+OpenAI identities discovered from the current catalog), decision-model thinking is
+explicit and may use any level supported by that exact model through `max`, and `noEligible` is exactly `cancel` or
 `static`. Missing policy defaults to cancellation. `static` still requires an
 extra confirmation and the ordinary final launch confirmation. Model policy,
 custom profiles, specialist activation, planner policy, observational budgets,

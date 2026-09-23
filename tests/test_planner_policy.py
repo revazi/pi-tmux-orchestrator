@@ -31,7 +31,7 @@ class PlannerPolicyTests(TestCase):
                 "preferred": {
                     "provider": "canonical-provider",
                     "model": "canonical-model",
-                    "thinking": "medium",
+                    "thinking": "max",
                 },
                 "fallbacks": [
                     {"provider": "xai", "model": "grok-exact", "thinking": "low"},
@@ -45,13 +45,16 @@ class PlannerPolicyTests(TestCase):
             }
         )
         self.assertEqual(policy["preferred"]["model"], "canonical-model")
+        self.assertEqual(policy["preferred"]["thinking"], "max")
         self.assertEqual(
             [(item["provider"], item["model"]) for item in policy["fallbacks"]],
             [("xai", "grok-exact"), ("openai", "gpt-exact")],
         )
         self.assertEqual(policy["no_eligible"], "static")
 
-    def test_malformed_duplicate_and_high_thinking_policies_fail_closed(self) -> None:
+    def test_malformed_duplicate_and_unsupported_thinking_policies_fail_closed(
+        self,
+    ) -> None:
         base = {
             "version": 1,
             "preferred": None,
@@ -65,7 +68,9 @@ class PlannerPolicyTests(TestCase):
             {**base, "fallbacks": [{"provider": "xai", "model": "grok"}]},
             {
                 **base,
-                "fallbacks": [{"provider": "xai", "model": "grok", "thinking": "high"}],
+                "fallbacks": [
+                    {"provider": "xai", "model": "grok", "thinking": "ultra"}
+                ],
             },
             {
                 **base,

@@ -302,8 +302,8 @@ under separate provider-call authorization with `/login typesafe` or the
   operator-supplied Pi decision model while TypeSafe auth is configured, and that
   the exact Pi decision model wins over configured identities after TypeSafe
   auth is removed. Confirm
-  selected worker models/thinking are available and at most `medium`, malformed
-  output starts nothing, and launch
+  selected worker model/thinking tuples are available and use only each model's
+  advertised supported levels through `max`, malformed output starts nothing, and launch
   still requires a second confirmation. If exact-project custom specialists are
   configured, confirm only freshly verified allowlisted identities/contracts are
   candidates and an accepted subset remains read-only. This is not evidence of

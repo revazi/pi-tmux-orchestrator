@@ -223,9 +223,10 @@ The policy is read through the authoritative Python boundary from
 may span enabled providers—for example exact Grok and OpenAI identities resolved
 from `/or-models`—without constraining worker roles to that provider. Every candidate
 must contain exactly a canonical provider, canonical model, and explicit `off`,
-`minimal`, `low`, or `medium` thinking level. Identities must be unique across
-preferred and fallback entries. Unknown/duplicate fields, duplicate identities,
-partial entries, higher thinking, non-regular/symlinked/oversized files, and
+`minimal`, `low`, `medium`, `high`, `xhigh`, or `max` thinking level supported by
+that model. Identities must be unique across preferred and fallback entries.
+Unknown/duplicate fields, duplicate identities, partial entries, unsupported
+thinking, non-regular/symlinked/oversized files, and
 policy files inside the target project fail closed. A missing policy is the
 versioned empty `cancel` policy. `pi-tmux-agents --json planner-policy --project
 /absolute/project` validates and projects only the path, configured flag, and
@@ -240,9 +241,10 @@ catalog identities are ambiguous and reject the whole start. `noEligible:
 explicit no-provider-call fallback to the ordinary static/manual preview and
 final confirmation. An unavailable or unsupported exact per-run override fails
 immediately and never falls through to configured entries. Jev has already been
-excluded at that point because TypeSafe authentication is absent. Pi decision
-thinking and every selected worker thinking level are capped at `medium`; a
-conflicting explicit higher setting fails before the planning call.
+excluded at that point because TypeSafe authentication is absent. Pi decision-call thinking remains governed by the decision-model policy. Worker
+thinking independently uses each exact catalog model's supported levels through
+`max` where available; an explicit/project/global lock unsupported by that model
+fails before the planning call.
 
 Jev is not registered as a Pi chat model and needs no `models.json` entry or
 additional package. The extension registers an auth-only provider so the key can
@@ -250,20 +252,21 @@ use Pi's native credential flow, while the bundled dependency-free adapter posts
 one request directly to the fixed `https://api.typesafe.ai/v1/systemone`
 endpoint with model alias `jev-latest`.
 It expresses optional-role inclusion and exact worker model/thinking assignments
-as bounded TypeSafe Choice questions. Assignment option criteria stay identity-only
-(`provider/model thinking=level`) so the 255-option Choice bound stays compact;
-the same canonical capability objects and declared catalog cost hints are sent
-once as `state.candidate_model_capabilities`. Instructions tell Jev to use that
-state, pick the smallest sufficient listed combination, and never infer quality,
-coding skill, latency, or reliability from model names. The adapter validates
-every returned answer and constructs the ordinary version-1 planner decision
-deterministically. Direct TypeSafe Jev and the Pi fallback receive the same
-canonical bounded capability projection; there is no operator model allowlist
-or alternative candidate set. TypeSafe currently caps each role's exact
-model/thinking Choice options at 255, so an unusually broad bounded catalog can
-leave later tuples capability-visible and digest-bound but not selectable;
-#185 tracks a lossless representation. Capability-heavy requests that exceed
-the fixed 96 KiB request bound fail before HTTP rather than dropping metadata.
+as bounded TypeSafe Choice questions. Each role uses factorized model-identity
+and thinking-level choices, each with at most 100 and seven options respectively.
+The catalog admits up to 100 models × seven supported thinking levels (700 exact
+tuples per role); selected axes are recombined only when the exact tuple exists.
+Capability metadata is included once, canonicalized, and digest-bound. There are
+at most 255 questions, and the complete request is limited to 96 KiB serialized
+UTF-8 bytes. If it cannot fit, planning fails before HTTP without omitting
+selectable tuples. Canonical capability objects and declared catalog cost hints
+are sent once as `state.candidate_model_capabilities`. Instructions tell Jev to
+use that state, choose the smallest sufficient listed combination, and never
+infer quality, coding skill, latency, or reliability from model names. The
+adapter validates every returned answer and constructs the ordinary version-1
+planner decision deterministically. Direct TypeSafe Jev and the Pi fallback
+receive the same canonical bounded capability projection; there is no operator
+model allowlist or alternative candidate set.
 The versioned Jev model returned by TypeSafe is retained as provenance;
 `thinking: "off"` is the compatibility value because System One has no Pi
 thinking level.

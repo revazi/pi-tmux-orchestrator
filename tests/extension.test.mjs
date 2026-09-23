@@ -19,6 +19,7 @@ import {
   validateDecisionModelPolicy,
   validatePlannerDecision,
   validatePlannerTopology,
+  plannerTestHooks,
 } from "../extensions/orchestrator-planner.js";
 import {
   normalizedTypeSafeApiKey,
@@ -3213,12 +3214,12 @@ test("preflight decision model uses exact per-run, preferred, then cross-provide
     plannerCandidateDigest(boundedExplicit.candidates),
     plannerCandidateDigest(plannerModelCandidates(ctx, boundedExplicit.candidatePriorities)),
   );
-  assert.throws(
-    () => selectDecisionModel(ctx, {
-      provider: "openai", model: "gpt-exact", thinking: "high",
-    }, configured),
-    /exceeds_medium_cap/,
-  );
+  ctx.modelRegistry.getAvailable = () => [{
+    ...openai, thinkingLevelMap: { off: "off", max: "max" },
+  }];
+  assert.equal(selectDecisionModel(ctx, {
+    provider: "openai", model: "gpt-exact", thinking: "max",
+  }, configured).thinking, "max");
   assert.throws(
     () => selectDecisionModel(ctx, { provider: "missing", model: "model" }, configured),
     /decision_model_unavailable/,
@@ -3370,7 +3371,7 @@ test("TypeSafe Jev precedes explicit Pi decision models and configured fallback"
   assert.equal(JSON.stringify(result).includes("test-typesafe-key"), false);
   assert.match(result.plan.roles[0].reason, /Jev retained the required role/);
 
-  const manyModels = Array.from({ length: 100 }, (_, index) => ({
+  const manyModels = Array.from({ length: 30 }, (_, index) => ({
     provider: "many", id: `model-${index}`, reasoning: true,
   }));
   const manyContext = {
@@ -3419,7 +3420,150 @@ test("TypeSafe Jev precedes explicit Pi decision models and configured fallback"
       },
     },
   );
-  assert.equal(largestChoice, 255);
+  assert.ok(largestChoice <= plannerTestHooks.TYPESAFE_MAX_CHOICE_OPTIONS);
+  assert.equal(largestChoice, 30);
+
+  const maximumCatalog = Array.from({ length: 100 }, (_, index) => ({
+    provider: `provider-${index % 2}`,
+    id: `maximum-model-${index}`,
+    reasoning: true,
+    thinkingLevelMap: Object.fromEntries(
+      ["off", "minimal", "low", "medium", "high", "xhigh", "max"]
+        .filter((_, levelIndex) => (index + levelIndex) % 3 !== 0)
+        .map((level) => [level, level]),
+    ),
+  }));
+  const maximumContext = {
+    scopedModels: [],
+    modelRegistry: { getAvailable: () => maximumCatalog },
+  };
+  const maximumSelection = selectDecisionModel(
+    maximumContext, undefined, plannerPolicy(), [], { typesafeApiKey: "test-typesafe-key" },
+  );
+  const maximumTopology = validatePlannerTopology(plannerTopology({ optionalRoles: [] }));
+  const maximumInput = {
+    task: "Select from the maximum bounded catalog.",
+    withPlaywright: false, withDjangoExpert: false,
+  };
+  const maximumPolicy = {
+    roles: ["implementer", "reviewer"], required: new Set(["implementer", "reviewer"]),
+    custom: new Map(),
+  };
+  const maximumPayload = plannerTestHooks.plannerPayloadForTest(
+    maximumInput, "/project", maximumSelection.candidates, maximumPolicy, maximumTopology,
+  );
+  const capturedTypeSafeRequest = plannerTestHooks.typeSafeDecisionRequestForTest(
+    maximumPayload, maximumSelection.candidates,
+    maximumInput, maximumPolicy, maximumTopology,
+  );
+  await runPreflightPlanner(
+    maximumContext,
+    maximumInput,
+    "/project",
+    maximumSelection,
+    validatePlannerTopology(plannerTopology({ optionalRoles: [] })),
+    undefined,
+    undefined,
+    {
+      typesafeApiKey: "test-typesafe-key",
+      typesafeFetch: async (_url, options) => {
+        const request = JSON.parse(options.body);
+        const requestValue = capturedTypeSafeRequest;
+        const modelQuestions = Object.entries(request.questions).filter(([id]) => id.startsWith("model_"));
+        const thinkingQuestions = Object.entries(request.questions).filter(([id]) => id.startsWith("thinking_"));
+        assert.equal(modelQuestions.length, 2);
+        assert.equal(thinkingQuestions.length, 2);
+        assert.equal(Object.keys(request.state).filter((key) => key === "candidate_model_capabilities").length, 1);
+        assert.ok(Buffer.byteLength(options.body, "utf8") <= typesafeTestHooks.MAX_TYPESAFE_REQUEST_BYTES);
+        for (const question of [...modelQuestions.map(([, value]) => value), ...thinkingQuestions.map(([, value]) => value)]) {
+          assert.ok(Object.keys(question.criteria).length <= plannerTestHooks.TYPESAFE_MAX_CHOICE_OPTIONS);
+        }
+        const capabilities = request.state.candidate_model_capabilities;
+        assert.equal(capabilities.length, maximumCatalog.length);
+        assert.deepEqual(capabilities.map(({ provider, model }) => ({ provider, model })),
+          maximumCatalog.map(({ provider, id }) => ({ provider, model: id })).sort((a, b) => `${a.provider}/${a.model}`.localeCompare(`${b.provider}/${b.model}`)));
+        for (const [questionId, question] of modelQuestions) {
+          assert.equal(Object.keys(question.criteria).length, 100);
+          for (const choice of Object.keys(question.criteria)) {
+            const index = Number.parseInt(choice.slice(1), 36);
+            const candidate = maximumCatalog.find((item) => item.id === capabilities[index].model);
+            assert.equal(capabilities[index].provider, candidate.provider);
+            assert.equal(capabilities[index].model, candidate.id);
+          }
+        }
+        for (const [, question] of thinkingQuestions) {
+          assert.ok(Object.keys(question.criteria).length <= 7);
+        }
+        const validPairs = maximumCatalog.flatMap((candidate) => Object.keys(candidate.thinkingLevelMap)
+          .map((thinking) => [`${candidate.provider}/${candidate.id}`, thinking]));
+        assert.equal(validPairs.length, maximumCatalog.reduce((count, candidate) => count + Object.keys(candidate.thinkingLevelMap).length, 0));
+        const chooseAnswer = (question, choice) => ({
+          type: "choice", choice, confidence: 1,
+          probabilities: Object.fromEntries(Object.keys(question.criteria).map((key) => [key, key === choice ? 1 : 0])),
+        });
+        let tupleProofCount = 0;
+        for (const [model, thinking] of validPairs) {
+          const [provider, modelId] = model.split("/");
+          assert.ok(capabilities.some((item) => item.provider === provider && item.model === modelId));
+          assert.ok(maximumCatalog.some((candidate) => candidate.provider === provider
+            && candidate.id === modelId && candidate.thinkingLevelMap[thinking] === thinking));
+          const modelIndex = capabilities.findIndex((item) => item.provider === provider && item.model === modelId);
+          const modelChoice = `m${modelIndex.toString(36)}`;
+          for (const [roleIndex, role] of ["implementer", "reviewer"].entries()) {
+            const answers = {};
+            for (const [questionId, question] of Object.entries(request.questions)) {
+              let choice = Object.keys(question.criteria)[0];
+              if (questionId === `model_${String(roleIndex).padStart(2, "0")}`) choice = modelChoice;
+              if (questionId === `thinking_${String(roleIndex).padStart(2, "0")}`) choice = thinking;
+              answers[questionId] = chooseAnswer(question, choice);
+            }
+            const result = plannerTestHooks.parseTypeSafeDecisionForTest(
+              { model: "jev-1.13.0", answers, usage: { input_tokens: 1, output_tokens: 1 } },
+              requestValue, maximumSelection.candidates, maximumContext, maximumSelection,
+              maximumTopology, maximumPolicy, {
+                acceptedAtMs: 1, createdAtMs: 1, requestId: "test",
+                bindings: {
+                  plannerPolicy: metadataDigest({ version: 1 }),
+                  topologyPolicy: metadataDigest(maximumTopology),
+                  candidateSet: plannerCandidateDigest(maximumSelection.candidates),
+                },
+                operatorOverrides: [],
+              },
+            );
+            assert.ok(result.decision.roles.some((assignment) => assignment.role === role
+              && assignment.provider === provider && assignment.model === modelId
+              && assignment.thinking === thinking), `${role} must preserve ${model}/${thinking}`);
+            tupleProofCount += 1;
+          }
+        }
+        assert.equal(tupleProofCount, validPairs.length * 2);
+        const invalidAnswers = {};
+        for (const [questionId, question] of Object.entries(request.questions)) {
+          const choices = Object.keys(question.criteria);
+          const choice = questionId.startsWith("model_") ? "m0" : choices[0];
+          invalidAnswers[questionId] = chooseAnswer(question, choice);
+        }
+        const invalidModelQuestion = requestValue.assignments.get("implementer").modelQuestion;
+        const invalidThinkingQuestion = requestValue.assignments.get("implementer").thinkingQuestion;
+        invalidAnswers[invalidModelQuestion] = chooseAnswer(request.questions[invalidModelQuestion], "m0");
+        invalidAnswers[invalidThinkingQuestion] = chooseAnswer(request.questions[invalidThinkingQuestion], "max");
+        assert.throws(() => plannerTestHooks.parseTypeSafeDecisionForTest(
+          { model: "jev-1.13.0", answers: invalidAnswers, usage: { input_tokens: 1, output_tokens: 1 } },
+          requestValue, maximumSelection.candidates, maximumContext, maximumSelection, maximumTopology,
+          maximumPolicy,
+        ), /typesafe_assignment_tuple_invalid/);
+        const answers = {};
+        for (const [questionId, question] of Object.entries(request.questions)) {
+          const choices = Object.keys(question.criteria);
+          const choice = questionId.startsWith("model_") ? "m0" : choices[0];
+          answers[questionId] = chooseAnswer(question, choice);
+        }
+        return new Response(JSON.stringify({
+          model: "jev-1.13.0", answers, usage: { input_tokens: 1, output_tokens: 1 },
+        }), { status: 200 });
+      },
+    },
+  );
 
   const safeRequest = { state: "safe", model: "jev-latest", questions: {} };
   await assert.rejects(
@@ -3543,20 +3687,24 @@ test("malformed TypeSafe planning fails before the Python start boundary", async
 test("preflight candidate projection honors scoped thinking and strict decision validation", () => {
   const medium = {
     provider: "provider", id: "medium", reasoning: true,
-    thinkingLevelMap: { off: null, minimal: null, low: "low", medium: "medium", high: "high" },
+    thinkingLevelMap: { off: null, minimal: null, low: "low", medium: "medium", high: "high", xhigh: "xhigh", max: "max" },
   };
-  const highOnly = { provider: "provider", id: "high-only", reasoning: true };
+  const highOnly = {
+    provider: "provider", id: "high-only", reasoning: true,
+    thinkingLevelMap: { high: "high", xhigh: "xhigh", max: "max" },
+  };
   const ctx = {
     model: medium,
     scopedModels: [
       { model: medium },
-      { model: highOnly, thinkingLevel: "high" },
+      { model: highOnly, thinkingLevel: "max" }
     ],
     modelRegistry: { getAvailable: () => { throw new Error("scoped catalog must win"); } },
   };
   const candidates = plannerModelCandidates(ctx);
-  assert.deepEqual(candidates.map((item) => item.modelId), ["medium"]);
-  assert.deepEqual(candidates[0].thinkingLevels, ["low", "medium"]);
+  assert.deepEqual(candidates.map((item) => item.modelId), ["high-only", "medium"]);
+  assert.deepEqual(candidates.find((item) => item.modelId === "medium").thinkingLevels, ["low", "medium", "high", "xhigh", "max"]);
+  assert.deepEqual(candidates.find((item) => item.modelId === "high-only").thinkingLevels, ["max"]);
   const other = {
     model: highOnly,
     provider: "another-provider",
@@ -3598,10 +3746,11 @@ test("preflight candidate projection honors scoped thinking and strict decision 
     version: 1,
     roles: [
       { role: "reviewer", provider: "provider", model: "medium", thinking: "low", reason: "Independent review is mandatory." },
-      { role: "implementer", provider: "provider", model: "medium", thinking: "medium", reason: "One writer handles the bounded change." },
+      { role: "implementer", provider: "provider", model: "medium", thinking: "max", reason: "One writer handles the bounded change." },
     ],
   }, candidates, input);
   assert.deepEqual(valid.roles.map((item) => item.role), ["implementer", "reviewer"]);
+  assert.equal(valid.roles[0].thinking, "max");
   assert.throws(
     () => validatePlannerDecision({
       version: 1,
@@ -3615,6 +3764,16 @@ test("preflight candidate projection honors scoped thinking and strict decision 
   assert.throws(
     () => validatePlannerDecision({ version: 1, roles: [] }, candidates, input),
     /invalid_planner_roles/,
+  );
+  assert.throws(
+    () => validatePlannerDecision({
+      version: 1,
+      roles: [
+        { role: "implementer", provider: "provider", model: "medium", thinking: "high", reason: "Writer." },
+        { role: "reviewer", provider: "provider", model: "medium", thinking: "low", reason: "Reviewer." },
+      ],
+    }, candidates, { modelOverrides: { implementer: { thinking: "medium" } } }),
+    /planner_overrode_explicit_thinking/,
   );
   assert.throws(
     () => validatePlannerDecision({
@@ -3675,7 +3834,7 @@ test("capability-informed planner projection is bounded, redacted, and identical
     provider: "anthropic",
     id: "claude-declared",
     reasoning: true,
-    thinkingLevelMap: { off: "off", low: "low", medium: "medium", high: "high" },
+    thinkingLevelMap: { off: "off", low: "low", medium: "medium", high: "high", xhigh: "xhigh", max: "max" },
     input: ["text", "image", "audio"],
     contextWindow: 200000,
     maxTokens: 8192,
@@ -3709,7 +3868,7 @@ test("capability-informed planner projection is bounded, redacted, and identical
     provider: "missing",
     id: "no-metadata",
     reasoning: true,
-    thinkingLevelMap: { low: "low", medium: "medium" },
+    thinkingLevelMap: { low: "low", medium: "medium", high: "high", xhigh: "xhigh", max: "max" },
   };
   const malformed = {
     provider: "broken",
@@ -3737,7 +3896,7 @@ test("capability-informed planner projection is bounded, redacted, and identical
   assert.deepEqual(projected[0], {
     provider: "anthropic",
     model: "claude-declared",
-    thinking_levels: ["off", "minimal", "low", "medium"],
+    thinking_levels: ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
     capabilities: {
       reasoning: true,
       input: { text: true, image: true },
@@ -3852,6 +4011,10 @@ test("capability-informed planner projection is bounded, redacted, and identical
     },
   }, lockedInput, "/project", piSelection, topology);
   assert.deepEqual(piPayload.candidate_models, projected);
+  assert.deepEqual(piPayload.worker_thinking_levels, ["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
+  assert.deepEqual(piPayload.locked_role_constraints.find((item) => item.role === "reviewer"), {
+    role: "reviewer", provider: "local", model: "zero-cost", thinking: "off",
+  });
   assert.equal(piResult.input.modelOverrides.reviewer.model, "zero-cost");
   assert.deepEqual(piResult.input.plannedCustomRoleIds, ["custom-security"]);
   assert.equal(JSON.stringify(piPayload).includes("catalog-secret"), false);
@@ -3891,13 +4054,11 @@ test("capability-informed planner projection is bounded, redacted, and identical
   ));
   assert.match(assignment.instructions.decision, /Do not infer quality, coding skill, latency, or reliability from model names/);
   assert.match(assignment.instructions.decision, /candidate_model_capabilities/);
-  for (const text of Object.values(assignment.criteria)) {
-    assert.match(text, /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+ thinking=(off|minimal|low|medium)$/);
+  for (const [choice, text] of Object.entries(assignment.criteria)) {
+    assert.match(choice, /^(m[0-9a-z]+|off|minimal|low|medium|high|xhigh|max)$/);
+    assert.ok(typeof text === "string");
   }
-  const declaredOption = Object.values(assignment.criteria).find((text) => (
-    text.includes("anthropic/claude-declared") && text.includes("thinking=low")
-  ));
-  assert.equal(declaredOption, "anthropic/claude-declared thinking=low");
+  assert.equal(Object.hasOwn(typesafeRequest.state, "worker_assignment_tuple_catalog"), false);
   assert.equal(
     typesafeRequest.state.candidate_model_capabilities[0].capabilities.prompt_cache_retention.short,
     true,
@@ -3915,12 +4076,12 @@ test("capability-informed planner projection is bounded, redacted, and identical
 
   const highOnly = {
     provider: "provider", id: "high-only", reasoning: true,
-    thinkingLevelMap: { high: "high" },
+    thinkingLevelMap: { high: "high", xhigh: "xhigh", max: "max" },
   };
   assert.deepEqual(plannerModelCandidates({
-    scopedModels: [{ model: highOnly, thinkingLevel: "high" }],
+    scopedModels: [{ model: highOnly, thinkingLevel: "max" }],
     modelRegistry: { getAvailable: () => [highOnly] },
-  }), []);
+  }).map((item) => item.thinkingLevels), [["max"]]);
 });
 
 test("trusted custom topology is bounded, contract-locked, and selected by exact identity", async () => {
@@ -4213,7 +4374,7 @@ test("dynamic launch rejects a topology binding changed after accepted preview",
 test("dynamic launch rejects available-model thinking changed after accepted preview", async () => {
   const model = {
     provider: "provider", id: "model", reasoning: true,
-    thinkingLevelMap: { off: null, minimal: null, low: "low", medium: "medium" },
+    thinkingLevelMap: { off: null, minimal: null, low: "low", medium: "medium", high: "high", xhigh: "xhigh", max: "max" },
   };
   let startCalls = 0;
   const { tool } = harness(async (_command, args) => {
@@ -4230,13 +4391,13 @@ test("dynamic launch rejects available-model thinking changed after accepted pre
     }
     startCalls += 1;
     const planning = await boundPlanningFromArgs(args);
-    model.thinkingLevelMap = { off: null, minimal: null, low: "low", medium: null };
+    model.thinkingLevelMap = { off: null, minimal: null, low: "low", medium: "medium", high: "high", xhigh: "xhigh", max: null };
     return {
       code: 0,
       stdout: JSON.stringify(success("start", {
         project: process.cwd(), session: "pi-stale-catalog", dry_run: true,
         roles: [
-          { name: "implementer", provider: "provider", model: "model", thinking: "medium" },
+          { name: "implementer", provider: "provider", model: "model", thinking: "max" },
           { name: "reviewer", provider: "provider", model: "model", thinking: "low" },
         ],
         planning,
@@ -4256,7 +4417,7 @@ test("dynamic launch rejects available-model thinking changed after accepted pre
           content: [{ type: "text", text: JSON.stringify({
             version: 1,
             roles: [
-              { role: "implementer", provider: "provider", model: "model", thinking: "medium", reason: "One writer." },
+              { role: "implementer", provider: "provider", model: "model", thinking: "max", reason: "One writer." },
               { role: "reviewer", provider: "provider", model: "model", thinking: "low", reason: "Mandatory review." },
             ],
           }) }],
@@ -4342,7 +4503,10 @@ test("dynamic launch rejects capability metadata changed after accepted preview"
 });
 
 test("dynamic planning failure or declined authorization starts nothing", async () => {
-  const model = { provider: "provider", id: "model", reasoning: true };
+  const model = {
+    provider: "provider", id: "model", reasoning: true,
+    thinkingLevelMap: { off: "off", low: "low", medium: "medium", high: "high", xhigh: "xhigh", max: "max" },
+  };
   let completions = 0;
   let executions = 0;
   let selectedPolicy = plannerPolicy({
@@ -4380,10 +4544,10 @@ test("dynamic planning failure or declined authorization starts nothing", async 
       action: "start",
       task: "synthetic",
       dynamicPlan: true,
-      modelOverrides: { all: { provider: "provider", model: "model", thinking: "high" } },
+      modelOverrides: { all: { provider: "provider", model: "model", thinking: "invalid" } },
     }, undefined, undefined,
     context({ confirmations: [true], context: { model, modelRegistry: registry } })),
-    /dynamic_planning_thinking_exceeds_medium_cap/,
+    /dynamic_planning_thinking_invalid/,
   );
   assert.equal(completions, 0);
   await assert.rejects(
@@ -4448,7 +4612,7 @@ test("dynamic planning failure or declined authorization starts nothing", async 
 
   selectedPolicy = {
     version: 1,
-    preferred: { provider: "provider", model: "model", thinking: "high" },
+    preferred: { provider: "provider", model: "model", thinking: "ultra" },
     fallbacks: [],
     no_eligible: "cancel",
   };

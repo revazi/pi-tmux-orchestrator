@@ -42,7 +42,7 @@ def planning_record(roles):
         "decision_model": {
             "provider": "decision-provider",
             "model": "decision-model",
-            "thinking": "medium",
+            "thinking": "max",
             "source": "configured-fallback",
         },
         "roles": retained_roles,

@@ -178,7 +178,7 @@ def validate_planning_record(
         raise OrchestrationError("Planning decision model metadata is invalid")
     thinking = model.get("thinking")
     source = model.get("source")
-    if thinking not in {"off", "minimal", "low", "medium"}:
+    if thinking not in {"off", "minimal", "low", "medium", "high", "xhigh", "max"}:
         raise OrchestrationError("Planning decision model thinking is invalid")
     if source not in PLANNING_SOURCES:
         raise OrchestrationError("Planning decision model source is invalid")

@@ -38,7 +38,6 @@ const OPTIONAL_TASK_FIELDS = {
   django: "djangoTask",
 };
 const THINKING_ORDER = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
-const THINKING_CAP = "medium";
 const MAX_MODEL_SCAN = 4096;
 const MAX_PLANNER_MODELS = 100;
 const MAX_PROMPT_BYTES = 96 * 1024;
@@ -49,6 +48,7 @@ const PLANNER_MAX_TOKENS = 4096;
 const TYPESAFE_PROVIDER = "typesafe";
 const TYPESAFE_SOURCE = "typesafe-auth";
 const TYPESAFE_MAX_CHOICE_OPTIONS = 255;
+const TYPESAFE_MAX_QUESTIONS = 255;
 const TYPESAFE_MODEL_PATTERN = /^jev-[a-z0-9.-]+$/;
 
 const SYSTEM_PROMPT = `You are the preflight decision-maker for Pi Tmux Orchestrator.
@@ -93,16 +93,14 @@ function selectedModels(ctx) {
   return { scoped, source: Array.isArray(source) ? source : [] };
 }
 
-function cappedThinkingLevels(model, pinnedThinking) {
-  const capIndex = THINKING_ORDER.indexOf(THINKING_CAP);
-  return availableThinkingLevels(model, pinnedThinking)
-    .filter((level) => THINKING_ORDER.indexOf(level) <= capIndex);
+function workerThinkingLevels(model, pinnedThinking) {
+  return availableThinkingLevels(model, pinnedThinking);
 }
 
 function catalogCandidate(entry, scoped) {
   const model = scoped ? entry?.model : entry;
   if (!boundedIdentifier(model?.provider) || !boundedIdentifier(model?.id)) return undefined;
-  const thinkingLevels = cappedThinkingLevels(model, scoped ? entry?.thinkingLevel : undefined);
+  const thinkingLevels = workerThinkingLevels(model, scoped ? entry?.thinkingLevel : undefined);
   if (!thinkingLevels.length) return undefined;
   return {
     model,
@@ -173,9 +171,6 @@ function requestedDecisionModel(value) {
   if (value.thinking !== undefined && !THINKING_ORDER.includes(value.thinking)) {
     throw new Error("invalid_decision_model_thinking");
   }
-  if (THINKING_ORDER.indexOf(value.thinking ?? "off") > THINKING_ORDER.indexOf(THINKING_CAP)) {
-    throw new Error("decision_model_thinking_exceeds_medium_cap");
-  }
   return { ...value };
 }
 
@@ -183,8 +178,7 @@ function configuredDecisionModel(value) {
   if (!decisionModelShape(value, true)
       || !boundedIdentifier(value.provider)
       || !boundedIdentifier(value.model)
-      || !THINKING_ORDER.includes(value.thinking)
-      || THINKING_ORDER.indexOf(value.thinking) > THINKING_ORDER.indexOf(THINKING_CAP)) {
+      || !THINKING_ORDER.includes(value.thinking)) {
     throw new Error("invalid_planner_policy_projection");
   }
   return { provider: value.provider, model: value.model, thinking: value.thinking };
@@ -299,7 +293,7 @@ export function decisionModelConfirmation(selection) {
   if (selection.kind !== "model") throw new Error("decision_model_not_selected");
   return [
     `Decision model: ${selection.provider}/${selection.modelId}`,
-    `Thinking: ${selection.thinking} (dynamic-planning cap=${THINKING_CAP})`,
+    `Thinking: ${selection.thinking} (must be supported by the selected decision model)`,
     `Source: ${selection.source}`,
     `Eligible model candidates: ${selection.candidateCount}`,
     "Payload categories: bounded task/context, canonical project identity, fixed role/contract authority, exact candidate model/thinking/capability metadata, declared catalog cost hints, and locked operator/config constraints.",
@@ -492,37 +486,29 @@ function plannerPayload(input, project, candidates, policy, topology) {
     optional_role_constraints: enabled,
     candidate_models: candidates.map((candidate) => publicPlannerCandidate(candidate)),
     locked_role_constraints: lockedRoleConstraints(input, policy, topology),
-    thinking_cap: THINKING_CAP,
+    worker_thinking_levels: THINKING_ORDER,
   };
 }
 
-function typesafeAssignmentOptions(role, candidates, input, policy, topology) {
+function typesafeRoleAxes(role, candidates, input, policy, topology) {
   const locked = roleConstraint(input, role, policy, topology);
-  const options = [];
-  for (const candidate of candidates) {
-    if (locked.provider !== undefined
-        && (candidate.provider !== locked.provider || candidate.modelId !== locked.model)) {
-      continue;
-    }
-    for (const thinking of candidate.thinkingLevels) {
-      if (locked.thinking !== undefined && thinking !== locked.thinking) continue;
-      const id = `option_${String(options.length).padStart(3, "0")}`;
-      options.push({
-        id,
-        provider: candidate.provider,
-        model: candidate.modelId,
-        thinking,
-        description: `${candidate.provider}/${candidate.modelId} thinking=${thinking}`,
-      });
-      if (options.length === TYPESAFE_MAX_CHOICE_OPTIONS) return options;
-    }
-  }
-  if (!options.length) throw new Error("typesafe_assignment_options_unavailable");
-  return options;
+  const eligible = candidates.flatMap((candidate, index) => candidate.thinkingLevels.map((thinking) => ({
+    provider: candidate.provider,
+    model: candidate.modelId,
+    thinking,
+    modelIndex: index,
+  }))).filter((tuple) => (
+    (locked.provider === undefined || tuple.provider === locked.provider && tuple.model === locked.model)
+    && (locked.thinking === undefined || tuple.thinking === locked.thinking)
+  ));
+  if (!eligible.length) throw new Error("typesafe_assignment_options_unavailable");
+  const candidateIndexes = [...new Set(eligible.map((tuple) => tuple.modelIndex))];
+  const thinkingLevels = THINKING_ORDER.filter((level) => eligible.some((tuple) => tuple.thinking === level));
+  return { eligible, candidateIndexes, thinkingLevels };
 }
 
 function typesafeQuestionState(payload) {
-  const { candidate_models: candidateModels, ...state } = payload;
+  const { candidate_models: candidateModels, worker_thinking_levels: _levels, ...state } = payload;
   return {
     ...state,
     worker_model_candidate_count: candidateModels.length,
@@ -555,28 +541,36 @@ function typesafeDecisionRequest(payload, candidates, input, policy, topology) {
       };
       inclusions.set(questionId, role);
     }
-    const options = typesafeAssignmentOptions(role, candidates, input, policy, topology);
-    if (options.length === 1) {
-      fixedAssignments.set(role, options[0]);
-      continue;
+    const axes = typesafeRoleAxes(role, candidates, input, policy, topology);
+    const modelQuestion = axes.candidateIndexes.length > 1 ? `model_${String(index).padStart(2, "0")}` : undefined;
+    const thinkingQuestion = axes.thinkingLevels.length > 1 ? `thinking_${String(index).padStart(2, "0")}` : undefined;
+    if (modelQuestion) {
+      questions[modelQuestion] = {
+        type: "choice",
+        instructions: {
+          decision: "Choose the smallest sufficient exact eligible provider/model identity by its catalog index. Capability metadata and declared catalog cost hints are in candidate_model_capabilities at that index. Missing, zero, or unavailable metadata is unknown; never guess. Declared rates are catalog hints, not billing or observed spend. Do not infer quality, coding skill, latency, or reliability from model names; honor role locks.",
+          role, contract: descriptor.contract, authority: descriptor.authority,
+        },
+        criteria: Object.fromEntries(axes.candidateIndexes.map((candidateIndex) => [
+          `m${candidateIndex.toString(36)}`, `catalog index ${candidateIndex}`,
+        ])),
+      };
     }
-    const questionId = `assignment_${String(index).padStart(2, "0")}`;
-    questions[questionId] = {
-      type: "choice",
-      instructions: {
-        decision: "Choose the smallest sufficient exact worker model and thinking combination for this role. Use candidate_model_capabilities and declared catalog cost hints. Do not infer quality, coding skill, latency, or reliability from model names. Missing, zero, or unavailable metadata is unknown; never guess. Declared rates are catalog hints, not billing or observed spend. Honor locked exact overrides.",
-        role,
-        contract: descriptor.contract,
-        authority: descriptor.authority,
-      },
-      criteria: Object.fromEntries(options.map((option) => [option.id, option.description])),
-    };
-    assignments.set(questionId, {
-      role,
-      options: new Map(options.map((option) => [option.id, option])),
-    });
+    if (thinkingQuestion) {
+      questions[thinkingQuestion] = {
+        type: "choice",
+        instructions: {
+          decision: "Choose one exact model-supported worker thinking level from this role's eligible levels; the selected model/level pair must be an eligible catalog tuple.",
+          role, contract: descriptor.contract, authority: descriptor.authority,
+        },
+        criteria: Object.fromEntries(axes.thinkingLevels.map((level) => [level, level])),
+      };
+    }
+    if (!modelQuestion && !thinkingQuestion) fixedAssignments.set(role, axes.eligible[0]);
+    else assignments.set(role, { axes, modelQuestion, thinkingQuestion });
   }
   let lockedConfirmation;
+  if (Object.keys(questions).length > TYPESAFE_MAX_QUESTIONS) throw new Error("typesafe_question_limit_exceeded");
   if (!Object.keys(questions).length) {
     lockedConfirmation = "locked_plan";
     questions[lockedConfirmation] = {
@@ -700,13 +694,28 @@ function parseTypeSafeDecision(responseValue, requestValue, candidates, input, p
   }
   const assignmentByRole = new Map(requestValue.fixedAssignments);
   const assignmentConfidence = new Map();
-  for (const [questionId, assignment] of requestValue.assignments) {
-    const answer = typesafeChoiceAnswer(
-      response.answers[questionId],
-      new Set(assignment.options.keys()),
-    );
-    assignmentByRole.set(assignment.role, assignment.options.get(answer.choice));
-    assignmentConfidence.set(assignment.role, answer.confidence);
+  for (const [role, assignment] of requestValue.assignments) {
+    let selectedModelIndex = assignment.axes.candidateIndexes[0];
+    let selectedThinking = assignment.axes.thinkingLevels[0];
+    let confidence = 1;
+    if (assignment.modelQuestion) {
+      const options = new Set(Object.keys(requestValue.questions[assignment.modelQuestion].criteria));
+      const answer = typesafeChoiceAnswer(response.answers[assignment.modelQuestion], options);
+      selectedModelIndex = Number.parseInt(answer.choice.slice(1), 36);
+      confidence = answer.confidence;
+    }
+    if (assignment.thinkingQuestion) {
+      const options = new Set(Object.keys(requestValue.questions[assignment.thinkingQuestion].criteria));
+      const answer = typesafeChoiceAnswer(response.answers[assignment.thinkingQuestion], options);
+      selectedThinking = answer.choice;
+      confidence = Math.min(confidence, answer.confidence);
+    }
+    const tuple = assignment.axes.eligible.find((item) => (
+      item.modelIndex === selectedModelIndex && item.thinking === selectedThinking
+    ));
+    if (!tuple) throw new Error("typesafe_assignment_tuple_invalid");
+    assignmentByRole.set(role, tuple);
+    assignmentConfidence.set(role, confidence);
   }
   if (requestValue.lockedConfirmation) {
     const answer = typesafeChoiceAnswer(
@@ -788,9 +797,6 @@ function validateLockedConstraint(locked, candidates) {
   }
   if (locked.thinking !== undefined && !THINKING_ORDER.includes(locked.thinking)) {
     throw new Error("dynamic_planning_thinking_invalid");
-  }
-  if (THINKING_ORDER.indexOf(locked.thinking ?? "off") > THINKING_ORDER.indexOf(THINKING_CAP)) {
-    throw new Error("dynamic_planning_thinking_exceeds_medium_cap");
   }
   if (locked.provider === undefined) return;
   const candidate = exactCandidate(candidates, locked.provider, locked.model);
@@ -1095,12 +1101,26 @@ export function plannerPlanConfirmation(plan) {
 export const plannerTestHooks = {
   MAX_PROMPT_BYTES,
   MAX_RESPONSE_BYTES,
+  MAX_PLANNER_MODELS,
+  TYPESAFE_MAX_QUESTIONS,
   PLANNER_MAX_TOKENS,
   PLANNER_TIMEOUT_MS,
   ROLE_ORDER,
   SYSTEM_PROMPT,
-  THINKING_CAP,
   TYPESAFE_MAX_CHOICE_OPTIONS,
   TYPESAFE_PROVIDER,
   TYPESAFE_SOURCE,
+  parseTypeSafeDecisionForTest: (response, request, candidates, ctx, selection, topology, policy, bindingOptions) => {
+    const parsed = parseTypeSafeDecision(
+      response, request, candidates, ctx, policy ?? selection.policy, topology,
+    );
+    if (bindingOptions) Object.assign(parsed, bindingOptions);
+    return parsed;
+  },
+  typeSafeDecisionRequestForTest: (payload, candidates, input, policy, topology) => typesafeDecisionRequest(
+    payload, candidates, input, eligiblePlannerRoles(input, topology, candidates), topology,
+  ),
+  plannerPayloadForTest: (input, project, candidates, policy, topology) => plannerPayload(
+    input, project, candidates, eligiblePlannerRoles(input, topology, candidates), topology,
+  ),
 };

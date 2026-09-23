@@ -17,7 +17,9 @@ from .planning import metadata_digest
 PLANNER_POLICY_VERSION = 1
 MAX_PLANNER_POLICY_BYTES = 32 * 1024
 MAX_PLANNER_FALLBACKS = 16
-PLANNER_THINKING_LEVELS = frozenset({"off", "minimal", "low", "medium"})
+PLANNER_THINKING_LEVELS = frozenset(
+    {"off", "minimal", "low", "medium", "high", "xhigh", "max"}
+)
 PLANNER_NO_ELIGIBLE = frozenset({"cancel", "static"})
 PLANNER_POLICY_FIELDS = frozenset({"version", "preferred", "fallbacks", "noEligible"})
 PLANNER_MODEL_FIELDS = frozenset({"provider", "model", "thinking"})
@@ -90,7 +92,7 @@ def _decision_model(value: object, label: str) -> dict[str, str]:
     thinking = value.get("thinking")
     if not isinstance(thinking, str) or thinking not in PLANNER_THINKING_LEVELS:
         raise OrchestrationError(
-            f"Planner policy {label}.thinking must be off, minimal, low, or medium"
+            f"Planner policy {label}.thinking must be off, minimal, low, medium, high, xhigh, or max"
         )
     return {
         "provider": _bounded_identifier(value.get("provider"), f"{label}.provider"),
