@@ -700,6 +700,10 @@ class BrokerRecoveryTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
                     now,
                 ),
             )
+            database.execute(
+                "UPDATE roles SET active_assignment_id=?,state='active' WHERE role='reviewer'",
+                (assignment_id,),
+            )
         writer = mock.Mock()
         writer.drain = mock.AsyncMock()
         client = Client("reviewer", mock.Mock(), writer)

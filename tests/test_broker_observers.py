@@ -226,7 +226,7 @@ class BrokerObserverTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
                     "implementer",
                     1,
                     "plan",
-                    "accepted",
+                    "active",
                     "8" * 32,
                     now,
                     now,
@@ -250,6 +250,38 @@ class BrokerObserverTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
                         "summary": "Wrong assignment kind.",
                     },
                 },
+            )
+
+        with broker_store.connect_broker_database(self.coord) as database:
+            database.execute(
+                "UPDATE roles SET active_assignment_id=? WHERE role='implementer'",
+                ("a" * 32,),
+            )
+        with self.assertRaisesRegex(Exception, "not active for this role"):
+            await broker.handle_report(
+                client,
+                {
+                    "id": "4" * 32,
+                    "assignment_id": assignment_id,
+                    "report": validate_report(
+                        {
+                            "kind": "plan",
+                            "summary": "Stale assignment report.",
+                            "relevant_paths": [],
+                            "relevant_symbols": [],
+                            "intended_changes": [],
+                            "required_checks": [],
+                            "risks": [],
+                            "open_questions": [],
+                        },
+                        "implementer",
+                    ),
+                },
+            )
+        with broker_store.connect_broker_database(self.coord) as database:
+            database.execute(
+                "UPDATE roles SET active_assignment_id=? WHERE role='implementer'",
+                (assignment_id,),
             )
 
         plan = {
