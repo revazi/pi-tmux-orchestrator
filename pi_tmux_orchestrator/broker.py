@@ -88,6 +88,7 @@ class Broker(BrokerControlSupport, BrokerObserverSupport, BrokerWorkflowSupport)
         self.workspace_capsule = self.task_bodies.get("workspace_capsule")
         self.dashboard = BrokerDashboard(manifest)
         self.dashboard_active = False
+        self.dashboard_ticker: asyncio.Task[None] | None = None
 
     def _load_startup_payload(self) -> dict[str, Any]:
         path = self.coord / "startup.json"
@@ -144,10 +145,20 @@ class Broker(BrokerControlSupport, BrokerObserverSupport, BrokerWorkflowSupport)
     async def run(self) -> None:
         with self.dashboard:
             self.dashboard_active = True
+            if self.dashboard.interactive:
+                self.dashboard_ticker = asyncio.create_task(
+                    self._dashboard_presentation_ticker()
+                )
             try:
                 await self._run()
             finally:
                 self.dashboard_active = False
+                if self.dashboard_ticker is not None:
+                    self.dashboard_ticker.cancel()
+                    try:
+                        await self.dashboard_ticker
+                    except asyncio.CancelledError:
+                        pass
 
     async def _run(self) -> None:
         prepare_broker_database(self.coord)
@@ -211,6 +222,13 @@ class Broker(BrokerControlSupport, BrokerObserverSupport, BrokerWorkflowSupport)
             socket_path.unlink()
         except FileNotFoundError:
             pass
+
+    async def _dashboard_presentation_ticker(self) -> None:
+        """Bounded 250ms local redraw cadence; it never reads broker metadata."""
+        while self.dashboard_active:
+            await asyncio.sleep(0.25)
+            if self.dashboard_active:
+                self.dashboard.presentation_tick()
 
     def refresh_dashboard(self) -> None:
         """Refresh presentation after state writes without affecting broker behavior."""

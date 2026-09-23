@@ -270,7 +270,8 @@ class DashboardRenderingTests(DashboardFixture):
             height=30,
             color=False,
         )
-        self.assertNotIn("▰", idle)
+        self.assertIn("LIVE", idle)
+        self.assertNotIn("▰", idle.split("NOW", 1)[0])
         self.assertNotIn("PRIVATE_", "\n".join(frames))
 
     def test_assignment_guardrail_markers_are_visible_in_every_layout(self) -> None:
@@ -454,6 +455,124 @@ class DashboardTerminalModeTests(DashboardFixture):
         self.assertIn("\x1b[?25h", output)
         self.assertNotIn("\x1b[32m", output)
         self.assertNotIn("\x1b[36m", output)
+
+    def test_presentation_tick_animates_active_without_metadata_reads(self) -> None:
+        stream = FakeStream(tty=True)
+        dashboard = BrokerDashboard(
+            self.manifest,
+            stream=stream,
+            environ={"TERM": "tmux-256color", "NO_COLOR": "1"},
+            size_getter=self.size_getter,
+        )
+        snapshot = copy.deepcopy(self.snapshot)
+        snapshot["roles"][0].pop("activity", None)
+        with dashboard:
+            dashboard.refresh(snapshot, self.events)
+            before = stream.getvalue().count("\x1b[H")
+            dashboard.presentation_tick()
+            dashboard.presentation_tick()
+        output = stream.getvalue()
+        self.assertGreater(output.count("\x1b[H"), before)
+        self.assertEqual(dashboard._presentation_frame, 2)
+        self.assertIn("active", output)
+        self.assertIn("LIVE", output)
+
+    def test_presentation_tick_animates_loading_but_not_static_or_plain(self) -> None:
+        for tty in (True, False):
+            with self.subTest(tty=tty):
+                stream = FakeStream(tty=tty)
+                dashboard = BrokerDashboard(
+                    self.manifest,
+                    stream=stream,
+                    environ={"TERM": "xterm-256color", "NO_COLOR": "1"},
+                    size_getter=self.size_getter,
+                )
+                loading = copy.deepcopy(self.snapshot)
+                loading["workflow"]["state"] = "starting"
+                for role in loading["roles"]:
+                    role["state"] = "disconnected"
+                    role.pop("activity", None)
+                first_loading = render_dashboard(
+                    self.manifest,
+                    loading,
+                    self.events,
+                    width=180,
+                    height=30,
+                    color=False,
+                    presentation_frame=0,
+                )
+                second_loading = render_dashboard(
+                    self.manifest,
+                    loading,
+                    self.events,
+                    width=180,
+                    height=30,
+                    color=False,
+                    presentation_frame=1,
+                )
+                self.assertNotEqual(first_loading, second_loading)
+                self.assertIn("LOADING", first_loading)
+                with dashboard:
+                    dashboard.refresh(loading, self.events)
+                    initial = stream.getvalue().count("\x1b[H")
+                    dashboard.presentation_tick()
+                    self.assertEqual(
+                        stream.getvalue().count("\x1b[H"), initial + int(tty)
+                    )
+                    static = copy.deepcopy(self.snapshot)
+                    static["workflow"]["state"] = "ready"
+                    for role in static["roles"]:
+                        role["state"] = "waiting"
+                    dashboard.refresh(static, self.events)
+                    before = stream.getvalue()
+                    dashboard.presentation_tick()
+                    self.assertEqual(stream.getvalue(), before)
+
+    def test_presentation_frames_move_in_all_adaptive_layouts_and_ascii(self) -> None:
+        snapshot = copy.deepcopy(self.snapshot)
+        snapshot["roles"][0].pop("activity", None)
+        for width, height in ((180, 30), (80, 18), (45, 14)):
+            first = render_dashboard(
+                self.manifest,
+                snapshot,
+                self.events,
+                width=width,
+                height=height,
+                color=False,
+                presentation_frame=0,
+            )
+            second = render_dashboard(
+                self.manifest,
+                snapshot,
+                self.events,
+                width=width,
+                height=height,
+                color=False,
+                presentation_frame=1,
+            )
+            with self.subTest(width=width):
+                self.assertNotEqual(first, second)
+                if width == 45:
+                    # The active role animates, but a waiting role remains static.
+                    self.assertEqual(
+                        first.splitlines()[4].split("LIVE", 1)[0],
+                        second.splitlines()[4].split("LIVE", 1)[0],
+                    )
+                self.assertLessEqual(len(second.splitlines()), height)
+                self.assertTrue(
+                    all(len(line) <= width - 1 for line in second.splitlines())
+                )
+        ascii_frame = render_dashboard(
+            self.manifest,
+            snapshot,
+            self.events,
+            width=180,
+            height=30,
+            color=False,
+            unicode=False,
+            presentation_frame=1,
+        )
+        ascii_frame.encode("ascii")
 
     def test_size_change_repaints_new_layout_while_same_size_is_suppressed(
         self,
