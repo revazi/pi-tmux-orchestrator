@@ -239,6 +239,34 @@ model choice, failed mandatory review, or unexpected provider request. Synthetic
 and fixed-output runs remain lifecycle evidence only and never fill a quality or
 cost cell.
 
+#### Configurable Jev guidance production-wire acceptance — 2026-09-24
+
+One separately authorized dynamic start used the direct fixed-endpoint TypeSafe
+adapter with configured user-global `jevGuidance`. TypeSafe accepted the request
+and returned decision model `jev-1.13.0`; retained provenance records provider
+`typesafe`, source `typesafe-auth`, and the compatibility decision thinking value
+`off`. The call reported 11,413 input and 2,401 output tokens (13,814 total);
+monetary cost remained unavailable rather than estimated.
+
+The authorization exposed configured status and only guidance digest prefix
+`d8f66938f129`, not the guidance body. Jev selected the exact available tuples
+`openai-codex/gpt-6-luna` with thinking `off` for the implementer and mandatory
+reviewer, with no optional specialist. The launch reread policy and accepted the
+same full planner-policy binding
+`02d645f8cff0775490675ec537b45afc201036b0b1e6b23467f73ce74cabd0ff`.
+Retained manifest/planning provenance, JSON and human status, broker/dashboard
+metadata, and structured reports contained the decision identity, exact worker
+tuples, usage, and opaque digests without the guidance body. The run reached
+`ready` after mandatory review.
+
+This establishes one successful production-wire request, accepted typed
+response, deterministic tuple validation, body-free public/retained planning
+surfaces, and unchanged-policy launch revalidation. It does not establish that
+Jev followed the preference semantically, that the chosen roster or tuples were
+better, or that guidance improves cost or quality. The model-free regression
+still supplies the separate negative case proving that a changed guidance digest
+rejects launch before workers start.
+
 #### Issue #174 fallback benchmark evidence
 
 One explicitly authorized provider-backed run of the frozen three-case matrix was
