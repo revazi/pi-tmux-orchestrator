@@ -14,6 +14,14 @@ from .broker_store import public_broker_events, public_broker_snapshot
 from .role_registry import valid_custom_role_id
 
 MAX_DASHBOARD_EVENTS = 8
+_COMPACT_COLUMNS = {
+    "role": 15,
+    "link": 5,
+    "state": 17,
+    "tokens": 10,
+    "context": 6,
+    "thinking": 7,
+}
 
 SEMANTIC_ANSI = {
     "success": "32",
@@ -259,7 +267,7 @@ def _connection(role: dict[str, Any], *, unicode: bool, compact: bool = False) -
         f"g{generation}" if type(generation) is int and generation > 0 else "g?"
     )
     if compact:
-        return f"{marker}{generation_text}"
+        return f"{marker} {generation_text}"
     return f"{marker} {'up' if connected else 'dn'} · {generation_text}"
 
 
@@ -288,6 +296,12 @@ def _role_glyph(role: object, *, unicode: bool) -> str:
     if pair is None:
         return "🧩" if unicode and valid_custom_role_id(name) else ""
     return pair[0] if unicode else pair[1]
+
+
+def _role_label(role: object, *, unicode: bool) -> str:
+    name = sanitize_terminal_text(role, fallback="unknown")
+    glyph = _role_glyph(name, unicode=unicode)
+    return f"{glyph} {name}" if glyph else name
 
 
 def _activity_bar(
@@ -574,7 +588,7 @@ def _full_role_lines(
     presentation_frame: int = 0,
 ) -> list[Line]:
     columns = {
-        "role": 11,
+        "role": 15,
         "link": 9,
         "state": 18,
         "work": 18,
@@ -618,7 +632,13 @@ def _full_role_lines(
             f"{sanitize_terminal_text(config.get('model'))}"
         )
         cells = [
-            Span(_cell(name, columns["role"], unicode=unicode)),
+            Span(
+                _cell(
+                    _role_label(name, unicode=unicode),
+                    columns["role"],
+                    unicode=unicode,
+                )
+            ),
             Span(gap),
             Span(
                 _cell(
@@ -675,14 +695,8 @@ def _compact_role_lines(
     unicode: bool,
     presentation_frame: int = 0,
 ) -> list[Line]:
-    role_width = 11
-    state_width = 16
-    token_width = 8
-    context_width = 6
-    thinking_width = 7
-    fixed = (
-        4 + role_width + state_width + token_width + context_width + thinking_width + 6
-    )
+    columns = _COMPACT_COLUMNS
+    fixed = sum(columns.values()) + 7
     model_width = max(6, width - fixed)
     lines: list[Line] = []
     for name, config, role in _ordered_roles(manifest, snapshot):
@@ -694,25 +708,32 @@ def _compact_role_lines(
         )
         token_text = _format_role_tokens(role)
         if budget:
-            token_text = f"!{token_text}"
+            token_text = f"{'⚠' if unicode else '!'} {token_text}"
         lines.append(
             [
                 Span(
                     _cell(
+                        _role_label(name, unicode=unicode),
+                        columns["role"],
+                        unicode=unicode,
+                    )
+                ),
+                Span(" "),
+                Span(
+                    _cell(
                         _connection(role, unicode=unicode, compact=True),
-                        4,
+                        columns["link"],
                         unicode=unicode,
                     ),
                     "success" if connected else "error",
                 ),
-                Span(_cell(name, role_width, unicode=unicode)),
                 Span(" "),
                 Span(
                     _cell(
                         _live_state(
                             role, unicode=unicode, presentation_frame=presentation_frame
                         ),
-                        state_width,
+                        columns["state"],
                         unicode=unicode,
                     ),
                     state_semantic(
@@ -723,25 +744,55 @@ def _compact_role_lines(
                 ),
                 Span(" "),
                 Span(
-                    _cell(token_text, token_width, unicode=unicode, align="right"),
+                    _cell(
+                        token_text,
+                        columns["tokens"],
+                        unicode=unicode,
+                        align="right",
+                    ),
                     "warning" if budget else "normal",
                 ),
                 Span(" "),
                 Span(
                     _cell(
                         _format_context(role),
-                        context_width,
+                        columns["context"],
                         unicode=unicode,
                         align="right",
                     )
                 ),
                 Span(" "),
-                Span(_cell(config.get("thinking"), thinking_width, unicode=unicode)),
+                Span(
+                    _cell(
+                        config.get("thinking"),
+                        columns["thinking"],
+                        unicode=unicode,
+                    )
+                ),
                 Span("  "),
                 Span(_cell(model, model_width, unicode=unicode)),
             ]
         )
     return lines
+
+
+def _compact_role_header(width: int, *, unicode: bool) -> Line:
+    columns = _COMPACT_COLUMNS
+    fixed = sum(columns.values()) + 7
+    model_width = max(6, width - fixed)
+    headings = [
+        ("ROLE", columns["role"]),
+        ("LINK", columns["link"]),
+        ("STATUS", columns["state"]),
+        ("TOKENS", columns["tokens"]),
+        ("CTX", columns["context"]),
+        ("THINK", columns["thinking"]),
+        ("MODEL", model_width),
+    ]
+    cells = [
+        _cell(label, column_width, unicode=unicode) for label, column_width in headings
+    ]
+    return [Span(" ".join(cells[:-1]) + "  " + cells[-1], "muted")]
 
 
 def _event_lines(events: list[dict[str, Any]], *, unicode: bool) -> list[Line]:
@@ -876,12 +927,7 @@ def _compact_layout(
     )
     if now is not None:
         lines.append(now)
-    lines.extend(
-        [
-            _line(),
-            _line("ROLES  LINK/GEN · LIVE · TOTAL/Δ · CTX · THINK · MODEL", "muted"),
-        ]
-    )
+    lines.extend([_line(), _compact_role_header(width, unicode=unicode)])
     lines.extend(
         _compact_role_lines(
             manifest,
@@ -947,7 +993,7 @@ def _narrow_layout(
         lines.append(
             [
                 Span(f"{marker} ", "success" if connected else "error"),
-                Span(name),
+                Span(_role_label(name, unicode=unicode)),
                 Span(" [read-only]" if valid_custom_role_id(name) else "", "muted"),
                 Span("  "),
                 Span(
@@ -960,19 +1006,6 @@ def _narrow_layout(
                         ).split(" ", 1)[0]
                     ),
                 ),
-                Span(" LIVE ", "muted") if role.get("state") == "active" else Span(""),
-                Span(
-                    _activity_bar(
-                        None,
-                        unicode=unicode,
-                        width=5,
-                        blob=2,
-                        presentation_frame=presentation_frame,
-                    ),
-                    "active",
-                )
-                if role.get("state") == "active"
-                else Span(""),
                 Span(f"  {token_text}  {_format_context(role)}"),
             ]
         )

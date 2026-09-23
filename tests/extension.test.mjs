@@ -583,7 +583,7 @@ test("dashboard sessions become usable while an explicitly requested doctor rema
   const partial = overlay.render(100).join("\n");
   assert.match(partial, /pi-alpha-agents/);
   assert.match(partial, /2 running/);
-  assert.match(partial, /2 running/);
+  assert.doesNotMatch(partial, /Loading sessions|refreshing/);
   assert.match(partial, /Running doctor/);
   overlay.handleInput("j");
   overlay.handleInput("\r");

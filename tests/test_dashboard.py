@@ -162,6 +162,59 @@ class DashboardRenderingTests(DashboardFixture):
         self.assertIn("pi-tmux-agents stop pi-dashboard-test --yes", rendered)
         self.assertIn("prefix + L return", rendered)
 
+    def test_compact_role_table_uses_clean_columns_and_role_icons(self) -> None:
+        manifest = copy.deepcopy(self.manifest)
+        snapshot = copy.deepcopy(self.snapshot)
+        additions = {
+            "probe": ("🔎", "P"),
+            "playwright": ("🎭", "W"),
+            "django": ("🐍", "D"),
+        }
+        for name in additions:
+            manifest["roles"][name] = {
+                "provider": "openai-codex",
+                "model": "gpt-6-luna",
+                "thinking": "off",
+            }
+            snapshot["roles"].append(
+                {
+                    "role": name,
+                    "state": "idle",
+                    "connected": True,
+                    "generation": 1,
+                    "total_tokens": 7_400,
+                    "context_percent": 1.5,
+                }
+            )
+        rendered = render_dashboard(
+            manifest,
+            snapshot,
+            self.events,
+            width=110,
+            height=18,
+            color=False,
+        )
+        self.assertRegex(
+            rendered, r"ROLE\s+LINK\s+STATUS\s+TOKENS\s+CTX\s+THINK\s+MODEL"
+        )
+        self.assertNotIn("LINK/GEN · LIVE", rendered)
+        self.assertRegex(rendered, r"⚡ implementer\s+● g2")
+        self.assertIn("👀 reviewer", rendered)
+        for name, (glyph, _) in additions.items():
+            self.assertIn(f"{glyph} {name}", rendered)
+        ascii_rendered = render_dashboard(
+            manifest,
+            snapshot,
+            self.events,
+            width=110,
+            height=18,
+            color=False,
+            unicode=False,
+        )
+        ascii_rendered.encode("ascii")
+        for name, (_, marker) in additions.items():
+            self.assertIn(f"{marker} {name}", ascii_rendered)
+
     def test_dashboard_uses_manifest_launch_models_not_snapshot_claims(self) -> None:
         snapshot = copy.deepcopy(self.snapshot)
         snapshot["roles"][0]["provider"] = "openai"
@@ -602,7 +655,7 @@ class DashboardTerminalModeTests(DashboardFixture):
         self.assertEqual(output.count("\x1b[H"), 2)
         full_frame, compact_frame = output.split("\x1b[H")[1:]
         self.assertIn("RECENT METADATA EVENTS", full_frame)
-        self.assertIn("ROLES LINK/GEN", compact_frame)
+        self.assertRegex(compact_frame, r"ROLE\s+LINK\s+STATUS\s+TOKENS")
         self.assertNotIn("ASSIGNMENT", compact_frame)
 
     def test_unavailable_view_forces_unchanged_frame_to_repaint_on_recovery(

@@ -39,10 +39,10 @@ TRANSPORT TUI   PROTOCOL BROKER-V1 / V1   ACTUAL USAGE 42.8k TOKENS
 NOW  ⚡ implementer  LIVE ▰▰▰▰▱▱▱▱▱▱▱▱  streaming  →  👀 reviewer waiting
 
 ROLES
-ROLE         LINK       LIVE         ASSIGNMENT          MODEL                    THINK   TOTAL/Δ   CTX
+ROLE             LINK       LIVE         ASSIGNMENT          MODEL                    THINK   TOTAL/Δ   CTX
 --------------------------------------------------------------------------------------------------------
-implementer  ● up · g1  streaming ▰▰▰▱▱▱  r2 implementation   anthropic/model-name     high     31.2k/+4k  62.4%
-reviewer     ● up · g1  waiting      r2 review           google/model-name        medium   11.6k/+1k  28.1%
+⚡ implementer   ● up · g1  streaming ▰▰▰▱▱▱  r2 implementation   anthropic/model-name     high     31.2k/+4k  62.4%
+👀 reviewer      ● up · g1  waiting      r2 review           google/model-name        medium   11.6k/+1k  28.1%
 
 RECENT METADATA EVENTS
 #00124  14:03:18  implementer  💫 worker_lifecycle  active     r2
@@ -66,15 +66,18 @@ never the only state signal.
 | `error` | red | `uncertain`, disconnected, error/failed/rejected/conflict |
 | `muted` | dim neutral | secondary labels, timestamps, unknown/starting metadata |
 
-The product heading and round use bold emphasis. No role receives a decorative
-identity color, so the same state always has the same meaning across rows.
+The product heading and round use bold emphasis. Built-in roles use redundant,
+stable icons across layouts: `⚡` implementer, `👀` reviewer, `🔎` probe, `🎭`
+Playwright, and `🐍` Django; ASCII output uses `I`, `R`, `P`, `W`, and `D`.
+No role receives a decorative identity color, so the same state always has the
+same meaning across rows.
 
 ## Responsive contract
 
 | Layout | Breakpoint | Preserved information |
 |---|---|---|
 | Full | width >= 100 and height >= 22 | Project, assignment, full role columns, bounded event rail, two-line actions |
-| Compact | width >= 64 and height >= 12 | Identity/state, transport/protocol, one role row with generation, lifecycle, usage/context, assignment-guardrail marker, thinking/model; events when height remains |
+| Compact | width >= 64 and height >= 12 | A conventional `ROLE / LINK / STATUS / TOKENS / CTX / THINK / MODEL` table with role icons, generation, lifecycle, assignment-guardrail marker, and events when height remains |
 | Narrow | otherwise | Identity/state first, one role health row each with assignment-guardrail marker; model/thinking/assignment details and events only when height remains; hidden roles are counted |
 
 Every rendered line is limited to one column less than the pane width to avoid
