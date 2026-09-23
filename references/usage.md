@@ -216,14 +216,21 @@ The policy is read through the authoritative Python boundary from
     { "provider": "provider-c", "model": "exact-model-c", "thinking": "medium" }
   ],
   "noEligible": "cancel",
-  "jevGuidance": "Prefer the smallest useful roster. Use deeper thinking only for ambiguous, security-sensitive, or high-risk work."
+  "jevGuidance": "Prefer the smallest useful roster. Balance declared token and cost efficiency against outcome risk: choose the least resource-intensive exact candidate whose listed capabilities are clearly sufficient for a correct, complete outcome, and avoid lightweight variants when their capability margin is uncertain. When authoritative catalog facts establish recency and otherwise-sufficient candidates show no clear advantage for an older option, prefer the more recent candidate; never infer recency, quality, coding skill, latency, or reliability from model names. Use deeper thinking only for ambiguous, security-sensitive, or high-risk work."
 }
 ```
 
 `jevGuidance` is optional natural-language text in this same planner policy file;
 it may also be `null`. It expresses preferences such as roster economy,
-specialist thresholds, model-cost posture, or thinking depth. The text is sent
-only to the direct TypeSafe Jev request as `state.jev_behavior_guidance`. Every
+specialist thresholds, model-cost posture, or thinking depth. Write those
+preferences in terms of listed capabilities, declared catalog cost hints, task
+risk, and outcome sufficiency. Guidance is not a model allow/deny list: do not
+write “never use model X” or “prefer model Y.” Apply hard model exclusions
+through Pi's authoritative model scope, or use exact per-run role overrides.
+The current canonical capability projection has no recency field, so Jev must
+not infer model age from names; a recency preference applies only when
+authoritative catalog facts establish it. The text is sent only to the direct
+TypeSafe Jev request as `state.jev_behavior_guidance`. Every
 typed question explicitly makes it subordinate to the exact candidate scope,
 fixed role authority, hard rules, and locked constraints. It cannot add a
 role/model, create an operator model allowlist, direct selection by model name,

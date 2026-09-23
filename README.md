@@ -321,12 +321,18 @@ Dynamic planning uses a separate strict user-global file,
     { "provider": "provider-c", "model": "exact-model-c", "thinking": "medium" }
   ],
   "noEligible": "cancel",
-  "jevGuidance": "Prefer the smallest useful roster. Use deeper thinking only for ambiguous, security-sensitive, or high-risk work."
+  "jevGuidance": "Prefer the smallest useful roster. Balance declared token and cost efficiency against outcome risk: choose the least resource-intensive exact candidate whose listed capabilities are clearly sufficient for a correct, complete outcome, and avoid lightweight variants when their capability margin is uncertain. When authoritative catalog facts establish recency and otherwise-sufficient candidates show no clear advantage for an older option, prefer the more recent candidate; never infer recency, quality, coding skill, latency, or reliability from model names. Use deeper thinking only for ambiguous, security-sensitive, or high-risk work."
 }
 ```
 
 `jevGuidance` is optional and may be `null`; it affects only direct TypeSafe Jev
 and remains subordinate to the exact candidate scope and hard planning rules.
+Write preferences in terms of listed capabilities, declared cost hints, task risk,
+and outcome sufficiency—not model names. Guidance cannot enforce “never use model
+X” or “prefer model Y.” Apply hard exclusions through Pi's authoritative model
+scope, or use exact per-run role overrides. Because the current capability
+projection has no recency field, Jev must not infer model age from an identity;
+recency preferences apply only if authoritative catalog facts establish it.
 This file is validated for every dynamic start, but its identities configure
 only the Pi-model fallback path used when TypeSafe authentication and an
 explicit Pi decision model are both absent. Resolve every identity from
