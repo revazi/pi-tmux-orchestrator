@@ -182,7 +182,7 @@ class BrokerWorkflowSupport:
                 (client.role,),
             ).fetchone()
             if (
-                assignment["state"] in {"completed", "uncertain", "failed"}
+                assignment["state"] != "accepted"
                 or role_state is None
                 or role_state["active_assignment_id"] != assignment_id
             ):
