@@ -2,9 +2,11 @@
 
 This document is the review contract for the `BROKER + STATUS` pane. The
 broker remains the authoritative state writer and event source; tmux only hosts
-and displays this projection. A dashboard refresh is requested by broker state
-transitions or a supported terminal resize signal, never by a timer, polling
-loop, or model turn.
+and displays this projection. Broker metadata refreshes are requested by state
+transitions or a supported terminal resize signal. While an interactive pane
+shows loading or active work, a bounded 250ms presentation ticker repaints cached
+metadata only; it does not read broker state or imply provider/workflow progress.
+Static states and non-TTY output suppress these local animation frames.
 
 ## Operator hierarchy
 
@@ -12,6 +14,8 @@ The pane answers these questions in order:
 
 1. **Where am I?** Product, exact session, project (when space permits).
 2. **What needs attention?** Workflow state and round are the strongest line.
+   Starting, connecting, and initializing include a presentation-only `LOADING`
+   spinner even before any worker emits streaming activity.
 3. **How is it coordinated?** Worker transport, broker protocol, and actual
    provider-reported run tokens.
 4. **Who is doing what right now?** A NOW flow line names the active worker,
@@ -35,10 +39,10 @@ TRANSPORT TUI   PROTOCOL BROKER-V1 / V1   ACTUAL USAGE 42.8k TOKENS
 NOW  ⚡ implementer  LIVE ▰▰▰▰▱▱▱▱▱▱▱▱  streaming  →  👀 reviewer waiting
 
 ROLES
-ROLE         LINK       LIVE         ASSIGNMENT          MODEL                    THINK   TOTAL/Δ   CTX
+ROLE             LINK       LIVE         ASSIGNMENT          MODEL                    THINK   TOTAL/Δ   CTX
 --------------------------------------------------------------------------------------------------------
-implementer  ● up · g1  streaming ▰▰▰▱▱▱  r2 implementation   anthropic/model-name     high     31.2k/+4k  62.4%
-reviewer     ● up · g1  waiting      r2 review           google/model-name        medium   11.6k/+1k  28.1%
+⚡ implementer   ● up · g1  streaming ▰▰▰▱▱▱  r2 implementation   anthropic/model-name     high     31.2k/+4k  62.4%
+👀 reviewer      ● up · g1  waiting      r2 review           google/model-name        medium   11.6k/+1k  28.1%
 
 RECENT METADATA EVENTS
 #00124  14:03:18  implementer  💫 worker_lifecycle  active     r2
@@ -62,15 +66,18 @@ never the only state signal.
 | `error` | red | `uncertain`, disconnected, error/failed/rejected/conflict |
 | `muted` | dim neutral | secondary labels, timestamps, unknown/starting metadata |
 
-The product heading and round use bold emphasis. No role receives a decorative
-identity color, so the same state always has the same meaning across rows.
+The product heading and round use bold emphasis. Built-in roles use redundant,
+stable icons across layouts: `⚡` implementer, `👀` reviewer, `🔎` probe, `🎭`
+Playwright, and `🐍` Django; ASCII output uses `I`, `R`, `P`, `W`, and `D`.
+No role receives a decorative identity color, so the same state always has the
+same meaning across rows.
 
 ## Responsive contract
 
 | Layout | Breakpoint | Preserved information |
 |---|---|---|
 | Full | width >= 100 and height >= 22 | Project, assignment, full role columns, bounded event rail, two-line actions |
-| Compact | width >= 64 and height >= 12 | Identity/state, transport/protocol, one role row with generation, lifecycle, usage/context, assignment-guardrail marker, thinking/model; events when height remains |
+| Compact | width >= 64 and height >= 12 | A conventional `ROLE / LINK / STATUS / TOKENS / CTX / THINK / MODEL` table with role icons, generation, lifecycle, assignment-guardrail marker, and events when height remains |
 | Narrow | otherwise | Identity/state first, one role health row each with assignment-guardrail marker; model/thinking/assignment details and events only when height remains; hidden roles are counted |
 
 Every rendered line is limited to one column less than the pane width to avoid
@@ -114,10 +121,11 @@ The dashboard is a control-plane summary, not another worker log:
 - Cost, detailed token categories, full timestamps, and long model identifiers
   yield to state and role legibility at constrained sizes; exact retained data
   remains available through status/Supervisor APIs.
-- Timer-driven spinners, progress estimates, and hard-budget gauges are omitted
-  because they would imply polling or precision the broker does not have. The
-  bouncing `LIVE` bar is an activity marker, not percent-complete. It advances
-  only on real worker events. A compact `G~`/`G!`
+- Progress estimates and hard-budget gauges are omitted because they would imply
+  precision the broker does not have. The bouncing `LIVE` bar is an activity
+  marker, not percent-complete. It advances on authoritative worker pulses or a
+  local presentation-only frame; that frame does not change phase, reports,
+  usage, or event history. A compact `G~`/`G!`
   prefix denotes a retained assignment warning/hard fact without presenting it
   as a live gauge.
 
@@ -135,10 +143,16 @@ already cached by the startup notice. Pressing `d` explicitly starts the
 current-project doctor operation and displays its bounded result. Doctor model
 discovery is shared per distinct provider within that CLI operation rather than
 launching Pi once per role. The overlay never tails pane output or starts a
-refresh timer. Each running session row keeps exact session/project identity,
-workflow state/round, profile, linked-role count, calls, operational tokens,
-complete provider-reported cost, and maximum available role context pressure.
-Missing provider values render as unavailable.
+refresh timer. Each running session row keeps exact session/project identity, workflow state/round,
+profile, linked-role count, planning mode, calls, operational tokens, complete
+provider-reported cost, and maximum available role context pressure. The state
+and role-availability marker lead the row; success, attention, active, failure,
+and unavailable states use distinct redundant icons/colors. Profile/role summary
+and then planning and usage form secondary detail. Missing provider values render
+as unavailable. The initial load explains that it reads bounded metadata and
+offers retry/close keys; an empty result offers an explicit refresh hint. Existing
+rows remain selectable while an explicit refresh is pending. These messages are
+static: the overlay does not animate or schedule list/status/doctor/provider calls.
 
 Arrows or `j`/`k` select; Enter closes the overlay and attaches while watching
 future transitions without replaying an existing actionable outcome as a new

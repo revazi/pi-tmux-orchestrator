@@ -14,6 +14,14 @@ from .broker_store import public_broker_events, public_broker_snapshot
 from .role_registry import valid_custom_role_id
 
 MAX_DASHBOARD_EVENTS = 8
+_COMPACT_COLUMNS = {
+    "role": 15,
+    "link": 5,
+    "state": 17,
+    "tokens": 10,
+    "context": 6,
+    "thinking": 7,
+}
 
 SEMANTIC_ANSI = {
     "success": "32",
@@ -259,7 +267,7 @@ def _connection(role: dict[str, Any], *, unicode: bool, compact: bool = False) -
         f"g{generation}" if type(generation) is int and generation > 0 else "g?"
     )
     if compact:
-        return f"{marker}{generation_text}"
+        return f"{marker} {generation_text}"
     return f"{marker} {'up' if connected else 'dn'} · {generation_text}"
 
 
@@ -290,16 +298,33 @@ def _role_glyph(role: object, *, unicode: bool) -> str:
     return pair[0] if unicode else pair[1]
 
 
+def _role_label(role: object, *, unicode: bool) -> str:
+    name = sanitize_terminal_text(role, fallback="unknown")
+    glyph = _role_glyph(name, unicode=unicode)
+    return f"{glyph} {name}" if glyph else name
+
+
 def _activity_bar(
-    sequence: object, *, unicode: bool, width: int = 8, blob: int = 3
+    sequence: object,
+    *,
+    unicode: bool,
+    width: int = 8,
+    blob: int = 3,
+    presentation_frame: int | None = None,
 ) -> str:
-    """Bounce a filled blob along a 1-column track. Advances only with sequence."""
+    """Bounce a marker on authoritative pulses or a presentation-only frame."""
     if width < 2:
         return ""
     on = "▰" if unicode else "#"
     off = "▱" if unicode else "-"
     span = min(blob, width)
-    seq = sequence if type(sequence) is int and sequence >= 0 else 0
+    seq = (
+        sequence + (presentation_frame or 0)
+        if type(sequence) is int and sequence >= 0
+        else presentation_frame
+        if type(presentation_frame) is int and presentation_frame >= 0
+        else 0
+    )
     travel = width - span + 1
     if travel <= 1:
         return on * width
@@ -311,16 +336,34 @@ def _activity_bar(
     )
 
 
-def _live_state(role: dict[str, Any], *, unicode: bool) -> str:
+def _presentation_spinner(frame: int, *, unicode: bool) -> str:
+    frames = ("◐", "◓", "◑", "◒") if unicode else ("|", "/", "-", "\\")
+    safe_frame = frame if type(frame) is int and frame >= 0 else 0
+    return frames[safe_frame % len(frames)]
+
+
+def _live_state(
+    role: dict[str, Any], *, unicode: bool, presentation_frame: int = 0
+) -> str:
     state = sanitize_terminal_text(role.get("state"), fallback="unknown").lower()
     activity = role.get("activity")
-    if state != "active" or not isinstance(activity, str) or not activity:
+    if state != "active":
         return state
-    bar = _activity_bar(role.get("activity_sequence"), unicode=unicode, width=6, blob=3)
+    if not isinstance(activity, str) or not activity:
+        activity = "active"
+    bar = _activity_bar(
+        role.get("activity_sequence"),
+        unicode=unicode,
+        width=6,
+        blob=3,
+        presentation_frame=presentation_frame,
+    )
     return f"{activity} {bar}"
 
 
-def _now_flow_line(snapshot: dict[str, Any], *, unicode: bool) -> Line | None:
+def _now_flow_line(
+    snapshot: dict[str, Any], *, unicode: bool, presentation_frame: int = 0
+) -> Line | None:
     roles = [
         role
         for role in snapshot.get("roles", [])
@@ -350,19 +393,18 @@ def _now_flow_line(snapshot: dict[str, Any], *, unicode: bool) -> Line | None:
         name = sanitize_terminal_text(working.get("role"))
         glyph = _role_glyph(name, unicode=unicode)
         activity = working.get("activity")
+        if not isinstance(activity, str) or not activity:
+            activity = "active"
         if glyph:
             line.append(Span(f"{glyph} ", "active"))
         line.append(Span(name, "active"))
-        if (
-            sanitize_terminal_text(working.get("state")).lower() == "active"
-            and isinstance(activity, str)
-            and activity
-        ):
+        if sanitize_terminal_text(working.get("state")).lower() == "active":
             bar = _activity_bar(
                 working.get("activity_sequence"),
                 unicode=unicode,
                 width=12,
                 blob=4,
+                presentation_frame=presentation_frame,
             )
             line.extend(
                 [
@@ -374,11 +416,24 @@ def _now_flow_line(snapshot: dict[str, Any], *, unicode: bool) -> Line | None:
                 ]
             )
         else:
-            live = _live_state(working, unicode=unicode)
+            live = _live_state(
+                working, unicode=unicode, presentation_frame=presentation_frame
+            )
             line.extend(
                 [
                     Span("  "),
                     Span(live, state_semantic(live.split(" ", 1)[0])),
+                    Span("  LIVE ", "muted"),
+                    Span(
+                        _activity_bar(
+                            None,
+                            unicode=unicode,
+                            width=8,
+                            blob=3,
+                            presentation_frame=presentation_frame,
+                        ),
+                        "active",
+                    ),
                 ]
             )
     if waiting:
@@ -445,6 +500,7 @@ def _header_lines(
     *,
     unicode: bool,
     include_project: bool,
+    presentation_frame: int = 0,
 ) -> list[Line]:
     workflow = snapshot.get("workflow", {})
     state = sanitize_terminal_text(workflow.get("state"), fallback="unknown")
@@ -476,6 +532,16 @@ def _header_lines(
         Span("   ROUND ", "muted"),
         Span(round_text, "heading"),
     ]
+    if state.lower() in {"starting", "connecting", "initializing"}:
+        state_line.extend(
+            [
+                Span("   LOADING ", "muted"),
+                Span(
+                    _presentation_spinner(presentation_frame, unicode=unicode),
+                    "active",
+                ),
+            ]
+        )
     continuation = snapshot.get("workflow", {}).get("continuation", {})
     if continuation.get("pause_reason") == "repair_round_limit":
         state_line.extend(
@@ -514,10 +580,15 @@ def _transport_line(
 
 
 def _full_role_lines(
-    manifest: dict[str, Any], snapshot: dict[str, Any], width: int, *, unicode: bool
+    manifest: dict[str, Any],
+    snapshot: dict[str, Any],
+    width: int,
+    *,
+    unicode: bool,
+    presentation_frame: int = 0,
 ) -> list[Line]:
     columns = {
-        "role": 11,
+        "role": 15,
         "link": 9,
         "state": 18,
         "work": 18,
@@ -548,7 +619,9 @@ def _full_role_lines(
     lines: list[Line] = [[header], [Span(divider_character * width, "muted")]]
     for name, config, role in _ordered_roles(manifest, snapshot):
         connection_semantic = "success" if role.get("connected") is True else "error"
-        live_state = _live_state(role, unicode=unicode)
+        live_state = _live_state(
+            role, unicode=unicode, presentation_frame=presentation_frame
+        )
         lifecycle_semantic = state_semantic(live_state.split(" ", 1)[0])
         budget = role.get("soft_budget_exceeded") is True
         token_text = _format_role_tokens(role)
@@ -559,7 +632,13 @@ def _full_role_lines(
             f"{sanitize_terminal_text(config.get('model'))}"
         )
         cells = [
-            Span(_cell(name, columns["role"], unicode=unicode)),
+            Span(
+                _cell(
+                    _role_label(name, unicode=unicode),
+                    columns["role"],
+                    unicode=unicode,
+                )
+            ),
             Span(gap),
             Span(
                 _cell(
@@ -609,16 +688,15 @@ def _full_role_lines(
 
 
 def _compact_role_lines(
-    manifest: dict[str, Any], snapshot: dict[str, Any], width: int, *, unicode: bool
+    manifest: dict[str, Any],
+    snapshot: dict[str, Any],
+    width: int,
+    *,
+    unicode: bool,
+    presentation_frame: int = 0,
 ) -> list[Line]:
-    role_width = 11
-    state_width = 16
-    token_width = 8
-    context_width = 6
-    thinking_width = 7
-    fixed = (
-        4 + role_width + state_width + token_width + context_width + thinking_width + 6
-    )
+    columns = _COMPACT_COLUMNS
+    fixed = sum(columns.values()) + 7
     model_width = max(6, width - fixed)
     lines: list[Line] = []
     for name, config, role in _ordered_roles(manifest, snapshot):
@@ -630,48 +708,91 @@ def _compact_role_lines(
         )
         token_text = _format_role_tokens(role)
         if budget:
-            token_text = f"!{token_text}"
+            token_text = f"{'⚠' if unicode else '!'} {token_text}"
         lines.append(
             [
                 Span(
                     _cell(
+                        _role_label(name, unicode=unicode),
+                        columns["role"],
+                        unicode=unicode,
+                    )
+                ),
+                Span(" "),
+                Span(
+                    _cell(
                         _connection(role, unicode=unicode, compact=True),
-                        4,
+                        columns["link"],
                         unicode=unicode,
                     ),
                     "success" if connected else "error",
                 ),
-                Span(_cell(name, role_width, unicode=unicode)),
                 Span(" "),
                 Span(
                     _cell(
-                        _live_state(role, unicode=unicode),
-                        state_width,
+                        _live_state(
+                            role, unicode=unicode, presentation_frame=presentation_frame
+                        ),
+                        columns["state"],
                         unicode=unicode,
                     ),
-                    state_semantic(_live_state(role, unicode=unicode).split(" ", 1)[0]),
+                    state_semantic(
+                        _live_state(
+                            role, unicode=unicode, presentation_frame=presentation_frame
+                        ).split(" ", 1)[0]
+                    ),
                 ),
                 Span(" "),
                 Span(
-                    _cell(token_text, token_width, unicode=unicode, align="right"),
+                    _cell(
+                        token_text,
+                        columns["tokens"],
+                        unicode=unicode,
+                        align="right",
+                    ),
                     "warning" if budget else "normal",
                 ),
                 Span(" "),
                 Span(
                     _cell(
                         _format_context(role),
-                        context_width,
+                        columns["context"],
                         unicode=unicode,
                         align="right",
                     )
                 ),
                 Span(" "),
-                Span(_cell(config.get("thinking"), thinking_width, unicode=unicode)),
+                Span(
+                    _cell(
+                        config.get("thinking"),
+                        columns["thinking"],
+                        unicode=unicode,
+                    )
+                ),
                 Span("  "),
                 Span(_cell(model, model_width, unicode=unicode)),
             ]
         )
     return lines
+
+
+def _compact_role_header(width: int, *, unicode: bool) -> Line:
+    columns = _COMPACT_COLUMNS
+    fixed = sum(columns.values()) + 7
+    model_width = max(6, width - fixed)
+    headings = [
+        ("ROLE", columns["role"]),
+        ("LINK", columns["link"]),
+        ("STATUS", columns["state"]),
+        ("TOKENS", columns["tokens"]),
+        ("CTX", columns["context"]),
+        ("THINK", columns["thinking"]),
+        ("MODEL", model_width),
+    ]
+    cells = [
+        _cell(label, column_width, unicode=unicode) for label, column_width in headings
+    ]
+    return [Span(" ".join(cells[:-1]) + "  " + cells[-1], "muted")]
 
 
 def _event_lines(events: list[dict[str, Any]], *, unicode: bool) -> list[Line]:
@@ -747,14 +868,31 @@ def _full_layout(
     height: int,
     *,
     unicode: bool,
+    presentation_frame: int = 0,
 ) -> list[Line]:
-    lines = _header_lines(manifest, snapshot, unicode=unicode, include_project=True)
+    lines = _header_lines(
+        manifest,
+        snapshot,
+        unicode=unicode,
+        include_project=True,
+        presentation_frame=presentation_frame,
+    )
     lines.append(_transport_line(manifest, snapshot, compact=False))
-    now = _now_flow_line(snapshot, unicode=unicode)
+    now = _now_flow_line(
+        snapshot, unicode=unicode, presentation_frame=presentation_frame
+    )
     if now is not None:
         lines.append(now)
     lines.extend([_line(), _line("ROLES", "heading")])
-    lines.extend(_full_role_lines(manifest, snapshot, width, unicode=unicode))
+    lines.extend(
+        _full_role_lines(
+            manifest,
+            snapshot,
+            width,
+            unicode=unicode,
+            presentation_frame=presentation_frame,
+        )
+    )
     session = sanitize_terminal_text(manifest.get("session"), fallback="SESSION")
     footer = [_line(), *_guidance_lines(session, full=True)]
     remaining = height - len(lines) - len(footer)
@@ -774,19 +912,31 @@ def _compact_layout(
     height: int,
     *,
     unicode: bool,
+    presentation_frame: int = 0,
 ) -> list[Line]:
-    lines = _header_lines(manifest, snapshot, unicode=unicode, include_project=False)
+    lines = _header_lines(
+        manifest,
+        snapshot,
+        unicode=unicode,
+        include_project=False,
+        presentation_frame=presentation_frame,
+    )
     lines.append(_transport_line(manifest, snapshot, compact=True))
-    now = _now_flow_line(snapshot, unicode=unicode)
+    now = _now_flow_line(
+        snapshot, unicode=unicode, presentation_frame=presentation_frame
+    )
     if now is not None:
         lines.append(now)
+    lines.extend([_line(), _compact_role_header(width, unicode=unicode)])
     lines.extend(
-        [
-            _line(),
-            _line("ROLES  LINK/GEN · LIVE · TOTAL/Δ · CTX · THINK · MODEL", "muted"),
-        ]
+        _compact_role_lines(
+            manifest,
+            snapshot,
+            width,
+            unicode=unicode,
+            presentation_frame=presentation_frame,
+        )
     )
-    lines.extend(_compact_role_lines(manifest, snapshot, width, unicode=unicode))
     session = sanitize_terminal_text(manifest.get("session"), fallback="SESSION")
     footer = [_line(), *_guidance_lines(session, full=False)]
     remaining = height - len(lines) - len(footer)
@@ -805,8 +955,15 @@ def _narrow_layout(
     height: int,
     *,
     unicode: bool,
+    presentation_frame: int = 0,
 ) -> list[Line]:
-    header = _header_lines(manifest, snapshot, unicode=unicode, include_project=False)
+    header = _header_lines(
+        manifest,
+        snapshot,
+        unicode=unicode,
+        include_project=False,
+        presentation_frame=presentation_frame,
+    )
     header[1].extend(
         [Span("  ·  ", "muted"), *_transport_line(manifest, snapshot, compact=True)]
     )
@@ -836,12 +993,18 @@ def _narrow_layout(
         lines.append(
             [
                 Span(f"{marker} ", "success" if connected else "error"),
-                Span(name),
+                Span(_role_label(name, unicode=unicode)),
                 Span(" [read-only]" if valid_custom_role_id(name) else "", "muted"),
                 Span("  "),
                 Span(
-                    _live_state(role, unicode=unicode),
-                    state_semantic(_live_state(role, unicode=unicode).split(" ", 1)[0]),
+                    _live_state(
+                        role, unicode=unicode, presentation_frame=presentation_frame
+                    ),
+                    state_semantic(
+                        _live_state(
+                            role, unicode=unicode, presentation_frame=presentation_frame
+                        ).split(" ", 1)[0]
+                    ),
                 ),
                 Span(f"  {token_text}  {_format_context(role)}"),
             ]
@@ -896,6 +1059,7 @@ def render_dashboard(
     height: int,
     color: bool,
     unicode: bool = True,
+    presentation_frame: int = 0,
 ) -> str:
     """Render one bounded metadata-only dashboard frame."""
     safe_width = max(1, width - 1)
@@ -913,6 +1077,7 @@ def render_dashboard(
             safe_width,
             safe_height,
             unicode=unicode,
+            presentation_frame=presentation_frame,
         )
     elif layout == "compact":
         lines = _compact_layout(
@@ -922,6 +1087,7 @@ def render_dashboard(
             safe_width,
             safe_height,
             unicode=unicode,
+            presentation_frame=presentation_frame,
         )
     else:
         lines = _narrow_layout(
@@ -931,6 +1097,7 @@ def render_dashboard(
             safe_width,
             safe_height,
             unicode=unicode,
+            presentation_frame=presentation_frame,
         )
     lines = lines[:safe_height]
     return "\n".join(
@@ -965,6 +1132,9 @@ class BrokerDashboard:
         self._entered = False
         self._last_frame: str | None = None
         self._last_plain_summary: str | None = None
+        self._presentation_frame = 0
+        self._snapshot: dict[str, Any] | None = None
+        self._events: list[dict[str, Any]] = []
         self._unavailable_displayed = False
 
     def __enter__(self) -> BrokerDashboard:
@@ -998,6 +1168,9 @@ class BrokerDashboard:
     def refresh(self, snapshot: dict[str, Any], events: list[dict[str, Any]]) -> None:
         size = self.size_getter(fallback=(100, 30))
         self._unavailable_displayed = False
+        self._snapshot = snapshot
+        self._events = events
+        previous_frame = self._last_frame
         frame = render_dashboard(
             self.manifest,
             snapshot,
@@ -1006,6 +1179,7 @@ class BrokerDashboard:
             height=size.lines,
             color=self.color,
             unicode=self.unicode,
+            presentation_frame=self._presentation_frame,
         )
         if self.interactive:
             if frame == self._last_frame:
@@ -1021,7 +1195,8 @@ class BrokerDashboard:
             self.stream.flush()
             self._last_frame = frame
             return
-        if self._last_frame is None:
+        self._last_frame = frame
+        if previous_frame is None:
             self.stream.write(frame + "\n")
             self.stream.flush()
             self._last_plain_summary = self._plain_summary(
@@ -1033,7 +1208,30 @@ class BrokerDashboard:
                 self.stream.write(summary + "\n")
                 self.stream.flush()
             self._last_plain_summary = summary
-        self._last_frame = frame
+
+    def presentation_tick(self) -> None:
+        """Repaint cached metadata on a bounded local frame; never reads state."""
+        if not self.interactive or self._snapshot is None:
+            return
+        if not self._is_animating(self._snapshot):
+            return
+        self._presentation_frame = (self._presentation_frame + 1) % 12
+        self.refresh(self._snapshot, self._events)
+
+    @staticmethod
+    def _is_animating(snapshot: dict[str, Any]) -> bool:
+        workflow = snapshot.get("workflow", {})
+        if isinstance(workflow, dict) and workflow.get("state") in {
+            "starting",
+            "connecting",
+            "initializing",
+            "active",
+        }:
+            return True
+        return any(
+            isinstance(role, dict) and role.get("state") == "active"
+            for role in snapshot.get("roles", [])
+        )
 
     def render_unavailable(self) -> None:
         if self._unavailable_displayed:

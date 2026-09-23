@@ -162,6 +162,59 @@ class DashboardRenderingTests(DashboardFixture):
         self.assertIn("pi-tmux-agents stop pi-dashboard-test --yes", rendered)
         self.assertIn("prefix + L return", rendered)
 
+    def test_compact_role_table_uses_clean_columns_and_role_icons(self) -> None:
+        manifest = copy.deepcopy(self.manifest)
+        snapshot = copy.deepcopy(self.snapshot)
+        additions = {
+            "probe": ("🔎", "P"),
+            "playwright": ("🎭", "W"),
+            "django": ("🐍", "D"),
+        }
+        for name in additions:
+            manifest["roles"][name] = {
+                "provider": "openai-codex",
+                "model": "gpt-6-luna",
+                "thinking": "off",
+            }
+            snapshot["roles"].append(
+                {
+                    "role": name,
+                    "state": "idle",
+                    "connected": True,
+                    "generation": 1,
+                    "total_tokens": 7_400,
+                    "context_percent": 1.5,
+                }
+            )
+        rendered = render_dashboard(
+            manifest,
+            snapshot,
+            self.events,
+            width=110,
+            height=18,
+            color=False,
+        )
+        self.assertRegex(
+            rendered, r"ROLE\s+LINK\s+STATUS\s+TOKENS\s+CTX\s+THINK\s+MODEL"
+        )
+        self.assertNotIn("LINK/GEN · LIVE", rendered)
+        self.assertRegex(rendered, r"⚡ implementer\s+● g2")
+        self.assertIn("👀 reviewer", rendered)
+        for name, (glyph, _) in additions.items():
+            self.assertIn(f"{glyph} {name}", rendered)
+        ascii_rendered = render_dashboard(
+            manifest,
+            snapshot,
+            self.events,
+            width=110,
+            height=18,
+            color=False,
+            unicode=False,
+        )
+        ascii_rendered.encode("ascii")
+        for name, (_, marker) in additions.items():
+            self.assertIn(f"{marker} {name}", ascii_rendered)
+
     def test_dashboard_uses_manifest_launch_models_not_snapshot_claims(self) -> None:
         snapshot = copy.deepcopy(self.snapshot)
         snapshot["roles"][0]["provider"] = "openai"
@@ -270,7 +323,8 @@ class DashboardRenderingTests(DashboardFixture):
             height=30,
             color=False,
         )
-        self.assertNotIn("▰", idle)
+        self.assertIn("LIVE", idle)
+        self.assertNotIn("▰", idle.split("NOW", 1)[0])
         self.assertNotIn("PRIVATE_", "\n".join(frames))
 
     def test_assignment_guardrail_markers_are_visible_in_every_layout(self) -> None:
@@ -455,6 +509,127 @@ class DashboardTerminalModeTests(DashboardFixture):
         self.assertNotIn("\x1b[32m", output)
         self.assertNotIn("\x1b[36m", output)
 
+    def test_presentation_tick_animates_active_without_metadata_reads(self) -> None:
+        stream = FakeStream(tty=True)
+        dashboard = BrokerDashboard(
+            self.manifest,
+            stream=stream,
+            environ={"TERM": "tmux-256color", "NO_COLOR": "1"},
+            size_getter=self.size_getter,
+        )
+        snapshot = copy.deepcopy(self.snapshot)
+        snapshot["roles"][0].pop("activity", None)
+        reads = []
+        dashboard.refresh_from_store = lambda coord: reads.append(coord)
+        with dashboard:
+            dashboard.refresh(snapshot, self.events)
+            before = stream.getvalue().count("\x1b[H")
+            dashboard.presentation_tick()
+            dashboard.presentation_tick()
+        output = stream.getvalue()
+        self.assertGreater(output.count("\x1b[H"), before)
+        self.assertEqual(dashboard._presentation_frame, 2)
+        self.assertIn("active", output)
+        self.assertIn("LIVE", output)
+        self.assertEqual(reads, [])
+
+    def test_presentation_tick_animates_loading_but_not_static_or_plain(self) -> None:
+        for tty in (True, False):
+            with self.subTest(tty=tty):
+                stream = FakeStream(tty=tty)
+                dashboard = BrokerDashboard(
+                    self.manifest,
+                    stream=stream,
+                    environ={"TERM": "xterm-256color", "NO_COLOR": "1"},
+                    size_getter=self.size_getter,
+                )
+                loading = copy.deepcopy(self.snapshot)
+                loading["workflow"]["state"] = "starting"
+                for role in loading["roles"]:
+                    role["state"] = "disconnected"
+                    role.pop("activity", None)
+                first_loading = render_dashboard(
+                    self.manifest,
+                    loading,
+                    self.events,
+                    width=180,
+                    height=30,
+                    color=False,
+                    presentation_frame=0,
+                )
+                second_loading = render_dashboard(
+                    self.manifest,
+                    loading,
+                    self.events,
+                    width=180,
+                    height=30,
+                    color=False,
+                    presentation_frame=1,
+                )
+                self.assertNotEqual(first_loading, second_loading)
+                self.assertIn("LOADING", first_loading)
+                with dashboard:
+                    dashboard.refresh(loading, self.events)
+                    initial = stream.getvalue().count("\x1b[H")
+                    dashboard.presentation_tick()
+                    self.assertEqual(
+                        stream.getvalue().count("\x1b[H"), initial + int(tty)
+                    )
+                    static = copy.deepcopy(self.snapshot)
+                    static["workflow"]["state"] = "ready"
+                    for role in static["roles"]:
+                        role["state"] = "waiting"
+                    dashboard.refresh(static, self.events)
+                    before = stream.getvalue()
+                    dashboard.presentation_tick()
+                    self.assertEqual(stream.getvalue(), before)
+
+    def test_presentation_frames_move_in_all_adaptive_layouts_and_ascii(self) -> None:
+        snapshot = copy.deepcopy(self.snapshot)
+        snapshot["roles"][0].pop("activity", None)
+        for width, height in ((180, 30), (80, 18), (45, 14)):
+            first = render_dashboard(
+                self.manifest,
+                snapshot,
+                self.events,
+                width=width,
+                height=height,
+                color=False,
+                presentation_frame=0,
+            )
+            second = render_dashboard(
+                self.manifest,
+                snapshot,
+                self.events,
+                width=width,
+                height=height,
+                color=False,
+                presentation_frame=1,
+            )
+            with self.subTest(width=width):
+                self.assertNotEqual(first, second)
+                if width == 45:
+                    # The active role animates, but a waiting role remains static.
+                    self.assertEqual(
+                        first.splitlines()[4].split("LIVE", 1)[0],
+                        second.splitlines()[4].split("LIVE", 1)[0],
+                    )
+                self.assertLessEqual(len(second.splitlines()), height)
+                self.assertTrue(
+                    all(len(line) <= width - 1 for line in second.splitlines())
+                )
+        ascii_frame = render_dashboard(
+            self.manifest,
+            snapshot,
+            self.events,
+            width=180,
+            height=30,
+            color=False,
+            unicode=False,
+            presentation_frame=1,
+        )
+        ascii_frame.encode("ascii")
+
     def test_size_change_repaints_new_layout_while_same_size_is_suppressed(
         self,
     ) -> None:
@@ -480,7 +655,7 @@ class DashboardTerminalModeTests(DashboardFixture):
         self.assertEqual(output.count("\x1b[H"), 2)
         full_frame, compact_frame = output.split("\x1b[H")[1:]
         self.assertIn("RECENT METADATA EVENTS", full_frame)
-        self.assertIn("ROLES LINK/GEN", compact_frame)
+        self.assertRegex(compact_frame, r"ROLE\s+LINK\s+STATUS\s+TOKENS")
         self.assertNotIn("ASSIGNMENT", compact_frame)
 
     def test_unavailable_view_forces_unchanged_frame_to_repaint_on_recovery(

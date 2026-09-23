@@ -466,7 +466,10 @@ test("dashboard loads doctor only on demand, shows help, refreshes sessions, and
     3,
     { matches: () => false },
   );
-  assert.match(overlay.render(100).join("\n"), /Loading running orchestrations/);
+  const loading = overlay.render(100).join("\n");
+  assert.match(loading, /Loading sessions/);
+  assert.match(loading, /Reading bounded orchestration metadata/);
+  assert.match(loading, /Existing sessions stay selectable during refresh/);
   await overlay.refresh();
   assert.equal(listLoads, 1);
   assert.equal(doctorLoads, 0);
@@ -475,6 +478,9 @@ test("dashboard loads doctor only on demand, shows help, refreshes sessions, and
   const lines = overlay.render(100);
   assert.ok(lines.every((line) => dashboardHooks.visibleWidth(line) <= 100));
   assert.match(lines.join("\n"), /Orchestration Dashboard/);
+  assert.match(lines.join("\n"), /◌ active r2/);
+  assert.match(lines.join("\n"), /2\/2 linked · balanced/);
+  assert.match(lines.join("\n"), /○ state unavailable.*economy/);
   assert.doesNotMatch(lines.join("\n"), /Doctor passed|Running doctor/);
   assert.equal(dashboardHooks.visibleWidth(overlay.render(3)[0]), 3);
 
@@ -500,6 +506,31 @@ test("dashboard loads doctor only on demand, shows help, refreshes sessions, and
   assert.match(aboutFooter, /NPM.*npmjs\.com\/package\/pi-tmux-orchestrator/);
   assert.match(aboutFooter, /Contribute.*Ideas, issues, and PRs are welcome/);
   assert.ok(aboutFooter.indexOf("Contribute") > aboutFooter.indexOf("NPM"));
+  const callsBeforeDispose = { listLoads, doctorLoads, aboutLoads, renders };
+  overlay.dispose();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual({ listLoads, doctorLoads, aboutLoads, renders }, callsBeforeDispose);
+});
+
+test("dashboard session state icons distinguish ready, attention, failed, and unavailable", async () => {
+  const overlay = new OrchestrationDashboardOverlay(
+    dashboardTheme,
+    () => {},
+    () => {},
+    async () => dashboardSnapshot().list,
+    async () => dashboardSnapshot().doctor,
+    async () => dashboardSnapshot().about,
+    3,
+    { matches: () => false },
+  );
+  await overlay.refresh();
+  const rows = overlay.sessions;
+  for (const [state, expected] of [["ready", "✓ ready"], ["needs_attention", "⚠ needs_attention"], ["failed", "✕ failed"]]) {
+    rows[0].dashboard.workflow.state = state;
+    assert.match(overlay.render(120).join("\n"), new RegExp(expected));
+  }
+  rows[0].dashboard.available = false;
+  assert.match(overlay.render(120).join("\n"), /○ state unavailable/);
   overlay.dispose();
 });
 
@@ -552,7 +583,7 @@ test("dashboard sessions become usable while an explicitly requested doctor rema
   const partial = overlay.render(100).join("\n");
   assert.match(partial, /pi-alpha-agents/);
   assert.match(partial, /2 running/);
-  assert.doesNotMatch(partial, /refreshing/);
+  assert.doesNotMatch(partial, /Loading sessions|refreshing/);
   assert.match(partial, /Running doctor/);
   overlay.handleInput("j");
   overlay.handleInput("\r");
