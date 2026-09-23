@@ -2,7 +2,7 @@ import { lstat, readFile } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import net from "node:net";
-import { publicRoleContracts } from "./orchestrator-role-metadata.js";
+import { publicRoleAssignments, publicRoleContracts } from "./orchestrator-role-metadata.js";
 import {
   BROKER_PROTOCOL_VERSION,
   brokerFrame,
@@ -63,12 +63,14 @@ async function readObserverIdentity(envelope) {
   const socketPath = envelope.data?.paths?.observer_socket;
   const session = envelope.data?.session;
   invalidUnless(validObserverPaths(coordination, socketPath, session), "observer_paths_unavailable");
-  const roles = envelope.data.roles === undefined ? undefined : publicRoleContracts(envelope.data.roles);
+  const publicRoles = envelope.data.roles;
+  const roles = publicRoles === undefined ? undefined : publicRoleContracts(publicRoles);
+  const assignments = Array.isArray(publicRoles) ? publicRoleAssignments(publicRoles) : [];
   const tokenPath = join(coordination, "control.token");
   invalidUnless(safeTokenMetadata(await lstat(tokenPath)), "observer_token_unsafe");
   const token = (await readFile(tokenPath, "ascii")).trim();
   invalidUnless(/^[a-f0-9]{32}$/.test(token), "observer_token_invalid");
-  return { session, socketPath, token, roles };
+  return { session, socketPath, token, roles, assignments };
 }
 
 export async function attachParentObserver(pi, envelope, observer, onStop, options = {}) {
@@ -81,6 +83,7 @@ export async function attachParentObserver(pi, envelope, observer, onStop, optio
   const reports = [];
   const reportIds = new Set();
   const roleStates = new Map();
+  const assignments = new Map(identity.assignments.map((item) => [item.name, item]));
   let workflowState = "starting";
   let round = 1;
   let retryCount = 0;
@@ -128,6 +131,10 @@ export async function attachParentObserver(pi, envelope, observer, onStop, optio
     return [...roleStates].map(([role, state]) => ({ role, state }));
   }
 
+  function currentAssignments() {
+    return [...assignments.values()];
+  }
+
   function notifyProgress(update) {
     try {
       pi.sendMessage(
@@ -163,6 +170,7 @@ export async function attachParentObserver(pi, envelope, observer, onStop, optio
       round,
       reports,
       currentRoles(),
+      currentAssignments(),
     );
     try {
       pi.sendMessage(
@@ -222,6 +230,9 @@ export async function attachParentObserver(pi, envelope, observer, onStop, optio
     invalidUnless(reports.length < 100, "too_many_observer_reports");
     reportIds.add(value.id);
     reports.push(value);
+    if (snapshotSeen && value.authoritative_assignment) {
+      assignments.set(value.role, value.authoritative_assignment);
+    }
     if (snapshotSeen) {
       notifyProgress({ kind: "report", role: value.role, reportRound: value.round });
     }

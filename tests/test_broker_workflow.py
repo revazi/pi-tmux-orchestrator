@@ -5,18 +5,20 @@ from __future__ import annotations
 import copy
 import secrets
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-from pi_tmux_orchestrator import broker_store
+from pi_tmux_orchestrator import broker_store, commands
 from pi_tmux_orchestrator.broker import Broker, initialize_broker_run
 from pi_tmux_orchestrator.broker_observers import MAX_OBSERVER_REPORTS
 from pi_tmux_orchestrator.broker_workflow import BrokerWorkflowSupport
-from pi_tmux_orchestrator.models import OrchestrationError
 from pi_tmux_orchestrator.custom_role_resources import retained_custom_contracts
 from pi_tmux_orchestrator.evidence_reuse import EvidenceReuse
-from pathlib import Path
+from pi_tmux_orchestrator.models import OrchestrationError
+from pi_tmux_orchestrator.output import public_role
 from pi_tmux_orchestrator.protocol import validate_report
+from pi_tmux_orchestrator.storage import save_manifest
 from test_broker import BrokerFixture, assignment_usage_snapshot
 
 
@@ -381,3 +383,232 @@ class WorkflowSupportTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
         await workflow.maybe_assign_reviewer(1)
         workflow.assign.assert_not_awaited()
         workflow.broadcast_workflow.assert_not_awaited()
+
+    async def test_runtime_identity_is_compared_without_mutating_launch_metadata(
+        self,
+    ):
+        before = public_role(
+            "reviewer",
+            self.manifest["roles"]["reviewer"],
+            self.manifest["transport"],
+        )
+        cases = [
+            ({}, "omitted"),
+            ({"runtime_identity": {"availability": "unavailable"}}, "unavailable"),
+            (
+                {
+                    "runtime_identity": {
+                        "provider": "test",
+                        "model": "model",
+                        "thinking": "off",
+                    }
+                },
+                "matching",
+            ),
+            (
+                {
+                    "runtime_identity": {
+                        "provider": "openai",
+                        "model": "gpt-5.6",
+                        "thinking": "medium",
+                    }
+                },
+                "conflicting",
+            ),
+        ]
+        workflow = self.workflow()
+        with broker_store.connect_broker_database(self.coord) as database:
+            database.execute(
+                "UPDATE roles SET generation=? WHERE role='reviewer'",
+                (2,),
+            )
+        with mock.patch.object(workflow, "route_report", new=mock.AsyncMock()):
+            for extra, status in cases:
+                with self.subTest(status=status):
+                    assignment_id = workflow.create_assignment("reviewer", "review")
+                    await workflow.handle_report(
+                        workflow.clients["reviewer"],
+                        {
+                            "id": secrets.token_hex(16),
+                            "assignment_id": assignment_id,
+                            "report": {
+                                "kind": "review",
+                                "summary": "Used GPT-5.6 Sol while launch stayed grok.",
+                                "verdict": "approved",
+                            },
+                            **extra,
+                        },
+                    )
+                    event = workflow.broadcast.await_args.args[0]
+                    self.assertEqual(event["runtime_identity_status"], status)
+                    if status == "omitted":
+                        self.assertNotIn("runtime_identity", event)
+                    else:
+                        self.assertEqual(
+                            event["runtime_identity"], extra["runtime_identity"]
+                        )
+                    self.assertEqual(
+                        public_role(
+                            "reviewer",
+                            self.manifest["roles"]["reviewer"],
+                            self.manifest["transport"],
+                        ),
+                        before,
+                    )
+                    with broker_store.connect_broker_database(
+                        self.coord, readonly=True
+                    ) as database:
+                        dump = "\n".join(database.iterdump())
+                    self.assertNotIn("gpt-5.6", dump.lower())
+                    self.assertNotIn("GPT-5.6 Sol", dump)
+                    reviewer = next(
+                        role
+                        for role in commands.status_roles(self.coord, self.manifest)
+                        if role["name"] == "reviewer"
+                    )
+                    self.assertEqual(reviewer["provider"], before["provider"])
+                    self.assertEqual(reviewer["model"], before["model"])
+                    self.assertNotIn("runtime_identity_status", reviewer)
+
+    async def test_report_uses_authoritative_assignment_after_model_restart(self):
+        workflow = self.workflow()
+        workflow.manifest["roles"]["reviewer"].update(
+            {"provider": "openai", "model": "gpt-5.6", "thinking": "medium"}
+        )
+        save_manifest(self.coord, workflow.manifest)
+        assignment_id = workflow.create_assignment("reviewer", "review")
+        with mock.patch.object(workflow, "route_report", new=mock.AsyncMock()):
+            await workflow.handle_report(
+                workflow.clients["reviewer"],
+                {
+                    "id": secrets.token_hex(16),
+                    "assignment_id": assignment_id,
+                    "report": {
+                        "kind": "review",
+                        "summary": "new worker generation",
+                        "verdict": "approved",
+                    },
+                    "runtime_identity": {
+                        "provider": "openai",
+                        "model": "gpt-5.6",
+                        "thinking": "medium",
+                    },
+                },
+            )
+        event = workflow.broadcast.await_args.args[0]
+        self.assertEqual(event["runtime_identity_status"], "matching")
+        self.assertEqual(
+            event["authoritative_assignment"],
+            {
+                "name": "reviewer",
+                "provider": "openai",
+                "model": "gpt-5.6",
+                "thinking": "medium",
+                "transport": "tui",
+            },
+        )
+        self.assertEqual(workflow.manifest["roles"]["reviewer"]["model"], "gpt-5.6")
+
+    async def test_report_ignores_disk_manifest_until_generation_refresh(self):
+        workflow = self.workflow()
+        updated_manifest = copy.deepcopy(self.manifest)
+        updated_manifest["roles"]["reviewer"].update(
+            {"provider": "openai", "model": "gpt-5.6", "thinking": "medium"}
+        )
+        save_manifest(self.coord, updated_manifest)
+        assignment_id = workflow.create_assignment("reviewer", "review")
+        with mock.patch.object(workflow, "route_report", new=mock.AsyncMock()):
+            await workflow.handle_report(
+                workflow.clients["reviewer"],
+                {
+                    "id": secrets.token_hex(16),
+                    "assignment_id": assignment_id,
+                    "report": {
+                        "kind": "review",
+                        "summary": "old generation still connected",
+                        "verdict": "approved",
+                    },
+                    "runtime_identity": {
+                        "provider": "test",
+                        "model": "model",
+                        "thinking": "off",
+                    },
+                },
+            )
+        event = workflow.broadcast.await_args.args[0]
+        self.assertEqual(event["runtime_identity_status"], "matching")
+        self.assertEqual(
+            event["authoritative_assignment"],
+            {
+                "name": "reviewer",
+                "provider": "test",
+                "model": "model",
+                "thinking": "off",
+                "transport": "tui",
+            },
+        )
+        self.assertEqual(workflow.manifest["roles"]["reviewer"]["model"], "model")
+
+    async def test_malformed_runtime_identity_is_rejected_before_acceptance(
+        self,
+    ):
+        workflow = self.workflow()
+        assignment_id = workflow.create_assignment("reviewer", "review")
+        with self.assertRaises(OrchestrationError):
+            await workflow.handle_report(
+                workflow.clients["reviewer"],
+                {
+                    "id": secrets.token_hex(16),
+                    "assignment_id": assignment_id,
+                    "report": {
+                        "kind": "review",
+                        "summary": "spoofed identity",
+                        "verdict": "approved",
+                    },
+                    "runtime_identity": {
+                        "provider": "openai",
+                        "model": "gpt-5.6",
+                        "thinking": "medium",
+                        "role": "implementer",
+                    },
+                },
+            )
+        workflow.broadcast.assert_not_awaited()
+        with broker_store.connect_broker_database(
+            self.coord, readonly=True
+        ) as database:
+            self.assertEqual(
+                database.execute("SELECT COUNT(*) FROM reports").fetchone()[0], 0
+            )
+
+    async def test_duplicate_report_cannot_replace_runtime_identity(self):
+        workflow = self.workflow()
+        assignment_id = workflow.create_assignment("reviewer", "review")
+        message = {
+            "id": secrets.token_hex(16),
+            "assignment_id": assignment_id,
+            "report": {
+                "kind": "review",
+                "summary": "first accepted identity",
+                "verdict": "approved",
+            },
+        }
+        with mock.patch.object(workflow, "route_report", new=mock.AsyncMock()):
+            await workflow.handle_report(workflow.clients["reviewer"], message)
+            await workflow.handle_report(
+                workflow.clients["reviewer"],
+                {
+                    **message,
+                    "id": secrets.token_hex(16),
+                    "runtime_identity": {
+                        "provider": "openai",
+                        "model": "gpt-5.6",
+                        "thinking": "medium",
+                    },
+                },
+            )
+        self.assertEqual(workflow.broadcast.await_count, 1)
+        self.assertEqual(
+            workflow.broadcast.await_args.args[0]["runtime_identity_status"],
+            "omitted",
+        )

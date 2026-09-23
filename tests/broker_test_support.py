@@ -121,6 +121,7 @@ class BrokerFixture(unittest.TestCase):
                 "session_dir": str(session_dir),
                 "session_id": f"run-1-{role}",
             }
+        save_manifest(self.coord, self.manifest)
 
 
 def assignment_usage_snapshot(*, assignment_input: int = 40) -> dict[str, object]:

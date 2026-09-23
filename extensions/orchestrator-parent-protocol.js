@@ -156,9 +156,64 @@ function validReportUsage(value) {
   ].every(Boolean);
 }
 
+const RUNTIME_IDENTITY_STATUSES = new Set(["matching", "omitted", "unavailable", "conflicting"]);
+const WORKER_THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
+const WORKER_TRANSPORTS = new Set(["tui", "rpc"]);
+
+function boundedIdentityToken(value) {
+  return typeof value === "string"
+    && value.length > 0
+    && value.length <= 256
+    && !/[\s\u0000-\u001f\u007f]/.test(value);
+}
+
+function validUnavailableRuntimeIdentity(value) {
+  return exactKeys(value, ["availability"]) && value.availability === "unavailable";
+}
+
+function validAvailableRuntimeIdentity(value) {
+  return exactKeys(value, ["provider", "model", "thinking"])
+    && boundedIdentityToken(value.provider)
+    && boundedIdentityToken(value.model)
+    && WORKER_THINKING_LEVELS.has(value.thinking);
+}
+
+function validRuntimeIdentityProjection(value) {
+  const status = value.runtime_identity_status;
+  const identity = value.runtime_identity;
+  if (status === undefined) return identity === undefined;
+  if (!RUNTIME_IDENTITY_STATUSES.has(status)) return false;
+  if (status === "omitted") return identity === undefined;
+  if (status === "unavailable") return validUnavailableRuntimeIdentity(identity);
+  return validAvailableRuntimeIdentity(identity);
+}
+
+function validAuthoritativeAssignment(value, role, roles) {
+  if (value === undefined) return true;
+  const contract = roles.get(role);
+  const custom = role !== contract;
+  const keys = ["name", "provider", "model", "thinking", "transport"];
+  if (custom) keys.push("specialist_contract");
+  return exactKeys(value, keys)
+    && value.name === role
+    && boundedIdentityToken(value.provider)
+    && boundedIdentityToken(value.model)
+    && WORKER_THINKING_LEVELS.has(value.thinking)
+    && WORKER_TRANSPORTS.has(value.transport)
+    && (!custom || value.specialist_contract === contract);
+}
+
+function reportOptionalKeys(value) {
+  const optional = [];
+  if (Object.hasOwn(value, "usage")) optional.push("usage");
+  if (Object.hasOwn(value, "runtime_identity_status")) optional.push("runtime_identity_status");
+  if (Object.hasOwn(value, "runtime_identity")) optional.push("runtime_identity");
+  if (Object.hasOwn(value, "authoritative_assignment")) optional.push("authoritative_assignment");
+  return optional;
+}
+
 function validReportKeys(value, legacyKeys) {
-  return exactKeys(value, legacyKeys)
-    || exactKeys(value, [...legacyKeys, "usage"]);
+  return exactKeys(value, [...legacyKeys, ...reportOptionalKeys(value)]);
 }
 
 function validReportIdentity(value) {
@@ -188,8 +243,10 @@ function validateReport(value, roles) {
     [
       validReportKeys(value, legacyKeys),
       value.usage === undefined || validReportUsage(value.usage),
+      validRuntimeIdentityProjection(value),
       validReportIdentity(value),
       validReportRoleAndRound(value, roles),
+      validAuthoritativeAssignment(value.authoritative_assignment, value.role, roles),
       validReportBody(value, encodedReport),
     ].every(Boolean),
     "invalid_observer_report",

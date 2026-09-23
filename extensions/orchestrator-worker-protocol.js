@@ -3,6 +3,8 @@ import { validWorkerRole } from "./orchestrator-worker-roles.js";
 
 export const WORKER_PROTOCOL_VERSION = 1;
 export const MAX_WORKER_FRAME_BYTES = 256 * 1024;
+const WORKER_THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
+
 export const DELIVERY_ENTRY = "pi-tmux-orchestrator-delivery-v1";
 export const BOUNDARY_ENTRY = "pi-tmux-orchestrator-context-boundary-v1";
 export const GUARDRAIL_ENTRY = "pi-tmux-orchestrator-guardrail-v1";
@@ -11,6 +13,27 @@ export const WORKER_MESSAGE_TYPE = "pi-tmux-orchestrator-message-v1";
 
 function id() {
   return randomBytes(16).toString("hex");
+}
+
+function boundedRuntimeIdentityToken(value) {
+  return typeof value === "string"
+    && value.length > 0
+    && value.length <= 256
+    && !/[\s\u0000-\u001f\u007f]/.test(value);
+}
+
+export function workerRuntimeIdentity(ctx) {
+  const provider = ctx?.model?.provider;
+  const model = ctx?.model?.id;
+  const thinking = ctx?.thinkingLevel;
+  if (
+    !boundedRuntimeIdentityToken(provider)
+    || !boundedRuntimeIdentityToken(model)
+    || !WORKER_THINKING_LEVELS.has(thinking)
+  ) {
+    return { availability: "unavailable" };
+  }
+  return { provider, model, thinking };
 }
 
 export function validWorkerEnvironment({

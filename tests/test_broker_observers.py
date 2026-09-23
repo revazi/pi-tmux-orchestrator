@@ -196,6 +196,8 @@ class BrokerObserverTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
             self.assertEqual(report_event["type"], "report")
             self.assertEqual(report_event["assignment_id"], assignment_id)
             self.assertEqual(report_event["report"], report)
+            self.assertEqual(report_event["runtime_identity_status"], "omitted")
+            self.assertNotIn("runtime_identity", report_event)
             route_report.assert_awaited_once_with("reviewer", 1, report)
             with broker_store.connect_broker_database(
                 self.coord, readonly=True

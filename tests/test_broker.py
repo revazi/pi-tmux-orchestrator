@@ -25,11 +25,14 @@ from pi_tmux_orchestrator.context_capsules import (
     render_run_state_capsule,
     render_worker_baseline,
 )
+from pi_tmux_orchestrator.output import public_role
 from pi_tmux_orchestrator.protocol import (
+    compare_runtime_identity,
     decode_frame,
     encode_frame,
     validate_client_message,
     validate_report,
+    validate_runtime_identity,
 )
 
 
@@ -71,8 +74,36 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(validate_client_message(message), message)
         current = {**message, "usage": assignment_usage_snapshot()}
         self.assertEqual(validate_client_message(current), current)
+        identity = {
+            **current,
+            "runtime_identity": {
+                "provider": "xai",
+                "model": "grok-4.6",
+                "thinking": "medium",
+            },
+        }
+        self.assertEqual(validate_client_message(identity), identity)
+        unavailable = {
+            **message,
+            "runtime_identity": {"availability": "unavailable"},
+        }
+        self.assertEqual(validate_client_message(unavailable), unavailable)
         with self.assertRaisesRegex(Exception, "missing or unknown fields"):
             validate_client_message({**current, "unknown": 1})
+        with self.assertRaisesRegex(Exception, "missing or unknown fields"):
+            validate_client_message({**identity, "runtime_identity_status": "matching"})
+        with self.assertRaisesRegex(Exception, "missing or unknown fields"):
+            validate_client_message(
+                {
+                    **message,
+                    "runtime_identity": {
+                        "provider": "xai",
+                        "model": "grok-4.6",
+                        "thinking": "medium",
+                        "role": "reviewer",
+                    },
+                }
+            )
 
     def test_guardrail_message_is_bounded_numeric_metadata_only(self) -> None:
         message = {
@@ -117,6 +148,39 @@ class ProtocolTests(unittest.TestCase):
         ):
             with self.subTest(changes=changes), self.assertRaises(Exception):
                 validate_client_message({**message, **changes})
+
+    def test_runtime_identity_compares_exact_launch_fields(self) -> None:
+        config = {"provider": "xai", "model": "grok-4.6", "thinking": "medium"}
+        matching = validate_runtime_identity(
+            {"provider": "xai", "model": "grok-4.6", "thinking": "medium"}
+        )
+        self.assertEqual(compare_runtime_identity(None, config), "omitted")
+        self.assertEqual(
+            compare_runtime_identity({"availability": "unavailable"}, config),
+            "unavailable",
+        )
+        self.assertEqual(compare_runtime_identity(matching, config), "matching")
+        self.assertEqual(
+            compare_runtime_identity(
+                {"provider": "openai", "model": "gpt-5.6", "thinking": "medium"},
+                config,
+            ),
+            "conflicting",
+        )
+        for invalid in (
+            {"availability": "matching"},
+            {"provider": "xai", "model": "grok-4.6"},
+            {
+                "provider": "xai",
+                "model": "grok-4.6",
+                "thinking": "medium",
+                "specialist_contract": "probe",
+            },
+            {"provider": "xai", "model": "grok-4.6", "thinking": "not-a-level"},
+            {"provider": "xai", "model": "has space", "thinking": "medium"},
+        ):
+            with self.subTest(invalid=invalid), self.assertRaises(Exception):
+                validate_runtime_identity(invalid)
 
     def test_plan_report_is_bounded_read_only_and_implementer_only(self) -> None:
         contract = json.loads(
@@ -678,6 +742,48 @@ class BrokerStoreTests(BrokerFixture):
             roles = commands.status_roles(self.coord, self.manifest)
         self.assertEqual([role["name"] for role in roles], ["implementer", "reviewer"])
         self.assertTrue(all("broker_state" not in role for role in roles))
+
+    def test_status_supervisor_and_public_roles_share_launch_assignments(
+        self,
+    ) -> None:
+        initialize_broker_run(self.coord, self.manifest, "task", {})
+        transport = self.manifest["transport"]
+        expected = [
+            public_role(role, config, transport)
+            for role, config in self.manifest["roles"].items()
+        ]
+        status = commands.status_roles(self.coord, self.manifest)
+        supervisor = supervisor_api.public_supervisor_run(self.coord, self.manifest)
+        snapshot = supervisor_api.supervisor_snapshot(
+            self.manifest["session"], self.coord.name
+        )
+        for surface in (status, supervisor["roles"], snapshot["roles"]):
+            assignments = [
+                {
+                    key: role[key]
+                    for key in ("name", "provider", "model", "thinking", "transport")
+                }
+                for role in surface
+            ]
+            self.assertEqual(
+                assignments,
+                [
+                    {
+                        key: role[key]
+                        for key in (
+                            "name",
+                            "provider",
+                            "model",
+                            "thinking",
+                            "transport",
+                        )
+                    }
+                    for role in expected
+                ],
+            )
+            self.assertTrue(
+                all("runtime_identity_status" not in role for role in surface)
+            )
 
     def test_supervisor_reads_degrade_when_broker_is_busy(self) -> None:
         initialize_broker_run(self.coord, self.manifest, "task", {})

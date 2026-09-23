@@ -21,12 +21,33 @@ from .broker_store import (
 from .constants import BROKER_PROTOCOL_VERSION, RPC_TOKEN_PATTERN
 from .context_capsules import render_run_state_capsule
 from .models import OrchestrationError
-from .protocol import validate_report
+from .protocol import (
+    compare_runtime_identity,
+    validate_report,
+    validate_runtime_identity,
+)
+from .role_registry import valid_custom_role_id
 from .specialist_activation import decide_custom_specialist, decide_specialist
+from .storage import manifest_transport
 
 if TYPE_CHECKING:
     from .broker import Client
     from .evidence_reuse import EvidenceReuse
+
+
+def authoritative_assignment(
+    role: str, config: dict[str, Any], transport: str
+) -> dict[str, str]:
+    assignment = {
+        "name": role,
+        "provider": config["provider"],
+        "model": config["model"],
+        "thinking": config["thinking"],
+        "transport": transport,
+    }
+    if valid_custom_role_id(role):
+        assignment["specialist_contract"] = config["custom_role"]["contract"]
+    return assignment
 
 
 class BrokerWorkflowSupport:
@@ -125,6 +146,13 @@ class BrokerWorkflowSupport:
             raise OrchestrationError(
                 "Assignment provider usage is invalid", "invalid_protocol"
             )
+        runtime_identity = None
+        if "runtime_identity" in message:
+            runtime_identity = validate_runtime_identity(message["runtime_identity"])
+        current_role = self.manifest["roles"][client.role]
+        assignment_projection = authoritative_assignment(
+            client.role, current_role, manifest_transport(self.manifest)
+        )
         assignment_id = message["assignment_id"]
         if not isinstance(assignment_id, str) or not RPC_TOKEN_PATTERN.fullmatch(
             assignment_id
@@ -233,7 +261,13 @@ class BrokerWorkflowSupport:
             "round": assignment["round"],
             "report": report,
             "usage": report_usage["assignment"] if report_usage is not None else None,
+            "runtime_identity_status": compare_runtime_identity(
+                runtime_identity, current_role
+            ),
+            "authoritative_assignment": assignment_projection,
         }
+        if runtime_identity is not None:
+            report_event["runtime_identity"] = runtime_identity
         self._remember_report(report_event)
         await self.broadcast(report_event)
         try:

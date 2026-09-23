@@ -100,7 +100,14 @@ bounded typed reports, and schedules the mandatory review.
 
 The invoking Pi remains the parent supervisor. It receives event-driven
 completion or attention updates while each worker keeps its normal durable Pi
-session. The broker dashboard refreshes assignment-bound thinking, streaming,
+session. Ready and needs-attention parent updates show immutable per-generation
+launch role/provider/model/thinking/transport assignments before untrusted
+reports; a confirmed model-changing restart refreshes that role's launch
+assignment from current manifest metadata before the new generation reports. Provider or model names in
+report prose are never treated as selected identity. A worker may attach a
+machine-readable process identity outside report tool arguments so the broker
+can surface an exact matching or conflicting signal without changing the
+launch assignment. The broker dashboard refreshes assignment-bound thinking, streaming,
 tool, reporting, and finalized-usage metadata directly from worker events; a
 NOW line shows who is working and who is waiting. It does not wait for handoff. Crashes and ambiguous delivery fail to `uncertain`
 rather than blindly replaying work.

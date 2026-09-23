@@ -18,6 +18,7 @@ from .constants import (
     MAX_REPORT_ITEMS,
     MAX_REPORT_SUMMARY_CHARS,
     RPC_TOKEN_PATTERN,
+    THINKING_LEVELS,
     WORKER_ACTIVITY_PHASES,
 )
 from .models import OrchestrationError
@@ -377,6 +378,72 @@ def _validate_guardrail_message(value: dict[str, Any]) -> None:
         raise OrchestrationError("Guardrail values are invalid", "invalid_protocol")
 
 
+_IDENTITY_TOKEN = re.compile(r"[^\s\x00-\x1f\x7f]{1,256}")
+RUNTIME_IDENTITY_FIELDS = ("provider", "model", "thinking")
+RUNTIME_IDENTITY_STATUSES = frozenset(
+    {"matching", "omitted", "unavailable", "conflicting"}
+)
+
+
+def _identity_token(value: object, label: str) -> str:
+    if not isinstance(value, str) or not _IDENTITY_TOKEN.fullmatch(value):
+        raise OrchestrationError(f"{label} is invalid", "invalid_protocol")
+    return value
+
+
+def validate_runtime_identity(value: object) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise OrchestrationError(
+            "Worker runtime identity is invalid", "invalid_protocol"
+        )
+    keys = set(value)
+    if keys == {"availability"}:
+        if value.get("availability") != "unavailable":
+            raise OrchestrationError(
+                "Worker runtime identity is invalid", "invalid_protocol"
+            )
+        return {"availability": "unavailable"}
+    if keys != set(RUNTIME_IDENTITY_FIELDS):
+        raise OrchestrationError(
+            "Worker runtime identity has missing or unknown fields",
+            "invalid_protocol",
+        )
+    thinking = value["thinking"]
+    if thinking not in THINKING_LEVELS or not isinstance(thinking, str):
+        raise OrchestrationError(
+            "Worker runtime identity thinking is invalid", "invalid_protocol"
+        )
+    return {
+        "provider": _identity_token(value["provider"], "runtime identity provider"),
+        "model": _identity_token(value["model"], "runtime identity model"),
+        "thinking": thinking,
+    }
+
+
+def compare_runtime_identity(
+    identity: dict[str, Any] | None, config: dict[str, Any]
+) -> str:
+    if identity is None:
+        return "omitted"
+    if identity.get("availability") == "unavailable":
+        return "unavailable"
+    if all(
+        identity.get(field) == config.get(field) for field in RUNTIME_IDENTITY_FIELDS
+    ):
+        return "matching"
+    return "conflicting"
+
+
+def _report_client_key_sets(base: set[str]) -> tuple[set[str], ...]:
+    legacy = base | {"assignment_id", "report"}
+    return (
+        legacy,
+        legacy | {"usage"},
+        legacy | {"runtime_identity"},
+        legacy | {"usage", "runtime_identity"},
+    )
+
+
 def validate_client_message(
     value: object, *, custom_contracts: object = None
 ) -> dict[str, Any]:
@@ -389,8 +456,7 @@ def validate_client_message(
     if message_type == "hello":
         expected = (base | {"generation"},)
     elif message_type == "report":
-        legacy = base | {"assignment_id", "report"}
-        expected = (legacy, legacy | {"usage"})
+        expected = _report_client_key_sets(base)
     elif message_type == "lifecycle":
         expected = (base | {"state", "usage"},)
     elif message_type == "progress":
@@ -434,6 +500,8 @@ def validate_client_message(
             raise OrchestrationError(
                 "Worker progress phase is invalid", "invalid_protocol"
             )
+    if message_type == "report" and "runtime_identity" in value:
+        validate_runtime_identity(value["runtime_identity"])
     return value
 
 

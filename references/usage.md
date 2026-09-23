@@ -1080,7 +1080,7 @@ with live report observation.
 9. Acceptance of each distinct new assignment emits one metadata-only `context_boundary` event. Pi invokes context projection for every provider request. With default `prune`, that boundary removes prior assignment turns; explicit `retain` keeps them. Every assistant/tool turn in the current assignment remains visible in either mode.
 10. A confirmed restart replays the live in-memory baseline and latest coalesced run state, including a pending replacement deferred during the active assignment, before recovery without creating a second boundary for that assignment.
 11. `approved` marks the run ready without waking the implementer for an acknowledgement turn.
-12. An attached parent observer returns the latest structured reports to the parent Pi.
+12. An attached parent observer returns the latest structured reports to the parent Pi, with authoritative per-generation launch assignments rendered first. A confirmed model-changing restart refreshes that role's launch assignment from current manifest metadata before the new generation reports. Report-body provider or model names stay untrusted; a machine-readable worker process identity, when present, is compared exactly and may be labeled matching, omitted, unavailable, or conflicting without changing the launch assignment.
 
 The terminating report tool avoids an extra post-report provider turn. Idle
 workers end their turn and never sleep or poll. A watching parent also ends its

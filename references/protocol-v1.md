@@ -328,6 +328,22 @@ lowercase hexadecimal values.
   before any downstream routing. A duplicate report receives a duplicate
   acknowledgement and cannot replace the first usage result; legacy reports
   without a snapshot remain accepted with assignment usage unavailable.
+  Current TUI/RPC bridges also attach an optional `runtime_identity` sibling
+  taken from the Pi process model/thinking configuration, never from model-authored
+  report arguments. Exact-key unions remain compatible with usage-only and
+  identity-free reports. The broker compares `provider`, `model`, and `thinking`
+  against immutable per-generation launch metadata held by the broker and
+  fans out `runtime_identity_status` as `matching`, `omitted`, `unavailable`, or
+  `conflicting`. The broker also adds a bounded `authoritative_assignment` to its
+  ephemeral observer report event. A confirmed restart refreshes that role's
+  provider/model/thinking from current manifest metadata before the new
+  generation can report, so attached parents stay aligned without reading disk
+  at report acceptance. Malformed or
+  spoofed extra identity fields are rejected. Workers cannot author either
+  broker-derived field. The comparison never mutates public role assignments,
+  Supervisor/status/dashboard launch fields, or SQLite metadata. Observer
+  snapshots remain `{role,state}` only. Free-form report prose is never parsed
+  for identity.
 - Operator control command retries deduplicate matching action/role/delivery
   metadata; conflicting reuse is rejected. Supervisor API v2 exposes retained
   command metadata without message bodies.

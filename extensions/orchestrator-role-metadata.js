@@ -1,6 +1,16 @@
 import { validCustomRoleId, validWorkerRole, workerRoleContract } from "./orchestrator-worker-roles.js";
 
 const MAX_SURFACE_ROLES = 13;
+const THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
+const TRANSPORTS = new Set(["tui", "rpc"]);
+
+function boundedIdentityToken(value) {
+  return typeof value === "string"
+    && value.length > 0
+    && value.length <= 256
+    && !/[\s\u0000-\u001f\u007f]/.test(value);
+}
+
 export const controlRoleParameters = {
   type: "string",
   maxLength: 32,
@@ -35,4 +45,31 @@ export function publicRoleContracts(roles) {
     throw new Error("missing_public_required_roles");
   }
   return contracts;
+}
+
+// Copy only the bounded immutable assignment fields consumed by parent prompts.
+// The full CLI status role object may contain pane IDs and retained policy metadata.
+export function publicRoleAssignments(roles) {
+  const contracts = publicRoleContracts(roles);
+  return roles.map((item) => {
+    if (
+      !boundedIdentityToken(item.provider)
+      || !boundedIdentityToken(item.model)
+      || !THINKING_LEVELS.has(item.thinking)
+      || !TRANSPORTS.has(item.transport)
+    ) {
+      throw new Error("invalid_public_role_assignment");
+    }
+    const assignment = {
+      name: item.name,
+      provider: item.provider,
+      model: item.model,
+      thinking: item.thinking,
+      transport: item.transport,
+    };
+    if (validCustomRoleId(item.name)) {
+      assignment.specialist_contract = contracts.get(item.name);
+    }
+    return assignment;
+  });
 }
