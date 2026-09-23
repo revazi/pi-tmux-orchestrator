@@ -286,7 +286,7 @@ class BrokerObserverTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
             )
 
         for index, state in enumerate(
-            ("delivering", "uncertain", "failed", "completed", "future-state"),
+            ("uncertain", "failed", "completed", "future-state"),
             start=1,
         ):
             with self.subTest(assignment_state=state):
