@@ -151,8 +151,10 @@ and may select only exact-project custom specialists whose registered resources
 and fixed read-only contracts validate before the provider call. Exact per-run
 choices win over exact-project constraints, user-global constraints/defaults,
 planner choices, and packaged fallback. Every selected provider/model/thinking
-tuple must exist in Pi's bounded currently available/scoped catalog at one of that
-model's supported thinking levels, through `max` where available; there is no operator
+tuple must exist in Pi's bounded catalog: a non-empty `ctx.scopedModels` list is
+authoritative and replaces the broader registry, while an empty scope follows Pi's
+all-available-models semantics. Every tuple must use one of that exact model's supported
+thinking levels, through `max` where available; there is no operator
 model allowlist or alternative candidate set. Dynamic
 planning receives a bounded non-secret Pi 0.87.1 capability projection—identity,
 reasoning and supported thinking levels, text/image input support, context

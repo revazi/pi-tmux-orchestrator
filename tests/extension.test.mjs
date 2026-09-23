@@ -3620,6 +3620,147 @@ test("TypeSafe Jev precedes explicit Pi decision models and configured fallback"
   );
 });
 
+test("TypeSafe Jev is confined to Pi scopedModels and cannot invent an identity", async () => {
+  const scopedLow = {
+    provider: "scope", id: "allowed-low", reasoning: true,
+    thinkingLevelMap: { low: "low" },
+  };
+  const scopedMax = {
+    provider: "scope", id: "allowed-max", reasoning: true,
+    thinkingLevelMap: { max: "max" },
+  };
+  const outside = {
+    provider: "registry", id: "outside-scope", reasoning: true,
+    thinkingLevelMap: { low: "low" },
+  };
+  let registryReads = 0;
+  const ctx = {
+    scopedModels: [
+      { model: scopedLow, thinkingLevel: "low" },
+      { model: scopedMax, thinkingLevel: "max" },
+    ],
+    modelRegistry: {
+      getAvailable: () => {
+        registryReads += 1;
+        return [outside];
+      },
+    },
+  };
+  const selection = selectDecisionModel(
+    ctx, undefined, plannerPolicy(), [], { typesafeApiKey: "test-typesafe-key" },
+  );
+  assert.deepEqual(
+    selection.candidates.map((candidate) => [candidate.provider, candidate.modelId, candidate.thinkingLevels]),
+    [
+      ["scope", "allowed-low", ["low"]],
+      ["scope", "allowed-max", ["max"]],
+    ],
+  );
+  assert.equal(registryReads, 0);
+  assert.throws(
+    () => selectDecisionModel(ctx, {
+      provider: "registry", model: "outside-scope", thinking: "low",
+    }, plannerPolicy()),
+    /decision_model_unavailable/,
+  );
+
+  const input = {
+    task: "Use only the exact Pi model scope.",
+    withProbe: false,
+    withPlaywright: false,
+    withDjangoExpert: false,
+  };
+  const topology = validatePlannerTopology(plannerTopology({ optionalRoles: [] }));
+  let capturedRequest;
+  const answerFor = (question, choice) => ({
+    type: "choice",
+    choice,
+    confidence: 1,
+    probabilities: Object.fromEntries(
+      Object.keys(question.criteria).map((option) => [option, option === choice ? 1 : 0]),
+    ),
+  });
+  const result = await runPreflightPlanner(
+    ctx, input, "/project", selection, topology, undefined, undefined,
+    {
+      typesafeApiKey: "test-typesafe-key",
+      typesafeFetch: async (_url, options) => {
+        capturedRequest = JSON.parse(options.body);
+        const selected = {
+          model_00: "m1",
+          thinking_00: "max",
+          model_01: "m0",
+          thinking_01: "low",
+        };
+        const answers = Object.fromEntries(Object.entries(capturedRequest.questions).map(
+          ([questionId, question]) => [
+            questionId,
+            answerFor(question, selected[questionId] ?? Object.keys(question.criteria)[0]),
+          ],
+        ));
+        return new Response(JSON.stringify({
+          model: "jev-1.13.0",
+          answers,
+          usage: { input_tokens: 1, output_tokens: 1 },
+        }), { status: 200 });
+      },
+    },
+  );
+  assert.deepEqual(
+    capturedRequest.state.candidate_model_capabilities.map(
+      (candidate) => [candidate.provider, candidate.model, candidate.thinking_levels],
+    ),
+    [
+      ["scope", "allowed-low", ["low"]],
+      ["scope", "allowed-max", ["max"]],
+    ],
+  );
+  assert.deepEqual(
+    result.plan.roles.map((role) => [role.role, role.provider, role.model, role.thinking]),
+    [
+      ["implementer", "scope", "allowed-max", "max"],
+      ["reviewer", "scope", "allowed-low", "low"],
+    ],
+  );
+  assert.equal(JSON.stringify(capturedRequest).includes("outside-scope"), false);
+  assert.equal(registryReads, 0);
+
+  await assert.rejects(
+    runPreflightPlanner(
+      ctx, input, "/project", selection, topology, undefined, undefined,
+      {
+        typesafeApiKey: "test-typesafe-key",
+        typesafeFetch: async (_url, options) => {
+          const request = JSON.parse(options.body);
+          const answers = Object.fromEntries(Object.entries(request.questions).map(
+            ([questionId, question]) => {
+              const choice = questionId === "model_00" ? "m2" : Object.keys(question.criteria)[0];
+              return [questionId, answerFor(question, choice)];
+            },
+          ));
+          return new Response(JSON.stringify({
+            model: "jev-1.13.0",
+            answers,
+            usage: { input_tokens: 1, output_tokens: 1 },
+          }), { status: 200 });
+        },
+      },
+    ),
+    /typesafe_answer_invalid/,
+  );
+  assert.throws(
+    () => validatePlannerDecision({
+      version: 1,
+      roles: [
+        { role: "implementer", provider: "registry", model: "outside-scope", thinking: "low", reason: "Invented." },
+        { role: "reviewer", provider: "scope", model: "allowed-low", thinking: "low", reason: "Scoped." },
+      ],
+    }, selection.candidates, input),
+    /unavailable_planner_role_model/,
+  );
+  assert.equal(registryReads, 0);
+});
+
 test("malformed TypeSafe planning fails before the Python start boundary", async () => {
   const worker = {
     provider: "worker-provider",

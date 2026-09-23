@@ -61,7 +61,7 @@ Hard rules:
 - Include implementer and reviewer exactly once.
 - Optional roles are only the exact identities listed in eligible_roles.
 - Custom identities are fixed read-only specialists with the listed contract; never create an identity or change a contract.
-- Choose only provider/model/thinking combinations listed in candidate_models.
+- candidate_models is the authoritative exact Pi model scope: a non-empty scopedModels selection when present, otherwise the current available catalog. Choose only provider/model/thinking combinations listed there; never invent an identity.
 - Use only listed technical capabilities and declared catalog cost hints.
 - Prefer the smallest sufficient model for the role's technical needs and declared cost.
 - Do not infer quality, coding skill, latency, or reliability from model names.
@@ -548,7 +548,7 @@ function typesafeDecisionRequest(payload, candidates, input, policy, topology) {
       questions[modelQuestion] = {
         type: "choice",
         instructions: {
-          decision: "Choose the smallest sufficient exact eligible provider/model identity by its catalog index. Capability metadata and declared catalog cost hints are in candidate_model_capabilities at that index. Missing, zero, or unavailable metadata is unknown; never guess. Declared rates are catalog hints, not billing or observed spend. Do not infer quality, coding skill, latency, or reliability from model names; honor role locks.",
+          decision: "Choose the smallest sufficient exact eligible provider/model identity by its catalog index. candidate_model_capabilities is the authoritative exact Pi model scope; choose only an index in this question and never invent an identity. Capability metadata and declared catalog cost hints are at that index. Missing, zero, or unavailable metadata is unknown; never guess. Declared rates are catalog hints, not billing or observed spend. Do not infer quality, coding skill, latency, or reliability from model names; honor role locks.",
           role, contract: descriptor.contract, authority: descriptor.authority,
         },
         criteria: Object.fromEntries(axes.candidateIndexes.map((candidateIndex) => [
