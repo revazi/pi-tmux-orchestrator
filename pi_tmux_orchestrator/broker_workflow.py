@@ -177,6 +177,18 @@ class BrokerWorkflowSupport:
             if existing is not None:
                 await self.reply(client, message["id"], True, status="duplicate")
                 return
+            role_state = database.execute(
+                "SELECT active_assignment_id FROM roles WHERE role=?",
+                (client.role,),
+            ).fetchone()
+            if (
+                assignment["state"] not in {"delivering", "accepted"}
+                or role_state is None
+                or role_state["active_assignment_id"] != assignment_id
+            ):
+                raise OrchestrationError(
+                    "Assignment is not active for this role", "conflict"
+                )
             report_id = secrets.token_hex(16)
             assignment_usage = (
                 report_usage["assignment"] if report_usage is not None else {}

@@ -252,6 +252,64 @@ class BrokerObserverTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
                 },
             )
 
+        rejected_plan = validate_report(
+            {
+                "kind": "plan",
+                "summary": "Ineligible assignment report.",
+                "relevant_paths": [],
+                "relevant_symbols": [],
+                "intended_changes": [],
+                "required_checks": [],
+                "risks": [],
+                "open_questions": [],
+            },
+            "implementer",
+        )
+        with broker_store.connect_broker_database(self.coord) as database:
+            database.execute(
+                "UPDATE roles SET active_assignment_id=? WHERE role='implementer'",
+                ("a" * 32,),
+            )
+        with self.assertRaisesRegex(Exception, "not active for this role"):
+            await broker.handle_report(
+                client,
+                {
+                    "id": "4" * 32,
+                    "assignment_id": assignment_id,
+                    "report": rejected_plan,
+                },
+            )
+        with broker_store.connect_broker_database(self.coord) as database:
+            database.execute(
+                "UPDATE roles SET active_assignment_id=? WHERE role='implementer'",
+                (assignment_id,),
+            )
+
+        for index, state in enumerate(
+            ("uncertain", "failed", "completed", "future-state"),
+            start=1,
+        ):
+            with self.subTest(assignment_state=state):
+                with broker_store.connect_broker_database(self.coord) as database:
+                    database.execute(
+                        "UPDATE assignments SET state=? WHERE id=?",
+                        (state, assignment_id),
+                    )
+                with self.assertRaisesRegex(Exception, "not active for this role"):
+                    await broker.handle_report(
+                        client,
+                        {
+                            "id": str(index) * 32,
+                            "assignment_id": assignment_id,
+                            "report": rejected_plan,
+                        },
+                    )
+        with broker_store.connect_broker_database(self.coord) as database:
+            database.execute(
+                "UPDATE assignments SET state='accepted' WHERE id=?",
+                (assignment_id,),
+            )
+
         plan = {
             "kind": "plan",
             "summary": "PRIVATE_PLAN_BODY_CANARY",
