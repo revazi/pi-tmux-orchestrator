@@ -2,7 +2,7 @@
 
 This is the complete operator reference. If you are installing the package or
 starting your first run, begin with the README's
-[quick start](../README.md#quick-start). Existing users upgrading to `0.10.0`
+[quick start](../README.md#quick-start). Existing users upgrading to `0.11.0`
 should read the [0.10 upgrade](../README.md#upgrading-to-010) first. The 0.9
 slash-command map remains in [Upgrading to 0.9](../README.md#upgrading-to-09).
 
