@@ -284,6 +284,17 @@ const pythonVersion = python.match(/^VERSION = "([^"]+)"$/m)?.[1];
 if (version !== expectedManifest.version || pythonVersion !== expectedManifest.version) {
   throw new Error("VERSION and Python CLI must match the exact package version");
 }
+const changelog = await readFile(resolve(root, "CHANGELOG.md"), "utf8");
+if (!changelog.includes(`## ${version} - `)) {
+  throw new Error(`CHANGELOG.md must contain the ${version} release heading`);
+}
+const releaseNotesPath = `releases/v${version}.md`;
+const releaseNotes = await readFile(resolve(root, releaseNotesPath), "utf8");
+for (const heading of ["## Breaking change", "## Upgrade safely"]) {
+  if (!releaseNotes.includes(heading)) {
+    throw new Error(`${releaseNotesPath} must contain ${heading}`);
+  }
+}
 
 const npmTemp = await mkdtemp(join(tmpdir(), "pi-tmux-verify-package-"));
 const npmHome = resolve(npmTemp, "home");
