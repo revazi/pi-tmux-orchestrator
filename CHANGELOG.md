@@ -4,6 +4,8 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## 0.11.0 - 2026-09-22
+
 ### Added
 
 - Added a bounded machine-readable worker runtime-identity sibling on broker-v1 reports, derived from the Pi process model/thinking configuration rather than `orchestrator_report` arguments; the broker compares exact provider/model/thinking fields against immutable per-generation launch metadata and fans out matching, omitted, unavailable, or conflicting without storing the claim or changing public role assignments, while a confirmed restart refreshes that role's launch assignment from current manifest metadata before the new generation reports

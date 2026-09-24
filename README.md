@@ -1,503 +1,60 @@
 # Pi Tmux Orchestrator
 
-[![npm version](https://img.shields.io/npm/v/pi-tmux-orchestrator.svg)](https://www.npmjs.com/package/pi-tmux-orchestrator)
-[![npm downloads](https://img.shields.io/npm/dm/pi-tmux-orchestrator.svg)](https://www.npmjs.com/package/pi-tmux-orchestrator)
-[![CI](https://github.com/revazi/pi-tmux-orchestrator/actions/workflows/ci.yml/badge.svg)](https://github.com/revazi/pi-tmux-orchestrator/actions/workflows/ci.yml)
-[![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.md)
+[![npm version](https://img.shields.io/npm/v/pi-tmux-orchestrator.svg)](https://www.npmjs.com/package/pi-tmux-orchestrator) [![npm downloads](https://img.shields.io/npm/dm/pi-tmux-orchestrator.svg)](https://www.npmjs.com/package/pi-tmux-orchestrator) [![CI](https://github.com/revazi/pi-tmux-orchestrator/actions/workflows/ci.yml/badge.svg)](https://github.com/revazi/pi-tmux-orchestrator/actions/workflows/ci.yml) [![MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.md)
 
-A [Pi](https://github.com/earendil-works/pi) package for coordinating coding
-agents in a monitorable tmux grid.
-
-- One implementer writes and one independent reviewer is always required.
-- Configure each orchestration's models, thinking profile, flow, budgets, skills,
-  workspace hints, and optional built-in specialists.
-- Native Pi workers remain visible and directly steerable in a grid that adapts
-  to the roles enabled for that run.
-- An event-driven broker handles structured coordination and recovery.
-- Durable orchestration state is bounded and metadata-only.
-
-![Pi Tmux Orchestrator native worker grid and broker dashboard](https://raw.githubusercontent.com/revazi/pi-tmux-orchestrator/main/assets/pi-tmux-orchestrator-demo.png)
+Coordinate coding agents in visible tmux panes from [Pi](https://github.com/earendil-works/pi). Each run has one implementer and a mandatory independent reviewer, with structured broker coordination and durable metadata-only state.
 
 ## Install
 
-Requirements: Pi, Python 3.11+, tmux 3.2+, and macOS or Linux. Worker adapters are verified against Pi 0.87.1; other Pi versions are not covered by a compatibility matrix. The lean `--system-prompt` / `--no-skills` launch contract does not freeze Pi's default prompt size.
+Requirements: Pi, Python 3.11+, tmux 3.2+, macOS or Linux. Worker adapters are verified against Pi 0.87.1.
 
-```bash
+```sh
 pi install npm:pi-tmux-orchestrator
 ```
 
-Run once without installing:
-
-```bash
-pi -e npm:pi-tmux-orchestrator
-```
-
-Pi packages execute with your user permissions. Inspect packages before
-installing them.
+Try without installation: `pi -e npm:pi-tmux-orchestrator`. Packages run with your user permissions; inspect before installing.
 
 ## Quick start
 
-Start Pi inside tmux from the project you want to change:
+Start Pi in tmux, from the project to change:
 
-```bash
+```sh
 tmux new -s coding
 cd /absolute/path/to/project
 pi
 ```
 
-Then use either:
+Then run `/or-start Describe the change` or ask naturally to use the orchestrator. Review the preview and confirm. Defaults need no configuration. Use `/or-dashboard` to inspect runs; when attached, press tmux prefix then `L` to return to Pi.
 
-```text
-/or-start Describe the change you want
-```
+## Commands
 
-or natural language:
-
-```text
-Describe the change you want. Use the orchestrator.
-```
-
-Review the preview and confirm. The default run starts one implementer and the
-mandatory reviewer. No configuration file is required.
-
-Open `/or-dashboard` to inspect or attach to runs. When attached to the worker
-grid, press the tmux prefix followed by `L` to return to the same Pi session.
-
-## Pi commands
-
-The extension intentionally exposes only five commands:
-
-| Command | Purpose |
+| Command | Use |
 |---|---|
-| `/or-dashboard` | List, inspect, attach/watch, run doctor, or confirm stop |
+| `/or-dashboard` | Inspect, attach/watch, run doctor explicitly, or confirm stop |
 | `/or-models [query]` | Find exact provider/model IDs |
-| `/or-start [task]` | Preview, confirm, and start work |
-| `/or-send [session]` | Send private guidance; attention targets the waiting assignment, and post-ready implementer guidance opens a reviewed repair round |
+| `/or-start [task]` | Preview, confirm, and start |
+| `/or-send [session]` | Send private guidance to a run |
 | `/or-stop [session]` | Select and confirm stopping a run |
 
-The dashboard is keyboard-driven:
+The dashboard supports arrows or `j`/`k`, Enter to attach/watch, `d` for doctor, `r` to refresh, `x` for confirmed stop, `?` for help, and `q`/Escape to close. Opening it does not run doctor or poll in the background.
 
-| Key | Action |
-|---|---|
-| arrows or `j`/`k` | Select a run |
-| Enter | Watch future transitions and attach |
-| `d` | Run current-project doctor explicitly |
-| `r` | Refresh the session list |
-| `x` | Request confirmed stop |
-| `?` | Show help |
-| `q` or Escape | Close |
+## Safety and configuration
 
-Opening or refreshing the dashboard never runs doctor and never starts
-background polling. Attaching does not replay an already-completed outcome into
-the invoking Pi; use explicit watch behavior when that Pi should assess an
-existing outcome.
+Tmux hosts panes; an authenticated local broker transports typed workflow reports. Ambiguous delivery fails closed rather than blindly replaying work. Worker prompts and project payloads are not retained in broker metadata. Stop and start actions require confirmation; review authority cannot be removed.
 
-## How it works
+Runs can select exact role models and thinking, single/phased flow, optional built-in specialists, budgets, reviewed skills, and worker-context policy. Model-guided planning is opt-in and separately confirmed. Details and strict user-global configuration examples are in the [usage guide](references/usage.md); protocol and custom specialist details are in [protocol](references/protocol-v1.md) and [custom roles](references/custom-roles.md).
 
-Tmux hosts the worker panes but does not transport workflow messages. Each run
-has an owner-only Unix-socket broker that authenticates role bridges, accepts
-bounded typed reports, and schedules the mandatory review.
+## Upgrade to 0.11.0
 
-The invoking Pi remains the parent supervisor. It receives event-driven
-completion or attention updates while each worker keeps its normal durable Pi
-session. Ready and needs-attention parent updates show immutable per-generation
-launch role/provider/model/thinking/transport assignments before untrusted
-reports; a confirmed model-changing restart refreshes that role's launch
-assignment from current manifest metadata before the new generation reports. Provider or model names in
-report prose are never treated as selected identity. A worker may attach a
-machine-readable process identity outside report tool arguments so the broker
-can surface an exact matching or conflicting signal without changing the
-launch assignment. The broker dashboard refreshes assignment-bound thinking, streaming,
-tool, reporting, and finalized-usage metadata directly from worker events; a
-NOW line shows who is working and who is waiting. It does not wait for handoff. Crashes and ambiguous delivery fail to `uncertain`
-rather than blindly replaying work.
+Update with `pi update npm:pi-tmux-orchestrator` (or reinstall with `pi install npm:pi-tmux-orchestrator`). Finish or stop active runs before replacing the package. The 0.11.0 release adds opt-in bounded model-guided preflight planning, direct TypeSafe Jev decision support, capability-aware candidate selection, and clearer authoritative worker assignment/progress reporting. Planning makes an additional provider call only when explicitly enabled and confirmed; ordinary starts retain the deterministic path. Existing retained runs remain readable; new ordinary and custom-role manifest formats remain v5 and v7 respectively, over broker-v1.
 
-The package supports interactive native Pi panes and explicit headless RPC
-workers through the same broker protocol. Ordinary new runs use manifest v5;
-explicit custom-role runs use v7. Both use `broker-v1`, and retained older runs
-remain readable.
+See the complete [0.11.0 release and migration notes](releases/v0.11.0.md). If upgrade is blocked, remove the package and reinstall the prior exact version, `npm:pi-tmux-orchestrator@0.10.0`, then start Pi again. Do not resume in-flight runs across versions; preserve their original installation until safely finished or stopped. [Rollback guidance](releases/v0.10.0.md#rollback).
 
-## Configure orchestrations
+## Help and documentation
 
-Every start can choose exact role models and thinking levels, a `single` or
-`phased` implementation flow, optional probe/Playwright/Django specialists,
-observational budgets, explicitly reviewed worker skills, and the experimental
-workspace capsule. Use `/or-start`, natural language, the model tool, or the
-terminal CLI; explicit run options take precedence.
-
-For opt-in model-guided preflight selection, use `/or-start --plan TASK` or
-model-tool `dynamicPlan=true`. Before preview, the extension shows the exact
-decision service and requires approval for one additional provider call. When
-TypeSafe authentication is configured through Pi's native `/login typesafe`
-flow or the `TYPESAFE_API_KEY` environment fallback, the bundled dependency-free
-HTTPS adapter uses TypeSafe `jev-latest` directly at the fixed
-`https://api.typesafe.ai/v1/systemone` endpoint. Jev is a typed System One
-decision model, not a Pi chat model: it chooses from bounded role questions and
-factorized exact model-identity and thinking-level choices, while the same
-canonical capability facts as the Pi fallback path are sent once in request
-state. The catalog is limited to 100 models and seven supported thinking levels;
-each question has at most 255 options and the request at most 255 questions.
-The complete serialized request is limited to 96 KiB UTF-8. If it cannot fit,
-planning fails before HTTP rather than omitting candidates. Optional user-global
-natural-language preferences for both direct TypeSafe Jev and Pi-chat dynamic
-planning use the canonical `dynamicGuidance` text field in the `planner` object
-of the existing `~/.pi/agent/tmux-orchestrator.json` configuration. The same
-object holds `preferred`, ordered `fallbacks`, and `noEligible`. Legacy
-`jevGuidance` is accepted only when `dynamicGuidance` is absent; configure just
-one field. The text is bounded, digest-bound, and subordinate to candidate,
-role-authority, and locked-constraint rules—it cannot add identities, create a model allowlist,
-direct selection by model name, or weaken validation. Missing or `null` guidance
-keeps the packaged behavior.
-Deterministic code constructs the normal strict plan. When TypeSafe authentication is absent, an exact model-tool
-`decisionModel` selects a Pi chat model for that run. Without either, the strict
-version-1 user-global planner policy selects an exact configured Pi preferred identity,
-then ordered exact cross-provider fallbacks. If no configured identity is
-eligible, policy either cancels or offers an explicitly confirmed static/manual
-start without a planning call.
-The strict one-shot decision retains exactly one built-in implementer and
-mandatory built-in reviewer, may select unique eligible built-in specialists,
-and may select only exact-project custom specialists whose registered resources
-and fixed read-only contracts validate before the provider call. Exact per-run
-choices win over exact-project constraints, user-global constraints/defaults,
-planner choices, and packaged fallback. Every selected provider/model/thinking
-tuple must exist in Pi's bounded catalog: a non-empty `ctx.scopedModels` list is
-authoritative and replaces the broader registry, while an empty scope follows Pi's
-all-available-models semantics. Every tuple must use one of that exact model's supported
-thinking levels, through `max` where available; there is no operator
-model allowlist or alternative candidate set. Dynamic
-planning receives a bounded non-secret Pi 0.87.1 capability projection—identity,
-reasoning and supported thinking levels, text/image input support, context
-window, max output tokens, declared input/output/cache-read/cache-write rates
-and tiers, and prompt-cache retention presence—and must choose the smallest
-sufficient model from technical needs and declared catalog cost hints without
-inferring quality, coding skill, latency, or reliability from model names.
-Declared rates are catalog hints, not billing, observed spend, or runtime
-eligibility; missing, zero, or malformed metadata stays explicit and is never
-guessed. Capability metadata is digest-bound in the candidate set so catalog
-drift after preview rejects launch. Roles may use different enabled providers.
-Exact per-role overrides, project/profile constraints, custom-role bindings,
-role authority, and model-supported worker thinking constraints remain authoritative. The planner cannot invent
-roles/contracts, grant tools or write authority, remove review, force activation,
-mutate configuration, or start tmux/workers before the separate final
-confirmation. `projectCustomRoles=false` excludes project custom candidates; an
-explicit `true` requires every eligible configured identity. The terminal uses
-the same planner and validation path with `start --dynamic-plan
---authorize-planning --yes`; planning authorization and launch authorization are
-separate and omission of either fails before any provider or launch call.
-Accepted decisions are bound to the private task/context, canonical project,
-resolved configuration, planner policy, eligible catalog, and trusted resources;
-all mutable inputs are revalidated after preview and before launch. Retained
-status/dashboard/Supervisor output contains only mode, decision identity/source,
-selected role/model/thinking/contract metadata, timestamps, request ID, and
-SHA-256 bindings—never task, prompt, provider, credential, endpoint, or custom
-resource bodies. Ordinary `/or-start TASK` remains the static/manual path. No
-cost, savings, or quality improvement is claimed from catalog rates, model
-names, or the extra planning call without comparative evidence.
-
-For an opt-in repair cap, use `/or-start`'s additional repair-round input,
-`maxRepairRounds` in the model tool, or CLI `start --max-repair-rounds N`.
-Blank/omission disables the cap; `0` pauses before the first repair.
-The run remains incomplete at the cap; explicit terminal CLI
-`continue SESSION --yes --command-id <32-hex-id>` authorizes one additional round.
-This does not limit an active assignment or change observational budgets.
-See [continuation semantics](references/usage.md#repair-round-continuation-limit-opt-in).
-
-For related worker investigation, use `/or-start`'s worker-context input,
-tool `workerContext: { reviewer: "retain" }`, or CLI
-`start --worker-context reviewer=retain`. Other roles keep default
-pruning; mandatory review and run limits are unchanged. Retention can increase
-context cost. Retained roles receive bounded worktree-metadata reuse hints—not
-proof of current checks or permission to reuse approval. See
-[context policy](references/usage.md#worker-context-retention-opt-in) and
-[reuse limitations](references/usage.md#bounded-investigation-reuse-hints).
-
-Validate future custom-specialist definitions with
-`pi-tmux-agents role-registry --project /absolute/project`. This checks strict
-user-global definitions and reviewed resource digests; it does **not** launch
-custom roles. The shared bootstrap verifies pinned v6/v7 role/resource bindings
-and isolates read-only resources. Internal custom contract/routing/accounting
-checks and bounded control/presentation adapters are covered by model-free
-regressions. Isolated staged-package actual-Pi TUI/RPC startup, broker
-reconnection, restart, resource revocation, and cleanup are also covered without
-a prompt or provider request; this does not claim a generated custom report or
-provider behavior. Explicit CLI selection can be previewed with
-`start --dry-run --custom-role ID PROVIDER MODEL THINKING` (repeatable, at most
-eight). Version-4 exact-project `customRoles` can also select the same registered
-identities for one canonical directory; `--no-project-custom-roles` omits them,
-`--project-custom-role ID` selects an allowlisted subset for the bounded planner
-adapter, and explicit `--custom-role` wins. Provider/model values are always explicit.
-Thinking accepts an explicit level or `profile` to opt into the same identity's
-user-global custom-profile mapping; profile mappings never select workers and
-project profile selections cannot configure custom thinking. Selected roles use
-deterministic rules from their bound specialist contract, or
-`--force-specialist CUSTOM_ID`. Omit `--dry-run` to launch after model and
-resource validation. Retained custom status exposes contracts and bounded policy
-sources, not resource bodies or claims of current resource validity.
-See the [registry, bootstrap, and workflow trust boundaries](references/custom-roles.md).
-
-Reusable defaults are user-global, never project-local:
-
-```text
-~/.pi/agent/tmux-orchestrator.json
-```
-
-Packaged profiles change only Pi thinking levels:
-
-- `economy`
-- `balanced`
-- `thorough` — compatibility default
-
-Profiles do not change models, tools, role authority, mandatory review,
-routing, or budget behavior.
-
-Version-4 configuration can apply exact defaults to canonical project paths,
-including registered custom specialists. Version 3 remains accepted without
-`customRoles`:
-
-```json
-{
-  "version": 4,
-  "defaultProfile": "balanced",
-  "projects": [
-    {
-      "directory": "/absolute/canonical/path/from/pwd-P",
-      "profile": "thorough",
-      "implementationFlow": "phased",
-      "specialists": ["probe"],
-      "workspaceCapsule": false,
-      "customRoles": [
-        {
-          "id": "custom-security",
-          "provider": "exact-provider",
-          "model": "exact-model",
-          "thinking": "low"
-        }
-      ]
-    }
-  ]
-}
-```
-
-Project directories must already exist and exactly match `pwd -P`; there are no
-globs, prefix matches, repository-name matches, or symlink components. Custom role
-IDs must already exist in the user-global registry. Explicit run options override
-an exact project mapping.
-
-Pi remains authoritative for worker, Pi-fallback, and TypeSafe authentication.
-The extension registers TypeSafe as an auth-only provider with no chat models.
-Configure it once through Pi's masked native prompt:
-
-```text
-/login typesafe
-```
-
-Pi persists that credential in its normal user-global credential store and it
-takes effect immediately without restarting Pi; the orchestrator never reads the
-auth file directly. At planning time it asks Pi's
-model registry for the resolved credential, trims and validates it, and uses it
-only in the in-memory HTTPS Authorization header after planning confirmation.
-Use `/logout` and select `TypeSafe Jev Planner` to remove the stored credential.
-`TYPESAFE_API_KEY` remains an optional environment override for automation. The
-key is never accepted in orchestrator configuration or arguments, retained in
-orchestration state,
-logged, shown, or forwarded into broker/worker tmux environments. The fixed
-TypeSafe endpoint cannot be overridden.
-
-Jev takes precedence whenever TypeSafe authentication is configured. Log out and
-unset the environment fallback to use an explicit Pi `decisionModel`, or the
-configured Pi preferred/fallback policy when no per-run decision model is
-supplied.
-
-Dynamic planning policy is the optional `planner` member in the existing strict
-user-global `~/.pi/agent/tmux-orchestrator.json` configuration:
-
-```json
-{
-  "version": 4,
-  "defaults": {},
-  "roles": {},
-  "planner": {
-    "preferred": {
-      "provider": "provider-a",
-      "model": "exact-model-a",
-      "thinking": "medium"
-    },
-    "fallbacks": [
-      { "provider": "provider-b", "model": "exact-model-b", "thinking": "low" },
-      { "provider": "provider-c", "model": "exact-model-c", "thinking": "medium" }
-    ],
-    "noEligible": "cancel",
-    "dynamicGuidance": "Prefer the smallest useful roster. Balance declared token and cost efficiency against outcome risk: choose the least resource-intensive exact candidate whose listed capabilities are clearly sufficient for a correct, complete outcome, and avoid lightweight variants when their capability margin is uncertain. When authoritative catalog facts establish recency and otherwise-sufficient candidates show no clear advantage for an older option, prefer the more recent candidate; never infer recency, quality, coding skill, latency, or reliability from model names. Use deeper thinking only for ambiguous, security-sensitive, or high-risk work."
-  }
-}
-```
-
-`dynamicGuidance` is optional and may be `null`; it applies to both direct
-TypeSafe Jev and Pi-chat dynamic planning as subordinate preferences only. Migrate
-legacy `jevGuidance` by renaming the field; configuring both fields is rejected.
-For migration, explicitly copy the old planner values into this `planner`
-object, then remove the separate `tmux-orchestrator-planner.json` file. Until it
-is removed, dynamic planning rejects with a migration error—even if the unified
-file has no planner member—so values are never silently merged or chosen by
-precedence. The retired `PI_TMUX_ORCHESTRATOR_PLANNER_CONFIG` override also fails
-closed; move its policy into the single user-global `tmux-orchestrator.json`
-selected by `PI_TMUX_ORCHESTRATOR_CONFIG` (or the default Pi home path). The
-unified file remains the sole authority, is limited to 64 KiB, and is validated
-outside the target project. The guidance
-field is limited to 16 KiB; malformed, control-bearing, whitespace-padded, or
-oversized values fail closed before planning.
-Write preferences in terms of listed capabilities, declared cost hints, task risk,
-and outcome sufficiency—not model names. Guidance cannot enforce “never use model
-X” or “prefer model Y.” Apply hard exclusions through Pi's authoritative model
-scope, or use exact per-run role overrides. Because the current capability
-projection has no recency field, Jev must not infer model age from an identity;
-recency preferences apply only if authoritative catalog facts establish it.
-This file is validated for every dynamic start, but its identities configure
-only the Pi-model fallback path used when TypeSafe authentication and an
-explicit Pi decision model are both absent. Resolve every identity from
-`/or-models`; display
-names never match. `preferred`
-may be `null`, fallbacks are tried in listed order (for example, exact Grok and
-OpenAI identities discovered from the current catalog), decision-model thinking is
-explicit and may use any level supported by that exact model through `max`, and `noEligible` is exactly `cancel` or
-`static`. Missing policy defaults to cancellation. `static` still requires an
-extra confirmation and the ordinary final launch confirmation. Model policy,
-custom profiles, specialist activation, planner policy, observational budgets,
-worker skills, and workspace capsules are documented in the
-[complete usage reference](references/usage.md).
-
-## Upgrading to 0.10
-
-Version 0.10.0 adds opt-in custom read-only specialists, worker-context
-retention, repair-round continuation, and a watchable broker dashboard. There
-is no new slash-command, protocol, or authority-model breaking change. The 0.9
-command map below still applies.
-
-Finish or stop active orchestrations, update, and restart Pi:
-
-```bash
-pi update npm:pi-tmux-orchestrator
-```
-
-Start a new orchestration after restarting. An already-running broker keeps the
-code loaded when that run started and does not hot-reload this release.
-
-- Ordinary new runs still use manifest v5 and `broker-v1`. Explicit custom-role
-  runs use manifest v7.
-- Version-3 user-global configuration remains accepted without `customRoles`.
-  Version 4 adds exact-project `customRoles` for already-registered identities.
-- Retained older runs remain readable.
-- Custom specialists, worker-context retention, and the repair-round cap are
-  opt-in. Defaults do not start custom roles or retain extra worker context.
-
-See the [v0.10.0 release notes](releases/v0.10.0.md).
-If migration is blocked, stop active 0.10 runs and roll back:
-
-```bash
-pi remove npm:pi-tmux-orchestrator
-pi install npm:pi-tmux-orchestrator@0.9.5
-```
-
-## Upgrading to 0.9
-
-Version 0.9 removed duplicate long-form commands and separate helper commands:
-
-| Before | Now |
-|---|---|
-| `/orchestrator-dashboard` | `/or-dashboard` |
-| `/orchestrator-models` | `/or-models` |
-| `/orchestrator-start` | `/or-start` |
-| `/orchestrator-send` | `/or-send` |
-| `/orchestrator-stop` | `/or-stop` |
-| list/status/help/about/doctor/watch/attach helpers | `/or-dashboard` |
-| supervisor/restart helpers | `pi-tmux-agents` or the model tool |
-
-Finish or stop active runs, update, and restart Pi:
-
-```bash
-pi update npm:pi-tmux-orchestrator
-```
-
-Existing manifest v1-v4 runs remain readable. The mandatory reviewer,
-one-writer policy, and `thorough` compatibility profile are unchanged.
-
-See the [v0.9.0 release notes](https://github.com/revazi/pi-tmux-orchestrator/releases/tag/v0.9.0) and
-[migration discussion archive](https://github.com/revazi/pi-tmux-orchestrator/issues/82).
-If migration is blocked, stop active 0.9 runs and roll back:
-
-```bash
-pi remove npm:pi-tmux-orchestrator
-pi install npm:pi-tmux-orchestrator@0.8.1
-```
-
-## Terminal CLI
-
-The Python CLI provides the complete operational surface:
-
-```bash
-pi-tmux-agents --json planner-policy --project /absolute/project
-pi-tmux-agents --json planner-topology --project /absolute/project
-pi-tmux-agents list
-pi-tmux-agents status SESSION
-pi-tmux-agents attach SESSION
-pi-tmux-agents send SESSION --role implementer --message-file /tmp/message.txt
-pi-tmux-agents restart SESSION --role implementer --yes
-pi-tmux-agents stop SESSION --yes
-```
-
-Run `pi-tmux-agents --help` for all commands, JSON output, Supervisor API,
-controller, profile, model, specialist, and headless-worker options.
-
-## Safety
-
-- The implementer is the only writer; reviewer and specialist roles are
-  read-only but are not OS sandboxes.
-- Project trust, start, restart, and stop retain explicit confirmation
-  boundaries.
-- Existing tmux sessions are never replaced and operations use exact targets.
-- Workflow, prompt, report, message, diff, log, provider, and credential bodies
-  stay out of durable/public orchestration metadata.
-- Provider usage and cost are shown only when Pi/provider metadata supplies
-  them; synthetic benchmarks are not billing or quality claims.
-
-See [SECURITY.md](SECURITY.md) for the complete security model.
-
-## Documentation
-
-- [Complete operator and CLI usage](references/usage.md)
-- [Custom read-only specialists](references/custom-roles.md)
-- [Coordination protocol and state boundaries](references/protocol-v1.md)
+- [Detailed usage and configuration](references/usage.md)
+- [Prerelease testing](references/prerelease-testing.md)
 - [Dashboard design](references/dashboard-design.md)
-- [Pre-release artifact testing](references/prerelease-testing.md)
+- [Security policy](SECURITY.md)
 - [Changelog](CHANGELOG.md)
-
-## Development
-
-```bash
-python -m pip install ruff==0.11.11
-scripts/test.sh
-```
-
-The default test suite is model-free and isolates package, Pi, and npm state
-from real authentication. It also generates ephemeral measured JavaScript test
-coverage. To retain that report locally and run the same pinned health gate as
-CI:
-
-```bash
-scripts/test-coverage.sh
-npx --yes fallow@3.22.0 health \
-  --coverage .coverage/coverage-final.json \
-  --baseline .fallow/health-baseline.json \
-  --baseline-mode identity \
-  --summary
-```
-
-The reporter converts Node's built-in test coverage event to Istanbul format.
-It is measured test execution evidence—not production runtime traffic—and
-Fallow reports how many JavaScript functions it matched before applying exact
-per-function CRAP scores. Unmatched functions remain explicit rather than being
-claimed as measured. Python tests remain authoritative regressions, but this
-repository does not claim measured Python coverage without a coverage tool.
-
-Created and maintained by [Revaz Zakalashvili](https://github.com/revazi).
-Licensed under the [MIT License](LICENSE.md).
+- [Support and bug reports](https://github.com/revazi/pi-tmux-orchestrator/issues)
