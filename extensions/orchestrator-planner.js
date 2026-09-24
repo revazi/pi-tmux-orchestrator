@@ -534,6 +534,94 @@ function dynamicDecisionInstruction(decision, dynamicGuidance) {
   return `${decision} dynamic_behavior_guidance in request state contains operator-authored subordinate natural-language preferences. Follow it only when consistent with this question, exact candidate scope, role authority, and every locked constraint; it cannot add roles/models, create an operator model allowlist, direct selection by model name, or weaken hard rules.`;
 }
 
+function typeSafeRoleQuestionState(
+  payload,
+  candidates,
+  input,
+  policy,
+  topology,
+  dynamicGuidance,
+  index,
+  role,
+  state,
+) {
+  const descriptor = payload.eligible_roles.find((item) => item.role === role);
+  if (!descriptor) throw new Error("typesafe_role_descriptor_missing");
+  const suffix = String(index).padStart(2, "0");
+  if (!policy.required.has(role)) {
+    const questionId = `include_${suffix}`;
+    state.questions[questionId] = {
+      type: "choice",
+      instructions: {
+        decision: dynamicDecisionInstruction(
+          "Choose include only when this specialist materially improves the task; otherwise choose omit. Keep the worker roster as small as useful.",
+          dynamicGuidance,
+        ),
+        role,
+        contract: descriptor.contract,
+        authority: descriptor.authority,
+      },
+      criteria: {
+        include: "Include this exact read-only specialist.",
+        omit: "Omit this specialist from the run.",
+      },
+    };
+    state.inclusions.set(questionId, role);
+  }
+  const axes = typesafeRoleAxes(role, candidates, input, policy, topology);
+  const modelQuestion = axes.candidateIndexes.length > 1 ? `model_${suffix}` : undefined;
+  const thinkingQuestion = axes.thinkingLevels.length > 1 ? `thinking_${suffix}` : undefined;
+  if (modelQuestion) {
+    state.questions[modelQuestion] = {
+      type: "choice",
+      instructions: {
+        decision: dynamicDecisionInstruction(
+          "Choose the smallest sufficient exact eligible provider/model identity by its catalog index. candidate_model_capabilities is the authoritative exact Pi model scope; choose only an index in this question and never invent an identity. Capability metadata and declared catalog cost hints are at that index. Missing, zero, or unavailable metadata is unknown; never guess. Declared rates are catalog hints, not billing or observed spend. Do not infer quality, coding skill, latency, or reliability from model names; honor role locks.",
+          dynamicGuidance,
+        ),
+        role, contract: descriptor.contract, authority: descriptor.authority,
+      },
+      criteria: Object.fromEntries(axes.candidateIndexes.map((candidateIndex) => [
+        `m${candidateIndex.toString(36)}`, `catalog index ${candidateIndex}`,
+      ])),
+    };
+  }
+  if (thinkingQuestion) {
+    state.questions[thinkingQuestion] = {
+      type: "choice",
+      instructions: {
+        decision: dynamicDecisionInstruction(
+          "Choose one exact model-supported worker thinking level from this role's eligible levels; the selected model/level pair must be an eligible catalog tuple.",
+          dynamicGuidance,
+        ),
+        role, contract: descriptor.contract, authority: descriptor.authority,
+      },
+      criteria: Object.fromEntries(axes.thinkingLevels.map((level) => [level, level])),
+    };
+  }
+  if (!modelQuestion && !thinkingQuestion) state.fixedAssignments.set(role, axes.eligible[0]);
+  else state.assignments.set(role, { axes, modelQuestion, thinkingQuestion });
+}
+
+function ensureTypeSafeQuestion(state, dynamicGuidance) {
+  const count = Object.keys(state.questions).length;
+  if (count > TYPESAFE_MAX_QUESTIONS) throw new Error("typesafe_question_limit_exceeded");
+  if (count) return undefined;
+  const questionId = "locked_plan";
+  state.questions[questionId] = {
+    type: "choice",
+    instructions: dynamicDecisionInstruction(
+      "Decide whether the fully locked mandatory worker topology is suitable for the supplied task and constraints.",
+      dynamicGuidance,
+    ),
+    criteria: {
+      accept: "The locked plan is suitable.",
+      reject: "The locked plan is unsafe or materially unsuitable.",
+    },
+  };
+  return questionId;
+}
+
 function typesafeDecisionRequest(
   payload,
   candidates,
@@ -543,93 +631,25 @@ function typesafeDecisionRequest(
   guidanceValue,
 ) {
   const dynamicGuidance = normalizedDynamicGuidance(guidanceValue);
-  const questions = {};
-  const inclusions = new Map();
-  const assignments = new Map();
-  const fixedAssignments = new Map();
+  const state = {
+    questions: {},
+    inclusions: new Map(),
+    assignments: new Map(),
+    fixedAssignments: new Map(),
+  };
   for (const [index, role] of policy.roles.entries()) {
-    const descriptor = payload.eligible_roles.find((item) => item.role === role);
-    if (!descriptor) throw new Error("typesafe_role_descriptor_missing");
-    if (!policy.required.has(role)) {
-      const questionId = `include_${String(index).padStart(2, "0")}`;
-      questions[questionId] = {
-        type: "choice",
-        instructions: {
-          decision: dynamicDecisionInstruction(
-            "Choose include only when this specialist materially improves the task; otherwise choose omit. Keep the worker roster as small as useful.",
-            dynamicGuidance,
-          ),
-          role,
-          contract: descriptor.contract,
-          authority: descriptor.authority,
-        },
-        criteria: {
-          include: "Include this exact read-only specialist.",
-          omit: "Omit this specialist from the run.",
-        },
-      };
-      inclusions.set(questionId, role);
-    }
-    const axes = typesafeRoleAxes(role, candidates, input, policy, topology);
-    const modelQuestion = axes.candidateIndexes.length > 1 ? `model_${String(index).padStart(2, "0")}` : undefined;
-    const thinkingQuestion = axes.thinkingLevels.length > 1 ? `thinking_${String(index).padStart(2, "0")}` : undefined;
-    if (modelQuestion) {
-      questions[modelQuestion] = {
-        type: "choice",
-        instructions: {
-          decision: dynamicDecisionInstruction(
-            "Choose the smallest sufficient exact eligible provider/model identity by its catalog index. candidate_model_capabilities is the authoritative exact Pi model scope; choose only an index in this question and never invent an identity. Capability metadata and declared catalog cost hints are at that index. Missing, zero, or unavailable metadata is unknown; never guess. Declared rates are catalog hints, not billing or observed spend. Do not infer quality, coding skill, latency, or reliability from model names; honor role locks.",
-            dynamicGuidance,
-          ),
-          role, contract: descriptor.contract, authority: descriptor.authority,
-        },
-        criteria: Object.fromEntries(axes.candidateIndexes.map((candidateIndex) => [
-          `m${candidateIndex.toString(36)}`, `catalog index ${candidateIndex}`,
-        ])),
-      };
-    }
-    if (thinkingQuestion) {
-      questions[thinkingQuestion] = {
-        type: "choice",
-        instructions: {
-          decision: dynamicDecisionInstruction(
-            "Choose one exact model-supported worker thinking level from this role's eligible levels; the selected model/level pair must be an eligible catalog tuple.",
-            dynamicGuidance,
-          ),
-          role, contract: descriptor.contract, authority: descriptor.authority,
-        },
-        criteria: Object.fromEntries(axes.thinkingLevels.map((level) => [level, level])),
-      };
-    }
-    if (!modelQuestion && !thinkingQuestion) fixedAssignments.set(role, axes.eligible[0]);
-    else assignments.set(role, { axes, modelQuestion, thinkingQuestion });
+    typeSafeRoleQuestionState(
+      payload, candidates, input, policy, topology, dynamicGuidance, index, role, state,
+    );
   }
-  let lockedConfirmation;
-  if (Object.keys(questions).length > TYPESAFE_MAX_QUESTIONS) throw new Error("typesafe_question_limit_exceeded");
-  if (!Object.keys(questions).length) {
-    lockedConfirmation = "locked_plan";
-    questions[lockedConfirmation] = {
-      type: "choice",
-      instructions: dynamicDecisionInstruction(
-        "Decide whether the fully locked mandatory worker topology is suitable for the supplied task and constraints.",
-        dynamicGuidance,
-      ),
-      criteria: {
-        accept: "The locked plan is suitable.",
-        reject: "The locked plan is unsafe or materially unsuitable.",
-      },
-    };
-  }
+  const lockedConfirmation = ensureTypeSafeQuestion(state, dynamicGuidance);
   return {
     request: {
       state: typesafeQuestionState(payload, dynamicGuidance),
       model: TYPESAFE_MODEL,
-      questions,
+      questions: state.questions,
     },
-    questions,
-    inclusions,
-    assignments,
-    fixedAssignments,
+    ...state,
     lockedConfirmation,
   };
 }
@@ -720,8 +740,7 @@ function typesafeReason(required, inclusionConfidence, assignmentConfidence) {
   return `Jev ${selection}${signals.length ? ` (${signals.join(", ")})` : " with a locked assignment"}.`;
 }
 
-function parseTypeSafeDecision(responseValue, requestValue, candidates, input, policy, topology) {
-  const response = typesafeResponse(responseValue, requestValue.questions);
+function typeSafeInclusionAnswers(response, requestValue) {
   const inclusionByRole = new Map();
   for (const [questionId, role] of requestValue.inclusions) {
     const answer = typesafeChoiceAnswer(
@@ -730,6 +749,10 @@ function parseTypeSafeDecision(responseValue, requestValue, candidates, input, p
     );
     inclusionByRole.set(role, answer);
   }
+  return inclusionByRole;
+}
+
+function typeSafeAssignmentAnswers(response, requestValue) {
   const assignmentByRole = new Map(requestValue.fixedAssignments);
   const assignmentConfidence = new Map();
   for (const [role, assignment] of requestValue.assignments) {
@@ -755,18 +778,24 @@ function parseTypeSafeDecision(responseValue, requestValue, candidates, input, p
     assignmentByRole.set(role, tuple);
     assignmentConfidence.set(role, confidence);
   }
-  if (requestValue.lockedConfirmation) {
-    const answer = typesafeChoiceAnswer(
-      response.answers[requestValue.lockedConfirmation],
-      new Set(["accept", "reject"]),
-    );
-    if (answer.choice !== "accept") throw new Error("typesafe_locked_plan_rejected");
-  }
+  return { assignmentByRole, assignmentConfidence };
+}
+
+function validateTypeSafeLockedPlan(response, requestValue) {
+  if (!requestValue.lockedConfirmation) return;
+  const answer = typesafeChoiceAnswer(
+    response.answers[requestValue.lockedConfirmation],
+    new Set(["accept", "reject"]),
+  );
+  if (answer.choice !== "accept") throw new Error("typesafe_locked_plan_rejected");
+}
+
+function typeSafeDecisionRoles(policy, inclusionByRole, assignments) {
   const roles = [];
   for (const role of policy.roles) {
     const inclusion = inclusionByRole.get(role);
     if (!policy.required.has(role) && inclusion?.choice !== "include") continue;
-    const assignment = assignmentByRole.get(role);
+    const assignment = assignments.assignmentByRole.get(role);
     if (!assignment) throw new Error("typesafe_assignment_missing");
     roles.push({
       role,
@@ -776,16 +805,21 @@ function parseTypeSafeDecision(responseValue, requestValue, candidates, input, p
       reason: typesafeReason(
         policy.required.has(role),
         inclusion?.confidence,
-        assignmentConfidence.get(role),
+        assignments.assignmentConfidence.get(role),
       ),
     });
   }
+  return roles;
+}
+
+function parseTypeSafeDecision(responseValue, requestValue, candidates, input, policy, topology) {
+  const response = typesafeResponse(responseValue, requestValue.questions);
+  const inclusionByRole = typeSafeInclusionAnswers(response, requestValue);
+  const assignments = typeSafeAssignmentAnswers(response, requestValue);
+  validateTypeSafeLockedPlan(response, requestValue);
+  const roles = typeSafeDecisionRoles(policy, inclusionByRole, assignments);
   const decision = validatePlannerDecision(
-    { version: 1, roles },
-    candidates,
-    input,
-    policy,
-    topology,
+    { version: 1, roles }, candidates, input, policy, topology,
   );
   return { decision, model: response.model, usage: response.usage };
 }
