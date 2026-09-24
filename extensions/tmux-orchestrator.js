@@ -561,7 +561,7 @@ function plannerTopologyFromEnvelope(envelope) {
   return plannerTopologyProjectionFromEnvelope(envelope).policy;
 }
 
-function validatedJevGuidanceProjection(value) {
+function validatedDynamicGuidanceProjection(value) {
   if (value === undefined) {
     return {
       version: 1,
@@ -587,7 +587,7 @@ function validatedJevGuidanceProjection(value) {
           || /[\p{Cc}\p{Cs}]/u.test(value.text)
         : value.text !== null)
       || value.digest !== metadataDigest({ version: 1, text: value.text })) {
-    throw new Error("invalid_jev_guidance_projection");
+    throw new Error("invalid_dynamic_guidance_projection");
   }
   return {
     version: 1,
@@ -607,7 +607,7 @@ function plannerPolicyProjectionFromEnvelope(envelope) {
   return {
     policy: validateDecisionModelPolicy(data.policy),
     bindingDigest: data.binding_digest,
-    jevGuidance: validatedJevGuidanceProjection(data.jev_guidance),
+    dynamicGuidance: validatedDynamicGuidanceProjection(data.dynamic_guidance),
   };
 }
 
@@ -649,11 +649,10 @@ async function applyDynamicPlan(pi, ctx, input, project, signal) {
     if (!confirmed) throw new Error("dynamic_planning_static_fallback_declined");
     return { input: { ...input, dynamicPlan: false }, plan: undefined };
   }
-  const guidanceConfirmation = selection.kind === "typesafe"
-    ? `Jev behavior guidance: ${policyProjection.jevGuidance.configured
-      ? "configured"
-      : "default"} (${policyProjection.jevGuidance.digest.slice(0, 12)}…).`
-    : undefined;
+  const guidance = policyProjection.dynamicGuidance;
+  const guidanceConfirmation = `Dynamic guidance: ${guidance.configured
+    ? "configured"
+    : "default"} (${guidance.digest.slice(0, 12)}…).`;
   const planningConfirmed = await ctx.ui.confirm(
     "Authorize preflight decision call?",
     [
@@ -674,7 +673,7 @@ async function applyDynamicPlan(pi, ctx, input, project, signal) {
       topologyPolicy: topologyProjection.bindingDigest,
     },
     signal,
-    { typesafeApiKey, jevGuidance: policyProjection.jevGuidance },
+    { typesafeApiKey, dynamicGuidance: policyProjection.dynamicGuidance },
   );
   planned.plan.revalidation = {
     topologyArgs,
@@ -1418,7 +1417,7 @@ export const testHooks = {
   selectDecisionModel,
   runStart,
   startInputWithParentModel,
-  validateJevGuidanceProjection: validatedJevGuidanceProjection,
+  validateDynamicGuidanceProjection: validatedDynamicGuidanceProjection,
   validateObserverFrame,
   withPrivateFiles,
 };

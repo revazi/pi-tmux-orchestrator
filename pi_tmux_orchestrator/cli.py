@@ -599,12 +599,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     planner_policy = subparsers.add_parser(
         "planner-policy",
-        help="validate and project the strict user-global decision-model policy",
+        help="validate and project the unified user-global decision policy",
     )
     planner_policy.add_argument(
         "--project",
         default=os.getcwd(),
-        help="enforce that planner policy remains outside this project",
+        help="enforce that orchestration configuration remains outside this project",
     )
     planner_policy.set_defaults(handler=planner_policy_command)
 

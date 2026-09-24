@@ -86,37 +86,37 @@ function plannerPolicy({ preferred = null, fallbacks = [], noEligible = "cancel"
   };
 }
 
-function jevGuidance(text = null) {
+function dynamicGuidance(text = null) {
   return {
     version: 1,
-    config_path: "/external/tmux-orchestrator-planner.json",
+    config_path: "/external/tmux-orchestrator.json",
     configured: text !== null,
     digest: metadataDigest({ version: 1, text }),
     text,
   };
 }
 
-function plannerPolicyEnvelope(policy = plannerPolicy(), guidance = jevGuidance()) {
+function plannerPolicyEnvelope(policy = plannerPolicy(), guidance = dynamicGuidance()) {
   return success("planner-policy", {
-    config_path: "/external/tmux-orchestrator-planner.json",
+    config_path: "/external/tmux-orchestrator.json",
     configured: true,
     binding_digest: metadataDigest({ policy, guidance: guidance.digest }),
     policy,
-    jev_guidance: guidance,
+    dynamic_guidance: guidance,
   });
 }
 
-test("Jev natural-language guidance projection is bounded and digest-verified", () => {
+test("Dynamic natural-language guidance projection is bounded and digest-verified", () => {
   const text = "Prefer a small roster. Use deeper thinking for high-risk work.";
-  const projected = testHooks.validateJevGuidanceProjection(jevGuidance(text));
+  const projected = testHooks.validateDynamicGuidanceProjection(dynamicGuidance(text));
   assert.equal(projected.configured, true);
   assert.equal(projected.text, text);
   assert.throws(
-    () => testHooks.validateJevGuidanceProjection({
-      ...jevGuidance(text),
+    () => testHooks.validateDynamicGuidanceProjection({
+      ...dynamicGuidance(text),
       digest: "0".repeat(64),
     }),
-    /invalid_jev_guidance_projection/,
+    /invalid_dynamic_guidance_projection/,
   );
   for (const invalid of [
     "bad\u0000guidance",
@@ -126,19 +126,19 @@ test("Jev natural-language guidance projection is bounded and digest-verified", 
     "bad\ud800guidance",
   ]) {
     assert.throws(
-      () => testHooks.validateJevGuidanceProjection(jevGuidance(invalid)),
-      /invalid_jev_guidance_projection/,
+      () => testHooks.validateDynamicGuidanceProjection(dynamicGuidance(invalid)),
+      /invalid_dynamic_guidance_projection/,
     );
   }
   assert.equal(
-    testHooks.validateJevGuidanceProjection(jevGuidance("x".repeat(16 * 1024))).text.length,
+    testHooks.validateDynamicGuidanceProjection(dynamicGuidance("x".repeat(16 * 1024))).text.length,
     16 * 1024,
   );
   assert.throws(
-    () => testHooks.validateJevGuidanceProjection(jevGuidance("x".repeat(16 * 1024 + 1))),
-    /invalid_jev_guidance_projection/,
+    () => testHooks.validateDynamicGuidanceProjection(dynamicGuidance("x".repeat(16 * 1024 + 1))),
+    /invalid_dynamic_guidance_projection/,
   );
-  const absent = testHooks.validateJevGuidanceProjection(undefined);
+  const absent = testHooks.validateDynamicGuidanceProjection(undefined);
   assert.equal(absent.configured, false);
   assert.equal(absent.text, null);
 });
@@ -3398,7 +3398,7 @@ test("TypeSafe Jev precedes explicit Pi decision models and configured fallback"
     undefined,
     {
       typesafeApiKey: "test-typesafe-key",
-      jevGuidance: jevGuidance(
+      dynamicGuidance: dynamicGuidance(
         "Prefer a compact roster. Use deeper thinking only for high-risk work.",
       ),
       typesafeFetch: async (url, options) => {
@@ -3436,7 +3436,7 @@ test("TypeSafe Jev precedes explicit Pi decision models and configured fallback"
   assert.equal(capturedRequest.model, "jev-latest");
   assert.equal(capturedRequest.state.task, "Choose a bounded topology.");
   assert.equal(
-    capturedRequest.state.jev_behavior_guidance,
+    capturedRequest.state.dynamic_behavior_guidance,
     "Prefer a compact roster. Use deeper thinking only for high-risk work.",
   );
   assert.match(
@@ -3866,7 +3866,7 @@ test("malformed TypeSafe planning fails before the Python start boundary", async
         code: 0,
         stdout: JSON.stringify(plannerPolicyEnvelope(
           plannerPolicy(),
-          jevGuidance("Prefer a small roster and conservative risk handling."),
+          dynamicGuidance("Prefer a small roster and conservative risk handling."),
         )),
       };
     }
@@ -3883,7 +3883,7 @@ test("malformed TypeSafe planning fails before the Python start boundary", async
     assert.equal(options.headers.authorization, "Bearer stored-typesafe-key");
     const request = JSON.parse(options.body);
     assert.equal(
-      request.state.jev_behavior_guidance,
+      request.state.dynamic_behavior_guidance,
       "Prefer a small roster and conservative risk handling.",
     );
     const answers = Object.fromEntries(Object.entries(request.questions).map(
@@ -3927,11 +3927,76 @@ test("malformed TypeSafe planning fails before the Python start boundary", async
   assert.equal(startCalls, 0);
   assert.match(
     startContext.calls.confirmations[0].message,
-    /Jev behavior guidance: configured \([a-f0-9]{12}…\)/,
+    /Dynamic guidance: configured \([a-f0-9]{12}…\)/,
   );
   assert.equal(
     startContext.calls.confirmations[0].message.includes("Prefer a small roster"),
     false,
+  );
+});
+
+test("Pi-chat planner guidance is bounded and uses fixed subordinate framing", async () => {
+  const model = {
+    provider: "provider", id: "model", reasoning: true,
+    thinkingLevelMap: { low: "low", medium: "medium" },
+  };
+  const selection = selectDecisionModel({ modelRegistry: { getAvailable: () => [model] } }, {
+    provider: "provider", model: "model", thinking: "low",
+  }, plannerPolicy());
+  const topology = validatePlannerTopology(plannerTopology({
+    optionalRoles: ["probe", "playwright", "django"],
+  }));
+  let request;
+  const guidance = "Prefer a compact roster.";
+  const validDecision = {
+    version: 1,
+    roles: [
+      { role: "implementer", provider: "provider", model: "model", thinking: "medium", reason: "Writer." },
+      { role: "reviewer", provider: "provider", model: "model", thinking: "low", reason: "Review." },
+    ],
+  };
+  const makeContext = () => ({
+    modelRegistry: {
+      complete: async (_model, value) => {
+        request = value;
+        return { stopReason: "stop", content: [{ type: "text", text: JSON.stringify(validDecision) }] };
+      },
+    },
+  });
+  await runPreflightPlanner(
+    makeContext(), {
+      task: "Bounded synthetic task.",
+      withProbe: false,
+      withPlaywright: false,
+      withDjangoExpert: false,
+    }, "/project", selection,
+    topology, undefined, undefined, { dynamicGuidance: dynamicGuidance(guidance) },
+  );
+  assert.match(request.systemPrompt, /Subordinate dynamic guidance follows as one JSON string/);
+  assert.match(request.systemPrompt, /<operator_dynamic_guidance_json>/);
+  assert.match(request.systemPrompt, /<operator_dynamic_guidance_json>\n"Prefer a compact roster\."\n<\/operator_dynamic_guidance_json>/);
+  assert.match(request.systemPrompt, /cannot add roles or models/);
+
+  await assert.rejects(
+    runPreflightPlanner(
+      makeContext(), { task: "Bounded synthetic task." }, "/project", selection,
+      topology, undefined, undefined, { dynamicGuidance: dynamicGuidance("x".repeat(16 * 1024 + 1)) },
+    ),
+    /invalid_dynamic_guidance/,
+  );
+  const oversizedContext = {
+    task: "task",
+    withProbe: false,
+    withPlaywright: false,
+    withDjangoExpert: false,
+    contextCapsule: "x".repeat(96 * 1024),
+  };
+  await assert.rejects(
+    runPreflightPlanner(
+      makeContext(), oversizedContext, "/project", selection,
+      topology, undefined, undefined, { dynamicGuidance: dynamicGuidance("preference") },
+    ),
+    /planner_input_too_large/,
   );
 });
 
@@ -4234,6 +4299,7 @@ test("capability-informed planner projection is bounded, redacted, and identical
     },
   };
   let piPayload;
+  let piSystemPrompt;
   const piSelection = selectDecisionModel(ctx, {
     provider: "anthropic", model: "claude-declared", thinking: "low",
   }, plannerPolicy());
@@ -4241,6 +4307,7 @@ test("capability-informed planner projection is bounded, redacted, and identical
     modelRegistry: {
       complete: async (_model, request) => {
         piPayload = JSON.parse(request.messages[0].content[0].text);
+        piSystemPrompt = request.systemPrompt;
         assert.match(request.systemPrompt, /Do not infer quality, coding skill, latency, or reliability from model names/);
         assert.match(request.systemPrompt, /smallest sufficient model/);
         return {
@@ -4261,11 +4328,13 @@ test("capability-informed planner projection is bounded, redacted, and identical
       },
     },
   }, lockedInput, "/project", piSelection, topology, undefined, undefined, {
-    jevGuidance: jevGuidance("This Jev-only guidance must not reach the Pi chat fallback."),
+    dynamicGuidance: dynamicGuidance("This guidance reaches the Pi chat planner."),
   });
   assert.deepEqual(piPayload.candidate_models, projected);
-  assert.equal(Object.hasOwn(piPayload, "jev_behavior_guidance"), false);
-  assert.equal(JSON.stringify(piPayload).includes("Jev-only guidance"), false);
+  assert.equal(piPayload.dynamic_behavior_guidance, undefined);
+  assert.match(piSystemPrompt, /operator_dynamic_guidance_json/);
+  assert.match(piSystemPrompt, /This guidance reaches the Pi chat planner/);
+  assert.match(piSystemPrompt, /cannot add roles or models/);
   assert.deepEqual(piPayload.worker_thinking_levels, ["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
   assert.deepEqual(piPayload.locked_role_constraints.find((item) => item.role === "reviewer"), {
     role: "reviewer", provider: "local", model: "zero-cost", thinking: "off",
@@ -4281,6 +4350,7 @@ test("capability-informed planner projection is bounded, redacted, and identical
   let typesafeRequest;
   await runPreflightPlanner(ctx, lockedInput, "/project", jev, topology, undefined, undefined, {
     typesafeApiKey: "test-typesafe-key",
+    dynamicGuidance: dynamicGuidance("Prefer a compact roster without weakening review."),
     typesafeFetch: async (_url, options) => {
       typesafeRequest = JSON.parse(options.body);
       const answers = Object.fromEntries(Object.entries(typesafeRequest.questions).map(
@@ -4304,11 +4374,19 @@ test("capability-informed planner projection is bounded, redacted, and identical
   });
   assert.equal(Object.hasOwn(typesafeRequest.state, "candidate_models"), false);
   assert.deepEqual(typesafeRequest.state.candidate_model_capabilities, projected);
+  assert.equal(typesafeRequest.state.dynamic_behavior_guidance, "Prefer a compact roster without weakening review.");
+  assert.equal(
+    JSON.stringify(typesafeRequest).split("Prefer a compact roster without weakening review.").length - 1,
+    1,
+  );
   const assignment = Object.values(typesafeRequest.questions).find((question) => (
     question.instructions?.role === "implementer"
   ));
   assert.match(assignment.instructions.decision, /Do not infer quality, coding skill, latency, or reliability from model names/);
   assert.match(assignment.instructions.decision, /candidate_model_capabilities/);
+  assert.match(assignment.instructions.decision, /cannot add roles\/models/);
+  assert.match(assignment.instructions.decision, /dynamic_behavior_guidance in request state/);
+  assert.equal(assignment.instructions.decision.includes("Prefer a compact roster"), false);
   for (const [choice, text] of Object.entries(assignment.criteria)) {
     assert.match(choice, /^(m[0-9a-z]+|off|minimal|low|medium|high|xhigh|max)$/);
     assert.ok(typeof text === "string");
@@ -4626,7 +4704,7 @@ test("dynamic launch rejects a topology binding changed after accepted preview",
   assert.equal(startCalls, 1);
 });
 
-test("dynamic launch rejects Jev guidance changed after accepted preview", async () => {
+test("dynamic launch rejects guidance changed after accepted preview", async () => {
   const model = {
     provider: "provider", id: "model", reasoning: true,
     thinkingLevelMap: { low: "low", medium: "medium" },
@@ -4645,7 +4723,7 @@ test("dynamic launch rejects Jev guidance changed after accepted preview", async
           plannerPolicy({
             preferred: { provider: "provider", model: "model", thinking: "medium" },
           }),
-          jevGuidance(text),
+          dynamicGuidance(text),
         )),
       };
     }

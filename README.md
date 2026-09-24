@@ -139,10 +139,13 @@ state. The catalog is limited to 100 models and seven supported thinking levels;
 each question has at most 255 options and the request at most 255 questions.
 The complete serialized request is limited to 96 KiB UTF-8. If it cannot fit,
 planning fails before HTTP rather than omitting candidates. Optional user-global
-natural-language preferences for Jev use the `jevGuidance` text field in the
-existing `~/.pi/agent/tmux-orchestrator-planner.json` policy. The text is
-bounded, digest-bound, and subordinate to candidate, role-authority, and
-locked-constraint rules—it cannot add identities, create a model allowlist,
+natural-language preferences for both direct TypeSafe Jev and Pi-chat dynamic
+planning use the canonical `dynamicGuidance` text field in the `planner` object
+of the existing `~/.pi/agent/tmux-orchestrator.json` configuration. The same
+object holds `preferred`, ordered `fallbacks`, and `noEligible`. Legacy
+`jevGuidance` is accepted only when `dynamicGuidance` is absent; configure just
+one field. The text is bounded, digest-bound, and subordinate to candidate,
+role-authority, and locked-constraint rules—it cannot add identities, create a model allowlist,
 direct selection by model name, or weaken validation. Missing or `null` guidance
 keeps the packaged behavior.
 Deterministic code constructs the normal strict plan. When TypeSafe authentication is absent, an exact model-tool
@@ -305,28 +308,44 @@ unset the environment fallback to use an explicit Pi `decisionModel`, or the
 configured Pi preferred/fallback policy when no per-run decision model is
 supplied.
 
-Dynamic planning uses a separate strict user-global file,
-`~/.pi/agent/tmux-orchestrator-planner.json`:
+Dynamic planning policy is the optional `planner` member in the existing strict
+user-global `~/.pi/agent/tmux-orchestrator.json` configuration:
 
 ```json
 {
-  "version": 1,
-  "preferred": {
-    "provider": "provider-a",
-    "model": "exact-model-a",
-    "thinking": "medium"
-  },
-  "fallbacks": [
-    { "provider": "provider-b", "model": "exact-model-b", "thinking": "low" },
-    { "provider": "provider-c", "model": "exact-model-c", "thinking": "medium" }
-  ],
-  "noEligible": "cancel",
-  "jevGuidance": "Prefer the smallest useful roster. Balance declared token and cost efficiency against outcome risk: choose the least resource-intensive exact candidate whose listed capabilities are clearly sufficient for a correct, complete outcome, and avoid lightweight variants when their capability margin is uncertain. When authoritative catalog facts establish recency and otherwise-sufficient candidates show no clear advantage for an older option, prefer the more recent candidate; never infer recency, quality, coding skill, latency, or reliability from model names. Use deeper thinking only for ambiguous, security-sensitive, or high-risk work."
+  "version": 4,
+  "defaults": {},
+  "roles": {},
+  "planner": {
+    "preferred": {
+      "provider": "provider-a",
+      "model": "exact-model-a",
+      "thinking": "medium"
+    },
+    "fallbacks": [
+      { "provider": "provider-b", "model": "exact-model-b", "thinking": "low" },
+      { "provider": "provider-c", "model": "exact-model-c", "thinking": "medium" }
+    ],
+    "noEligible": "cancel",
+    "dynamicGuidance": "Prefer the smallest useful roster. Balance declared token and cost efficiency against outcome risk: choose the least resource-intensive exact candidate whose listed capabilities are clearly sufficient for a correct, complete outcome, and avoid lightweight variants when their capability margin is uncertain. When authoritative catalog facts establish recency and otherwise-sufficient candidates show no clear advantage for an older option, prefer the more recent candidate; never infer recency, quality, coding skill, latency, or reliability from model names. Use deeper thinking only for ambiguous, security-sensitive, or high-risk work."
+  }
 }
 ```
 
-`jevGuidance` is optional and may be `null`; it affects only direct TypeSafe Jev
-and remains subordinate to the exact candidate scope and hard planning rules.
+`dynamicGuidance` is optional and may be `null`; it applies to both direct
+TypeSafe Jev and Pi-chat dynamic planning as subordinate preferences only. Migrate
+legacy `jevGuidance` by renaming the field; configuring both fields is rejected.
+For migration, explicitly copy the old planner values into this `planner`
+object, then remove the separate `tmux-orchestrator-planner.json` file. Until it
+is removed, dynamic planning rejects with a migration error—even if the unified
+file has no planner member—so values are never silently merged or chosen by
+precedence. The retired `PI_TMUX_ORCHESTRATOR_PLANNER_CONFIG` override also fails
+closed; move its policy into the single user-global `tmux-orchestrator.json`
+selected by `PI_TMUX_ORCHESTRATOR_CONFIG` (or the default Pi home path). The
+unified file remains the sole authority, is limited to 64 KiB, and is validated
+outside the target project. The guidance
+field is limited to 16 KiB; malformed, control-bearing, whitespace-padded, or
+oversized values fail closed before planning.
 Write preferences in terms of listed capabilities, declared cost hints, task risk,
 and outcome sufficiency—not model names. Guidance cannot enforce “never use model
 X” or “prefer model Y.” Apply hard exclusions through Pi's authoritative model

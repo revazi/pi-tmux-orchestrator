@@ -199,52 +199,73 @@ This is selection precedence, not automatic request-error failover. Once a
 service is selected, authentication, transport, timeout, malformed-response, or
 provider failures stop before launch and never trigger a second provider call.
 
-The policy is read through the authoritative Python boundary from
-`~/.pi/agent/tmux-orchestrator-planner.json`. An absolute
-`PI_TMUX_ORCHESTRATOR_PLANNER_CONFIG` overrides that path. Its version-1 shape is:
+The planner policy is stored in the `planner` member of the same authoritative
+user-global `~/.pi/agent/tmux-orchestrator.json` model/profile configuration.
+This adds one optional strict field to existing version-4 files and does not
+change the orchestration manifest or broker protocol versions.
+Existing version-4 files remain valid and the planner member is optional. A
+separate legacy `~/.pi/agent/tmux-orchestrator-planner.json` file (or a configured
+`PI_TMUX_ORCHESTRATOR_PLANNER_CONFIG` path) is no longer read as active policy:
+while that file exists, dynamic planning fails closed with migration guidance,
+regardless of whether the unified file has a planner member. Likewise, the retired
+environment override fails closed. This deliberate stop prevents silent merging
+or precedence selection when values conflict. Explicitly migrate desired values
+into `planner` in the one authoritative file and remove the old file/override;
+rename legacy `jevGuidance` to `dynamicGuidance` if needed. The unified
+configuration combines existing model defaults with planner settings:
 
 ```json
 {
-  "version": 1,
-  "preferred": {
-    "provider": "provider-a",
-    "model": "exact-model-a",
-    "thinking": "medium"
-  },
-  "fallbacks": [
-    { "provider": "provider-b", "model": "exact-model-b", "thinking": "low" },
-    { "provider": "provider-c", "model": "exact-model-c", "thinking": "medium" }
-  ],
-  "noEligible": "cancel",
-  "jevGuidance": "Prefer the smallest useful roster. Balance declared token and cost efficiency against outcome risk: choose the least resource-intensive exact candidate whose listed capabilities are clearly sufficient for a correct, complete outcome, and avoid lightweight variants when their capability margin is uncertain. When authoritative catalog facts establish recency and otherwise-sufficient candidates show no clear advantage for an older option, prefer the more recent candidate; never infer recency, quality, coding skill, latency, or reliability from model names. Use deeper thinking only for ambiguous, security-sensitive, or high-risk work."
+  "version": 4,
+  "defaults": {},
+  "roles": {},
+  "planner": {
+    "preferred": {
+      "provider": "provider-a",
+      "model": "exact-model-a",
+      "thinking": "medium"
+    },
+    "fallbacks": [
+      { "provider": "provider-b", "model": "exact-model-b", "thinking": "low" },
+      { "provider": "provider-c", "model": "exact-model-c", "thinking": "medium" }
+    ],
+    "noEligible": "cancel",
+    "dynamicGuidance": "Prefer the smallest useful roster. Balance declared token and cost efficiency against outcome risk: choose the least resource-intensive exact candidate whose listed capabilities are clearly sufficient for a correct, complete outcome, and avoid lightweight variants when their capability margin is uncertain. When authoritative catalog facts establish recency and otherwise-sufficient candidates show no clear advantage for an older option, prefer the more recent candidate; never infer recency, quality, coding skill, latency, or reliability from model names. Use deeper thinking only for ambiguous, security-sensitive, or high-risk work."
+  }
 }
 ```
 
-`jevGuidance` is optional natural-language text in this same planner policy file;
-it may also be `null`. It expresses preferences such as roster economy,
-specialist thresholds, model-cost posture, or thinking depth. Write those
-preferences in terms of listed capabilities, declared catalog cost hints, task
-risk, and outcome sufficiency. Guidance is not a model allow/deny list: do not
-write “never use model X” or “prefer model Y.” Apply hard model exclusions
-through Pi's authoritative model scope, or use exact per-run role overrides.
-The current canonical capability projection has no recency field, so Jev must
-not infer model age from names; a recency preference applies only when
-authoritative catalog facts establish it. The text is sent only to the direct
-TypeSafe Jev request as `state.jev_behavior_guidance`. Every
-typed question explicitly makes it subordinate to the exact candidate scope,
-fixed role authority, hard rules, and locked constraints. It cannot add a
-role/model, create an operator model allowlist, direct selection by model name,
-grant write access, remove review, or override validation. The planning
-confirmation shows only whether guidance is configured and a short digest;
+`dynamicGuidance` is optional natural-language text in this same planner policy
+object; it may also be `null`. Legacy `jevGuidance` is accepted only when the
+canonical field is absent; explicitly migrate by renaming it, and never configure both.
+Guidance expresses preferences such as roster economy, specialist thresholds,
+model-cost posture, or thinking depth. Write these in terms of listed
+capabilities, declared catalog cost hints, task risk, and outcome sufficiency.
+Guidance is not a model allow/deny list: do not write “never use model X” or
+“prefer model Y.” Apply hard model exclusions through Pi's authoritative model
+scope, or use exact per-run role overrides. The current canonical capability
+projection has no recency field, so planners must not infer model age from
+names; a recency preference applies only when authoritative catalog facts
+establish it. The same guidance is sent to direct TypeSafe Jev as
+`state.dynamic_behavior_guidance` and to the Pi-chat planner under fixed
+subordinate hard-rule framing. It cannot add roles/models, create an operator
+model allowlist, direct selection by model name, alter authority, weaken locked
+constraints, grant write access, remove review, or override validation. The
+planning confirmation shows configured/default status and a short digest;
 accepted planning provenance binds the full digest without retaining or
-displaying the text. Missing or `null` guidance uses the packaged behavior. The
-Pi-chat fallback does not receive this Jev-only field.
+displaying the text. Missing or `null` guidance uses the packaged behavior.
 
-Guidance is limited to 16 KiB within the existing 32 KiB policy-file limit.
+Guidance is limited to 16 KiB within the existing 64 KiB unified
+configuration-file limit.
 Empty, whitespace-padded, control-character-bearing, or oversized guidance fails
 before the planning call. The planner policy's existing external-path,
 regular-file, non-symlink, UTF-8, and target-project exclusion rules protect the
 whole file, including this field.
+
+The Pi-chat planner receives the guidance in its system prompt, explicitly
+framed as subordinate preference. Total serialized payload plus guidance and
+framing remains under the existing 96 KiB UTF-8 limit; overflow fails before
+the provider call rather than truncating candidate data.
 
 `preferred` may be `null`; at most 16 fallbacks are accepted. The ordered list
 may span enabled providers—for example exact Grok and OpenAI identities resolved
@@ -254,10 +275,10 @@ must contain exactly a canonical provider, canonical model, and explicit `off`,
 that model. Identities must be unique across preferred and fallback entries.
 Unknown/duplicate fields, duplicate identities, partial entries, unsupported
 thinking, non-regular/symlinked/oversized files, and
-policy files inside the target project fail closed. A missing policy is the
-versioned empty `cancel` policy. `pi-tmux-agents --json planner-policy --project
+configuration files inside the target project fail closed. A missing planner
+policy is the versioned empty `cancel` policy. `pi-tmux-agents --json planner-policy --project
 /absolute/project` validates and projects the path, configured flag, bounded
-identity policy, and Jev guidance projection used by the parent extension;
+identity policy, and dynamic guidance projection used by the parent extension;
 it does not expose auth or endpoint data. Retained manifests, previews, status,
 and dashboard output never contain the guidance body.
 
@@ -329,7 +350,7 @@ Before the provider call, the authoritative `planner-topology` boundary resolves
 strict external model/profile/project configuration and freshly validates any
 exact-project custom-role registry descriptors and pinned resources. The planner
 state contains the bounded task, optional structured parent capsule, optional
-Jev-only operator behavior guidance, project identity, fixed
+bounded dynamic guidance, project identity, fixed
 role/contract/authority descriptors, exact candidate
 model/thinking/capability metadata, declared catalog cost hints, and explicit
 constraints. Capability fields are identity, reasoning and supported thinking

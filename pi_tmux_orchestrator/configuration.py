@@ -36,7 +36,8 @@ PROFILE_MODEL_CONFIG_FIELDS = LEGACY_MODEL_CONFIG_FIELDS | {
     "defaultProfile",
     "profiles",
 }
-MODEL_CONFIG_FIELDS = PROFILE_MODEL_CONFIG_FIELDS | {"projects"}
+PROJECT_MODEL_CONFIG_FIELDS = PROFILE_MODEL_CONFIG_FIELDS | {"projects"}
+MODEL_CONFIG_FIELDS = PROJECT_MODEL_CONFIG_FIELDS | {"planner"}
 PROJECT_CONFIG_FIELDS = frozenset(
     {
         "directory",
@@ -49,6 +50,9 @@ PROJECT_CONFIG_FIELDS = frozenset(
     }
 )
 PROJECT_CUSTOM_ROLE_CONFIG_FIELDS = frozenset({"id", "provider", "model", "thinking"})
+PLANNER_CONFIG_FIELDS = frozenset(
+    {"preferred", "fallbacks", "noEligible", "dynamicGuidance", "jevGuidance"}
+)
 MODEL_CONFIG_ENV = "PI_TMUX_ORCHESTRATOR_CONFIG"
 
 
@@ -139,6 +143,37 @@ def empty_model_config() -> dict[str, Any]:
     }
 
 
+def validate_model_planner_fields(value: object) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise OrchestrationError("Model configuration planner must be an object")
+    from .planner_policy import validate_planner_policy
+
+    canonical_fields = {key for key in value if key != "version"}
+    if "version" in value and value["version"] != 1:
+        raise OrchestrationError("Model configuration planner version must be 1")
+    if not canonical_fields.issubset(PLANNER_CONFIG_FIELDS):
+        raise OrchestrationError("Model configuration planner has unsupported fields")
+    return validate_planner_policy(
+        {
+            "version": 1,
+            "preferred": value.get("preferred"),
+            "fallbacks": value.get("fallbacks", []),
+            "noEligible": value.get("noEligible", "cancel"),
+            **{
+                key: value[key]
+                for key in ("dynamicGuidance", "jevGuidance")
+                if key in value
+            },
+        }
+    )
+
+
+def validate_embedded_planner_policy(value: object) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise OrchestrationError("Model configuration planner must be an object")
+    return validate_model_planner_fields(value)
+
+
 def validate_model_config(value: object) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise OrchestrationError("Model configuration must be an object")
@@ -147,7 +182,9 @@ def validate_model_config(value: object) -> dict[str, Any]:
         allowed_fields = LEGACY_MODEL_CONFIG_FIELDS
     elif version == PROFILE_MODEL_CONFIG_VERSION:
         allowed_fields = PROFILE_MODEL_CONFIG_FIELDS
-    elif version in {PROJECT_MODEL_CONFIG_VERSION, MODEL_CONFIG_VERSION}:
+    elif version == PROJECT_MODEL_CONFIG_VERSION:
+        allowed_fields = PROJECT_MODEL_CONFIG_FIELDS
+    elif version == MODEL_CONFIG_VERSION:
         allowed_fields = MODEL_CONFIG_FIELDS
     else:
         raise OrchestrationError(
@@ -189,7 +226,12 @@ def validate_model_config(value: object) -> dict[str, Any]:
         if version >= PROJECT_MODEL_CONFIG_VERSION
         else []
     )
-    return {
+    planner = (
+        validate_embedded_planner_policy(value.get("planner"))
+        if "planner" in value
+        else None
+    )
+    result = {
         "version": MODEL_CONFIG_VERSION,
         "default_profile": default_profile,
         "profiles": profiles,
@@ -197,6 +239,9 @@ def validate_model_config(value: object) -> dict[str, Any]:
         "roles": roles,
         "projects": projects,
     }
+    if planner is not None:
+        result["planner"] = planner
+    return result
 
 
 def validate_model_fields(value: object, label: str) -> dict[str, str]:
