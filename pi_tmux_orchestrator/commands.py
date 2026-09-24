@@ -847,6 +847,7 @@ def doctor_command(args: argparse.Namespace) -> CommandResult:
         or configured_models["defaults"]
         or any(configured_models["roles"].values())
         or configured_models["projects"]
+        or configured_models.get("planner") is not None
     )
     execution_profile = resolve_execution_profile(
         configured_models, project=matched_project

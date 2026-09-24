@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from . import runtime
+from .configuration import MODEL_CONFIG_ENV, load_model_config, model_config_path
 from .models import CommandResult, OrchestrationError
 from .output import human_print
 from .planning import metadata_digest
@@ -18,30 +19,37 @@ from .planning import metadata_digest
 PLANNER_POLICY_VERSION = 1
 MAX_PLANNER_POLICY_BYTES = 32 * 1024
 MAX_PLANNER_FALLBACKS = 16
-JEV_GUIDANCE_VERSION = 1
-MAX_JEV_GUIDANCE_BYTES = 16 * 1024
+DYNAMIC_GUIDANCE_VERSION = 1
+MAX_DYNAMIC_GUIDANCE_BYTES = 16 * 1024
 PLANNER_THINKING_LEVELS = frozenset(
     {"off", "minimal", "low", "medium", "high", "xhigh", "max"}
 )
 PLANNER_NO_ELIGIBLE = frozenset({"cancel", "static"})
 PLANNER_POLICY_FIELDS = frozenset({"version", "preferred", "fallbacks", "noEligible"})
-PLANNER_POLICY_OPTIONAL_FIELDS = frozenset({"jevGuidance"})
+PLANNER_POLICY_OPTIONAL_FIELDS = frozenset({"dynamicGuidance", "jevGuidance"})
 PLANNER_MODEL_FIELDS = frozenset({"provider", "model", "thinking"})
-PLANNER_POLICY_ENV = "PI_TMUX_ORCHESTRATOR_PLANNER_CONFIG"
+LEGACY_PLANNER_POLICY_ENV = "PI_TMUX_ORCHESTRATOR_PLANNER_CONFIG"
+PLANNER_POLICY_ENV = MODEL_CONFIG_ENV
 
 
 def planner_policy_path(project: Path | None = None) -> Path:
-    configured = os.environ.get(PLANNER_POLICY_ENV)
-    if configured:
-        path = Path(configured).expanduser()
-        if not path.is_absolute():
-            raise OrchestrationError(f"{PLANNER_POLICY_ENV} must be an absolute path")
-        return _validate_planner_policy_path(path, project)
-    pi_home = runtime.PI_HOME
-    if not pi_home.is_absolute():
+    """Return the authoritative unified model/planner configuration path."""
+    return model_config_path(project)
+
+
+def _reject_retired_planner_override() -> None:
+    if os.environ.get(LEGACY_PLANNER_POLICY_ENV):
+        raise OrchestrationError(
+            f"{LEGACY_PLANNER_POLICY_ENV} is retired; migrate settings into "
+            "the planner object in tmux-orchestrator.json and remove this override"
+        )
+
+
+def _legacy_planner_policy_path(project: Path | None = None) -> Path:
+    if not runtime.PI_HOME.is_absolute():
         raise OrchestrationError("Pi configuration directory must be an absolute path")
     return _validate_planner_policy_path(
-        pi_home / "tmux-orchestrator-planner.json", project
+        runtime.PI_HOME / "tmux-orchestrator-planner.json", project
     )
 
 
@@ -63,7 +71,7 @@ def empty_planner_policy() -> dict[str, Any]:
         "preferred": None,
         "fallbacks": [],
         "no_eligible": "cancel",
-        "jev_guidance": None,
+        "dynamic_guidance": None,
     }
 
 
@@ -106,24 +114,24 @@ def _decision_model(value: object, label: str) -> dict[str, str]:
     }
 
 
-def _jev_guidance(value: object) -> str | None:
+def _dynamic_guidance(value: object, field: str = "dynamicGuidance") -> str | None:
     if value is None:
         return None
     try:
         encoded = value.encode("utf-8") if isinstance(value, str) else b""
     except UnicodeEncodeError as error:
         raise OrchestrationError(
-            "Planner policy jevGuidance must be bounded natural-language text or null"
+            f"Planner policy {field} must be bounded natural-language text or null"
         ) from error
     if (
         not isinstance(value, str)
         or not value
         or value.strip() != value
-        or len(encoded) > MAX_JEV_GUIDANCE_BYTES
+        or len(encoded) > MAX_DYNAMIC_GUIDANCE_BYTES
         or any(unicodedata.category(character) in {"Cc", "Cs"} for character in value)
     ):
         raise OrchestrationError(
-            "Planner policy jevGuidance must be bounded natural-language text or null"
+            f"Planner policy {field} must be bounded natural-language text or null"
         )
     return value
 
@@ -136,7 +144,11 @@ def validate_planner_policy(value: object) -> dict[str, Any]:
         or not fields.issubset(PLANNER_POLICY_FIELDS | PLANNER_POLICY_OPTIONAL_FIELDS)
     ):
         raise OrchestrationError(
-            "Planner policy must contain version, preferred, fallbacks, and noEligible, with optional jevGuidance"
+            "Planner policy must contain version, preferred, fallbacks, and noEligible, with optional dynamicGuidance or legacy jevGuidance"
+        )
+    if "dynamicGuidance" in fields and "jevGuidance" in fields:
+        raise OrchestrationError(
+            "Planner policy cannot contain both dynamicGuidance and jevGuidance"
         )
     if value.get("version") != PLANNER_POLICY_VERSION:
         raise OrchestrationError(
@@ -174,18 +186,17 @@ def validate_planner_policy(value: object) -> dict[str, Any]:
         "preferred": preferred,
         "fallbacks": fallbacks,
         "no_eligible": no_eligible,
-        "jev_guidance": _jev_guidance(value.get("jevGuidance")),
+        "dynamic_guidance": _dynamic_guidance(
+            value.get("dynamicGuidance", value.get("jevGuidance")),
+            "dynamicGuidance" if "dynamicGuidance" in fields else "jevGuidance",
+        ),
     }
 
 
-def load_planner_policy(
-    path: Path | None = None, *, project: Path | None = None
+def _load_planner_policy_file(
+    policy_path: Path, project: Path | None
 ) -> dict[str, Any]:
-    policy_path = (
-        _validate_planner_policy_path(path, project)
-        if path is not None
-        else planner_policy_path(project)
-    )
+    policy_path = _validate_planner_policy_path(policy_path, project)
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
     descriptor: int | None = None
     try:
@@ -218,6 +229,25 @@ def load_planner_policy(
     return validate_planner_policy(value)
 
 
+def load_planner_policy(
+    path: Path | None = None, *, project: Path | None = None
+) -> dict[str, Any]:
+    if path is not None:
+        return _load_planner_policy_file(path, project)
+    _reject_retired_planner_override()
+    unified_path = model_config_path(project)
+    unified_config = load_model_config(unified_path, project=project)
+    legacy_path = _legacy_planner_policy_path(project)
+    if legacy_path.exists():
+        raise OrchestrationError(
+            "Legacy planner file detected; migrate its settings into the planner "
+            "object in tmux-orchestrator.json and remove the legacy file"
+        )
+    if "planner" in unified_config:
+        return unified_config["planner"]
+    return empty_planner_policy()
+
+
 def planner_policy_command(args: argparse.Namespace) -> CommandResult:
     try:
         project = Path(args.project).expanduser().resolve(strict=True)
@@ -227,37 +257,46 @@ def planner_policy_command(args: argparse.Namespace) -> CommandResult:
         ) from error
     if not project.is_dir():
         raise OrchestrationError(f"Project directory does not exist: {project}")
-    path = planner_policy_path(project)
-    configured = path.exists()
-    loaded_policy = load_planner_policy(path, project=project)
-    guidance_text = loaded_policy["jev_guidance"]
+    _reject_retired_planner_override()
+    path = model_config_path(project)
+    unified_config = load_model_config(path, project=project)
+    legacy_path = _legacy_planner_policy_path(project)
+    if legacy_path.exists():
+        raise OrchestrationError(
+            "Legacy planner file detected; migrate its settings into the planner "
+            "object in tmux-orchestrator.json and remove the legacy file"
+        )
+    configured = path.exists() and "planner" in unified_config
+    loaded_policy = unified_config.get("planner", empty_planner_policy())
+    source_path = path
+    guidance_text = loaded_policy["dynamic_guidance"]
     policy = {
-        key: value for key, value in loaded_policy.items() if key != "jev_guidance"
+        key: value for key, value in loaded_policy.items() if key != "dynamic_guidance"
     }
     guidance = {
-        "version": JEV_GUIDANCE_VERSION,
-        "config_path": str(path),
+        "version": DYNAMIC_GUIDANCE_VERSION,
+        "config_path": str(source_path),
         "configured": guidance_text is not None,
         "digest": metadata_digest(
-            {"version": JEV_GUIDANCE_VERSION, "text": guidance_text}
+            {"version": DYNAMIC_GUIDANCE_VERSION, "text": guidance_text}
         ),
         "text": guidance_text,
     }
     human_print(
-        f"Planner policy: {path} "
+        f"Planner policy: {source_path} "
         f"({'configured' if configured else 'default cancel'}; "
-        f"Jev guidance {'configured' if guidance['configured'] else 'default'})"
+        f"Dynamic guidance {'configured' if guidance['configured'] else 'default'})"
     )
     return CommandResult(
         data={
-            "config_path": str(path),
+            "config_path": str(source_path),
             "configured": configured,
             "binding_digest": metadata_digest(
                 {
-                    "config_path": str(path),
+                    "config_path": str(source_path),
                     "configured": configured,
                     "policy": policy,
-                    "jev_guidance": {
+                    "dynamic_guidance": {
                         "version": guidance["version"],
                         "config_path": guidance["config_path"],
                         "configured": guidance["configured"],
@@ -266,6 +305,6 @@ def planner_policy_command(args: argparse.Namespace) -> CommandResult:
                 }
             ),
             "policy": policy,
-            "jev_guidance": guidance,
+            "dynamic_guidance": guidance,
         }
     )

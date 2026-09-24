@@ -14,8 +14,8 @@ Provide a small, reusable, intentionally tmux-scoped Pi skill and modular standa
 - `pi_tmux_orchestrator/`: authoritative dependency-free Python orchestration package
 - `pi_tmux_orchestrator/start_commands.py`: start policy resolution, manifest construction, tmux launch, admission, and rollback
 - `pi_tmux_orchestrator/commands.py`: retained-session reads, operator controls, diagnostics, and worker launch adapters
-- `pi_tmux_orchestrator/configuration.py`: strict user-global worker model policy
-- `pi_tmux_orchestrator/planner_policy.py`: strict versioned user-global decision-model priority policy, bounded natural-language Jev guidance, and safe CLI projection
+- `pi_tmux_orchestrator/configuration.py`: unified strict user-global worker and planner model policy
+- `pi_tmux_orchestrator/planner_policy.py`: embedded decision-model priority policy, bounded cross-planner natural-language guidance, migration checks, and safe CLI projection
 - `pi_tmux_orchestrator/planner_topology.py`: bounded worker-topology constraints and trusted custom-role projection
 - `pi_tmux_orchestrator/planning.py`: strict private-input/config bindings, launch admission, and body-free retained planning provenance
 - `pi_tmux_orchestrator/terminal_planning.py`: private one-request Pi RPC adapter for the terminal dynamic-planning path

@@ -54,17 +54,23 @@ Run the normal suite first:
 scripts/test.sh
 ```
 
-For a reviewed planner-policy fixture outside the target project, the metadata-
-only validation boundary can also be inspected without contacting a provider:
+For a reviewed unified configuration outside the target project, the metadata-
+only planner projection can be inspected without contacting a provider:
 
 ```bash
-PI_TMUX_ORCHESTRATOR_PLANNER_CONFIG=/absolute/path/planner.json \
+PI_TMUX_ORCHESTRATOR_CONFIG=/absolute/path/tmux-orchestrator.json \
   pi-tmux-agents --json planner-policy --project /absolute/project
 ```
 
+The retired `PI_TMUX_ORCHESTRATOR_PLANNER_CONFIG` override and any existing
+standalone planner file cause dynamic planning to fail closed with migration
+instructions. Do not treat either as active fallback policy; migrate values
+explicitly into the unified file and remove the old file/override.
+
 The output must contain only the config path, configured flag, and normalized
-canonical identity/thinking policy—never credentials, endpoints, task bodies,
-or provider response bodies. The corresponding topology projection can be
+canonical identity/thinking policy plus guidance status/digest/body projection—never
+credentials, endpoints, task bodies, or provider response bodies. Public
+confirmation and retained planning state continue to omit guidance text. The corresponding topology projection can be
 inspected without a provider call:
 
 ```bash
@@ -239,10 +245,10 @@ model choice, failed mandatory review, or unexpected provider request. Synthetic
 and fixed-output runs remain lifecycle evidence only and never fill a quality or
 cost cell.
 
-#### Configurable Jev guidance production-wire acceptance — 2026-09-24
+#### Configurable dynamic guidance production-wire acceptance — 2026-09-24
 
 One separately authorized dynamic start used the direct fixed-endpoint TypeSafe
-adapter with configured user-global `jevGuidance`. TypeSafe accepted the request
+adapter with configured user-global `dynamicGuidance`. TypeSafe accepted the request
 and returned decision model `jev-1.13.0`; retained provenance records provider
 `typesafe`, source `typesafe-auth`, and the compatibility decision thinking value
 `off`. The call reported 11,413 input and 2,401 output tokens (13,814 total);
@@ -332,9 +338,9 @@ under separate provider-call authorization with `/login typesafe` or the
   auth is removed. Confirm
   selected worker model/thinking tuples are available and use only each model's
   advertised supported levels through `max`. Repeat once with bounded natural-
-  language `jevGuidance` in `tmux-orchestrator-planner.json` and confirm the
-  authorization shows its digest, direct Jev receives the preferences, the
-  retained plan omits their body, and malformed or oversized guidance fails
+  language `dynamicGuidance` in the unified `tmux-orchestrator.json` planner member and confirm the
+  authorization shows its digest, both direct Jev and Pi-chat receive subordinate
+  preferences, the retained plan omits their body, and malformed or oversized guidance fails
   before HTTP.
   Confirm malformed output starts nothing, and launch
   still requires a second confirmation. If exact-project custom specialists are
