@@ -44,26 +44,38 @@ Tmux hosts panes; an authenticated local broker transports typed workflow report
 
 Runs can select exact role models and thinking, single/phased flow, optional built-in specialists, budgets, reviewed skills, and worker-context policy. Model-guided planning is opt-in and separately confirmed. Details and strict user-global configuration examples are in the [usage guide](references/usage.md); protocol and custom specialist details are in [protocol](references/protocol-v1.md) and [custom roles](references/custom-roles.md).
 
-## Upgrade to 0.11.0
+## Upgrade to 0.11.1
 
-Update with `pi update npm:pi-tmux-orchestrator` (or reinstall with `pi install npm:pi-tmux-orchestrator`). Finish or stop active runs before replacing the package. The 0.11.0 release adds opt-in bounded model-guided preflight planning, direct TypeSafe Jev decision support, capability-aware candidate selection, and clearer authoritative worker assignment/progress reporting. Planning makes an additional provider call only when explicitly enabled and confirmed; ordinary starts retain the deterministic path. Existing retained runs remain readable; new ordinary and custom-role manifest formats remain v5 and v7 respectively, over broker-v1.
+Version 0.11.1 requires operator-approved exact worker models for opt-in dynamic
+planning; ordinary static starts keep their deterministic path. Finish or stop
+active runs and preserve your external configuration before replacing the
+package. Choose a migration below, then update with
+`pi update npm:pi-tmux-orchestrator` (or reinstall with
+`pi install npm:pi-tmux-orchestrator`) and restart Pi. Open `/or-dashboard`, use
+`d` for an explicit configuration check, and generate a fresh planning preview
+before confirming a new dynamic run. Existing retained runs remain readable;
+never resume an in-flight run across versions.
 
-### Approved worker pools for dynamic planning (unreleased upgrade)
+### Approved worker pools for dynamic planning
 
 Dynamic starts (`/or-start --plan`, `dynamicPlan=true`, or terminal
 `--dynamic-plan`) no longer offer the full available catalog. Before upgrading,
 finish active runs; then configure exact operator-approved worker identities in
 external `~/.pi/agent/tmux-orchestrator.json` (or the absolute
-`PI_TMUX_ORCHESTRATOR_CONFIG` path). Use root **version 5** and
+`PI_TMUX_ORCHESTRATOR_CONFIG` path). Preserve existing fields, change the root
+version to **5**, and add
 `workerCandidates: {"version":1,"all":[{"provider":"provider-a","model":"exact-worker-a"}]}`.
 Optional built-in `roles` pools replace `all` for that role. Pools have 1–32
 identities each, at most five role pools and 100 distinct identities total.
 Choose exact IDs from `/or-models`, not model-name quality or recency heuristics.
 
 Exact run/project/global role locks override pools; custom roles keep fixed
-bindings. Without a pool, **every planner-eligible role**, including optional
-roles the planner might select, must have an exact authoritative provider/model
-lock. Otherwise planning fails before a provider call with configuration guidance;
+bindings. **Fully locked alternative:** keep configuration versions 1–4 without
+a pool and supply exact authoritative provider/model locks for **every
+planner-eligible role**, including optional roles the planner might select;
+explicitly disable optional roles you do not lock. Thinking-only settings
+and packaged defaults are not exact locks. Otherwise planning fails before a
+provider call with configuration guidance;
 it never silently falls back to the catalog. Both TypeSafe Jev and Pi fallback
 use the same approved scope and canonical capabilities. Confirmation and the
 immediate start acknowledgement show pool source/count and exact selected
@@ -73,7 +85,29 @@ cannot launch a new run: create a fresh preview. See
 [approved-pool configuration and migration](references/usage.md#approved-exact-worker-model-pools)
 and [provider-free acceptance](references/prerelease-testing.md#automated-provider-free-planning-gate).
 
-See the complete [0.11.0 release and migration notes](releases/v0.11.0.md). If upgrade is blocked, remove the package and reinstall the prior exact version, `npm:pi-tmux-orchestrator@0.10.0`, then start Pi again. Do not resume in-flight runs across versions; preserve their original installation until safely finished or stopped. [Rollback guidance](releases/v0.10.0.md#rollback).
+### Command map and rollback
+
+The five commands are unchanged from 0.11.0. For older installations:
+
+| Old command | Use in 0.11.1 |
+|---|---|
+| `/orchestrator-dashboard` | `/or-dashboard` |
+| `/orchestrator-models` | `/or-models` |
+| `/orchestrator-start` | `/or-start` |
+| `/orchestrator-send` | `/or-send` |
+| `/orchestrator-stop` | `/or-stop` |
+| list/status/help/about/doctor/watch/attach helpers | `/or-dashboard` keyboard actions |
+| supervisor/restart helpers | CLI or `tmux_orchestrator` model tool |
+
+See the authoritative [0.11.1 release and migration notes](releases/v0.11.1.md),
+the exact [GitHub Release](https://github.com/revazi/pi-tmux-orchestrator/releases/tag/v0.11.1),
+and [migration announcement #202](https://github.com/revazi/pi-tmux-orchestrator/issues/202).
+If migration is blocked, finish or stop active runs, run
+`pi remove npm:pi-tmux-orchestrator`, then
+`pi install npm:pi-tmux-orchestrator@0.11.0` and restart Pi. Preserve the original
+installation until in-flight runs are safely finished or stopped; do not resume
+them across versions. See [rollback steps](releases/v0.11.1.md#rollback) and the
+[prior 0.11.0 release notes](releases/v0.11.0.md).
 
 ## Help and documentation
 

@@ -4,6 +4,8 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+## 0.11.1 - 2026-10-02
+
 ### Added
 
 - Added strict external root configuration v5 / `workerCandidates` v1 exact operator-approved worker pools: one bounded all-role pool and optional replacement built-in role pools, validated against Pi availability/scoping before planning; exact run/project/global locks and custom fixed bindings remain authoritative, and direct TypeSafe Jev and Pi fallback enforce identical per-role membership and canonical capabilities.
