@@ -13,7 +13,8 @@ from .constants import KNOWN_ROLES, THINKING_LEVELS
 from .models import OrchestrationError
 from .role_registry import valid_custom_role_id
 
-PLANNING_VERSION = 2
+PLANNING_VERSION = 3
+POOL_PLANNING_VERSION = 2
 LEGACY_PLANNING_VERSION = 1
 PLANNING_DECISION_VERSION = 1
 MAX_PLANNING_RECORD_BYTES = 32 * 1024
@@ -155,13 +156,18 @@ def validate_planning_record(
         raise OrchestrationError("Planning record must be an object")
     version = value.get("version")
     fields = PLANNING_FIELDS | (
-        {"worker_candidates"} if version == PLANNING_VERSION else set()
+        {"worker_candidates"}
+        if version in {POOL_PLANNING_VERSION, PLANNING_VERSION}
+        else set()
     )
+    if version == PLANNING_VERSION:
+        fields |= {"scopes", "locks"}
     if set(value) != fields:
         raise OrchestrationError("Planning record has missing or unknown fields")
     if (
         type(version) is not int
-        or version not in {LEGACY_PLANNING_VERSION, PLANNING_VERSION}
+        or version
+        not in {LEGACY_PLANNING_VERSION, POOL_PLANNING_VERSION, PLANNING_VERSION}
         or value.get("mode") != "dynamic"
     ):
         raise OrchestrationError("Planning record version or mode is invalid")
@@ -224,9 +230,10 @@ def validate_planning_record(
         )
         for field in PLANNING_BINDING_FIELDS
     }
-    expected_decision = metadata_digest(
-        {"version": PLANNING_DECISION_VERSION, "roles": roles}
-    )
+    decision_metadata = {"version": PLANNING_DECISION_VERSION, "roles": roles}
+    if version == PLANNING_VERSION:
+        decision_metadata.update(validate_scope_metadata(value, roles))
+    expected_decision = metadata_digest(decision_metadata)
     if bindings["decision"] != expected_decision:
         raise OrchestrationError("Planning decision binding is invalid")
     result = {
@@ -243,10 +250,113 @@ def validate_planning_record(
         "usage": _planning_usage(value.get("usage")),
     }
     if version == PLANNING_VERSION:
+        result.update(validate_scope_metadata(value, roles))
+    if version in {POOL_PLANNING_VERSION, PLANNING_VERSION}:
         result["worker_candidates"] = validate_candidate_metadata(
             value["worker_candidates"], identities
         )
     return result
+
+
+def validate_scope_metadata(
+    value: dict[str, Any], roles: list[dict[str, str]]
+) -> dict[str, Any]:
+    scopes = value["scopes"]
+    axes = ["topology", "models", "thinking"]
+    if (
+        not isinstance(scopes, list)
+        or not scopes
+        or scopes != [axis for axis in axes if axis in scopes]
+    ):
+        raise OrchestrationError("Planning scopes are invalid")
+    locks = value["locks"]
+    if not isinstance(locks, list) or not 2 <= len(locks) <= MAX_PLANNING_ROLES:
+        raise OrchestrationError("Planning locks are invalid")
+    seen = set()
+    selected = {role["id"]: role for role in roles}
+    for lock in locks:
+        if not isinstance(lock, dict) or set(lock) != {
+            "role",
+            "inclusion",
+            "provider",
+            "model",
+            "thinking",
+        }:
+            raise OrchestrationError("Planning lock fields are invalid")
+        identity = lock["role"]
+        if (
+            not isinstance(identity, str)
+            or identity in seen
+            or (identity not in KNOWN_ROLES and not valid_custom_role_id(identity))
+        ):
+            raise OrchestrationError("Planning lock role is invalid")
+        seen.add(identity)
+        inclusion = lock["inclusion"]
+        if inclusion is not None and type(inclusion) is not bool:
+            raise OrchestrationError("Planning inclusion lock is invalid")
+        if "topology" not in scopes and inclusion is None:
+            raise OrchestrationError("Planning fixed topology requires locks")
+        if (
+            inclusion is True
+            and identity not in selected
+            or inclusion is False
+            and identity in selected
+        ):
+            raise OrchestrationError("Planning roster conflicts with locks")
+        if (lock["provider"] is None) != (lock["model"] is None):
+            raise OrchestrationError("Planning model lock is incomplete")
+        for field in ("provider", "model", "thinking"):
+            item = lock[field]
+            if item is not None:
+                if field == "thinking":
+                    if item not in THINKING_LEVELS:
+                        raise OrchestrationError("Planning thinking lock is invalid")
+                else:
+                    _identifier(item, "lock identity")
+                if identity in selected and selected[identity][field] != item:
+                    raise OrchestrationError("Planning assignment conflicts with locks")
+        if inclusion is not False and (
+            ("models" not in scopes and lock["model"] is None)
+            or ("thinking" not in scopes and lock["thinking"] is None)
+        ):
+            raise OrchestrationError("Planning fixed axes require exact locks")
+    if not set(selected).issubset(seen):
+        raise OrchestrationError("Planning selected roles lack lock metadata")
+    return {"scopes": list(scopes), "locks": [dict(lock) for lock in locks]}
+
+
+def planning_scopes_label(record: dict[str, Any]) -> str:
+    """Display recorded scopes without inferring authority for legacy runs."""
+    scopes = record.get("scopes")
+    return ",".join(scopes) if scopes else "unavailable (legacy record)"
+
+
+def planning_lock_lines(record: dict[str, Any]) -> list[str]:
+    """Render validated body-free authority metadata for terminal/status reads."""
+    locks = record.get("locks", [])
+    if not locks:
+        return ["Locks: unavailable (legacy record)."]
+    lines = ["Authoritative operator/policy locks; planner=authorized unlocked axis:"]
+    for lock in locks:
+        if lock["inclusion"] is False:
+            lines.append(
+                f"  {lock['role']}: inclusion=locked omit; "
+                "model=not applicable; thinking=not applicable"
+            )
+            continue
+        inclusion = "locked include" if lock["inclusion"] is True else "planner"
+        model = (
+            f"locked {lock['provider']}/{lock['model']}"
+            if lock["provider"] is not None
+            else "planner"
+        )
+        thinking = (
+            f"locked {lock['thinking']}" if lock["thinking"] is not None else "planner"
+        )
+        lines.append(
+            f"  {lock['role']}: inclusion={inclusion}; model={model}; thinking={thinking}"
+        )
+    return lines
 
 
 def validate_candidate_metadata(
@@ -321,7 +431,7 @@ def load_planning_record(
     except (UnicodeError, ValueError) as error:
         raise OrchestrationError("Planning record is not valid UTF-8 JSON") from error
     record = validate_planning_record(value, allow_unbound=allow_unbound)
-    if record["version"] != PLANNING_VERSION:
+    if record["version"] not in {POOL_PLANNING_VERSION, PLANNING_VERSION}:
         raise OrchestrationError(
             "Legacy planning records are read-only; create a fresh approved-pool preview"
         )
@@ -384,7 +494,7 @@ def bind_planning_record(
     dry_run: bool,
     candidate_policy: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    if record["version"] == PLANNING_VERSION:
+    if record["version"] in {POOL_PLANNING_VERSION, PLANNING_VERSION}:
         metadata = record["worker_candidates"]
         if (metadata["source"] == "configured") != (candidate_policy is not None):
             raise OrchestrationError(
@@ -410,6 +520,11 @@ def bind_planning_record(
         start_config_digest = metadata_digest(
             {
                 "resolved_start": start_config_digest,
+                **(
+                    {"scopes": record["scopes"], "locks": record["locks"]}
+                    if record["version"] == PLANNING_VERSION
+                    else {}
+                ),
                 "worker_candidates": metadata,
                 "planner_policy": record["bindings"]["planner_policy"],
                 "topology_policy": record["bindings"]["topology_policy"],

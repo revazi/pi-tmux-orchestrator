@@ -23,6 +23,7 @@ import {
   validatePlannerTopology,
   plannerTestHooks,
 } from "../extensions/orchestrator-planner.js";
+import { planningScopes, planningScopesConfirmation, scopedTopology } from "../extensions/orchestrator-planning-scopes.js";
 import { resolveWorkerCandidates, validateWorkerCandidates } from "../extensions/orchestrator-worker-candidates.js";
 import {
   normalizedTypeSafeApiKey,
@@ -3462,8 +3463,8 @@ test("Pi and TypeSafe offer identical role-approved scope and reject available b
     getAvailable: () => models,
     complete: async (model, request) => {
       assert.equal(model.id, "decision-unapproved");
-      piPayload = JSON.parse(request.messages[0].content[0].text);
-      return { stopReason: "stop", content: [{ type: "text", text: JSON.stringify(decision) }] };
+      piPayload = JSON.parse(request.messages[0].content[0].text).state;
+      return { stopReason: "stop", content: [{ type: "text", text: piDecisionText(request, decision) }] };
     },
   } };
   const piSelection = selectDecisionModel(ctx, { provider: "p", model: "decision-unapproved", thinking: "low" }, plannerPolicy());
@@ -3481,9 +3482,9 @@ test("Pi and TypeSafe offer identical role-approved scope and reject available b
         answers: { model_00: { type: "choice", choice: "m1", confidence: 1, probabilities: { m1: 1, m2: 0 } } } }), { status: 200 });
     },
   });
-  assert.deepEqual(piPayload.candidate_models, jevPayload.candidate_model_capabilities);
+  assert.deepEqual(piPayload.candidate_model_capabilities, jevPayload.candidate_model_capabilities);
   assert.deepEqual(piPayload.eligible_roles, jevPayload.eligible_roles);
-  assert.deepEqual(piPayload.candidate_models.map((item) => item.model), ["review", "writer", "writer-alt"]);
+  assert.deepEqual(piPayload.candidate_model_capabilities.map((item) => item.model), ["review", "writer", "writer-alt"]);
   assert.deepEqual(piPayload.eligible_roles.map((item) => item.candidate_model_indices), [[1, 2], [0]]);
   assert.equal(piResult.plan.bindings.candidateSet, jevResult.plan.bindings.candidateSet);
   assert.deepEqual(piResult.plan.workerCandidates, jevResult.plan.workerCandidates);
@@ -3497,18 +3498,18 @@ test("Pi and TypeSafe offer identical role-approved scope and reject available b
       answers: { model_00: { type: "choice", choice: "m0", confidence: 1, probabilities: { m1: 1, m2: 0 } } } }), { status: 200 }),
   }), /typesafe_answer_invalid/);
   decision.roles[0].model = "decision-unapproved";
-  await assert.rejects(runPreflightPlanner(ctx, { task: "Synthetic" }, "/project", piSelection, topology), /unavailable_planner_role_model/);
+  await assert.rejects(runPreflightPlanner(ctx, { task: "Synthetic" }, "/project", piSelection, topology), /typesafe_answer_invalid/);
   decision.roles[0].model = "review"; // approved for reviewer only, not implementer
-  await assert.rejects(runPreflightPlanner(ctx, { task: "Synthetic" }, "/project", piSelection, topology), /unapproved_planner_role_model/);
+  await assert.rejects(runPreflightPlanner(ctx, { task: "Synthetic" }, "/project", piSelection, topology), /typesafe_answer_invalid/);
 });
 
 test("missing pools fail before either provider or worker call; fully locked planning needs no pool", async () => {
   const model = { provider: "p", id: "locked", reasoning: true, thinkingLevelMap: { low: "low" } };
   const topology = validatePlannerTopology(plannerTopology({ workerCandidates: null, optionalRoles: [] }));
   let calls = 0;
-  const ctx = { modelRegistry: { getAvailable: () => [model], complete: async () => {
+  const ctx = { modelRegistry: { getAvailable: () => [model], complete: async (_model, piRequest) => {
     calls += 1;
-    return { stopReason: "stop", content: [{ type: "text", text: JSON.stringify({ version: 1, roles: [
+    return { stopReason: "stop", content: [{ type: "text", text: piDecisionText(piRequest, { version: 1, roles: [
       { role: "implementer", provider: "p", model: "locked", thinking: "low", reason: "Locked writer." },
       { role: "reviewer", provider: "p", model: "locked", thinking: "low", reason: "Locked reviewer." },
     ] }) }] };
@@ -3555,9 +3556,9 @@ test("dynamic start missing pool or stale approved pool never reaches launch", a
       })) };
     } };
     const ctx = context({ confirmations: [true, true], context: { modelRegistry: {
-      getAvailable: () => [model], complete: async () => {
+      getAvailable: () => [model], complete: async (_model, piRequest) => {
         providerCalls += 1;
-        return { stopReason: "stop", content: [{ type: "text", text: JSON.stringify({ version: 1,
+        return { stopReason: "stop", content: [{ type: "text", text: piDecisionText(piRequest, { version: 1,
           roles: ["implementer", "reviewer"].map((role) => ({ role, provider: "provider", model: "model", thinking: "medium", reason: "Bounded role." })),
         }) }] };
       },
@@ -3574,6 +3575,7 @@ test("immediate dynamic acknowledgement preserves maximum bounded exact assignme
   const roles = ["implementer", "reviewer", "probe", "playwright", "django", ...Array.from({ length: 8 }, (_, i) => `custom-role-${i}`)]
     .map((id) => ({ id, provider: "p".repeat(256), model: "m".repeat(256), thinking: "medium" }));
   const data = { session: "pi-long-assignments", planning: {
+    scopes: ["topology"], locks: roles.map((role) => ({ role: role.id, inclusion: true, provider: role.provider, model: role.model, thinking: role.thinking })),
     worker_candidates: { version: 1, source: "configured", count: 1,
       roles: roles.map(({ id }) => ({ role: id, source: "exact-lock", count: 1 })) }, roles,
   } };
@@ -4233,7 +4235,7 @@ test("Pi-chat planner guidance is bounded and uses fixed subordinate framing", a
     modelRegistry: {
       complete: async (_model, value) => {
         request = value;
-        return { stopReason: "stop", content: [{ type: "text", text: JSON.stringify(validDecision) }] };
+        return { stopReason: "stop", content: [{ type: "text", text: piDecisionText(value, validDecision) }] };
       },
     },
   });
@@ -4246,9 +4248,9 @@ test("Pi-chat planner guidance is bounded and uses fixed subordinate framing", a
     }, "/project", selection,
     topology, undefined, undefined, { dynamicGuidance: dynamicGuidance(guidance) },
   );
-  assert.match(request.systemPrompt, /Subordinate dynamic guidance follows as one JSON string/);
-  assert.match(request.systemPrompt, /<operator_dynamic_guidance_json>/);
-  assert.match(request.systemPrompt, /<operator_dynamic_guidance_json>\n"Prefer a compact roster\."\n<\/operator_dynamic_guidance_json>/);
+  assert.equal(JSON.parse(request.messages[0].content[0].text).state.dynamic_behavior_guidance, guidance);
+  assert.equal(request.systemPrompt.includes(guidance), false);
+  assert.match(request.systemPrompt, /guidance in request state is subordinate/);
   assert.match(request.systemPrompt, /cannot add roles or models/);
 
   await assert.rejects(
@@ -4582,7 +4584,7 @@ test("capability-informed planner projection is bounded, redacted, and identical
   const piResult = await runPreflightPlanner({
     modelRegistry: {
       complete: async (_model, request) => {
-        piPayload = JSON.parse(request.messages[0].content[0].text);
+        piPayload = JSON.parse(request.messages[0].content[0].text).state;
         piSystemPrompt = request.systemPrompt;
         assert.match(request.systemPrompt, /Do not infer recency, quality, coding skill, latency, or reliability from model names/);
         assert.match(request.systemPrompt, /smallest sufficient model/);
@@ -4590,7 +4592,7 @@ test("capability-informed planner projection is bounded, redacted, and identical
           stopReason: "stop",
           content: [{
             type: "text",
-            text: JSON.stringify({
+            text: piDecisionText(request, {
               version: 1,
               roles: [
                 { role: "implementer", provider: "anthropic", model: "claude-declared", thinking: "medium", reason: "Writer uses listed context and cost hints." },
@@ -4606,12 +4608,12 @@ test("capability-informed planner projection is bounded, redacted, and identical
   }, lockedInput, "/project", piSelection, topology, undefined, undefined, {
     dynamicGuidance: dynamicGuidance("This guidance reaches the Pi chat planner."),
   });
-  assert.deepEqual(piPayload.candidate_models, projected);
-  assert.equal(piPayload.dynamic_behavior_guidance, undefined);
-  assert.match(piSystemPrompt, /operator_dynamic_guidance_json/);
-  assert.match(piSystemPrompt, /This guidance reaches the Pi chat planner/);
+  assert.deepEqual(piPayload.candidate_model_capabilities, projected);
+  assert.equal(piPayload.dynamic_behavior_guidance, "This guidance reaches the Pi chat planner.");
+  assert.match(piSystemPrompt, /guidance in request state is subordinate/);
+  assert.equal(piSystemPrompt.includes("This guidance reaches the Pi chat planner"), false);
   assert.match(piSystemPrompt, /cannot add roles or models/);
-  assert.deepEqual(piPayload.worker_thinking_levels, ["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
+  assert.equal(piPayload.worker_thinking_levels, undefined);
   assert.deepEqual(piPayload.locked_role_constraints.find((item) => item.role === "reviewer"), {
     role: "reviewer", provider: "local", model: "zero-cost", thinking: "off",
   });
@@ -4721,10 +4723,10 @@ test("trusted custom topology is bounded, contract-locked, and selected by exact
   const result = await runPreflightPlanner({
     modelRegistry: {
       complete: async (_model, request) => {
-        payload = JSON.parse(request.messages[0].content[0].text);
+        payload = JSON.parse(request.messages[0].content[0].text).state;
         return {
           stopReason: "stop",
-          content: [{ type: "text", text: JSON.stringify({ version: 1, roles: responseRoles }) }],
+          content: [{ type: "text", text: piDecisionText(request, { version: 1, roles: responseRoles }) }],
           usage: { input: 1, output: 1 },
         };
       },
@@ -4862,7 +4864,7 @@ test("dynamic start plans mixed-provider built-in and trusted custom topology be
             stopReason: "stop",
             content: [{
               type: "text",
-              text: JSON.stringify({
+              text: piDecisionText(request, {
                 version: 1,
                 roles: [
                   { role: "implementer", provider: "xai", model: "grok-4.6", thinking: "medium", reason: "One writer is sufficient for the bounded implementation." },
@@ -4896,8 +4898,8 @@ test("dynamic start plans mixed-provider built-in and trusted custom topology be
   assert.equal(completion.options.reasoning, "medium");
   assert.equal(completion.options.maxRetries, 0);
   assert.equal(completion.request.messages[0].content[0].text.includes(privateTask), true);
-  const plannerInput = JSON.parse(completion.request.messages[0].content[0].text);
-  assert.deepEqual(plannerInput.candidate_models.map((item) => `${item.provider}/${item.model}`), [
+  const plannerInput = JSON.parse(completion.request.messages[0].content[0].text).state;
+  assert.deepEqual(plannerInput.candidate_model_capabilities.map((item) => `${item.provider}/${item.model}`), [
     "xai/grok-4.6",
     "openai-codex/gpt-review",
   ]);
@@ -4959,9 +4961,9 @@ test("dynamic launch rejects a topology binding changed after accepted preview",
       model,
       modelRegistry: {
         getAvailable: () => [model],
-        complete: async () => ({
+        complete: async (_model, piRequest) => ({
           stopReason: "stop",
-          content: [{ type: "text", text: JSON.stringify({
+          content: [{ type: "text", text: piDecisionText(piRequest, {
             version: 1,
             roles: [
               { role: "implementer", provider: "provider", model: "model", thinking: "medium", reason: "One writer." },
@@ -5029,9 +5031,9 @@ test("dynamic launch rejects guidance changed after accepted preview", async () 
       model,
       modelRegistry: {
         getAvailable: () => [model],
-        complete: async () => ({
+        complete: async (_model, piRequest) => ({
           stopReason: "stop",
-          content: [{ type: "text", text: JSON.stringify({
+          content: [{ type: "text", text: piDecisionText(piRequest, {
             version: 1,
             roles: [
               { role: "implementer", provider: "provider", model: "model", thinking: "medium", reason: "One writer." },
@@ -5093,9 +5095,9 @@ test("dynamic launch rejects available-model thinking changed after accepted pre
       model,
       modelRegistry: {
         getAvailable: () => [model],
-        complete: async () => ({
+        complete: async (_model, piRequest) => ({
           stopReason: "stop",
-          content: [{ type: "text", text: JSON.stringify({
+          content: [{ type: "text", text: piDecisionText(piRequest, {
             version: 1,
             roles: [
               { role: "implementer", provider: "provider", model: "model", thinking: "max", reason: "One writer." },
@@ -5160,9 +5162,9 @@ test("dynamic launch rejects capability metadata changed after accepted preview"
       model,
       modelRegistry: {
         getAvailable: () => [model],
-        complete: async () => ({
+        complete: async (_model, piRequest) => ({
           stopReason: "stop",
-          content: [{ type: "text", text: JSON.stringify({
+          content: [{ type: "text", text: piDecisionText(piRequest, {
             version: 1,
             roles: [
               { role: "implementer", provider: "provider", model: "model", thinking: "medium", reason: "One writer." },
@@ -5258,13 +5260,13 @@ test("dynamic planning failure or declined authorization starts nothing", async 
       action: "start", task: "synthetic", dynamicPlan: true,
     }, undefined, undefined,
     context({ confirmations: [true], context: { model, modelRegistry: registry } })),
-    /planner_request_timeout/,
+    /planner_request_failed/,
   );
   assert.equal(executions, 0);
 
-  registry.complete = async () => ({
+  registry.complete = async (_model, piRequest) => ({
     stopReason: "stop",
-    content: [{ type: "text", text: JSON.stringify({
+    content: [{ type: "text", text: piDecisionText(piRequest, {
       version: 1,
       roles: [
         { role: "implementer", provider: "provider", model: "model", thinking: "medium", reason: "Writer." },
@@ -5834,11 +5836,11 @@ test("slash --plan uses the same preflight decision and two-gate start path", as
       model,
       modelRegistry: {
         getAvailable: () => [model],
-        complete: async () => {
+        complete: async (_model, piRequest) => {
           completions += 1;
           return {
             stopReason: "stop",
-            content: [{ type: "text", text: JSON.stringify({
+            content: [{ type: "text", text: piDecisionText(piRequest, {
               version: 1,
               roles: [
                 { role: "implementer", provider: "provider", model: "decision", thinking: "medium", reason: "A single writer is enough." },
@@ -6302,4 +6304,326 @@ test("stop selects an exact session and requires explicit UI confirmation before
   const declinedCtx = context({ confirmations: [false] });
   await commands.get("or-stop").handler("pi-other", declinedCtx);
   assert.equal(argvs.length, 3);
+});
+
+function scopedPolicy({ constraints = {}, staticRoles = [], customRoles = [], workerCandidates } = {}) {
+  const raw = plannerTopology({ constraints, customRoles, workerCandidates: workerCandidates ?? approvedPool([{ provider: "p", id: "a" }, { provider: "p", id: "b" }]) });
+  raw.version = 3;
+  raw.static_roles = staticRoles;
+  for (const item of Object.values(raw.builtins)) item.effective = { provider: "p", model: "a", thinking: "low", ...item.constraint };
+  return raw;
+}
+
+function piDecisionText(value, decision) {
+  const request = JSON.parse(value.messages[0].content[0].text);
+  const selected = new Map(decision.roles.map((role) => [role.role, role]));
+  return JSON.stringify({ answers: questionAnswers(request, (id, choices) => {
+    const role = selected.get(request.questions[id].instructions?.role);
+    if (id.startsWith("include_")) return role ? "include" : "omit";
+    if (id.startsWith("model_") && role) {
+      const index = request.state.candidate_model_capabilities.findIndex((candidate) => candidate.provider === role.provider && candidate.model === role.model);
+      return `m${index.toString(36)}`;
+    }
+    if (id.startsWith("thinking_") && role) return role.thinking;
+    return choices[0];
+  }) });
+}
+
+function questionAnswers(request, select = (id, choices) => id.startsWith("include") ? "omit" : choices[0]) {
+  return Object.fromEntries(Object.entries(request.questions).map(([id, question]) => [id, select(id, Object.keys(question.criteria))]));
+}
+
+function choiceResponse(request, answers = questionAnswers(request)) {
+  return new Response(JSON.stringify({ model: "jev-1.13.0", usage: { input_tokens: 1, output_tokens: 1 },
+    answers: Object.fromEntries(Object.entries(answers).map(([id, choice]) => [id, {
+      type: "choice", choice, confidence: 1,
+      probabilities: Object.fromEntries(Object.keys(request.questions[id].criteria).map((option) => [option, option === choice ? 1 : 0])),
+    }])),
+  }), { status: 200 });
+}
+
+const SCOPE_COMBINATIONS = [
+  ["topology"], ["models"], ["thinking"], ["topology", "models"],
+  ["topology", "thinking"], ["models", "thinking"], ["topology", "models", "thinking"],
+];
+const SCOPE_MODELS = ["a", "b"].map((id) => ({ provider: "p", id, reasoning: true,
+  thinkingLevelMap: { off: null, minimal: null, low: "low", medium: "medium", high: null } }));
+
+for (const selector of [undefined, ...SCOPE_COMBINATIONS]) test(`planning scopes ${selector?.join("+") ?? "omitted all-axis compatibility"} authorize identical Jev/Pi questions and locks`, async () => {
+  const scopes = selector ?? ["topology", "models", "thinking"];
+  const input = { task: "Synthetic scope objective", dynamicPlan: true, ...(selector ? { planningScopes: selector } : {}) };
+  const topology = validatePlannerTopology(scopedPolicy({ staticRoles: ["probe"] }));
+  const requests = [];
+  let calls = 0;
+  const ctx = { modelRegistry: { getAvailable: () => SCOPE_MODELS, complete: async (_model, value) => {
+    calls += 1;
+    const request = JSON.parse(value.messages[0].content[0].text);
+    requests.push(request);
+    return { stopReason: "stop", content: [{ type: "text", text: JSON.stringify({ answers: questionAnswers(request) }) }] };
+  } } };
+  const pi = selectDecisionModel(ctx, { provider: "p", model: "a", thinking: "low" }, plannerPolicy());
+  const result = await runPreflightPlanner(ctx, input, "/synthetic", pi, topology);
+  const jev = selectDecisionModel(ctx, undefined, plannerPolicy(), [], { typesafeApiKey: "synthetic-key" });
+  const other = await runPreflightPlanner(ctx, input, "/synthetic", jev, topology, undefined, undefined, {
+    typesafeApiKey: "synthetic-key", typesafeFetch: async (_url, options) => {
+      calls += 1;
+      const request = JSON.parse(options.body);
+      requests.push(request);
+      return choiceResponse(request);
+    },
+  });
+  assert.equal(calls, 2); // exactly one request per backend
+  assert.deepEqual(requests[0], requests[1]);
+  const questions = Object.keys(requests[0].questions);
+  for (const [axis, prefix] of [["topology", "include_"], ["models", "model_"], ["thinking", "thinking_"]]) {
+    assert.equal(questions.some((id) => id.startsWith(prefix)), scopes.includes(axis));
+  }
+  assert.deepEqual(result.plan.roles.map(({ reason, ...role }) => role), other.plan.roles.map(({ reason, ...role }) => role));
+  assert.deepEqual(result.plan.scopes, scopes);
+  assert.deepEqual(result.plan.locks, other.plan.locks);
+  assert.equal(result.plan.bindings.candidateSet, other.plan.bindings.candidateSet);
+  assert.deepEqual(result.plan.roles.map((role) => role.role), scopes.includes("topology") ? ["implementer", "reviewer"] : ["implementer", "reviewer", "probe"]);
+  for (const role of result.plan.roles) {
+    if (!scopes.includes("models")) assert.equal(role.model, "a");
+    if (!scopes.includes("thinking")) assert.equal(role.thinking, "low");
+    assert.ok(["a", "b"].includes(role.model));
+  }
+  const retained = planningRecordForPreview(result.plan);
+  assert.equal(retained.version, 3);
+  assert.deepEqual(retained.scopes, scopes);
+  assert.equal(JSON.stringify(retained).includes(input.task), false);
+});
+
+test("scope confirmations and immediate retained reads identify locks without compatibility or excluded-axis ambiguity", () => {
+  const locks = [
+    { role: "implementer", inclusion: true, provider: "p", model: "a", thinking: "low" },
+    { role: "reviewer", inclusion: true, provider: null, model: null, thinking: "low" },
+    { role: "probe", inclusion: false, provider: null, model: null, thinking: null },
+    { role: "playwright", inclusion: null, provider: "p", model: "a", thinking: null },
+  ];
+  const confirmation = planningScopesConfirmation(["topology", "models"], locks);
+  assert.match(confirmation, /Planning scopes: topology, models\./);
+  assert.equal(confirmation.includes("omitted selector"), false);
+  assert.match(confirmation, /implementer: inclusion=locked include; model=locked p\/a; thinking=locked low/);
+  assert.match(confirmation, /reviewer: inclusion=locked include; model=planner; thinking=locked low/);
+  assert.match(confirmation, /probe: inclusion=locked omit; model=not applicable; thinking=not applicable/);
+  assert.match(confirmation, /playwright: inclusion=planner; model=locked p\/a; thinking=planner/);
+  const planning = { mode: "dynamic", scopes: ["topology", "models"], locks, decision_model: { source: "typesafe-auth" }, roles: [] };
+  for (const action of ["start", "status"]) {
+    const text = testHooks.notifyEnvelope(context(), success(action, { session: "pi-scope-labels", planning }));
+    assert.match(text, /Decision source: typesafe-auth/);
+    assert.match(text, /Planning scopes: topology, models/);
+    for (const lock of locks) assert.ok(text.includes(`${lock.role}: inclusion=`));
+    assert.match(text, /model=locked; thinking=locked low/);
+    assert.match(text, /model=not applicable; thinking=not applicable/);
+  }
+});
+
+test("legacy planning-v1/v2 start and status reads never invent scope or lock authority", () => {
+  for (const version of [1, 2]) {
+    const planning = { version, mode: "dynamic", decision_model: { source: "configured-fallback" }, roles: [] };
+    if (version === 2) planning.worker_candidates = { version: 1, source: "authoritative-locks", count: 1, roles: [] };
+    const confirmation = planningScopesConfirmation(planning.scopes, planning.locks);
+    assert.match(confirmation, /Planning scopes: unavailable \(legacy record\)/);
+    assert.match(confirmation, /Locks: unavailable \(legacy record\)/);
+    assert.doesNotMatch(confirmation, /topology|models|thinking|authorized|planner choices/);
+    for (const action of ["start", "status"]) {
+      const envelope = success(action, { session: "pi-legacy-scopes", planning });
+      const text = testHooks.notifyEnvelope(context(), envelope);
+      assert.match(text, /Decision source: configured-fallback/);
+      assert.match(text, /Planning scopes: unavailable \(legacy record\)/);
+      assert.match(text, /Locks: unavailable \(legacy record\)/);
+      assert.doesNotMatch(text, /Planning scopes: topology|inclusion=|model=planner|thinking=planner/);
+      assert.equal(Object.hasOwn(envelope.data.planning, "scopes"), false);
+      assert.equal(Object.hasOwn(envelope.data.planning, "locks"), false);
+    }
+  }
+  for (const action of ["start", "status"]) {
+    const text = testHooks.notifyEnvelope(context(), success(action, {
+      session: "pi-missing-provenance", planning: { mode: "dynamic" },
+    }));
+    assert.match(text, /Decision source: unavailable/);
+    assert.doesNotMatch(text, /Decision source: legacy|Planning scopes: topology/);
+  }
+});
+
+test("omitted all-axis requests honor fully locked suitability and identical backend rejection", async () => {
+  const input = { dynamicPlan: true, task: "Synthetic", withProbe: false, withPlaywright: false, withDjangoExpert: false,
+    modelOverrides: { all: { provider: "p", model: "a", thinking: "low" } } };
+  const topology = validatePlannerTopology(scopedPolicy({ workerCandidates: null }));
+  let request;
+  let answer = "accept";
+  let calls = 0;
+  const ctx = { modelRegistry: { getAvailable: () => SCOPE_MODELS, complete: async (_model, value) => {
+    calls += 1;
+    request = JSON.parse(value.messages[0].content[0].text);
+    assert.match(value.systemPrompt, /Return exactly \{"answers"/);
+    assert.equal(value.systemPrompt.includes('"roles"'), false);
+    return { stopReason: "stop", content: [{ type: "text", text: JSON.stringify({ answers: { locked_plan: answer } }) }] };
+  } } };
+  const pi = selectDecisionModel(ctx, { provider: "p", model: "a" }, plannerPolicy());
+  const result = await runPreflightPlanner(ctx, input, "/synthetic", pi, topology);
+  assert.deepEqual(Object.keys(request.questions), ["locked_plan"]);
+  assert.deepEqual(result.plan.scopes, ["topology", "models", "thinking"]);
+  assert.equal(calls, 1);
+  answer = "reject";
+  await assert.rejects(runPreflightPlanner(ctx, input, "/synthetic", pi, topology), /locked_plan_rejected/);
+  const jev = selectDecisionModel(ctx, undefined, plannerPolicy(), [], { typesafeApiKey: "synthetic-key" });
+  await assert.rejects(runPreflightPlanner(ctx, input, "/synthetic", jev, topology, undefined, undefined, {
+    typesafeApiKey: "synthetic-key", typesafeFetch: async (_url, options) => {
+      const other = JSON.parse(options.body);
+      assert.deepEqual(other, request);
+      return choiceResponse(other, { locked_plan: "reject" });
+    },
+  }), /locked_plan_rejected/);
+});
+
+test("scope validation, compatibility, fixed policy precedence, custom subset and explicit conflicts", () => {
+  assert.deepEqual(planningScopes({ dynamicPlan: true }), ["topology", "models", "thinking"]);
+  for (const value of [[], ["models", "models"], ["unknown"], null, "topology", ["topology", 1]]) {
+    assert.throws(() => planningScopes({ dynamicPlan: true, planningScopes: value }), /invalid_planning_scopes/);
+  }
+  assert.throws(() => planningScopes({ planningScopes: ["topology"] }), /require_dynamic/);
+  const topology = validatePlannerTopology(scopedPolicy({ constraints: { reviewer: { provider: "p", model: "b", thinking: "medium" } } }));
+  const input = { dynamicPlan: true, planningScopes: ["topology"], modelOverrides: { all: { thinking: "medium" }, reviewer: { provider: "p", model: "b", thinking: "low" } } };
+  const resolved = approvedWorkerSelection({ modelRegistry: { getAvailable: () => SCOPE_MODELS } }, input, topology);
+  assert.deepEqual(resolved.locks.find((role) => role.role === "reviewer"), { role: "reviewer", inclusion: true, provider: "p", model: "b", thinking: "low" });
+  assert.throws(() => approvedWorkerSelection({ modelRegistry: { getAvailable: () => SCOPE_MODELS } }, { ...input, modelOverrides: { reviewer: { thinking: "max" } } }, topology), /locked_thinking_unsupported/);
+  assert.throws(() => scopedTopology({ dynamicPlan: true, planningScopes: ["models"], withProbe: false, forceSpecialists: ["probe"] }, topology), /constraint_conflict/);
+  const custom = validatePlannerTopology(scopedPolicy({ customRoles: ["custom-a", "custom-b"].map((role) => ({ role, contract: "probe", provider: "p", model: "a", thinking: "low" })) }));
+  const fixed = scopedTopology({ dynamicPlan: true, planningScopes: ["thinking"], requiredCustomRoleIds: ["custom-b"] }, custom);
+  assert.deepEqual(fixed.fixedRoles, ["implementer", "reviewer", "custom-b"]);
+  assert.throws(() => scopedTopology({ dynamicPlan: true, planningScopes: ["models"], requiredCustomRoleIds: ["custom-missing"] }, custom), /not_allowlisted/);
+  assert.throws(() => scopedTopology({ dynamicPlan: true, planningScopes: ["thinking"], projectCustomRoles: false, requiredCustomRoleIds: ["custom-b"] }, custom), /constraint_conflict/);
+});
+
+test("fully locked scopes ask suitability once; rejection, invalid choices and unavailable locks fail closed", async () => {
+  const input = { task: "Synthetic", dynamicPlan: true, planningScopes: ["thinking"], modelOverrides: { all: { thinking: "low" } } };
+  const topology = validatePlannerTopology(scopedPolicy({ workerCandidates: { version: 1, all: [{ provider: "p", model: "a" }] } }));
+  let request;
+  const ctx = { modelRegistry: { getAvailable: () => SCOPE_MODELS, complete: async (_model, value) => {
+    request = JSON.parse(value.messages[0].content[0].text);
+    return { stopReason: "stop", content: [{ type: "text", text: JSON.stringify({ answers: { locked_plan: "accept" } }) }] };
+  } } };
+  const selection = selectDecisionModel(ctx, { provider: "p", model: "a" }, plannerPolicy());
+  await runPreflightPlanner(ctx, input, "/synthetic", selection, topology);
+  assert.deepEqual(Object.keys(request.questions), ["locked_plan"]);
+  ctx.modelRegistry.complete = async () => ({ stopReason: "stop", content: [{ type: "text", text: '{"answers":{"locked_plan":"reject"}}' }] });
+  await assert.rejects(runPreflightPlanner(ctx, input, "/synthetic", selection, topology), /locked_plan_rejected/);
+  ctx.modelRegistry.complete = async () => ({ stopReason: "stop", content: [{ type: "text", text: '{"answers":{"model_00":"m99"}}' }] });
+  await assert.rejects(runPreflightPlanner(ctx, input, "/synthetic", selection, topology), /answers_incomplete/);
+  ctx.modelRegistry.complete = () => assert.fail("unavailable lock must fail before provider call");
+  await assert.rejects(runPreflightPlanner(ctx, { ...input, modelOverrides: { all: { provider: "p", model: "missing" } } }, "/synthetic", selection, topology), /locked_model_unavailable/);
+});
+
+for (const scopes of SCOPE_COMBINATIONS) test(`scoped start ${scopes.join("+")} cancellation, stale preview, dry-run and no-launch failure`, async () => {
+  for (const mode of ["cancel-call", "cancel-launch", "stale-policy", "stale-lock", "stale-preview", "dry-run", "bad-answer", "launch"]) {
+    let providerCalls = 0;
+    let starts = 0;
+    let launches = 0;
+    let topologyReads = 0;
+    let previewPlanning;
+    const { tool, pi } = harness(async (_command, args) => {
+      if (args[2] === "planner-policy") return { code: 0, stdout: JSON.stringify(plannerPolicyEnvelope(plannerPolicy({ preferred: { provider: "p", model: "a", thinking: "low" } }))) };
+      if (args[2] === "planner-topology") {
+        topologyReads += 1;
+        const raw = scopedPolicy();
+        if (topologyReads > 1 && mode === "stale-policy") raw.static_roles = ["probe"];
+        if (topologyReads > 1 && mode === "stale-lock") raw.builtins.reviewer.effective.thinking = "medium";
+        return { code: 0, stdout: JSON.stringify(plannerTopologyEnvelope(raw)) };
+      }
+      assert.equal(args[2], "start");
+      starts += 1;
+      if (!args.includes("--dry-run")) launches += 1;
+      const roles = ["implementer", "reviewer"].map((name) => ({ name,
+        provider: args[args.indexOf(`--${name}-provider`) + 1],
+        model: args[args.indexOf(`--${name}-model`) + 1],
+        thinking: args[args.indexOf(`--${name}-thinking`) + 1],
+      }));
+      const planning = await boundPlanningFromArgs(args);
+      previewPlanning = planning;
+      if (mode === "stale-preview") planning.locks[0].thinking = "invalid";
+      return { code: 0, stdout: JSON.stringify(success("start", { roles, planning, project: process.cwd(), session: "pi-scopes", dry_run: args.includes("--dry-run"), trust: { child_bypass: false }, paths: { state_root: "/tmp/synthetic", coordination: null } })) };
+    });
+    const ctx = context({ confirmations: mode === "cancel-call" ? [false] : mode === "cancel-launch" ? [true, false] : [true, true], context: { modelRegistry: {
+      getAvailable: () => SCOPE_MODELS,
+      complete: async (_model, value) => {
+        providerCalls += 1;
+        const request = JSON.parse(value.messages[0].content[0].text);
+        return { stopReason: "stop", content: [{ type: "text", text: JSON.stringify({ answers: mode === "bad-answer" ? {} : questionAnswers(request) }) }] };
+      },
+    } } });
+    const input = { action: "start", task: "Synthetic", dynamicPlan: true, planningScopes: scopes };
+    if (mode === "dry-run") {
+      const result = await testHooks.runStart(pi, input, undefined, ctx, { previewOnly: true });
+      assert.deepEqual(result.data.planning.scopes, scopes);
+      assert.equal(launches, 0);
+      assert.equal(ctx.calls.confirmations.length, 1);
+    } else if (["launch"].includes(mode)) {
+      const result = await tool.execute("scoped", input, undefined, undefined, ctx);
+      assert.deepEqual(result.details.data.planning.scopes, scopes);
+      assert.equal(launches, 1);
+    } else {
+      await assert.rejects(tool.execute("scoped", input, undefined, undefined, ctx), /confirmation_declined|stale_dynamic|binding_mismatch|answers_incomplete/);
+      assert.equal(launches, 0);
+    }
+    if (mode === "cancel-call") assert.equal(providerCalls, 0);
+    else assert.equal(providerCalls, 1);
+    if (previewPlanning) assert.ok(Array.isArray(previewPlanning.locks));
+    assert.ok(starts <= 2);
+  }
+});
+
+test("TUI scope form cancellation, seven choices and explicit slash selector preserve scopes", async () => {
+  let reads = 0;
+  const { commands } = harness(async (_command, args) => {
+    reads += 1;
+    const envelope = args[2] === "planner-policy"
+      ? plannerPolicyEnvelope(plannerPolicy({ preferred: { provider: "p", model: "a", thinking: "low" } }))
+      : plannerTopologyEnvelope(scopedPolicy());
+    assert.notEqual(args[2], "start");
+    return { code: 0, stdout: JSON.stringify(envelope) };
+  });
+  const cancelled = context({ selections: [undefined] });
+  await commands.get("or-start").handler("--plan-scopes Synthetic", cancelled);
+  assert.equal(reads, 0);
+  assert.equal(cancelled.calls.selections[0].options.length, 7);
+  for (const scopes of SCOPE_COMBINATIONS) {
+    for (const selector of ["--plan-scopes", `--plan=${scopes.join(",")}`]) {
+      const ctx = context({ selections: [scopes.join(",")], inputs: ["", ""], confirmations: [false], context: {
+        modelRegistry: { getAvailable: () => SCOPE_MODELS, complete: () => assert.fail("declined preflight must not call provider") },
+      } });
+      await commands.get("or-start").handler(`${selector} Synthetic`, ctx);
+      assert.match(ctx.calls.confirmations[0].message, new RegExp(`Planning scopes: ${scopes.join(", ")}`));
+    }
+  }
+});
+
+for (const scopes of SCOPE_COMBINATIONS) test(`scopes ${scopes.join("+")} abort and provider failure cannot launch`, async () => {
+  const topology = validatePlannerTopology(scopedPolicy());
+  const input = { task: "Synthetic", dynamicPlan: true, planningScopes: scopes };
+  const controller = new AbortController();
+  let calls = 0;
+  const ctx = { modelRegistry: { getAvailable: () => SCOPE_MODELS, complete: async (_model, value) => {
+    calls += 1;
+    controller.abort();
+    return { stopReason: "stop", content: [{ type: "text", text: JSON.stringify({ answers: questionAnswers(JSON.parse(value.messages[0].content[0].text)) }) }] };
+  } } };
+  const pi = selectDecisionModel(ctx, { provider: "p", model: "a" }, plannerPolicy());
+  await assert.rejects(runPreflightPlanner(ctx, input, "/synthetic", pi, topology, undefined, controller.signal), /planner_request_cancelled/);
+  assert.equal(calls, 1);
+  await assert.rejects(runPreflightPlanner(ctx, input, "/synthetic", pi, topology, undefined, controller.signal), /planner_request_cancelled/);
+  assert.equal(calls, 1);
+  ctx.modelRegistry.complete = async () => { throw new Error("PRIVATE_PROVIDER_BODY"); };
+  await assert.rejects(runPreflightPlanner(ctx, input, "/synthetic", pi, topology), { message: "planner_request_failed" });
+  const jev = selectDecisionModel(ctx, undefined, plannerPolicy(), [], { typesafeApiKey: "synthetic-key" });
+  await assert.rejects(runPreflightPlanner(ctx, input, "/synthetic", jev, topology, undefined, controller.signal, {
+    typesafeApiKey: "synthetic-key", typesafeFetch: () => assert.fail("no call after abort"),
+  }), /planner_request_cancelled/);
+  await assert.rejects(runPreflightPlanner(ctx, input, "/synthetic", jev, topology, undefined, undefined, {
+    typesafeApiKey: "synthetic-key", typesafeFetch: async (_url, options) => {
+      const request = JSON.parse(options.body);
+      return choiceResponse(request, Object.fromEntries(Object.keys(request.questions).map((id) => [id, "unauthorized"])));
+    },
+  }), /typesafe_answer_invalid/);
 });

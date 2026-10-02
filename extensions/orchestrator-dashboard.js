@@ -483,7 +483,9 @@ function sessionProfile(session) {
 }
 
 function sessionPlanning(session) {
-  return session.planning?.mode === "dynamic" ? "plan dynamic" : "plan static";
+  if (session.planning?.mode !== "dynamic") return "plan static";
+  const scopes = session.planning.scopes?.join("+");
+  return scopes ? `plan dynamic (${scopes})` : "plan dynamic";
 }
 
 function sessionUsage(session) {

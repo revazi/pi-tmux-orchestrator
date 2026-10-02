@@ -24,6 +24,7 @@ EXPECTED_FILES=(
   extensions/orchestrator-models.js
   extensions/orchestrator-planner.js
   extensions/orchestrator-planning.js
+  extensions/orchestrator-planning-scopes.js
   extensions/orchestrator-worker-candidates.js
   extensions/orchestrator-typesafe.js
   extensions/orchestrator-update.js

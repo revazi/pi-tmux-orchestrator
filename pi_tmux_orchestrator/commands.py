@@ -43,7 +43,7 @@ from .constants import (
 )
 from .models import CommandResult, OrchestrationError
 from .output import bounded_message, human_print, public_role
-from .planning import retained_planning
+from .planning import planning_lock_lines, planning_scopes_label, retained_planning
 from .profiles import (
     public_execution_profile,
     resolve_execution_profile,
@@ -313,11 +313,15 @@ def status_command(args: argparse.Namespace) -> CommandResult:
             f"dynamic accepted via {planning['decision_model']['provider']}/"
             f"{planning['decision_model']['model']} "
             f"thinking={planning['decision_model']['thinking']} "
-            f"source={planning['decision_model']['source']}"
+            f"source={planning['decision_model']['source']}; "
+            f"scopes={planning_scopes_label(planning)}"
             if planning["mode"] == "dynamic"
             else "static/manual or legacy"
         )
     )
+    if planning["mode"] == "dynamic":
+        for line in planning_lock_lines(planning):
+            human_print(line)
     human_print(f"Coordination: {coord}")
     result = tmux(
         [

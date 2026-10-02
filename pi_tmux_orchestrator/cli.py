@@ -288,6 +288,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="request one bounded provider-backed preflight topology decision",
     )
     start.add_argument(
+        "--planning-scope",
+        action="append",
+        choices=("topology", "models", "thinking"),
+        help="authorized dynamic axis; repeat for combinations; omission preserves all three axes",
+    )
+    start.add_argument(
         "--authorize-planning",
         action="store_true",
         help="authorize the additional provider call required by --dynamic-plan",

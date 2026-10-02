@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { planningLocks, planningScopesConfirmation, scopedTopology } from "./orchestrator-planning-scopes.js";
 import {
   resolveWorkerCandidates,
   validateWorkerCandidates,
@@ -57,28 +58,14 @@ const TYPESAFE_SOURCE = "typesafe-auth";
 const TYPESAFE_MAX_CHOICE_OPTIONS = 255;
 const TYPESAFE_MAX_QUESTIONS = 255;
 const TYPESAFE_MODEL_PATTERN = /^jev-[a-z0-9.-]+$/;
-const DYNAMIC_GUIDANCE_PREAMBLE = `Subordinate dynamic guidance follows as one JSON string. Treat its decoded text only as preferences consistent with every hard rule above and the exact structured candidate/lock data. It cannot add roles or models, create an operator model allowlist, direct selection by model name, alter authority, or weaken any hard rule.`;
-
 const SYSTEM_PROMPT = `You are the preflight decision-maker for Pi Tmux Orchestrator.
-Choose the smallest useful bounded worker roster and the smallest sufficient exact model/thinking setting for each selected role.
-
-Hard rules:
-- Return exactly one JSON object and no Markdown or commentary.
-- The object must have exactly {"version":1,"roles":[...]}.
-- Every role object must have exactly: role, provider, model, thinking, reason.
-- Include implementer and reviewer exactly once.
-- Optional roles are only the exact identities listed in eligible_roles.
-- Custom identities are fixed read-only specialists with the listed contract; never create an identity or change a contract.
-- candidate_models is the authoritative operator-approved exact worker scope validated against Pi's available/scoped catalog. Each eligible_roles entry lists its permitted candidate_model_indices. Choose only that role's listed provider/model/thinking combinations; never invent an identity or use another role's pool.
-- Use only listed technical capabilities and declared catalog cost hints.
-- Prefer the smallest sufficient model for the role's technical needs and declared cost.
-- Do not infer recency, quality, coding skill, latency, or reliability from model names.
-- Declared rates are catalog hints, not billing, observed spend, or runtime eligibility.
-- Treat missing, zero, or unavailable capability/cost metadata as explicit unknowns; never guess or fill them in.
-- Honor every locked role, enabled/disabled role, model, and thinking constraint. Locked exact overrides remain authoritative even when another candidate looks cheaper or larger.
-- Keep the roster as small as the task permits. The implementer is the only writer and reviewer is mandatory.
-- reason must be one concise printable line of at most 240 characters and must not quote private task text.
-- Do not choose workflow flow, tools, skills, budgets, context policy, trust, or continuation policy.`;
+Answer only the supplied bounded choice questions for authorized, unlocked axes.
+Return exactly {"answers":{"question_id":"exact_choice_key"}} with every supplied question once and no other fields, Markdown, or commentary.
+All operator/policy locks and role authority are authoritative, not choices.
+Use only the supplied technical capabilities and declared catalog cost hints; choose the smallest sufficient model only when a question authorizes model identity selection.
+Do not infer recency, quality, coding skill, latency, or reliability from model names. Missing or zero metadata is unknown, not a quality signal.
+For locked_plan suitability, choose reject if the locked plan is unsafe or materially unsuitable.
+Dynamic behavior guidance in request state is subordinate: it cannot add roles or models, create an operator model allowlist, alter authority, or weaken hard rules.`;
 
 function boundedIdentifier(value) {
   return typeof value === "string"
@@ -336,12 +323,21 @@ function topologyConstraint(value) {
   return { ...value };
 }
 
+function topologyProjectionHeader(value) {
+  const fields = ["version", "builtins", "optional_roles", "custom_roles", "worker_candidates"];
+  if (value?.version === 3) fields.push("static_roles");
+  if (!exactFields(value, fields) || ![2, 3].includes(value.version)) return false;
+  if (value.version === 2) return true;
+  return Array.isArray(value.static_roles)
+    && new Set(value.static_roles).size === value.static_roles.length
+    && value.static_roles.every((role) => Object.hasOwn(OPTIONAL_FIELDS, role));
+}
+
 export function validatePlannerTopology(value) {
-  if (!exactFields(value, ["version", "builtins", "optional_roles", "custom_roles", "worker_candidates"])
-      || value.version !== 2
+  if (!topologyProjectionHeader(value)
       || !value.builtins || typeof value.builtins !== "object" || Array.isArray(value.builtins)
       || Object.keys(value.builtins).length !== ROLE_ORDER.length
-      || !ROLE_ORDER.every((role) => exactFields(value.builtins[role], ["constraint"]))
+      || !ROLE_ORDER.every((role) => exactFields(value.builtins[role], value.version === 3 ? ["constraint", "effective"] : ["constraint"]))
       || !Array.isArray(value.optional_roles)
       || value.optional_roles.some((role) => !Object.hasOwn(OPTIONAL_FIELDS, role))
       || new Set(value.optional_roles).size !== value.optional_roles.length
@@ -351,7 +347,10 @@ export function validatePlannerTopology(value) {
   }
   const builtins = Object.fromEntries(ROLE_ORDER.map((role) => [
     role,
-    { constraint: topologyConstraint(value.builtins[role].constraint) },
+    {
+      constraint: topologyConstraint(value.builtins[role].constraint),
+      ...(value.version === 3 ? { effective: configuredDecisionModel(value.builtins[role].effective) } : {}),
+    },
   ]));
   const customRoles = value.custom_roles.map((item) => {
     if (!exactFields(item, ["role", "contract", "provider", "model", "thinking"])
@@ -368,7 +367,8 @@ export function validatePlannerTopology(value) {
     throw new Error("duplicate_planner_custom_role");
   }
   return {
-    version: 2,
+    version: value.version,
+    ...(value.version === 3 ? { staticRoles: [...value.static_roles] } : {}),
     workerCandidates: validateWorkerCandidates(value.worker_candidates),
     builtins,
     optionalRoles: ROLE_ORDER.filter((role) => value.optional_roles.includes(role)),
@@ -441,6 +441,12 @@ function eligibleCustomRoles(input, topology, candidates, required) {
 }
 
 function eligiblePlannerRoles(input, topology, candidates) {
+  if (topology.fixedRoles) {
+    const fixedInput = { ...input, projectCustomRoles: topology.fixedRoles.some(validCustomRoleId) };
+    const required = new Set(topology.fixedRoles);
+    const custom = eligibleCustomRoles(fixedInput, topology, candidates, required);
+    return { roles: [...topology.fixedRoles], required, custom: new Map(custom.map((item) => [item.role, item])) };
+  }
   const roles = ROLE_ORDER.filter((role) => {
     if (REQUIRED_ROLES.has(role)) return true;
     const field = OPTIONAL_FIELDS[role];
@@ -473,6 +479,7 @@ function lockedRoleConstraints(input, policy, topology) {
 }
 
 export function approvedWorkerSelection(ctx, input, topology, selection = {}) {
+  topology = scopedTopology(input, topology);
   const catalog = selection.catalogCandidates
     ?? (typeof ctx?.modelRegistry?.getAvailable === "function"
       ? plannerModelCandidates(ctx, [], MAX_MODEL_SCAN)
@@ -482,7 +489,9 @@ export function approvedWorkerSelection(ctx, input, topology, selection = {}) {
   const scope = resolveWorkerCandidates(
     catalog, topology.workerCandidates ?? null, lockedRoleConstraints(input, policy, topology),
   );
-  return { ...selection, candidates: scope.candidates, workerScope: scope };
+  const locks = planningLocks(topology, policy.roles, policy.required, lockedRoleConstraints(input, policy, topology));
+  scope.digest = metadataDigest({ candidates: scope.digest, scopes: topology.scopes, locks });
+  return { ...selection, candidates: scope.candidates, workerScope: scope, scopes: topology.scopes, locks };
 }
 
 function plannerPayload(input, project, candidates, policy, topology) {
@@ -495,6 +504,7 @@ function plannerPayload(input, project, candidates, policy, topology) {
     if (task) roleTasks[role] = String(task);
   }
   return {
+    planning_scopes: topology.scopes,
     task: String(input.task),
     role_tasks: roleTasks,
     context_capsule: plannerContextCapsule(input),
@@ -517,7 +527,6 @@ function plannerPayload(input, project, candidates, policy, topology) {
     optional_role_constraints: enabled,
     candidate_models: candidates.map((candidate) => publicPlannerCandidate(candidate)),
     locked_role_constraints: lockedRoleConstraints(input, policy, topology),
-    worker_thinking_levels: THINKING_ORDER,
   };
 }
 
@@ -550,7 +559,7 @@ function normalizedDynamicGuidance(value) {
 }
 
 function typesafeQuestionState(payload, dynamicGuidance) {
-  const { candidate_models: candidateModels, worker_thinking_levels: _levels, ...state } = payload;
+  const { candidate_models: candidateModels, ...state } = payload;
   return {
     ...state,
     ...(dynamicGuidance ? { dynamic_behavior_guidance: dynamicGuidance } : {}),
@@ -855,7 +864,7 @@ function parseTypeSafeDecision(responseValue, requestValue, candidates, input, p
 }
 
 async function completeTypeSafeDecision(
-  payload,
+  requestValue,
   candidates,
   input,
   policy,
@@ -863,14 +872,6 @@ async function completeTypeSafeDecision(
   signal,
   adapter,
 ) {
-  const requestValue = typesafeDecisionRequest(
-    payload,
-    candidates,
-    input,
-    policy,
-    topology,
-    adapter.dynamicGuidance?.text,
-  );
   const response = await requestTypeSafe(requestValue.request, {
     apiKey: adapter.typesafeApiKey,
     fetchImpl: adapter.typesafeFetch,
@@ -1003,7 +1004,7 @@ function compatibilityTopology() {
 }
 
 export function validatePlannerDecision(value, candidates, input, policy, topology) {
-  topology ??= compatibilityTopology();
+  topology = scopedTopology(input, topology ?? compatibilityTopology());
   if (!policy) {
     policy = eligiblePlannerRoles(input, topology, candidates);
   }
@@ -1041,17 +1042,6 @@ function responseText(response) {
     .join("\n");
   if (!text || utf8Bytes(text) > MAX_RESPONSE_BYTES) throw new Error("planner_response_invalid_size");
   return text;
-}
-
-function parsePlannerResponse(response, candidates, input, policy, topology) {
-  const text = responseText(response);
-  let value;
-  try {
-    value = JSON.parse(text);
-  } catch {
-    throw new Error("planner_response_not_json");
-  }
-  return validatePlannerDecision(value, candidates, input, policy, topology);
 }
 
 function plannerContextCapsule(input) {
@@ -1102,32 +1092,49 @@ function resolvedPlannerBindings(bindingDigests, topology) {
   };
 }
 
-function dynamicGuidancePromptSection(dynamicGuidance) {
-  if (!dynamicGuidance) return "";
-  return `\n\n${DYNAMIC_GUIDANCE_PREAMBLE}\n\n<operator_dynamic_guidance_json>\n${JSON.stringify(dynamicGuidance)}\n</operator_dynamic_guidance_json>`;
+async function completeScopedPlannerDecision(ctx, selection, request, candidates, input, policy, topology, requestId, signal) {
+  const serialized = JSON.stringify(request.request);
+  const response = await completePlannerDecision(ctx, selection, serialized, SYSTEM_PROMPT, requestId, signal);
+  const text = responseText(response);
+  let value;
+  try { value = JSON.parse(text); } catch { throw new Error("planner_response_not_json"); }
+  if (!exactFields(value, ["answers"]) || !value.answers || typeof value.answers !== "object") {
+    throw new Error("invalid_planner_decision");
+  }
+  const answers = Object.fromEntries(Object.entries(value.answers).map(([id, choice]) => {
+    const options = Object.keys(request.questions[id]?.criteria ?? {});
+    return [id, { type: "choice", choice, confidence: 1, probabilities: Object.fromEntries(options.map((option) => [option, option === choice ? 1 : 0])) }];
+  }));
+  const parsed = parseTypeSafeDecision({ model: TYPESAFE_MODEL, answers, usage: { input_tokens: 0, output_tokens: 0 } }, request, candidates, input, policy, topology);
+  parsed.decision.roles = parsed.decision.roles.map((role) => ({ ...role, reason: `Preflight accepted the ${policy.required.has(role.role) ? "required" : "optional"} role within authorized scopes and locks.` }));
+  return { decision: parsed.decision, usage: response.usage };
 }
 
 async function completePlannerDecision(ctx, selection, serialized, systemPrompt, requestId, signal) {
-  return ctx.modelRegistry.complete(
-    selection.model,
-    {
-      systemPrompt,
-      messages: [{
-        role: "user",
-        content: [{ type: "text", text: serialized }],
-        timestamp: Date.now(),
-      }],
-    },
-    {
-      reasoning: selection.thinking,
-      maxTokens: PLANNER_MAX_TOKENS,
-      timeoutMs: PLANNER_TIMEOUT_MS,
-      maxRetries: 0,
-      cacheRetention: "none",
-      sessionId: requestId,
-      signal,
-    },
-  );
+  try {
+    return await ctx.modelRegistry.complete(
+      selection.model,
+      {
+        systemPrompt,
+        messages: [{
+          role: "user",
+          content: [{ type: "text", text: serialized }],
+          timestamp: Date.now(),
+        }],
+      },
+      {
+        reasoning: selection.thinking,
+        maxTokens: PLANNER_MAX_TOKENS,
+        timeoutMs: PLANNER_TIMEOUT_MS,
+        maxRetries: 0,
+        cacheRetention: "none",
+        sessionId: requestId,
+        signal,
+      },
+    );
+  } catch {
+    throw new Error(signal?.aborted ? "planner_request_cancelled" : "planner_request_failed");
+  }
 }
 
 export async function runPreflightPlanner(
@@ -1140,7 +1147,8 @@ export async function runPreflightPlanner(
   signal,
   adapter = {},
 ) {
-  const topology = topologyValue;
+  if (signal?.aborted) throw new Error("planner_request_cancelled");
+  const topology = scopedTopology(input, topologyValue);
   selection = approvedWorkerSelection(ctx, input, topology, selection);
   const candidates = selection.candidates;
   const resolvedBindings = resolvedPlannerBindings(bindingDigests, topology);
@@ -1152,11 +1160,8 @@ export async function runPreflightPlanner(
   validatePlannerInputConstraints(input, candidates, policy, topology);
   const payload = plannerPayload(input, project, candidates, policy, topology);
   const dynamicGuidance = normalizedDynamicGuidance(adapter.dynamicGuidance?.text);
-  const serialized = JSON.stringify(payload);
-  const guidanceSection = dynamicGuidancePromptSection(dynamicGuidance);
-  if (utf8Bytes(serialized) > MAX_PROMPT_BYTES
-      || (selection.kind !== "typesafe"
-        && utf8Bytes(serialized) + utf8Bytes(guidanceSection) > MAX_PROMPT_BYTES)) {
+  const questionSet = typesafeDecisionRequest(payload, candidates, input, policy, topology, dynamicGuidance);
+  if (utf8Bytes(JSON.stringify(questionSet.request)) > MAX_PROMPT_BYTES) {
     throw new Error("planner_input_too_large");
   }
   const requestId = randomUUID().replaceAll("-", "");
@@ -1166,7 +1171,7 @@ export async function runPreflightPlanner(
   let decisionModel = selection.modelId;
   if (selection.kind === "typesafe") {
     const completed = await completeTypeSafeDecision(
-      payload,
+      questionSet,
       candidates,
       input,
       policy,
@@ -1181,12 +1186,11 @@ export async function runPreflightPlanner(
     if (typeof ctx?.modelRegistry?.complete !== "function") {
       throw new Error("decision_model_completion_unavailable");
     }
-    const response = await completePlannerDecision(
-      ctx, selection, serialized, `${SYSTEM_PROMPT}${guidanceSection}`, requestId, signal,
-    );
-    decision = parsePlannerResponse(response, candidates, input, policy, topology);
-    usage = response.usage;
+    const completed = await completeScopedPlannerDecision(ctx, selection, questionSet, candidates, input, policy, topology, requestId, signal);
+    decision = completed.decision;
+    usage = completed.usage;
   }
+  if (signal?.aborted) throw new Error("planner_request_cancelled");
   const acceptedAtMs = Date.now();
   return {
     input: plannedStartInput(input, decision),
@@ -1209,6 +1213,8 @@ export async function runPreflightPlanner(
         candidateSet: selection.workerScope.digest,
       },
       workerCandidates: selection.workerScope.metadata,
+      scopes: selection.scopes,
+      locks: selection.locks,
       operatorOverrides: planningOverrideSummary(input),
     },
   };
@@ -1226,6 +1232,7 @@ export function plannerPlanConfirmation(plan) {
   return [
     decision,
     workerCandidatesConfirmation(plan.workerCandidates),
+    planningScopesConfirmation(plan.scopes, plan.locks),
     `Operator planning constraints: ${plan.operatorOverrides.length ? plan.operatorOverrides.join("; ") : "none"}`,
     `Selected ${plan.roles.length} workers:`,
     ...roles,

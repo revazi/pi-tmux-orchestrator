@@ -94,6 +94,7 @@ def _terminal_input(args: Any, project: Path) -> dict[str, Any]:
         "project": str(project),
         "task": task,
         "dynamicPlan": True,
+        "planningScopes": getattr(args, "planning_scope", None),
         "previewOnly": bool(args.dry_run),
         "approveProject": bool(args.approve_project),
         "rpcWorkers": bool(args.rpc_workers),
@@ -256,6 +257,9 @@ def _run_terminal_planner(
 
 
 def terminal_dynamic_start(args: Any) -> CommandResult:
+    scopes = getattr(args, "planning_scope", None)
+    if scopes is not None and len(set(scopes)) != len(scopes):
+        raise OrchestrationError("Planning scopes must be unique", "invalid_arguments")
     if not args.authorize_planning:
         raise OrchestrationError(
             "--dynamic-plan requires --authorize-planning before the provider call",
@@ -314,7 +318,15 @@ def terminal_dynamic_start(args: Any) -> CommandResult:
     planning = data.get("planning")
     if isinstance(planning, dict):
         from .output import human_print
+        from .planning import planning_lock_lines, planning_scopes_label
 
+        human_print(
+            f"Planning scopes: {planning_scopes_label(planning)}; "
+            f"decision source={(planning.get('decision_model') or {}).get('source') or 'unavailable'}"
+        )
+
+        for line in planning_lock_lines(planning):
+            human_print(line)
         pool = planning.get("worker_candidates", {})
         human_print(
             f"Approved worker candidates: source={pool.get('source')}; count={pool.get('count')}"

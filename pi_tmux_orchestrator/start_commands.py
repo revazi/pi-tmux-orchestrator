@@ -411,6 +411,7 @@ def start_command(args: argparse.Namespace) -> CommandResult:
         return terminal_dynamic_start(args)
     if any(
         (
+            getattr(args, "planning_scope", None),
             getattr(args, "authorize_planning", False),
             getattr(args, "allow_static_fallback", False),
             getattr(args, "yes", False),

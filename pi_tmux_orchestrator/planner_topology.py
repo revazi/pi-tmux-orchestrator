@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .configuration import (
+    effective_model_config,
     load_model_config,
     model_config_path,
     project_model_config,
@@ -18,7 +19,7 @@ from .planning import metadata_digest
 from .profiles import resolve_execution_profile
 from .specialist_activation import SPECIALIST_ROLES
 
-PLANNER_TOPOLOGY_VERSION = 2
+PLANNER_TOPOLOGY_VERSION = 3
 BUILTIN_ROLE_ORDER = ("implementer", "reviewer", *SPECIALIST_ROLES)
 
 
@@ -76,7 +77,8 @@ def planner_topology_projection(
         role: {
             "constraint": _configured_role_constraint(
                 role, configured, matched, profile
-            )
+            ),
+            "effective": effective_model_config(role, configured, profile, matched),
         }
         for role in BUILTIN_ROLE_ORDER
     }
@@ -106,6 +108,7 @@ def planner_topology_projection(
         "version": PLANNER_TOPOLOGY_VERSION,
         "builtins": builtins,
         "optional_roles": optional_roles,
+        "static_roles": list(configured_specialists or []),
         "custom_roles": custom_roles,
         "worker_candidates": configured.get("worker_candidates"),
     }
