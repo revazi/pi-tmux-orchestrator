@@ -704,6 +704,7 @@ def start_command(args: argparse.Namespace) -> CommandResult:
             roles=roles,
             configs=configs,
             dry_run=bool(args.dry_run),
+            candidate_policy=configured_models.get("worker_candidates"),
         )
 
     project_config_metadata = public_project_config(matched_project)

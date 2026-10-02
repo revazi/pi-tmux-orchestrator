@@ -86,8 +86,9 @@ export function planningRecordForPreview(plan) {
   const bindings = plan.bindings;
   if (!validPlanningBindings(bindings)) throw new Error("invalid_planning_bindings");
   return {
-    version: 1,
+    version: 2,
     mode: "dynamic",
+    worker_candidates: plan.workerCandidates,
     request_id: plan.requestId,
     status: "accepted",
     created_at_ms: plan.createdAtMs,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 from pathlib import Path
 import tempfile
 from unittest import mock
@@ -32,8 +33,19 @@ def planning_record(roles):
         for role in roles
     ]
     return {
-        "version": 1,
+        "version": 2,
         "mode": "dynamic",
+        "worker_candidates": {
+            "version": 1,
+            "source": "authoritative-locks",
+            "count": len(
+                set((role["provider"], role["model"]) for role in retained_roles)
+            ),
+            "roles": [
+                {"role": role["id"], "source": "exact-lock", "count": 1}
+                for role in retained_roles
+            ],
+        },
         "request_id": "a" * 32,
         "status": "accepted",
         "created_at_ms": 1_800_000_000_000,
@@ -220,6 +232,113 @@ class PlanningAdmissionTests(JsonCliFixture):
         self.assertNotIn("RETAINED_PRIVATE_TASK", json.dumps(manifest))
         self.assertNotIn("RETAINED_PRIVATE_TASK", raw)
 
+    def test_legacy_planning_remains_readable_but_cannot_admit_a_new_start(self):
+        from pi_tmux_orchestrator.planning import retained_planning
+
+        code, static, raw, _ = self.start("Synthetic", "--dry-run")
+        self.assertEqual(code, 0, raw)
+        record = planning_record(static["data"]["roles"])
+        record["version"] = 1
+        del record["worker_candidates"]
+        record["bindings"]["input"] = "a" * 64
+        record["bindings"]["start_config"] = "b" * 64
+        self.assertEqual(retained_planning({"version": 8, "planning": record}), record)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "legacy.json"
+            path.write_text(json.dumps(record), encoding="utf-8")
+            code, failed, raw, _ = self.start(
+                "Synthetic", "--planning-record-file", str(path), "--dry-run"
+            )
+        self.assertEqual(code, 2, raw)
+        self.assertIn("fresh approved-pool preview", failed["error"]["message"])
+
+    def test_candidate_metadata_changes_reject_launch_without_state(self):
+        code, static, raw, _ = self.start("Synthetic", "--dry-run")
+        self.assertEqual(code, 0, raw)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "planning.json"
+            path.write_text(
+                json.dumps(planning_record(static["data"]["roles"])), encoding="utf-8"
+            )
+            code, preview, raw, _ = self.start(
+                "Synthetic", "--planning-record-file", str(path), "--dry-run"
+            )
+            self.assertEqual(code, 0, raw)
+            record = preview["data"]["planning"]
+            record["bindings"]["candidate_set"] = "e" * 64
+            path.write_text(json.dumps(record), encoding="utf-8")
+            with mock.patch.object(ORCHESTRATOR, "create_tmux_grid") as launch:
+                code, failed, raw, _ = self.start(
+                    "Synthetic", "--planning-record-file", str(path)
+                )
+            launch.assert_not_called()
+        self.assertEqual(code, 2, raw)
+        self.assertEqual(failed["error"]["code"], "stale_planning_binding")
+
+    def test_configured_pool_membership_and_changed_pool_are_launch_bindings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config_path = root / "config.json"
+            path = root / "planning.json"
+            with mock.patch.dict(
+                os.environ, {"PI_TMUX_ORCHESTRATOR_CONFIG": str(config_path)}
+            ):
+                code, static, raw, _ = self.start("Synthetic", "--dry-run")
+                self.assertEqual(code, 0, raw)
+                roles = static["data"]["roles"]
+                identities = [
+                    {"provider": role["provider"], "model": role["model"]}
+                    for role in roles
+                ]
+                config = {
+                    "version": 5,
+                    "workerCandidates": {"version": 1, "all": identities},
+                }
+                config_path.write_text(json.dumps(config), encoding="utf-8")
+                record = planning_record(roles)
+                record["worker_candidates"] = {
+                    "version": 1,
+                    "source": "configured",
+                    "count": len(identities),
+                    "roles": [
+                        {
+                            "role": role["name"],
+                            "source": "all-pool",
+                            "count": len(identities),
+                        }
+                        for role in roles
+                    ],
+                }
+                path.write_text(json.dumps(record), encoding="utf-8")
+                code, preview, raw, _ = self.start(
+                    "Synthetic", "--planning-record-file", str(path), "--dry-run"
+                )
+                self.assertEqual(code, 0, raw)
+                path.write_text(
+                    json.dumps(preview["data"]["planning"]), encoding="utf-8"
+                )
+                config["workerCandidates"]["all"].append(
+                    {"provider": "synthetic", "model": "new-approved"}
+                )
+                config_path.write_text(json.dumps(config), encoding="utf-8")
+                with mock.patch.object(ORCHESTRATOR, "create_tmux_grid") as launch:
+                    code, failed, raw, _ = self.start(
+                        "Synthetic", "--planning-record-file", str(path)
+                    )
+                launch.assert_not_called()
+                self.assertEqual(code, 2, raw)
+                self.assertEqual(failed["error"]["code"], "stale_planning_binding")
+                record["roles"][0]["model"] = "unapproved"
+                record["bindings"]["decision"] = metadata_digest(
+                    {"version": 1, "roles": record["roles"]}
+                )
+                path.write_text(json.dumps(record), encoding="utf-8")
+                code, failed, raw, _ = self.start(
+                    "Synthetic", "--planning-record-file", str(path), "--dry-run"
+                )
+                self.assertEqual(code, 2, raw)
+                self.assertIn("unapproved worker model", failed["error"]["message"])
+
     def test_terminal_dynamic_mode_requires_both_explicit_gates(self):
         code, envelope, raw, _ = self.run_main(
             [
@@ -291,6 +410,48 @@ class PlanningAdmissionTests(JsonCliFixture):
         self.assertTrue(request["previewOnly"])
         self.assertIn("PRIVATE_TERMINAL_TASK", request["input"]["task"])
         self.assertNotIn("PRIVATE_TERMINAL_TASK", raw)
+
+    def test_terminal_missing_pool_preserves_actionable_policy_error(self):
+        message = (
+            "Dynamic planning requires approved worker models. Configure version 5 "
+            "workerCandidates in the external tmux-orchestrator.json, or supply exact "
+            "provider/model overrides for every planner-eligible role (including "
+            "optional roles)."
+        )
+        with (
+            mock.patch.object(
+                terminal_planning,
+                "_run_terminal_planner",
+                return_value={
+                    "version": 1,
+                    "success": False,
+                    "envelope": None,
+                    "error": {
+                        "code": "approved_worker_pool_required",
+                        "message": message,
+                    },
+                },
+            ),
+            mock.patch.object(ORCHESTRATOR, "create_tmux_grid") as create_grid,
+        ):
+            code, envelope, raw, stderr = self.run_main(
+                [
+                    "--json",
+                    "start",
+                    "--project",
+                    str(ROOT),
+                    "--task",
+                    "PRIVATE_TERMINAL_POOL_TASK",
+                    "--dynamic-plan",
+                    "--authorize-planning",
+                    "--yes",
+                ]
+            )
+        self.assertEqual((code, stderr), (2, ""), raw)
+        self.assertEqual(envelope["error"]["code"], "approved_worker_pool_required")
+        self.assertEqual(envelope["error"]["message"], message)
+        self.assertNotIn("PRIVATE_TERMINAL_POOL_TASK", raw)
+        create_grid.assert_not_called()
 
     def test_terminal_rpc_timeout_fails_before_start_delivery(self):
         process = mock.MagicMock()

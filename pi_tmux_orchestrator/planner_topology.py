@@ -18,7 +18,7 @@ from .planning import metadata_digest
 from .profiles import resolve_execution_profile
 from .specialist_activation import SPECIALIST_ROLES
 
-PLANNER_TOPOLOGY_VERSION = 1
+PLANNER_TOPOLOGY_VERSION = 2
 BUILTIN_ROLE_ORDER = ("implementer", "reviewer", *SPECIALIST_ROLES)
 
 
@@ -107,6 +107,7 @@ def planner_topology_projection(
         "builtins": builtins,
         "optional_roles": optional_roles,
         "custom_roles": custom_roles,
+        "worker_candidates": configured.get("worker_candidates"),
     }
     binding_digest = metadata_digest(
         {

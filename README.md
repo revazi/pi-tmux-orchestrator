@@ -48,6 +48,31 @@ Runs can select exact role models and thinking, single/phased flow, optional bui
 
 Update with `pi update npm:pi-tmux-orchestrator` (or reinstall with `pi install npm:pi-tmux-orchestrator`). Finish or stop active runs before replacing the package. The 0.11.0 release adds opt-in bounded model-guided preflight planning, direct TypeSafe Jev decision support, capability-aware candidate selection, and clearer authoritative worker assignment/progress reporting. Planning makes an additional provider call only when explicitly enabled and confirmed; ordinary starts retain the deterministic path. Existing retained runs remain readable; new ordinary and custom-role manifest formats remain v5 and v7 respectively, over broker-v1.
 
+### Approved worker pools for dynamic planning (unreleased upgrade)
+
+Dynamic starts (`/or-start --plan`, `dynamicPlan=true`, or terminal
+`--dynamic-plan`) no longer offer the full available catalog. Before upgrading,
+finish active runs; then configure exact operator-approved worker identities in
+external `~/.pi/agent/tmux-orchestrator.json` (or the absolute
+`PI_TMUX_ORCHESTRATOR_CONFIG` path). Use root **version 5** and
+`workerCandidates: {"version":1,"all":[{"provider":"provider-a","model":"exact-worker-a"}]}`.
+Optional built-in `roles` pools replace `all` for that role. Pools have 1–32
+identities each, at most five role pools and 100 distinct identities total.
+Choose exact IDs from `/or-models`, not model-name quality or recency heuristics.
+
+Exact run/project/global role locks override pools; custom roles keep fixed
+bindings. Without a pool, **every planner-eligible role**, including optional
+roles the planner might select, must have an exact authoritative provider/model
+lock. Otherwise planning fails before a provider call with configuration guidance;
+it never silently falls back to the catalog. Both TypeSafe Jev and Pi fallback
+use the same approved scope and canonical capabilities. Confirmation and the
+immediate start acknowledgement show pool source/count and exact selected
+assignments, not configuration bodies. Ordinary static starts and configuration
+versions 1–4 remain supported. Old retained planning records remain readable but
+cannot launch a new run: create a fresh preview. See
+[approved-pool configuration and migration](references/usage.md#approved-exact-worker-model-pools)
+and [provider-free acceptance](references/prerelease-testing.md#automated-provider-free-planning-gate).
+
 See the complete [0.11.0 release and migration notes](releases/v0.11.0.md). If upgrade is blocked, remove the package and reinstall the prior exact version, `npm:pi-tmux-orchestrator@0.10.0`, then start Pi again. Do not resume in-flight runs across versions; preserve their original installation until safely finished or stopped. [Rollback guidance](releases/v0.10.0.md#rollback).
 
 ## Help and documentation

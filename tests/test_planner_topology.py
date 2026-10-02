@@ -23,7 +23,7 @@ class PlannerTopologyTests(unittest.TestCase):
                 {"PI_TMUX_ORCHESTRATOR_CONFIG": str(root / "absent.json")},
             ):
                 policy = planner_topology_policy(project)
-        self.assertEqual(policy["version"], 1)
+        self.assertEqual(policy["version"], 2)
         self.assertEqual(policy["optional_roles"], ["probe", "playwright", "django"])
         self.assertEqual(policy["custom_roles"], [])
         self.assertEqual(

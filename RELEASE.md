@@ -80,6 +80,8 @@ human approval in section 6.
 
 ## 4. Breaking-change communication
 
+- [ ] For the approved-worker-pool behavior change, communicate root config v5 / `workerCandidates` v1 migration and the fully locked no-pool alternative. Confirm no unlocked dynamic start falls back to the catalog, both Jev/Pi enforce identical scope, and immediate acknowledgements contain bounded pool source/count plus exact assignments. Static starts and older config/retained reads remain compatible; old planning-v1 records require a fresh preview for a new launch. Link [the migration guide](references/usage.md#approved-exact-worker-model-pools). Do not claim model-free tests establish production-wire acceptance.
+
 - [ ] Confirm the npm README has a prominent, version-specific upgrade section with the old-to-new command map, safe update sequence, compatibility facts, and rollback link.
 - [ ] Confirm `CHANGELOG.md` labels removals under `Breaking`, rather than leaving them buried under general changes.
 - [ ] Review `releases/v$RELEASE_VERSION.md` as the authoritative GitHub Release body. It must include migration steps, dashboard controls, profiles, exact per-project configuration, compatibility/safety facts, rollback, and support links without provider-cost or quality claims.
