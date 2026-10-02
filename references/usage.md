@@ -201,9 +201,10 @@ provider failures stop before launch and never trigger a second provider call.
 
 The planner policy is stored in the `planner` member of the same authoritative
 user-global `~/.pi/agent/tmux-orchestrator.json` model/profile configuration.
-This adds one optional strict field to existing version-4 files and does not
-change the orchestration manifest or broker protocol versions.
-Existing version-4 files remain valid and the planner member is optional. A
+The planner member remains optional in version-4 and version-5 files.
+Version 5 adds the separate strict `workerCandidates` policy described below;
+manifest v8/v9 and broker-v1 are unchanged. Existing versions 1–4 remain valid
+for ordinary starts and fully locked dynamic starts. A
 separate legacy `~/.pi/agent/tmux-orchestrator-planner.json` file (or a configured
 `PI_TMUX_ORCHESTRATOR_PLANNER_CONFIG` path) is no longer read as active policy:
 while that file exists, dynamic planning fails closed with migration guidance,
@@ -216,9 +217,16 @@ configuration combines existing model defaults with planner settings:
 
 ```json
 {
-  "version": 4,
+  "version": 5,
   "defaults": {},
   "roles": {},
+  "workerCandidates": {
+    "version": 1,
+    "all": [{ "provider": "provider-a", "model": "exact-worker-a" }],
+    "roles": {
+      "reviewer": [{ "provider": "provider-b", "model": "exact-review-worker" }]
+    }
+  },
   "planner": {
     "preferred": {
       "provider": "provider-a",
@@ -235,6 +243,70 @@ configuration combines existing model defaults with planner settings:
 }
 ```
 
+### Approved exact worker-model pools
+
+`workerCandidates` is an operator policy, not planner guidance or a ranking.
+It is allowed only in root configuration **version 5**, with nested policy
+**version 1**. `all` is required and nonempty. Optional `roles` accepts only
+`implementer`, `reviewer`, `probe`, `playwright`, and `django`; a role pool
+**replaces**, rather than extends, `all` for that role. Each pool contains 1–32
+objects with exactly `provider` and `model`, each a nonempty whitespace/control-free
+identifier of at most 256 characters. No globs, aliases, fuzzy matching,
+thinking levels, names, credentials, endpoints, ranking, or extra fields are
+accepted. Duplicate identities within a pool fail; reuse across pools is allowed.
+There are at most 100 distinct configured identities, within the existing
+64 KiB external-file bound. The resolved effective union, including locks and
+custom bindings, is also bounded to 100 candidates.
+
+Resolve precedence per eligible role: exact per-run role override (or explicit
+all-role override), exact-project role/default lock, user-global role/default
+lock, then that built-in role's pool or `all`. Thinking-only overrides do not
+constitute exact provider/model locks. Packaged model defaults are not approval.
+Custom roles retain their exact trusted bindings and cannot acquire a pool.
+Exact locks may select an available identity outside a pool. Every configured
+pool identity is checked against Pi's current available/nonempty scoped catalog,
+even if a lock overrides its pool or a role is not selected; unavailable or
+ambiguous identities reject planning before either provider call. A valid pool
+with no combination compatible with a role's thinking constraint also fails
+before planning. The decision model is looked up independently: it need not be
+approved as a worker, and its identity does not expand the worker scope.
+
+If `workerCandidates` is absent, every planner-eligible built-in role must have
+an authoritative exact provider/model lock. Candidates are derived only from
+those locks and eligible custom fixed bindings. An optional role still counts
+if the planner could select it; disable it explicitly or lock it as well. If any
+role is unlocked, the start fails before planning with the fixed
+`approved_worker_pool_required` diagnostic and guidance to configure version-5
+`workerCandidates` in the external `tmux-orchestrator.json` or exact
+provider/model overrides for every eligible role. The model tool, `/or-start`,
+and terminal start all preserve this guidance without exposing configuration
+or provider bodies. It never silently exposes the full catalog. An
+explicitly configured static/manual decision-policy fallback remains a separate
+confirmed no-planning path, not a catalog fallback.
+
+Both direct Jev typed choices and Pi fallback role indices enforce the same
+per-role membership; an identity approved only for reviewer cannot be selected
+for implementer. Canonical thinking/capability/cost hints are projected only for
+the resolved worker union. No recency, quality, or orchestration reliability is
+inferred from names. Natural-language guidance cannot create or expand approval.
+Planning-call confirmation shows bounded pool source/count per eligible role;
+final confirmation and the immediate start acknowledgement show exact selected
+provider/model/thinking assignments. Retained planning v2 contains only bounded
+pool source/count metadata, exact assignments, and digests, not pool/configuration
+bodies. The private topology v2 projection supplies the exact policy to preflight;
+do not copy that configuration projection into status or handoffs.
+
+**Migration:** retain existing fields, change the root version to 5, and add
+reviewed exact pools using `/or-models` identities. Existing version-4 custom
+bindings remain supported. Alternatively, keep versions 1–4 and supply exact
+locks for every eligible role. Static/manual starts require no pool and retain
+their existing precedence. Retained planning v1 in manifests v8/v9 stays readable;
+it is not accepted as input for a new launch. Generate a fresh v2 preview.
+Revalidation uses the original operator inputs, never planner-generated overrides
+as approval, and rejects changes to pool policy/source, role membership, approved
+availability, canonical capabilities, or resolved configuration after preview.
+Changes to unrelated unapproved catalog entries do not expand eligibility.
+
 `dynamicGuidance` is optional natural-language text in this same planner policy
 object; it may also be `null`. Legacy `jevGuidance` is accepted only when the
 canonical field is absent; explicitly migrate by renaming it, and never configure both.
@@ -242,8 +314,9 @@ Guidance expresses preferences such as roster economy, specialist thresholds,
 model-cost posture, or thinking depth. Write these in terms of listed
 capabilities, declared catalog cost hints, task risk, and outcome sufficiency.
 Guidance is not a model allow/deny list: do not write “never use model X” or
-“prefer model Y.” Apply hard model exclusions through Pi's authoritative model
-scope, or use exact per-run role overrides. The current canonical capability
+“prefer model Y.” Apply hard model exclusions through exact approved
+`workerCandidates` pools or Pi's authoritative model scope, or use exact per-run
+role overrides. The current canonical capability
 projection has no recency field, so planners must not infer model age from
 names; a recency preference applies only when authoritative catalog facts
 establish it. The same guidance is sent to direct TypeSafe Jev as
@@ -313,11 +386,11 @@ UTF-8 bytes. If it cannot fit, planning fails before HTTP without omitting
 selectable tuples. Canonical capability objects and declared catalog cost hints
 are sent once as `state.candidate_model_capabilities`. Instructions tell Jev to
 use that state, choose the smallest sufficient listed combination, and never
-infer quality, coding skill, latency, or reliability from model names. The
+infer recency, quality, coding skill, latency, or reliability from model names. The
 adapter validates every returned answer and constructs the ordinary version-1
 planner decision deterministically. Direct TypeSafe Jev and the Pi fallback
-receive the same canonical bounded capability projection; there is no operator
-model allowlist or alternative candidate set.
+receive the same operator-approved per-role candidate scope and canonical bounded
+capability projection; neither transport can expand it.
 The versioned Jev model returned by TypeSafe is retained as provenance;
 `thinking: "off"` is the compatibility value because System One has no Pi
 thinking level.
@@ -390,8 +463,8 @@ revalidation, exact preview matching, and final model availability checks.
 Before launch, the adapter rereads policy/topology configuration, recomputes the
 eligible catalog and thinking support, and compares SHA-256 bindings for the
 private task/context, canonical project, complete resolved start configuration,
-planner policy, topology policy, and candidate set, including digest-bound
-capability metadata. Any changed task, config,
+planner policy, topology policy, and resolved candidate scope/source/role membership,
+including digest-bound canonical capability metadata. Any changed task, config,
 registry resource, catalog availability, capability/cost-hint metadata, selected
 tuple, or preview projection
 fails with no launch. The accepted record has a bounded request ID and cannot
@@ -1005,12 +1078,15 @@ project.
 
 ### `planner-topology [--project PATH] [--profile NAME] [--no-project-custom-roles]`
 
-Validates and emits the metadata-only version-1 worker-topology policy used by
+Validates and emits the private version-2 worker-topology policy used by
 dynamic planning: fixed built-in constraints, exact-project optional built-ins,
-and freshly verified custom identity/contract/model bindings. It never emits
-resource paths/bodies, tasks, credentials, endpoints, or provider responses and
-never makes a provider call. This is a validation projection, not authorization
-to launch; selected custom resources are verified again by dry-run and launch.
+the bounded exact `workerCandidates` policy (one all-role pool and optional
+built-in per-role pools), and freshly verified custom identity/contract/model
+bindings. It never emits resource paths/bodies, tasks, credentials, endpoints,
+or provider responses and never makes a provider call. This is a private preflight
+projection, not public status or authorization to launch; do not copy the
+pool/configuration body into reports. Selected custom resources are verified
+again by dry-run and launch.
 
 ### `doctor [--project PATH]`
 

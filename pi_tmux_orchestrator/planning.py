@@ -13,7 +13,8 @@ from .constants import KNOWN_ROLES, THINKING_LEVELS
 from .models import OrchestrationError
 from .role_registry import valid_custom_role_id
 
-PLANNING_VERSION = 1
+PLANNING_VERSION = 2
+LEGACY_PLANNING_VERSION = 1
 PLANNING_DECISION_VERSION = 1
 MAX_PLANNING_RECORD_BYTES = 32 * 1024
 MAX_PLANNING_ROLES = len(KNOWN_ROLES) + 8
@@ -150,9 +151,19 @@ def _planning_role(value: object) -> dict[str, str]:
 def validate_planning_record(
     value: object, *, allow_unbound: bool = False
 ) -> dict[str, Any]:
-    if not isinstance(value, dict) or set(value) != PLANNING_FIELDS:
+    if not isinstance(value, dict):
+        raise OrchestrationError("Planning record must be an object")
+    version = value.get("version")
+    fields = PLANNING_FIELDS | (
+        {"worker_candidates"} if version == PLANNING_VERSION else set()
+    )
+    if set(value) != fields:
         raise OrchestrationError("Planning record has missing or unknown fields")
-    if value.get("version") != PLANNING_VERSION or value.get("mode") != "dynamic":
+    if (
+        type(version) is not int
+        or version not in {LEGACY_PLANNING_VERSION, PLANNING_VERSION}
+        or value.get("mode") != "dynamic"
+    ):
         raise OrchestrationError("Planning record version or mode is invalid")
     if value.get("status") != "accepted":
         raise OrchestrationError("Planning record status is invalid")
@@ -218,8 +229,8 @@ def validate_planning_record(
     )
     if bindings["decision"] != expected_decision:
         raise OrchestrationError("Planning decision binding is invalid")
-    return {
-        "version": PLANNING_VERSION,
+    result = {
+        "version": version,
         "mode": "dynamic",
         "request_id": request_id,
         "status": "accepted",
@@ -231,6 +242,67 @@ def validate_planning_record(
         "bindings": bindings,
         "usage": _planning_usage(value.get("usage")),
     }
+    if version == PLANNING_VERSION:
+        result["worker_candidates"] = validate_candidate_metadata(
+            value["worker_candidates"], identities
+        )
+    return result
+
+
+def validate_candidate_metadata(
+    value: object, selected_roles: list[str]
+) -> dict[str, Any]:
+    if (
+        not isinstance(value, dict)
+        or set(value) != {"version", "source", "count", "roles"}
+        or type(value["version"]) is not int
+        or value["version"] != 1
+        or not isinstance(value["source"], str)
+        or value["source"] not in {"configured", "authoritative-locks"}
+        or type(value["count"]) is not int
+        or not 1 <= value["count"] <= 100
+        or not isinstance(value["roles"], list)
+        or not 2 <= len(value["roles"]) <= MAX_PLANNING_ROLES
+    ):
+        raise OrchestrationError("Planning worker candidate metadata is invalid")
+    roles = []
+    for item in value["roles"]:
+        if (
+            not isinstance(item, dict)
+            or set(item) != {"role", "source", "count"}
+            or not isinstance(item["role"], str)
+            or (
+                item["role"] not in KNOWN_ROLES
+                and not valid_custom_role_id(item["role"])
+            )
+            or not isinstance(item["source"], str)
+            or item["source"]
+            not in {"all-pool", "role-pool", "exact-lock", "custom-binding"}
+            or type(item["count"]) is not int
+            or not 1 <= item["count"] <= min(32, value["count"])
+            or (
+                item["source"] in {"exact-lock", "custom-binding"}
+                and item["count"] != 1
+            )
+            or (
+                value["source"] == "authoritative-locks"
+                and item["source"] not in {"exact-lock", "custom-binding"}
+            )
+            or (
+                valid_custom_role_id(item["role"])
+                != (item["source"] == "custom-binding")
+            )
+        ):
+            raise OrchestrationError(
+                "Planning worker candidate role metadata is invalid"
+            )
+        roles.append(dict(item))
+    identities = [item["role"] for item in roles]
+    if len(set(identities)) != len(identities) or not set(selected_roles).issubset(
+        identities
+    ):
+        raise OrchestrationError("Planning worker candidate roles are invalid")
+    return {**value, "roles": roles}
 
 
 def load_planning_record(
@@ -248,7 +320,12 @@ def load_planning_record(
         value = json.loads(raw.decode("utf-8"))
     except (UnicodeError, ValueError) as error:
         raise OrchestrationError("Planning record is not valid UTF-8 JSON") from error
-    return validate_planning_record(value, allow_unbound=allow_unbound)
+    record = validate_planning_record(value, allow_unbound=allow_unbound)
+    if record["version"] != PLANNING_VERSION:
+        raise OrchestrationError(
+            "Legacy planning records are read-only; create a fresh approved-pool preview"
+        )
+    return record
 
 
 def planning_input_digest(
@@ -305,7 +382,40 @@ def bind_planning_record(
     roles: list[str],
     configs: dict[str, dict[str, Any]],
     dry_run: bool,
+    candidate_policy: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    if record["version"] == PLANNING_VERSION:
+        metadata = record["worker_candidates"]
+        if (metadata["source"] == "configured") != (candidate_policy is not None):
+            raise OrchestrationError(
+                "Approved worker pool changed after planning", "stale_planning_binding"
+            )
+        sources = {item["role"]: item["source"] for item in metadata["roles"]}
+        for role in record["roles"]:
+            source = sources[role["id"]]
+            if source not in {"all-pool", "role-pool"}:
+                continue
+            pool = candidate_policy["roles"].get(role["id"], candidate_policy["all"])
+            expected_source = (
+                "role-pool" if role["id"] in candidate_policy["roles"] else "all-pool"
+            )
+            if (
+                source != expected_source
+                or {"provider": role["provider"], "model": role["model"]} not in pool
+            ):
+                raise OrchestrationError(
+                    "Planning selected an unapproved worker model",
+                    "stale_planning_binding",
+                )
+        start_config_digest = metadata_digest(
+            {
+                "resolved_start": start_config_digest,
+                "worker_candidates": metadata,
+                "planner_policy": record["bindings"]["planner_policy"],
+                "topology_policy": record["bindings"]["topology_policy"],
+                "candidate_set": record["bindings"]["candidate_set"],
+            }
+        )
     expected_roles = []
     for role in roles:
         config = configs[role]

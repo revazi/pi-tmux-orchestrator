@@ -24,7 +24,8 @@ from .profiles import (
 from .specialist_activation import SPECIALIST_ROLES
 from .role_registry import MAX_CUSTOM_ROLES, valid_custom_role_id
 
-MODEL_CONFIG_VERSION = 4
+MODEL_CONFIG_VERSION = 5
+PLANNER_MODEL_CONFIG_VERSION = 4
 PROJECT_MODEL_CONFIG_VERSION = 3
 PROFILE_MODEL_CONFIG_VERSION = 2
 LEGACY_MODEL_CONFIG_VERSION = 1
@@ -37,7 +38,8 @@ PROFILE_MODEL_CONFIG_FIELDS = LEGACY_MODEL_CONFIG_FIELDS | {
     "profiles",
 }
 PROJECT_MODEL_CONFIG_FIELDS = PROFILE_MODEL_CONFIG_FIELDS | {"projects"}
-MODEL_CONFIG_FIELDS = PROJECT_MODEL_CONFIG_FIELDS | {"planner"}
+PLANNER_MODEL_CONFIG_FIELDS = PROJECT_MODEL_CONFIG_FIELDS | {"planner"}
+MODEL_CONFIG_FIELDS = PLANNER_MODEL_CONFIG_FIELDS | {"workerCandidates"}
 PROJECT_CONFIG_FIELDS = frozenset(
     {
         "directory",
@@ -178,19 +180,23 @@ def validate_model_config(value: object) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise OrchestrationError("Model configuration must be an object")
     version = value.get("version")
+    if type(version) is not int:
+        raise OrchestrationError("Model configuration version must be an integer")
     if version == LEGACY_MODEL_CONFIG_VERSION:
         allowed_fields = LEGACY_MODEL_CONFIG_FIELDS
     elif version == PROFILE_MODEL_CONFIG_VERSION:
         allowed_fields = PROFILE_MODEL_CONFIG_FIELDS
     elif version == PROJECT_MODEL_CONFIG_VERSION:
         allowed_fields = PROJECT_MODEL_CONFIG_FIELDS
+    elif version == PLANNER_MODEL_CONFIG_VERSION:
+        allowed_fields = PLANNER_MODEL_CONFIG_FIELDS
     elif version == MODEL_CONFIG_VERSION:
         allowed_fields = MODEL_CONFIG_FIELDS
     else:
         raise OrchestrationError(
             "Model configuration version must be "
             f"{LEGACY_MODEL_CONFIG_VERSION}, {PROFILE_MODEL_CONFIG_VERSION}, "
-            f"{PROJECT_MODEL_CONFIG_VERSION}, or {MODEL_CONFIG_VERSION}"
+            f"{PROJECT_MODEL_CONFIG_VERSION}, {PLANNER_MODEL_CONFIG_VERSION}, or {MODEL_CONFIG_VERSION}"
         )
     if set(value) - allowed_fields:
         raise OrchestrationError("Model configuration has unsupported top-level fields")
@@ -221,7 +227,7 @@ def validate_model_config(value: object) -> dict[str, Any]:
         validate_project_configs(
             value.get("projects", []),
             profiles,
-            allow_custom_roles=version >= MODEL_CONFIG_VERSION,
+            allow_custom_roles=version >= PLANNER_MODEL_CONFIG_VERSION,
         )
         if version >= PROJECT_MODEL_CONFIG_VERSION
         else []
@@ -241,6 +247,12 @@ def validate_model_config(value: object) -> dict[str, Any]:
     }
     if planner is not None:
         result["planner"] = planner
+    if "workerCandidates" in value:
+        from .worker_candidates import validate_worker_candidates
+
+        result["worker_candidates"] = validate_worker_candidates(
+            value["workerCandidates"]
+        )
     return result
 
 
@@ -559,7 +571,11 @@ def validate_manifest_orchestration_config(value: object) -> dict[str, Any]:
         or any(ord(character) < 32 for character in path)
     ):
         raise OrchestrationError("Manifest orchestration configuration path is invalid")
-    if value["version"] not in {PROJECT_MODEL_CONFIG_VERSION, MODEL_CONFIG_VERSION}:
+    if value["version"] not in {
+        PROJECT_MODEL_CONFIG_VERSION,
+        PLANNER_MODEL_CONFIG_VERSION,
+        MODEL_CONFIG_VERSION,
+    }:
         raise OrchestrationError(
             "Manifest orchestration configuration version is invalid"
         )

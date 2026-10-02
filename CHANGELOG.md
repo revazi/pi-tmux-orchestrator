@@ -4,6 +4,15 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- Added strict external root configuration v5 / `workerCandidates` v1 exact operator-approved worker pools: one bounded all-role pool and optional replacement built-in role pools, validated against Pi availability/scoping before planning; exact run/project/global locks and custom fixed bindings remain authoritative, and direct TypeSafe Jev and Pi fallback enforce identical per-role membership and canonical capabilities.
+- Bound resolved pool source/count, role eligibility, and canonical candidate facts into planning-v2 admission and stale-preview revalidation; confirmations and the immediate start acknowledgement expose exact assignments and bounded pool metadata without configuration bodies or name-based recency/quality inference.
+
+### Breaking (dynamic starts only)
+
+- Dynamic planning no longer silently offers the full available catalog. Configure approved pools in version 5, or lock every planner-eligible role to an exact provider/model identity; otherwise it fails before the provider call with actionable guidance. Static/manual starts and configuration versions 1–4 remain supported. Retained planning-v1 records stay readable but cannot admit a new launch; generate a fresh preview. See [configuration migration](references/usage.md#approved-exact-worker-model-pools).
+
 ## 0.11.0 - 2026-09-22
 
 ### Added

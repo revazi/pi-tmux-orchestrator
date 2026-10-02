@@ -77,10 +77,12 @@ inspected without a provider call:
 pi-tmux-agents --json planner-topology --project /absolute/project
 ```
 
-It may contain only fixed built-in constraints and verified custom
-identity/contract/model metadata—never registry/resource paths or bodies. Use
-`--no-project-custom-roles` to confirm the custom candidate list is empty and
-that no registry resources are read.
+The private topology v2 projection contains fixed built-in constraints, the
+reviewed exact worker-pool policy, and verified custom identity/contract/model
+metadata—never registry/resource paths or bodies. This is a private preflight
+input, not a public status or handoff: do not copy the pool/configuration body
+into reports. Use `--no-project-custom-roles` to confirm the custom candidate list
+is empty and that no registry resources are read.
 
 When Pi is available, this invokes
 `tests/actual_pi_custom_lifecycle.py` against the exact disposable package staged
@@ -91,6 +93,29 @@ not inference or a complete report round. If Pi is unavailable, that layer is
 reported as skipped rather than replaced by synthetic evidence.
 
 ### Automated provider-free planning gate
+
+Approved-pool migration is a new fail-closed dynamic-start gate: upgrade the
+external configuration to version 5 and add `workerCandidates` version 1, or pin
+every eligible role exactly. Do not use model-name heuristics or a full-catalog
+fallback. Ordinary starts and older retained runs remain supported.
+
+Provider-free fixtures must cover 1/32-identity pool boundaries, the 100-distinct
+union bound, built-in role replacement, duplicates/malformed/unavailable/scoped
+identities, run/project/global locks over pools, unchanged custom bindings,
+unlocked missing-pool no-call/no-launch, and fully locked no-pool planning. Verify
+that model-tool, `/or-start`, and terminal failures all preserve fixed actionable
+version-5 pool/exact-lock guidance while unrelated raw errors remain redacted. Capture
+synthetic direct Jev and Pi inputs to compare canonical candidate identities,
+capabilities, and per-role eligibility. Prove an available-but-unapproved model
+is never offered or accepted (including cross-role pool violations), and that a
+Pi decision model outside the worker pool remains usable without becoming a
+worker candidate. Mutate pools/source and approved capability facts after preview
+and require no launch; revalidation must use original operator locks, not the
+planner's generated assignments. Check bounded source/count and every exact
+selected assignment in final confirmation and immediate acknowledgement, including
+maximum-length identities. Check redaction, planning-v1 retained readability,
+new-launch rejection of legacy records, and static-start compatibility. These
+synthetic tests establish no production-wire approval for this policy.
 
 `scripts/test.sh` is the authoritative model-free gate. Its planning coverage
 includes strict preferred/fallback and scoped-catalog selection; minimum/maximum
@@ -228,9 +253,10 @@ making any call, record separate owner approval and freeze this paired benchmark
 | 2 | one clearly specialist-relevant change | same explicitly enabled specialist candidate set | planner chooses from that exact set |
 | 3 | ambiguous cross-cutting change | all reviewed optional candidates available | planner chooses the smallest accepted roster |
 
-Dynamic planning considers Pi's bounded currently available/scoped catalog
-through a capability and declared-cost-hint projection; do not add an operator
-model allowlist, and do not infer quality from model names. Catalog rates are not
+Dynamic planning considers only exact operator-approved worker pools (root config
+v5 / workerCandidates v1), or fully authoritative role locks, validated against
+Pi's available/scoped catalog. Freeze the same approval policy for both arms;
+do not infer recency or quality from model names. Catalog rates are not
 observed spend and must not fill a savings or quality cell.
 
 Use the same reviewed project revision, task class, profile, model availability,

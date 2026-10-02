@@ -29,11 +29,11 @@ import {
   ROLES,
   startInputWithParentModel,
 } from "./orchestrator-models.js";
+import { workerCandidatesConfirmation, workerCandidatesFailure } from "./orchestrator-worker-candidates.js";
 import {
   decisionModelConfirmation,
   metadataDigest,
-  plannerCandidateDigest,
-  plannerModelCandidates,
+  approvedWorkerSelection,
   plannerPlanConfirmation,
   planningRecordForPreview,
   runPreflightPlanner,
@@ -132,7 +132,7 @@ const parameters = {
     },
     dynamicPlan: {
       type: "boolean",
-      description: "Before start preview, make one separately confirmed provider call that chooses the bounded built-in worker roster and exact per-role model/thinking settings. No tmux session or worker starts before the decision and final confirmation",
+      description: "Before start preview, make one separately confirmed provider call that chooses the bounded built-in worker roster and exact per-role model/thinking settings from approved workerCandidates pools or authoritative exact role locks. Without a pool, every planner-eligible role must be exactly locked. No tmux session or worker starts before the decision and final confirmation",
     },
     decisionModel: {
       type: "object",
@@ -635,7 +635,7 @@ async function applyDynamicPlan(pi, ctx, input, project, signal) {
     ctx,
     process.env.TYPESAFE_API_KEY,
   );
-  const selection = selectDecisionModel(ctx, input.decisionModel, {
+  let selection = selectDecisionModel(ctx, input.decisionModel, {
     version: policy.version,
     preferred: policy.preferred,
     fallbacks: policy.fallbacks,
@@ -649,6 +649,7 @@ async function applyDynamicPlan(pi, ctx, input, project, signal) {
     if (!confirmed) throw new Error("dynamic_planning_static_fallback_declined");
     return { input: { ...input, dynamicPlan: false }, plan: undefined };
   }
+  selection = approvedWorkerSelection(ctx, input, topology, selection);
   const guidance = policyProjection.dynamicGuidance;
   const guidanceConfirmation = `Dynamic guidance: ${guidance.configured
     ? "configured"
@@ -656,7 +657,8 @@ async function applyDynamicPlan(pi, ctx, input, project, signal) {
   const planningConfirmed = await ctx.ui.confirm(
     "Authorize preflight decision call?",
     [
-      decisionModelConfirmation(selection),
+      decisionModelConfirmation({ ...selection, candidateCount: selection.candidates.length }),
+      workerCandidatesConfirmation(selection.workerScope.metadata),
       `Topology policy: ${topology.optionalRoles.length} optional built-ins; ${topology.customRoles.length} trusted custom candidates.`,
       guidanceConfirmation,
     ].filter(Boolean).join("\n"),
@@ -679,8 +681,8 @@ async function applyDynamicPlan(pi, ctx, input, project, signal) {
     topologyArgs,
     plannerPolicy: policyProjection.bindingDigest,
     topologyPolicy: topologyProjection.bindingDigest,
-    candidateSet: plannerCandidateDigest(selection.candidates),
-    candidatePriorities: selection.candidatePriorities,
+    candidateSet: selection.workerScope.digest,
+    operatorInput: input,
   };
   return planned;
 }
@@ -752,7 +754,7 @@ function dynamicBindingsMatch(expected, policy, topology, candidates) {
   return [
     policy.bindingDigest === expected.plannerPolicy,
     topology.bindingDigest === expected.topologyPolicy,
-    plannerCandidateDigest(candidates) === expected.candidateSet,
+    candidates.workerScope.digest === expected.candidateSet,
   ].every(Boolean);
 }
 
@@ -763,7 +765,7 @@ async function revalidateDynamicBindings(pi, ctx, project, plannerPlan, signal) 
   const policy = plannerPolicyProjectionFromEnvelope(policyEnvelope);
   const topologyEnvelope = await runCli(pi, "planner-topology", expected.topologyArgs, signal);
   const topology = plannerTopologyProjectionFromEnvelope(topologyEnvelope);
-  const candidates = plannerModelCandidates(ctx, expected.candidatePriorities);
+  const candidates = approvedWorkerSelection(ctx, expected.operatorInput, topology.policy);
   if (!dynamicBindingsMatch(expected, policy, topology, candidates)) {
     throw new Error("stale_dynamic_planning_binding");
   }
@@ -906,9 +908,14 @@ const successSummaries = {
     return `Switched to ${data.session}. ${data.return_hint || "Use tmux session navigation to return."}`;
   },
   start(data) {
-    return data.dry_run
+    const summary = data.dry_run
       ? `Validated ${data.session} with ${data.implementation_flow || "single"} implementation flow`
       : `Started detached ${data.session} with ${data.transport === "rpc" ? "headless RPC" : "native Pi TUI"} workers and ${data.implementation_flow || "single"} implementation flow. This invoking Pi remains the parent; use /or-dashboard and Enter to attach.`;
+    if (!data.planning) return summary;
+    return [summary, workerCandidatesConfirmation(data.planning.worker_candidates),
+      "Exact selected assignments:",
+      ...(data.planning.roles || []).map((role) => `${role.id}: ${role.provider}/${role.model} thinking=${role.thinking}`),
+    ].join("\n");
   },
   send(data) {
     return data.acknowledged
@@ -941,7 +948,7 @@ function safeDetails(envelope) {
 }
 
 function notifyEnvelope(ctx, envelope) {
-  const message = bounded(compactSummary(envelope), 800);
+  const message = bounded(compactSummary(envelope), envelope.command === "start" ? 12_000 : 800);
   ctx.ui.notify(message, envelope.success ? "info" : "error");
   return message;
 }
@@ -994,12 +1001,14 @@ async function executeAction(pi, input, signal, ctx, superviseStart = () => {}) 
     return {
       content: [{
         type: "text",
-        text: input.action === "models" ? modelCatalogContent(envelope.data) : bounded(summary, 800),
+        text: input.action === "models" ? modelCatalogContent(envelope.data) : summary,
       }],
       details: safeDetails(envelope),
       ...(envelope.planner_usage ? { usage: envelope.planner_usage } : {}),
     };
   } catch (error) {
+    const policyFailure = workerCandidatesFailure(error);
+    if (policyFailure) throw new Error(`${policyFailure.code}: ${policyFailure.message}`);
     throw new Error(bounded(error instanceof Error ? error.message : "orchestrator_error", 200));
   }
 }
@@ -1010,7 +1019,12 @@ function requireInteractiveTui(ctx, command) {
   return false;
 }
 
-function notifyCommandFailure(ctx, action) {
+function notifyCommandFailure(ctx, action, error) {
+  const policyFailure = action === "start" ? workerCandidatesFailure(error) : undefined;
+  if (policyFailure) {
+    ctx.ui.notify(policyFailure.message, "error");
+    return;
+  }
   const labels = {
     dashboard: "show the orchestration dashboard",
     attach: "attach to the orchestration grid",
@@ -1150,8 +1164,8 @@ function createCommandHandlers(pi, superviseStart = () => {}) {
         void Promise.resolve(superviseStart(envelope)).catch(() => {});
       }
       notifyEnvelope(ctx, envelope);
-    } catch {
-      notifyCommandFailure(ctx, "start");
+    } catch (error) {
+      notifyCommandFailure(ctx, "start", error);
     }
   };
 
@@ -1224,6 +1238,8 @@ async function readTerminalRequest(requestPath) {
 }
 
 function terminalFailure(error) {
+  const policyFailure = workerCandidatesFailure(error);
+  if (policyFailure) return { version: 1, success: false, envelope: null, error: policyFailure };
   const reason = error instanceof Error ? error.message : "dynamic_planning_failed";
   const safeReasons = new Set([
     "dynamic_planning_confirmation_declined",
@@ -1335,10 +1351,10 @@ export default function tmuxOrchestratorExtension(pi) {
   pi.registerTool({
     name: "tmux_orchestrator",
     label: "Tmux Orchestrator",
-    description: "Supervise bounded doctor, available-model discovery, list, status, watch, attach, start, or send actions through the Pi runtime and bundled Python tmux orchestrator. Start resolves strict user-global exact-project defaults for profile/models, single or phased flow, enabled specialists, exact-project custom read-only specialists, and the workspace capsule; explicit per-run values win. With dynamicPlan=true it makes one separately confirmed preflight provider call before preview to choose the bounded built-in worker roster and exact per-role model/thinking settings from Pi's bounded available/scoped catalog using non-secret capability and declared catalog cost-hint facts, without an operator model allowlist or name-based quality inference; TypeSafe authentication configured through /login typesafe or TYPESAFE_API_KEY selects the bundled direct jev-latest typed-decision adapter, its absence lets an exact operator-supplied Pi decisionModel win, and absence of both uses the strict user-global exact Pi preferred identity and ordered cross-provider fallbacks with configured cancel or explicitly confirmed static/manual behavior when none are eligible. Pi decision-call thinking follows decision-model policy; worker thinking uses each selected model's supported levels through max. It may also omit project custom specialists with projectCustomRoles=false, select deterministic or forced specialist activation, this parent Pi's current model, exact user-requested per-role provider/model/thinking overrides, strict per-run budget overrides, an opt-in additional repair-round cap, and explicit per-role retain/prune worker context. Never invent custom role IDs. The invoking Pi remains the parent; normal starts create no separate parent Pi or controller. Watch subscribes this Pi to lifecycle and final-report updates. Attach watches future transitions and switches its existing tmux client into native Pi worker panes without replaying an already-actionable initial outcome as a new parent task; prefix then L returns without stopping workers or changing this Pi's project context. New runs are watched automatically. Start always requires interactive confirmation.",
+    description: "Supervise bounded doctor, available-model discovery, list, status, watch, attach, start, or send actions through the Pi runtime and bundled Python tmux orchestrator. Start resolves strict user-global exact-project defaults for profile/models, single or phased flow, enabled specialists, exact-project custom read-only specialists, and the workspace capsule; explicit per-run values win. With dynamicPlan=true it makes one separately confirmed preflight provider call before preview to choose the bounded built-in worker roster and exact per-role model/thinking settings from strict version-5 external workerCandidates exact approved pools validated against Pi's available/scoped catalog, using non-secret capability and declared catalog cost-hint facts without name-based quality or recency inference. Exact run/project/global role locks override pools; custom roles keep fixed bindings. Without pools, every planner-eligible role including optional roles must have an authoritative exact provider/model lock, or the start fails before planning with configuration guidance; it never falls back to the full catalog. Both Jev and Pi use the same approved worker scope; the decision-model identity is independent. Confirmation and the immediate start acknowledgement show pool source/count and exact selected assignments, not configuration bodies;  TypeSafe authentication configured through /login typesafe or TYPESAFE_API_KEY selects the bundled direct jev-latest typed-decision adapter, its absence lets an exact operator-supplied Pi decisionModel win, and absence of both uses the strict user-global exact Pi preferred identity and ordered cross-provider fallbacks with configured cancel or explicitly confirmed static/manual behavior when none are eligible. Pi decision-call thinking follows decision-model policy; worker thinking uses each selected model's supported levels through max. It may also omit project custom specialists with projectCustomRoles=false, select deterministic or forced specialist activation, this parent Pi's current model, exact user-requested per-role provider/model/thinking overrides, strict per-run budget overrides, an opt-in additional repair-round cap, and explicit per-role retain/prune worker context. Never invent custom role IDs. The invoking Pi remains the parent; normal starts create no separate parent Pi or controller. Watch subscribes this Pi to lifecycle and final-report updates. Attach watches future transitions and switches its existing tmux client into native Pi worker panes without replaying an already-actionable initial outcome as a new parent task; prefix then L returns without stopping workers or changing this Pi's project context. New runs are watched automatically. Start always requires interactive confirmation.",
     promptSnippet: "Inspect or operate local Pi tmux orchestrations through the authoritative Python CLI",
     promptGuidelines: [
-      "Use tmux_orchestrator instead of rebuilding tmux orchestration state; before a start, synthesize a bounded contextCapsule from the current conversation when prior decisions or work matter; include only task-relevant state, constraints, acceptance criteria, paths, evidence, and open questions, never the full transcript. Prefer dynamicPlan=true when the user asks the orchestrator to decide worker count, roles, models, or thinking before launch; that mode requires separate approval for one preflight provider call and another confirmation for launch. TypeSafe authentication configured through /login typesafe or TYPESAFE_API_KEY selects the bundled direct jev-latest adapter before every Pi decision model. Without TypeSafe authentication, use an exact Pi decisionModel only when the user supplied it; it wins over the strict user-global exact Pi preferred identity and ordered cross-provider fallbacks, then the explicit cancel/static policy. Dynamic planning may select only fixed built-ins and freshly validated exact-project custom read-only specialists; projectCustomRoles=false omits custom candidates. Enable workspaceCapsule only for an explicit cold-assignment experiment and supply only bounded existing project-relative workspaceRelevantPaths, never a repository tree; it supplements discovery and never replaces reading governing instructions. Do not claim workspace-capsule savings or correctness without authoritative provider and review evidence. Do not claim dynamic-planning savings or correctness without separately reviewed provider and outcome evidence. Dynamic planning uses listed capabilities and declared catalog cost hints over the bounded available/scoped catalog; do not infer quality from model names, treat catalog rates as observed spend, or invent an operator model allowlist. Use implementationFlow=phased for complex work that benefits from read-only discovery before editing; use single for simple work or compatibility. Configured specialists use conservative deterministic activation gates after launch; pass forceSpecialists only when the user explicitly requires that enabled role to run regardless of a skip predicate. Exact-project customRoles from validated user-global configuration are included unless projectCustomRoles is false; never invent custom role identifiers, providers, models, tools, or contracts. After starting or explicitly watching a run, ensure the invoking Pi is watching it for lifecycle and final reports. Once watching, end the turn and rely on broker updates: never run sleep commands or repeatedly poll status/tmux while waiting for a watched orchestration. Attaching to an existing run watches future transitions but does not replay an already-actionable initial outcome into the current Pi; returning with tmux prefix then L does not change the current Pi's project context. Honor an explicit economy, balanced, thorough, or user-configured profile request through profile. Honor explicit user model/provider/thinking requests through useParentModel or modelOverrides; those overrides win over profile values. Use the models action to resolve available exact identifiers when needed; never invent a Pi provider/model identifier or inspect provider credentials. Omitted overrides use the exact canonical project mapping, then the user's global orchestrator model configuration, selected/default profile, and packaged defaults. Honor explicit per-run budget requests through budgetOverrides; omitted values use the strict user-global budget policy and packaged warn-only defaults, and never infer hard thresholds. Honor explicit repair-round cap requests through maxRepairRounds; omission disables the cap and 0 pauses before the first repair. This is separate from observational budgets and does not cap active-assignment tokens. Continuation approval remains operator-only through the confirmed terminal CLI; never approve your own continuation. Honor explicit retain/prune requests through workerContext for enabled roles; omitted roles keep prune. Retention may increase cost, reuse hints are advisory metadata observations, and historical checks or approval never replace required verification and review. Do not infer retention, switch live policies, or request unsupported compact/fresh modes. Worker skill discovery is disabled; pass workerSkills only for exact Markdown paths the user explicitly reviewed, never infer skills. When the user asks to enter, navigate, or directly steer the live workers, use attach rather than watch; attach requires the invoking Pi to be inside tmux. Prefer native Pi TUI workers and use rpcWorkers only after an explicit request for headless panes. The invoking Pi remains responsible for interpreting reports and deciding follow-up. When a workflow needs attention, send only to a waiting role that owns the active assignment; never trigger an idle role or reviewer without a broker assignment. Never create file handoffs, poll coordination state, claim parent project trust applies to child Pi sessions, or equate command acknowledgement with task completion.",
+      "Use tmux_orchestrator instead of rebuilding tmux orchestration state; before a start, synthesize a bounded contextCapsule from the current conversation when prior decisions or work matter; include only task-relevant state, constraints, acceptance criteria, paths, evidence, and open questions, never the full transcript. Prefer dynamicPlan=true when the user asks the orchestrator to decide worker count, roles, models, or thinking before launch; that mode requires separate approval for one preflight provider call and another confirmation for launch. TypeSafe authentication configured through /login typesafe or TYPESAFE_API_KEY selects the bundled direct jev-latest adapter before every Pi decision model. Without TypeSafe authentication, use an exact Pi decisionModel only when the user supplied it; it wins over the strict user-global exact Pi preferred identity and ordered cross-provider fallbacks, then the explicit cancel/static policy. Dynamic planning may select only fixed built-ins and freshly validated exact-project custom read-only specialists; projectCustomRoles=false omits custom candidates. Enable workspaceCapsule only for an explicit cold-assignment experiment and supply only bounded existing project-relative workspaceRelevantPaths, never a repository tree; it supplements discovery and never replaces reading governing instructions. Do not claim workspace-capsule savings or correctness without authoritative provider and review evidence. Do not claim dynamic-planning savings or correctness without separately reviewed provider and outcome evidence. Dynamic planning uses only operator-approved exact workerCandidates pools from external version-5 configuration, validated against Pi's available/scoped catalog, plus higher-precedence exact run/project/global role locks and custom fixed bindings. Per-role pools replace the all-role pool. Without a pool, every planner-eligible role including optional roles must have an authoritative exact provider/model lock; otherwise stop before the provider call and guide the operator to configure pools or exact overrides. Never invent or expand approval, silently offer the full catalog, infer quality or recency from names, or treat declared catalog cost hints as observed spend. Jev and Pi fallback enforce identical approved worker scope; decision-model lookup remains independent. Use bounded pool source/count and exact selected assignments from confirmation and immediate start acknowledgement as authoritative launch metadata, never configuration bodies. Use implementationFlow=phased for complex work that benefits from read-only discovery before editing; use single for simple work or compatibility. Configured specialists use conservative deterministic activation gates after launch; pass forceSpecialists only when the user explicitly requires that enabled role to run regardless of a skip predicate. Exact-project customRoles from validated user-global configuration are included unless projectCustomRoles is false; never invent custom role identifiers, providers, models, tools, or contracts. After starting or explicitly watching a run, ensure the invoking Pi is watching it for lifecycle and final reports. Once watching, end the turn and rely on broker updates: never run sleep commands or repeatedly poll status/tmux while waiting for a watched orchestration. Attaching to an existing run watches future transitions but does not replay an already-actionable initial outcome into the current Pi; returning with tmux prefix then L does not change the current Pi's project context. Honor an explicit economy, balanced, thorough, or user-configured profile request through profile. Honor explicit user model/provider/thinking requests through useParentModel or modelOverrides; those overrides win over profile values. Use the models action to resolve available exact identifiers when needed; never invent a Pi provider/model identifier or inspect provider credentials. Omitted overrides use the exact canonical project mapping, then the user's global orchestrator model configuration, selected/default profile, and packaged defaults. Honor explicit per-run budget requests through budgetOverrides; omitted values use the strict user-global budget policy and packaged warn-only defaults, and never infer hard thresholds. Honor explicit repair-round cap requests through maxRepairRounds; omission disables the cap and 0 pauses before the first repair. This is separate from observational budgets and does not cap active-assignment tokens. Continuation approval remains operator-only through the confirmed terminal CLI; never approve your own continuation. Honor explicit retain/prune requests through workerContext for enabled roles; omitted roles keep prune. Retention may increase cost, reuse hints are advisory metadata observations, and historical checks or approval never replace required verification and review. Do not infer retention, switch live policies, or request unsupported compact/fresh modes. Worker skill discovery is disabled; pass workerSkills only for exact Markdown paths the user explicitly reviewed, never infer skills. When the user asks to enter, navigate, or directly steer the live workers, use attach rather than watch; attach requires the invoking Pi to be inside tmux. Prefer native Pi TUI workers and use rpcWorkers only after an explicit request for headless panes. The invoking Pi remains responsible for interpreting reports and deciding follow-up. When a workflow needs attention, send only to a waiting role that owns the active assignment; never trigger an idle role or reviewer without a broker assignment. Never create file handoffs, poll coordination state, claim parent project trust applies to child Pi sessions, or equate command acknowledgement with task completion.",
     ],
     parameters,
     execute(_toolCallId, input, signal, _onUpdate, ctx) {
@@ -1416,6 +1432,8 @@ export const testHooks = {
   runPreflightPlanner,
   selectDecisionModel,
   runStart,
+  compactSummary,
+  notifyEnvelope,
   startInputWithParentModel,
   validateDynamicGuidanceProjection: validatedDynamicGuidanceProjection,
   validateObserverFrame,

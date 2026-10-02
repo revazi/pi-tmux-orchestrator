@@ -589,7 +589,7 @@ class UtilityTests(unittest.TestCase):
                 self.assertEqual(
                     ORCHESTRATOR.load_model_config(),
                     {
-                        "version": 4,
+                        "version": 5,
                         "default_profile": None,
                         "profiles": {},
                         "defaults": {},
@@ -639,7 +639,7 @@ class UtilityTests(unittest.TestCase):
         legacy = ORCHESTRATOR.validate_model_config(
             {"version": 1, "defaults": {}, "roles": {}}
         )
-        self.assertEqual(legacy["version"], 4)
+        self.assertEqual(legacy["version"], 5)
         self.assertEqual(
             ORCHESTRATOR.resolve_execution_profile(legacy),
             {
@@ -902,7 +902,7 @@ class UtilityTests(unittest.TestCase):
                 ],
             }
             config = ORCHESTRATOR.validate_model_config(value)
-            self.assertEqual(config["version"], 4)
+            self.assertEqual(config["version"], 5)
             matched = ORCHESTRATOR.project_model_config(config, project)
             self.assertIsNotNone(matched)
             assert matched is not None

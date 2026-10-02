@@ -52,6 +52,7 @@ const pythonFiles = [
   "role_contracts.py",
   "custom_role_resources.py",
   "worker_context.py",
+  "worker_candidates.py",
   "evidence_reuse.py",
   "workspace_capsules.py",
 ].map((name) => `pi_tmux_orchestrator/${name}`);
@@ -70,6 +71,7 @@ const expectedFiles = [
   "extensions/orchestrator-models.js",
   "extensions/orchestrator-planner.js",
   "extensions/orchestrator-planning.js",
+  "extensions/orchestrator-worker-candidates.js",
   "extensions/orchestrator-typesafe.js",
   "extensions/orchestrator-update.js",
   "extensions/orchestrator-dashboard.js",
@@ -105,6 +107,7 @@ const declaredFiles = [
   "extensions/orchestrator-models.js",
   "extensions/orchestrator-planner.js",
   "extensions/orchestrator-planning.js",
+  "extensions/orchestrator-worker-candidates.js",
   "extensions/orchestrator-typesafe.js",
   "extensions/orchestrator-update.js",
   "extensions/orchestrator-dashboard.js",

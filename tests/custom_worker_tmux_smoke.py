@@ -388,8 +388,25 @@ def fixed_planning_record(
         for role in roles
     ]
     return {
-        "version": 1,
+        "version": 2,
         "mode": "dynamic",
+        "worker_candidates": {
+            "version": 1,
+            "source": "authoritative-locks",
+            "count": len(
+                {(role["provider"], role["model"]) for role in retained_roles}
+            ),
+            "roles": [
+                {
+                    "role": role["id"],
+                    "source": "custom-binding"
+                    if role["id"].startswith("custom-")
+                    else "exact-lock",
+                    "count": 1,
+                }
+                for role in retained_roles
+            ],
+        },
         "request_id": "a" * 32,
         "status": "accepted",
         "created_at_ms": 1_800_000_000_000,

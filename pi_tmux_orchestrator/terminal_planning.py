@@ -310,4 +310,17 @@ def terminal_dynamic_start(args: Any) -> CommandResult:
         or not isinstance(envelope.get("data"), dict)
     ):
         raise OrchestrationError("Dynamic planning start envelope is invalid")
-    return CommandResult(data=envelope["data"])
+    data = envelope["data"]
+    planning = data.get("planning")
+    if isinstance(planning, dict):
+        from .output import human_print
+
+        pool = planning.get("worker_candidates", {})
+        human_print(
+            f"Approved worker candidates: source={pool.get('source')}; count={pool.get('count')}"
+        )
+        for role in planning.get("roles", []):
+            human_print(
+                f"{role['id']}: {role['provider']}/{role['model']} thinking={role['thinking']}"
+            )
+    return CommandResult(data=data)
