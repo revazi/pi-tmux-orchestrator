@@ -23,7 +23,7 @@ import {
   validatePlannerTopology,
   plannerTestHooks,
 } from "../extensions/orchestrator-planner.js";
-import { validateWorkerCandidates } from "../extensions/orchestrator-worker-candidates.js";
+import { resolveWorkerCandidates, validateWorkerCandidates } from "../extensions/orchestrator-worker-candidates.js";
 import {
   normalizedTypeSafeApiKey,
   requestTypeSafe,
@@ -3390,6 +3390,42 @@ test("worker pool resolution honors locks, role replacements, custom bindings, a
     workerCandidates: approvedPool([{ provider: "p", id: "missing" }]), optionalRoles: [],
   }));
   assert.throws(() => approvedWorkerSelection(ctx, { modelOverrides: { all: { provider: "p", model: "locked" } } }, missingEvenWhenLocked), /approved_worker_candidate_unavailable/);
+});
+
+test("worker pool thinking eligibility preserves ordered metadata, digest, and exact failures", () => {
+  const catalog = [
+    ["review", ["low", "high"]], ["high-only", ["high"]], ["low-only", ["low"]], ["locked", ["low"]],
+  ].map(([modelId, thinkingLevels]) => ({ provider: "p", modelId, thinkingLevels, capabilities: { reasoning: true } }));
+  const configured = { version: 1, all: [
+    { provider: "p", model: "high-only" }, { provider: "p", model: "low-only" },
+  ], roles: { reviewer: [{ provider: "p", model: "review" }] } };
+  const locks = [
+    { role: "implementer", thinking: "low" }, { role: "reviewer", thinking: "high" },
+    { role: "probe", provider: "p", model: "locked", thinking: "low" },
+  ];
+  const scope = resolveWorkerCandidates(catalog, configured, locks);
+  assert.deepEqual(scope.candidates, [catalog[0], catalog[2], catalog[3]]);
+  assert.deepEqual(scope.candidatesByRole, new Map([
+    ["implementer", new Set(["p\0low-only"])], ["reviewer", new Set(["p\0review"])],
+    ["probe", new Set(["p\0locked"])],
+  ]));
+  assert.deepEqual(scope.metadata, { version: 1, source: "configured", count: 3, roles: [
+    { role: "implementer", source: "all-pool", count: 1 },
+    { role: "reviewer", source: "role-pool", count: 1 },
+    { role: "probe", source: "exact-lock", count: 1 },
+  ] });
+  // Pin the digest produced by the resolver before helper extraction.
+  assert.equal(scope.digest, "d562c9e4d1cf57f7bdc86b386f33a502f5df001390b2b1183101ac0924fcbc4f");
+  for (const [policy, roleLocks, message] of [
+    [configured, [{ role: "implementer", thinking: "max" }], "dynamic_planning_locked_thinking_unsupported"],
+    [null, [{ role: "implementer" }], "approved_worker_pool_required"],
+    [null, [{ role: "implementer", provider: "p", model: "missing", thinking: "max" }], "dynamic_planning_locked_model_unavailable"],
+    [{ ...configured, roles: { reviewer: [{ provider: "p", model: "missing" }] } },
+      [{ role: "reviewer", provider: "p", model: "locked" }], "approved_worker_candidate_unavailable"],
+    [configured, [], "worker_candidates_limit_exceeded"],
+  ]) {
+    assert.throws(() => resolveWorkerCandidates(catalog, policy, roleLocks), { message });
+  }
 });
 
 test("maximum approved union and candidates beyond the old 100-model cut remain exact", () => {

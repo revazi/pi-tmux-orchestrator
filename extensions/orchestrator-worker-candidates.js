@@ -46,30 +46,47 @@ export function validateWorkerCandidates(value) {
   return policy;
 }
 
-export function resolveWorkerCandidates(catalog, configured, locks) {
-  const policy = validateWorkerCandidates(configured);
-  const available = new Map(catalog.map((candidate) => [key(candidate), candidate]));
+function assertConfiguredCandidatesAvailable(policy, available) {
   // Check every configured pool, even when a role lock overrides it.
   for (const identity of [policy?.all ?? [], ...Object.values(policy?.roles ?? {})].flat()) {
     if (!available.has(key(identity))) throw new Error("approved_worker_candidate_unavailable");
   }
+}
+
+function roleCandidatePool(policy, lock) {
+  if (lock.provider !== undefined) {
+    return {
+      source: BUILTINS.includes(lock.role) ? "exact-lock" : "custom-binding",
+      identities: [lock],
+    };
+  }
+  if (!policy) throw new Error("approved_worker_pool_required");
+  return {
+    source: policy.roles[lock.role] ? "role-pool" : "all-pool",
+    identities: policy.roles[lock.role] ?? policy.all,
+  };
+}
+
+function eligibleRoleCandidates(identities, thinking, available) {
+  const candidates = identities.map((identity) => available.get(key(identity)));
+  if (candidates.some((candidate) => !candidate)) {
+    throw new Error("dynamic_planning_locked_model_unavailable");
+  }
+  const eligible = candidates.filter((candidate) => thinking === undefined
+    || candidate.thinkingLevels.includes(thinking));
+  if (!eligible.length) throw new Error("dynamic_planning_locked_thinking_unsupported");
+  return eligible;
+}
+
+export function resolveWorkerCandidates(catalog, configured, locks) {
+  const policy = validateWorkerCandidates(configured);
+  const available = new Map(catalog.map((candidate) => [key(candidate), candidate]));
+  assertConfiguredCandidatesAvailable(policy, available);
   const candidatesByRole = new Map();
   const roles = [];
   for (const lock of locks) {
-    const fixed = lock.provider !== undefined;
-    if (!fixed && !policy) {
-      throw new Error("approved_worker_pool_required");
-    }
-    const source = fixed ? (BUILTINS.includes(lock.role) ? "exact-lock" : "custom-binding")
-      : (policy.roles[lock.role] ? "role-pool" : "all-pool");
-    const identities = fixed ? [lock] : (policy.roles[lock.role] ?? policy.all);
-    const candidates = identities.map((identity) => available.get(key(identity)));
-    if (candidates.some((candidate) => !candidate)) {
-      throw new Error("dynamic_planning_locked_model_unavailable");
-    }
-    const eligible = candidates.filter((candidate) => lock.thinking === undefined
-      || candidate.thinkingLevels.includes(lock.thinking));
-    if (!eligible.length) throw new Error("dynamic_planning_locked_thinking_unsupported");
+    const { source, identities } = roleCandidatePool(policy, lock);
+    const eligible = eligibleRoleCandidates(identities, lock.thinking, available);
     candidatesByRole.set(lock.role, new Set(eligible.map(key)));
     roles.push({ role: lock.role, source, count: eligible.length });
   }
