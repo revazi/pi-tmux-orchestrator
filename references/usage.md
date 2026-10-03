@@ -185,6 +185,68 @@ constraints. Declining either gate, cancellation, malformed/oversized policy or
 output, unavailable models, unsupported thinking, ambiguity, or conflicting
 explicit constraints starts nothing.
 
+### Independent planning scopes
+
+`planningScopes` is a strict nonempty unique array drawn from `topology`,
+`models`, and `thinking`, and requires `dynamicPlan=true`. All seven nonempty
+combinations are supported. No static or planning default changes: **omitting
+`planningScopes` with explicit `dynamicPlan=true` retains all three axes**,
+including the existing approved exact candidate-pool boundary. An empty array
+is invalid; use an ordinary static start to make no planning call.
+
+- `topology`: choose optional built-in and allowlisted custom specialists only.
+  Without it, the ordinary exact-project/per-run roster is fixed, including
+  configured custom roles (or an explicit selected subset); mandatory writer
+  and reviewer authority never changes.
+- `models`: choose exact worker provider/model identities only inside that role's
+  approved pool, unless an authoritative exact lock already resolves it.
+  Without it, identities resolve deterministically for every eligible role,
+  including specialists the topology planner may later omit.
+- `thinking`: choose supported worker thinking levels only where policy or
+  explicit overrides do not already lock them. Without it, effective thinking
+  is fixed; incompatible model/thinking tuples fail rather than relaxing a lock.
+
+Fixed values resolve in ordinary precedence order: per-run role, per-run all-role,
+exact-project role/default, user-global role/default, profile thinking, then
+packaged defaults. Explicit project/global/profile constraints also remain locks
+on authorized axes. Packaged defaults **do not** silently restrict legacy
+all-axis planning or enlarge its approved pool. When model planning is disabled,
+those deterministic identities are authoritative fixed-axis locks, not model
+candidates the service may change. Custom bindings always lock identity,
+contract, and thinking. Role inclusion overrides and specialist tasks win over
+policy; disabled-versus-required conflicts fail before the call.
+
+Examples (task text still travels through private files):
+
+```sh
+# Topology only: policy models and thinking cannot change.
+pi-tmux-agents start --task-file /private/task.txt --dynamic-plan \
+  --planning-scope topology --authorize-planning --yes
+# Topology plus thinking, with exact worker identities fixed.
+pi-tmux-agents start --task-file /private/task.txt --dynamic-plan \
+  --planning-scope topology --planning-scope thinking --authorize-planning --dry-run
+```
+
+Model tool: `dynamicPlan: true, planningScopes: ["topology", "thinking"]`.
+TUI: `/or-start --plan=topology,thinking TASK`, or `/or-start --plan-scopes TASK`
+for the seven-choice form. Cancelling the form starts nothing. Existing
+`/or-start --plan TASK` remains the all-axis compatibility path.
+
+Direct TypeSafe Jev and Pi fallback receive equivalent bounded questions only
+for authorized, unlocked axes. Fully locked assignments generate no model or
+thinking questions; a fully locked roster still gets one suitability question.
+There is exactly one separately authorized provider call, no retry/failover call,
+and the unchanged final launch confirmation. Preflight authorization, immediate
+acknowledgement, preview, final confirmation, terminal output, and retained reads
+identify scopes, authoritative operator/policy locks, and decision source.
+Planning v3 retains only scope/lock metadata, exact assignments, bounded pool
+counts, usage, and binding digests, never task/context/config/provider bodies.
+Its decision and start bindings include scopes and locks; stale policy, catalog,
+preview, or scope/lock changes reject launch. Planning v1/v2 remains readable;
+retained reads label their absent scopes and locks as unavailable (legacy record),
+never inferred planner authority. This display does not change v2 admission's
+historical all-axis meaning. Fresh previews emit v3.
+
 Decision-service precedence is:
 
 1. direct TypeSafe `jev-latest` when authentication is configured through
@@ -284,16 +346,16 @@ or provider bodies. It never silently exposes the full catalog. An
 explicitly configured static/manual decision-policy fallback remains a separate
 confirmed no-planning path, not a catalog fallback.
 
-Both direct Jev typed choices and Pi fallback role indices enforce the same
+Both direct Jev typed choices and Pi fallback choices enforce the same
 per-role membership; an identity approved only for reviewer cannot be selected
 for implementer. Canonical thinking/capability/cost hints are projected only for
 the resolved worker union. No recency, quality, or orchestration reliability is
 inferred from names. Natural-language guidance cannot create or expand approval.
 Planning-call confirmation shows bounded pool source/count per eligible role;
 final confirmation and the immediate start acknowledgement show exact selected
-provider/model/thinking assignments. Retained planning v2 contains only bounded
+provider/model/thinking assignments. Retained planning v3 contains only selected scopes, authoritative locks, bounded
 pool source/count metadata, exact assignments, and digests, not pool/configuration
-bodies. The private topology v2 projection supplies the exact policy to preflight;
+bodies. The private topology v3 projection supplies the exact policy to preflight;
 do not copy that configuration projection into status or handoffs.
 
 **Migration:** retain existing fields, change the root version to 5, and add
@@ -301,7 +363,7 @@ reviewed exact pools using `/or-models` identities. Existing version-4 custom
 bindings remain supported. Alternatively, keep versions 1–4 and supply exact
 locks for every eligible role. Static/manual starts require no pool and retain
 their existing precedence. Retained planning v1 in manifests v8/v9 stays readable;
-it is not accepted as input for a new launch. Generate a fresh v2 preview.
+it is not accepted as input for a new launch. Generate a fresh v3 preview.
 Revalidation uses the original operator inputs, never planner-generated overrides
 as approval, and rejects changes to pool policy/source, role membership, approved
 availability, canonical capabilities, or resolved configuration after preview.
@@ -319,9 +381,10 @@ Guidance is not a model allow/deny list: do not write “never use model X” or
 role overrides. The current canonical capability
 projection has no recency field, so planners must not infer model age from
 names; a recency preference applies only when authoritative catalog facts
-establish it. The same guidance is sent to direct TypeSafe Jev as
-`state.dynamic_behavior_guidance` and to the Pi-chat planner under fixed
-subordinate hard-rule framing. It cannot add roles/models, create an operator
+establish it. Both direct TypeSafe Jev and the Pi-chat fallback receive the
+same bounded question/state projection, with guidance once in
+`state.dynamic_behavior_guidance` under fixed subordinate hard-rule framing.
+This also applies to omitted-scope all-axis compatibility requests. It cannot add roles/models, create an operator
 model allowlist, direct selection by model name, alter authority, weaken locked
 constraints, grant write access, remove review, or override validation. The
 planning confirmation shows configured/default status and a short digest;
@@ -335,10 +398,11 @@ before the planning call. The planner policy's existing external-path,
 regular-file, non-symlink, UTF-8, and target-project exclusion rules protect the
 whole file, including this field.
 
-The Pi-chat planner receives the guidance in its system prompt, explicitly
-framed as subordinate preference. Total serialized payload plus guidance and
-framing remains under the existing 96 KiB UTF-8 limit; overflow fails before
-the provider call rather than truncating candidate data.
+The Pi-chat planner's system prompt defines the exact question-answer response
+contract and treats guidance in request state as subordinate preference; it does
+not ask for worker role objects or repeat the guidance body. The common serialized
+question/state projection remains under the existing 96 KiB UTF-8 limit;
+overflow fails before either provider call rather than truncating candidate data.
 
 `preferred` may be `null`; at most 16 fallbacks are accepted. The ordered list
 may span enabled providers—for example exact Grok and OpenAI identities resolved
@@ -715,6 +779,7 @@ Common options:
 - `--dry-run`
 - `--skip-model-check`
 - `--dynamic-plan`: opt into the shared bounded planner before preview
+- `--planning-scope topology|models|thinking`: repeat to authorize a nonempty unique combination; omission retains all three axes
 - `--authorize-planning`: authorize that one additional provider call (required with `--dynamic-plan`)
 - `--yes`: separately authorize launch after the validated dynamic preview (required with `--dynamic-plan`)
 - `--decision-provider`, `--decision-model`, and `--decision-thinking`: exact per-run decision identity override; provider and model must be supplied together

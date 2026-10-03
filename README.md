@@ -58,6 +58,15 @@ never resume an in-flight run across versions.
 
 ### Approved worker pools for dynamic planning
 
+Dynamic planning axes are independently selectable with model-tool
+`planningScopes: ["topology", "models", "thinking"]`, repeatable terminal
+`--planning-scope`, or `/or-start --plan-scopes` (seven-choice TUI form).
+For example, `planningScopes: ["topology"]` locks worker identities and thinking
+to effective per-run/project/global/profile policy. Omission preserves explicit
+`dynamicPlan=true` all-axis behavior; static defaults are unchanged. The one
+preflight call and final launch confirmation remain separate. See
+[independent scopes](references/usage.md#independent-planning-scopes).
+
 Dynamic starts (`/or-start --plan`, `dynamicPlan=true`, or terminal
 `--dynamic-plan`) no longer offer the full available catalog. Before upgrading,
 finish active runs; then configure exact operator-approved worker identities in

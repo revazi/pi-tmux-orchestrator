@@ -7,6 +7,7 @@ import argparse
 from .constants import SUPERVISOR_API_VERSION
 from .models import CommandResult
 from .output import human_print
+from .planning import planning_lock_lines, planning_scopes_label
 from .supervisor_api import (
     public_supervisor_run,
     retained_runs,
@@ -71,6 +72,14 @@ def supervisor_snapshot_command(args: argparse.Namespace) -> CommandResult:
         f"Supervisor snapshot: {data['session']} run={data['run_id']} "
         f"transport={data['transport']}"
     )
+    planning = data.get("planning", {})
+    if planning.get("mode") == "dynamic":
+        human_print(
+            f"Planning scopes: {planning_scopes_label(planning)}; "
+            f"decision source={planning['decision_model']['source']}"
+        )
+        for line in planning_lock_lines(planning):
+            human_print(line)
     for role in data["roles"]:
         worker = role["worker"]
         suffix = (

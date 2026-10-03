@@ -491,3 +491,24 @@ rm -rf "$STAGE"
 Never remove or overwrite the released/global package merely to test a staged
 build. Explicit `--no-extensions --no-skills -e "$PACKAGE_ROOT"` isolates the
 pre-release resource selection for one Pi process.
+
+### Independent planning-scope acceptance (#197)
+
+Model-free regressions exercise all seven nonempty combinations on direct Jev
+and Pi fallback synthetic transports, asserting identical authorized questions,
+fixed-axis locks, exact pool membership, one call, body-free provenance,
+cancellation, malformed choices, stale policy/locks/preview, dry-run, and no-launch
+failures. Python tests cover effective policy precedence, CLI/terminal forwarding,
+v3 record validation/admission, and stale scope bindings. This is synthetic
+evidence, not production TypeSafe/Pi wire acceptance.
+
+For separately authorized manual acceptance, compare topology-only and
+topology-plus-thinking against the deterministic preview for every eligible
+role, including optional/custom identities. Verify `/or-start --plan-scopes`
+cancellation, `--plan=topology,thinking`, and legacy `--plan` all-axis
+compatibility. Confirm scopes, locks, decision source, approved pool counts,
+and exact assignments in both confirmations, immediate acknowledgement,
+`start --dry-run`, status/dashboard and Supervisor reads. Change policy after
+preview and verify no session launches. Do not perform real provider calls
+without separate operator authorization. No default rollout or #198–#200 work
+is implied.

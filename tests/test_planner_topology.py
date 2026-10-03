@@ -10,6 +10,7 @@ import unittest
 from unittest import mock
 
 from pi_tmux_orchestrator.planner_topology import planner_topology_policy
+from pi_tmux_orchestrator.constants import DEFAULT_MODELS
 
 
 class PlannerTopologyTests(unittest.TestCase):
@@ -23,9 +24,13 @@ class PlannerTopologyTests(unittest.TestCase):
                 {"PI_TMUX_ORCHESTRATOR_CONFIG": str(root / "absent.json")},
             ):
                 policy = planner_topology_policy(project)
-        self.assertEqual(policy["version"], 2)
+        self.assertEqual(policy["version"], 3)
         self.assertEqual(policy["optional_roles"], ["probe", "playwright", "django"])
         self.assertEqual(policy["custom_roles"], [])
+        self.assertEqual(policy["static_roles"], [])
+        self.assertEqual(
+            policy["builtins"]["reviewer"]["effective"], DEFAULT_MODELS["reviewer"]
+        )
         self.assertEqual(
             {role: item["constraint"] for role, item in policy["builtins"].items()},
             {
@@ -88,6 +93,15 @@ class PlannerTopologyTests(unittest.TestCase):
             ):
                 policy = planner_topology_policy(project)
         self.assertEqual(policy["optional_roles"], ["probe", "django"])
+        self.assertEqual(policy["static_roles"], ["probe", "django"])
+        self.assertEqual(
+            policy["builtins"]["reviewer"]["effective"],
+            {
+                "provider": "project-provider",
+                "model": "review-model",
+                "thinking": "minimal",
+            },
+        )
         self.assertEqual(
             policy["builtins"]["implementer"]["constraint"],
             {

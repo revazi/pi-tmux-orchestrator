@@ -82,12 +82,14 @@ function validPlanningBindings(bindings) {
 
 export function planningRecordForPreview(plan) {
   const roles = planningRoles(plan.roles);
-  const decision = metadataDigest({ version: 1, roles });
+  const decision = metadataDigest({ version: 1, roles, scopes: plan.scopes, locks: plan.locks });
   const bindings = plan.bindings;
   if (!validPlanningBindings(bindings)) throw new Error("invalid_planning_bindings");
   return {
-    version: 2,
+    version: 3,
     mode: "dynamic",
+    scopes: plan.scopes,
+    locks: plan.locks,
     worker_candidates: plan.workerCandidates,
     request_id: plan.requestId,
     status: "accepted",

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import redirect_stdout
 import io
 import json
 import os
@@ -10,7 +11,12 @@ import tempfile
 from unittest import mock
 
 from json_cli_support import JsonCliFixture
-from pi_tmux_orchestrator import terminal_planning
+from pi_tmux_orchestrator import (
+    commands,
+    supervisor_api,
+    supervisor_commands,
+    terminal_planning,
+)
 from pi_tmux_orchestrator.models import OrchestrationError
 from pi_tmux_orchestrator.planning import (
     metadata_digest,
@@ -77,6 +83,33 @@ def planning_record(roles):
     }
 
 
+def scope_planning_record(roles, scopes):
+    record = planning_record(roles)
+    record.update(
+        version=3,
+        scopes=list(scopes),
+        locks=[
+            {
+                "role": role["id"],
+                "inclusion": True,
+                "provider": role["provider"],
+                "model": role["model"],
+                "thinking": role["thinking"],
+            }
+            for role in record["roles"]
+        ],
+    )
+    record["bindings"]["decision"] = metadata_digest(
+        {
+            "version": 1,
+            "roles": record["roles"],
+            "scopes": record["scopes"],
+            "locks": record["locks"],
+        }
+    )
+    return record
+
+
 class PlanningAdmissionTests(JsonCliFixture):
     def start(self, task, *extra):
         with (
@@ -97,6 +130,205 @@ class PlanningAdmissionTests(JsonCliFixture):
                     *extra,
                 ]
             )
+
+    def test_all_scope_records_bind_and_reject_stale_or_conflicting_axes(self):
+        import itertools
+
+        code, static, _, _ = self.start("Synthetic scopes", "--dry-run")
+        self.assertEqual(code, 0)
+        for count in (1, 2, 3):
+            for scopes in itertools.combinations(
+                ("topology", "models", "thinking"), count
+            ):
+                with (
+                    self.subTest(scopes=scopes),
+                    tempfile.TemporaryDirectory() as directory,
+                ):
+                    record = scope_planning_record(static["data"]["roles"], scopes)
+                    path = Path(directory) / "planning.json"
+                    path.write_text(json.dumps(record), encoding="utf-8")
+                    code, preview, raw, _ = self.start(
+                        "Synthetic scopes",
+                        "--planning-record-file",
+                        str(path),
+                        "--dry-run",
+                    )
+                    self.assertEqual(code, 0, raw)
+                    bound = preview["data"]["planning"]
+                    self.assertEqual(bound["scopes"], list(scopes))
+                    self.assertEqual(bound["locks"], record["locks"])
+                    validate_planning_record(bound)
+                    changed = json.loads(json.dumps(bound))
+                    changed["locks"][0]["thinking"] = (
+                        "off" if changed["roles"][0]["thinking"] != "off" else "low"
+                    )
+                    with self.assertRaises(OrchestrationError):
+                        validate_planning_record(changed)
+                    changed = json.loads(json.dumps(bound))
+                    changed["scopes"] = (
+                        ["thinking"] if list(scopes) != ["thinking"] else ["models"]
+                    )
+                    with self.assertRaises(OrchestrationError):
+                        validate_planning_record(changed)
+                    # Even a valid re-bound decision cannot reuse a confirmed preview of different scopes.
+                    changed["bindings"]["decision"] = metadata_digest(
+                        {
+                            "version": 1,
+                            "roles": changed["roles"],
+                            "scopes": changed["scopes"],
+                            "locks": changed["locks"],
+                        }
+                    )
+                    path.write_text(json.dumps(changed), encoding="utf-8")
+                    with mock.patch.object(ORCHESTRATOR, "tmux") as launch:
+                        code, rejected, _, _ = self.start(
+                            "Synthetic scopes", "--planning-record-file", str(path)
+                        )
+                    self.assertNotEqual(code, 0)
+                    self.assertEqual(
+                        rejected["error"]["code"], "stale_planning_binding"
+                    )
+                    launch.assert_not_called()
+
+    def test_terminal_forwards_each_scope_combination_and_rejects_duplicates(self):
+        import itertools
+
+        for count in (1, 2, 3):
+            for scopes in itertools.combinations(
+                ("topology", "models", "thinking"), count
+            ):
+                args = ORCHESTRATOR.build_parser().parse_args(
+                    [
+                        "start",
+                        "--project",
+                        str(ROOT),
+                        "--task",
+                        "Synthetic",
+                        "--dynamic-plan",
+                        "--authorize-planning",
+                        "--dry-run",
+                        *[
+                            arg
+                            for scope in scopes
+                            for arg in ("--planning-scope", scope)
+                        ],
+                    ]
+                )
+                projected = terminal_planning._terminal_input(args, ROOT)
+                self.assertEqual(projected["planningScopes"], list(scopes))
+                self.assertIs(projected["dynamicPlan"], True)
+        with mock.patch.object(terminal_planning, "_run_terminal_planner") as provider:
+            code, _, _, _ = self.run_main(
+                [
+                    "--json",
+                    "start",
+                    "--task",
+                    "Synthetic",
+                    "--dynamic-plan",
+                    "--authorize-planning",
+                    "--dry-run",
+                    "--planning-scope",
+                    "topology",
+                    "--planning-scope",
+                    "topology",
+                ]
+            )
+        self.assertNotEqual(code, 0)
+        provider.assert_not_called()
+        code, _, _, _ = self.start(
+            "Synthetic", "--planning-scope", "models", "--dry-run"
+        )
+        self.assertNotEqual(code, 0)
+
+    def test_terminal_and_supervisor_human_reads_show_scope_authority(self):
+        import itertools
+
+        roles = [
+            {"name": role, "provider": "p", "model": "a", "thinking": "low"}
+            for role in ("implementer", "reviewer")
+        ]
+        for count in (1, 2, 3):
+            for scopes in itertools.combinations(
+                ("topology", "models", "thinking"), count
+            ):
+                record = scope_planning_record(roles, scopes)
+                for lock in record["locks"]:
+                    if "models" in scopes:
+                        lock.update(provider=None, model=None)
+                    if "thinking" in scopes:
+                        lock["thinking"] = None
+                record["locks"].append(
+                    {
+                        "role": "probe",
+                        "inclusion": False,
+                        "provider": None,
+                        "model": None,
+                        "thinking": None,
+                    }
+                )
+                args = ORCHESTRATOR.build_parser().parse_args(
+                    [
+                        "start",
+                        "--project",
+                        str(ROOT),
+                        "--task",
+                        "PRIVATE_HUMAN_READ_TASK",
+                        "--dynamic-plan",
+                        "--authorize-planning",
+                        "--dry-run",
+                    ]
+                )
+                output = io.StringIO()
+                ORCHESTRATOR.JSON_MODE = False
+                with (
+                    redirect_stdout(output),
+                    mock.patch.object(
+                        terminal_planning,
+                        "_run_terminal_planner",
+                        return_value={
+                            "version": 1,
+                            "success": True,
+                            "envelope": {
+                                "command": "start",
+                                "success": True,
+                                "data": {"planning": record},
+                            },
+                        },
+                    ),
+                    mock.patch.object(
+                        supervisor_commands,
+                        "supervisor_snapshot",
+                        return_value={
+                            "session": "pi-synthetic",
+                            "run_id": "synthetic",
+                            "transport": "rpc",
+                            "planning": record,
+                            "roles": [],
+                        },
+                    ),
+                ):
+                    terminal_planning.terminal_dynamic_start(args)
+                    supervisor_commands.supervisor_snapshot_command(
+                        mock.Mock(session="pi-synthetic", run=None)
+                    )
+                text = output.getvalue()
+                self.assertEqual(text.count(f"Planning scopes: {','.join(scopes)}"), 2)
+                self.assertEqual(text.count("decision source=configured-fallback"), 2)
+                model = "planner" if "models" in scopes else "locked p/a"
+                thinking = "planner" if "thinking" in scopes else "locked low"
+                self.assertEqual(
+                    text.count(
+                        f"implementer: inclusion=locked include; model={model}; thinking={thinking}"
+                    ),
+                    2,
+                )
+                self.assertEqual(
+                    text.count(
+                        "probe: inclusion=locked omit; model=not applicable; thinking=not applicable"
+                    ),
+                    2,
+                )
+                self.assertNotIn("PRIVATE_HUMAN_READ_TASK", text)
 
     def test_preview_binds_private_inputs_and_resolved_start_without_bodies(self):
         code, static, raw, stderr = self.start("PRIVATE_PLAN_TASK", "--dry-run")
@@ -175,7 +407,7 @@ class PlanningAdmissionTests(JsonCliFixture):
     def test_accepted_launch_uses_manifest_v8_with_body_free_provenance(self):
         code, static, raw, _ = self.start("RETAINED_PRIVATE_TASK", "--dry-run")
         self.assertEqual(code, 0, raw)
-        record = planning_record(static["data"]["roles"])
+        record = scope_planning_record(static["data"]["roles"], ["topology"])
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             record_path = root / "planning.json"
@@ -218,16 +450,124 @@ class PlanningAdmissionTests(JsonCliFixture):
                 for index, role in enumerate(manifest["roles"].values(), start=2):
                     role["pane_id"] = f"%{index}"
                 coordination = Path(envelope["data"]["paths"]["coordination"])
-                ORCHESTRATOR.save_manifest(coordination, manifest)
-                loaded = ORCHESTRATOR.load_manifest(
-                    coordination, expected_session="pi-planning-provenance"
+                terminal_args = ORCHESTRATOR.build_parser().parse_args(
+                    [
+                        "start",
+                        "--project",
+                        str(ROOT),
+                        "--task",
+                        "RETAINED_PRIVATE_TASK",
+                        "--dynamic-plan",
+                        "--authorize-planning",
+                        "--dry-run",
+                    ]
                 )
+                ORCHESTRATOR.JSON_MODE = False
+                for version in (1, 2, 3):
+                    with self.subTest(retained_planning_version=version):
+                        retained = json.loads(json.dumps(manifest))
+                        plan = retained["planning"]
+                        if version != 3:
+                            plan["version"] = version
+                            del plan["scopes"], plan["locks"]
+                            plan["bindings"]["decision"] = metadata_digest(
+                                {"version": 1, "roles": plan["roles"]}
+                            )
+                            if version == 1:
+                                del plan["worker_candidates"]
+                        ORCHESTRATOR.save_manifest(coordination, retained)
+                        loaded = ORCHESTRATOR.load_manifest(
+                            coordination, expected_session="pi-planning-provenance"
+                        )
+                        with mock.patch.object(
+                            supervisor_api,
+                            "resolve_supervisor_target",
+                            return_value=(coordination, loaded),
+                        ):
+                            snapshot = supervisor_api.supervisor_snapshot(
+                                "pi-planning-provenance", None
+                            )
+                        self.assertEqual(snapshot["planning"], plan)
+                        output = io.StringIO()
+                        with (
+                            redirect_stdout(output),
+                            mock.patch.object(
+                                commands,
+                                "resolve_session",
+                                return_value=("pi-planning-provenance", coordination),
+                            ),
+                            mock.patch.object(
+                                commands, "tmux", return_value=mock.Mock(stdout="")
+                            ),
+                            mock.patch.object(
+                                commands,
+                                "try_public_broker_snapshot",
+                                return_value=None,
+                            ),
+                            mock.patch.object(
+                                supervisor_commands,
+                                "supervisor_snapshot",
+                                return_value=snapshot,
+                            ),
+                            mock.patch.object(
+                                terminal_planning,
+                                "_run_terminal_planner",
+                                return_value={
+                                    "version": 1,
+                                    "success": True,
+                                    "envelope": {
+                                        "command": "start",
+                                        "success": True,
+                                        "data": {"planning": plan},
+                                    },
+                                },
+                            ),
+                        ):
+                            status = commands.status_command(
+                                mock.Mock(session="pi-planning-provenance")
+                            )
+                            supervisor_commands.supervisor_snapshot_command(
+                                mock.Mock(session="pi-planning-provenance", run=None)
+                            )
+                            terminal_planning.terminal_dynamic_start(terminal_args)
+                        self.assertEqual(status.data["planning"], plan)
+                        text = output.getvalue()
+                        if version == 3:
+                            self.assertIn("scopes=topology", text)
+                            self.assertEqual(text.count("Planning scopes: topology"), 2)
+                            self.assertEqual(
+                                text.count(
+                                    "implementer: inclusion=locked include; model=locked "
+                                ),
+                                3,
+                            )
+                        else:
+                            self.assertIn("scopes=unavailable (legacy record)", text)
+                            self.assertEqual(
+                                text.count(
+                                    "Planning scopes: unavailable (legacy record)"
+                                ),
+                                2,
+                            )
+                            self.assertEqual(
+                                text.count("Locks: unavailable (legacy record)"), 3
+                            )
+                            self.assertNotIn("topology", text)
+                            self.assertNotIn("inclusion=", text)
+                            self.assertNotIn("model=planner", text)
+                            self.assertNotIn("thinking=planner", text)
+                            self.assertNotIn("scopes", status.data["planning"])
+                            self.assertNotIn("locks", snapshot["planning"])
+                        self.assertEqual(text.count("source=configured-fallback"), 3)
+                        self.assertNotIn("RETAINED_PRIVATE_TASK", text)
         self.assertEqual((code, stderr), (0, ""), raw)
         self.assertEqual(manifest["version"], 8)
         self.assertEqual(manifest["planning"], envelope["data"]["planning"])
         self.assertEqual(loaded["planning"], manifest["planning"])
         supervisor = ORCHESTRATOR.public_supervisor_run(coordination, loaded)
         self.assertEqual(supervisor["planning"], manifest["planning"])
+        self.assertEqual(supervisor["planning"]["scopes"], ["topology"])
+        self.assertEqual(supervisor["planning"]["locks"], record["locks"])
         self.assertEqual(manifest["planning"]["status"], "accepted")
         self.assertNotIn("RETAINED_PRIVATE_TASK", json.dumps(manifest))
         self.assertNotIn("RETAINED_PRIVATE_TASK", raw)
@@ -403,6 +743,17 @@ class PlanningAdmissionTests(JsonCliFixture):
                     "--dry-run",
                 ]
             )
+            output = io.StringIO()
+            ORCHESTRATOR.JSON_MODE = False
+            with redirect_stdout(output):
+                terminal_planning.terminal_dynamic_start(run.call_args.args[0])
+        text = output.getvalue()
+        self.assertIn("Planning scopes: unavailable (legacy record)", text)
+        self.assertIn("Locks: unavailable (legacy record)", text)
+        self.assertIn("decision source=unavailable", text)
+        self.assertNotIn("decision source=legacy", text)
+        self.assertNotIn("topology", text)
+        self.assertNotIn("PRIVATE_TERMINAL_TASK", text)
         self.assertEqual((code, stderr), (0, ""), raw)
         self.assertEqual(envelope["data"], expected)
         request = run.call_args.args[2]

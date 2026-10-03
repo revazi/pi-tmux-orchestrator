@@ -4,6 +4,11 @@ All notable changes to this project are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- Added independently selectable dynamic `topology`, `models`, and `thinking` scopes across the Pi model tool, seven-choice TUI form, and terminal CLI, with effective-policy fixed-axis locks, equivalent bounded Jev/Pi questions, one separately confirmed call, and unchanged final launch confirmation. Omitted scopes preserve explicit all-axis `dynamicPlan=true` compatibility; static defaults are unchanged.
+- Added body-free planning-v3 scope/lock provenance and admission bindings, scope-aware confirmations/acknowledgement/retained reads, and model-free combination, precedence, cancellation, stale-preview, and no-launch coverage. Existing planning-v1/v2 reads and v2 all-axis admission remain supported; missing retained scope/lock metadata is labeled legacy/unavailable, not inferred as planner authority.
+
 ## 0.11.1 - 2026-10-02
 
 ### Added
