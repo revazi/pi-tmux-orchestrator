@@ -69,6 +69,9 @@ async function workerHarness(t, mode) {
   const server = net.createServer((connection) => {
     peer = connection;
     let buffer = Buffer.alloc(0);
+    connection.on("error", (error) => {
+      if (error.code !== "ECONNRESET") server.emit("error", error);
+    });
     connection.on("data", (chunk) => {
       buffer = Buffer.concat([buffer, chunk]);
       while (buffer.length >= 4 && buffer.length >= buffer.readUInt32BE(0) + 4) {
