@@ -12,6 +12,7 @@ from .broker_store import connect_broker_database
 from .constants import BROKER_PROTOCOL_VERSION, RPC_TOKEN_PATTERN
 from .models import OrchestrationError
 from .protocol import encode_frame
+from .worker_attention import assignment_attention_metadata
 
 
 @dataclass(eq=False)
@@ -67,7 +68,11 @@ class BrokerObserverSupport:
                 ]
             )
             roles = [
-                {"role": row["role"], "state": row["state"]}
+                {
+                    "role": row["role"],
+                    "state": row["state"],
+                    "assignment": assignment_attention_metadata(database, row["role"]),
+                }
                 for row in database.execute(
                     "SELECT role,state FROM roles ORDER BY role"
                 )

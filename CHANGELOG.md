@@ -6,6 +6,7 @@ All notable changes to this project are documented here.
 
 ### Added
 
+- Added strict structured worker attention with bounded reasons and live-parent-only summary/question notifications, body-free assignment/attempt/settlement metadata, and one private report-recovery reminder with at most one additional provider request across shared TUI/RPC workers. Recovery/replay/restart cannot reset the allowance; attention or a second unreported settlement becomes actionable without fabricated reports or weakened exact-once acceptance. Acknowledgement or a reminder is not task completion.
 - Added independently selectable dynamic `topology`, `models`, and `thinking` scopes across the Pi model tool, seven-choice TUI form, and terminal CLI, with effective-policy fixed-axis locks, equivalent bounded Jev/Pi questions, one separately confirmed call, and unchanged final launch confirmation. Omitted scopes preserve explicit all-axis `dynamicPlan=true` compatibility; static defaults are unchanged.
 - Added body-free planning-v3 scope/lock provenance and admission bindings, scope-aware confirmations/acknowledgement/retained reads, and model-free combination, precedence, cancellation, stale-preview, and no-launch coverage. Existing planning-v1/v2 reads and v2 all-axis admission remain supported; missing retained scope/lock metadata is labeled legacy/unavailable, not inferred as planner authority.
 

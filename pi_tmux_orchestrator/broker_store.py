@@ -38,7 +38,7 @@ from .storage import ensure_private_directory, validate_coordination_directory
 
 from .worker_context import context_policy, retained_context_policy
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 _ACTIVATION_RULE_PATTERN = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
 _SQLITE_BUSY_MARKERS = ("database is locked", "database is busy")
 
@@ -208,6 +208,12 @@ def initialize_broker_database(
                 state TEXT NOT NULL,
                 delivery_id TEXT NOT NULL UNIQUE,
                 boundary_effective INTEGER NOT NULL DEFAULT 0,
+                settlement_count INTEGER NOT NULL DEFAULT 0 CHECK(settlement_count BETWEEN 0 AND 2),
+                last_settlement_id TEXT,
+                reminder_state TEXT NOT NULL DEFAULT 'none' CHECK(reminder_state IN ('none','reserved','used')),
+                report_attempt TEXT NOT NULL DEFAULT 'none' CHECK(report_attempt IN ('none','rejected','attention','accepted')),
+                attention_reason TEXT,
+                last_phase TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
@@ -412,6 +418,41 @@ def prepare_broker_database(coord: Path) -> None:
                 (json.dumps(context_policy({}, set()), separators=(",", ":")),),
             )
             version = 10
+        if version == 10:
+            assignment_columns = {
+                row["name"]
+                for row in database.execute("PRAGMA table_info(assignments)")
+            }
+            for column, declaration in (
+                (
+                    "settlement_count",
+                    "INTEGER NOT NULL DEFAULT 0 CHECK(settlement_count BETWEEN 0 AND 2)",
+                ),
+                ("last_settlement_id", "TEXT"),
+                (
+                    "reminder_state",
+                    "TEXT NOT NULL DEFAULT 'none' CHECK(reminder_state IN ('none','reserved','used'))",
+                ),
+                (
+                    "report_attempt",
+                    "TEXT NOT NULL DEFAULT 'none' CHECK(report_attempt IN ('none','rejected','attention','accepted'))",
+                ),
+                ("attention_reason", "TEXT"),
+                ("last_phase", "TEXT"),
+            ):
+                if column not in assignment_columns:
+                    database.execute(
+                        f"ALTER TABLE assignments ADD COLUMN {column} {declaration}"
+                    )
+            database.execute(
+                "UPDATE assignments SET report_attempt='accepted' WHERE id IN (SELECT assignment_id FROM reports)"
+            )
+            # Legacy assignments have no trustworthy settlement boundary. Never grant
+            # a fresh automatic turn to a run that predates the recovery protocol.
+            database.execute(
+                "UPDATE assignments SET reminder_state='used' WHERE state!='completed'"
+            )
+            version = 11
         if version != SCHEMA_VERSION:
             raise OrchestrationError("Broker database schema is unsupported")
         retained_repair_policy(database)

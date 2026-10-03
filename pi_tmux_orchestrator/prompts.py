@@ -64,8 +64,10 @@ explicitly authorize it; merging always requires owner approval. When no assignm
 is active, end the turn—never sleep or poll files, sockets, tmux, or status.
 
 For an active assignment, call orchestrator_report exactly once as the final action.
+If blocked or unable to report, use orchestrator_attention instead, then stop;
+acknowledgement or a recovery reminder is not task completion.
 Report concise summaries, paths, checks, findings, risks, and limitations; never copy
-diffs or logs. After reporting, stop.
+diffs or logs. After reporting or signalling attention, stop.
 """
 
 

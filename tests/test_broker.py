@@ -502,7 +502,7 @@ class BrokerStoreTests(BrokerFixture):
             report_columns = {
                 row["name"] for row in database.execute("PRAGMA table_info(reports)")
             }
-        self.assertEqual(schema_version, "10")
+        self.assertEqual(schema_version, "11")
         self.assertIn("boundary_effective", assignment_columns)
         self.assertIn("provider_calls", role_columns)
         self.assertIn("activity_sequence", role_columns)
@@ -548,7 +548,7 @@ class BrokerStoreTests(BrokerFixture):
                 database.execute(
                     "SELECT value FROM meta WHERE key='schema_version'"
                 ).fetchone()["value"],
-                "10",
+                "11",
             )
             tables = {
                 row["name"]

@@ -29,7 +29,9 @@ class WorkflowHarness(BrokerWorkflowSupport):
         self.coord = coord
         self.manifest = manifest
         self.custom_contracts = retained_custom_contracts(manifest, coord)
-        self.clients = {role: SimpleNamespace(role=role) for role in manifest["roles"]}
+        self.clients = {
+            role: SimpleNamespace(role=role, generation=1) for role in manifest["roles"]
+        }
         self.recent_reports = []
         self.latest_reports = {}
         self.evidence_reuse = EvidenceReuse(
@@ -40,6 +42,7 @@ class WorkflowHarness(BrokerWorkflowSupport):
         self.reply = mock.AsyncMock()
         self.broadcast = mock.AsyncMock()
         self.broadcast_workflow = mock.AsyncMock()
+        self.broadcast_assignment_state = mock.AsyncMock()
         self.deliver = mock.AsyncMock()
         self.assign = mock.AsyncMock(side_effect=self.create_assignment)
         self._assignment = mock.Mock(return_value="synthetic assignment")
@@ -115,7 +118,7 @@ class WorkflowSupportTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
             for name, value in vars(BrokerWorkflowSupport).items()
             if callable(value)
         ]
-        self.assertEqual(len(methods), 11)
+        self.assertEqual(len(methods), 12)
         for name in methods:
             with self.subTest(method=name):
                 self.assertNotIn(name, vars(Broker))

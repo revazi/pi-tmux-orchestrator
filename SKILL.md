@@ -113,6 +113,25 @@ coalesced run state, including deferred evidence, before accepted
 active-assignment recovery. See
 [references/protocol-v1.md](references/protocol-v1.md).
 
+### Worker attention and report recovery
+
+If unable to report, workers use terminating `orchestrator_attention` with one of
+`clarification`, `blocked`, `tool_failure`, or `report_failure`, then stop without
+waiting or polling. Optional summary/question are each at most 500 Unicode
+characters (no controls), sent only to the live authenticated parent UI. They
+are stripped before worker Pi history and never persisted in parent history,
+SQLite, status, dashboard, Supervisor, manifests, or registries; they cannot be
+replayed. Ask the user if the transient notification was missed.
+
+The broker retains only bounded assignment kind, last activity phase, report
+attempt (`none`, `rejected`, `attention`, `accepted`), reason, settlement count
+(0–2), and consumed reminder state. A settlement without a report or attention
+gets one private system reminder and at most one extra provider request. The
+next settlement becomes `needs_attention`, with no further automatic nudge.
+Reconnect/restart does not reset this allowance; ambiguous scheduling fails
+closed. Acknowledgement or an automatic nudge is not completion. Only an accepted
+final report satisfies the assignment; guidance must target its waiting owner.
+
 ## Start a grid
 
 Use the extension or a mode-`0600` temporary task file:

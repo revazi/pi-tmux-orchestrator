@@ -42,7 +42,13 @@ function parentStateText(state) {
 function roleStateLines(roles) {
   return [...roles]
     .sort((left, right) => left.role.localeCompare(right.role))
-    .map((item) => `- ${item.role}: ${item.state}`);
+    .map((item) => {
+      const assignment = item.assignment;
+      const metadata = assignment
+        ? ` assignment=${assignment.assignment_kind} settlements=${assignment.settlement_count} phase=${assignment.activity_phase ?? "none"} attempt=${assignment.report_attempt} reason=${assignment.attention_reason ?? "none"} reminder=${assignment.reminder_state}`
+        : "";
+      return `- ${item.role}: ${item.state}${metadata}`;
+    });
 }
 
 function workerStatesSection(roleLines) {
@@ -56,7 +62,7 @@ function attentionSection(state, roles) {
     .map((item) => item.role)
     .sort();
   if (!waitingRoles.length) return null;
-  return `Blocking worker assignment(s): ${waitingRoles.join(", ")}. Send guidance only to a listed waiting role. Do not trigger an idle role or the reviewer before the broker creates its assignment.`;
+  return `Blocking worker assignment(s): ${waitingRoles.join(", ")}. Send guidance only to a listed waiting role owning an active assignment. Acknowledgement or an automatic report-recovery reminder is not task completion. Attention prose is live UI-only and cannot be replayed; ask the user if needed. Do not trigger an idle role or the reviewer before the broker creates its assignment.`;
 }
 
 function assignmentLine(item) {

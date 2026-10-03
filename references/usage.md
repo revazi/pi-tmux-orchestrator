@@ -1470,3 +1470,39 @@ restart or stop/recreate the brokered run after inspecting retained state.
 
 Approve each interactive child only after inspection, use saved/global trust
 for RPC presentation, or restart with a separately confirmed `--approve-project`.
+
+## Structured worker attention
+
+`orchestrator_attention` is available to every active worker, including read-only
+custom roles and implementer plan assignments. Its strict object requires
+`reason: clarification|blocked|tool_failure|report_failure` and permits optional
+`summary` and `question`, each nonempty and at most 500 Unicode characters,
+without control characters or unpaired surrogates. Unknown keys and malformed
+values fail closed. This terminates the worker turn but does not complete its
+assignment or substitute for review/report evidence.
+
+Prose appears only as a transient notification in the live authenticated parent
+TUI/RPC UI. It is not a parent model message or tool result and is never replayed.
+The worker bridge strips attention arguments and accompanying assistant
+text/thinking before Pi journal persistence. No prose or raw validation errors
+are written to SQLite, metadata events, status, dashboard, Supervisor,
+manifests, or registries. If the parent was absent or missed the notification,
+use the retained bounded reason/classification and ask the user for clarification.
+
+Parent updates include assignment kind, last activity phase, settlement count
+(saturated at two), attempt classification (`none`, `rejected`, `attention`,
+`accepted`), reason, and reminder state. A worker settling on its active
+assignment without accepted report or explicit attention gets exactly one
+private system reminder, and the bridge gates at most one additional provider
+request, including retries. The next settlement becomes actionable
+`needs_attention`; it never generates another automatic reminder or a fabricated
+report. Reconnect, worker restart, broker restart, replay, duplicate messages,
+and stale assignment/generation cannot replenish the allowance. Interrupted
+reminder scheduling is conservatively actionable rather than silently retried.
+Legacy active assignments migrate without granting an automatic recovery turn.
+
+Acknowledgement or an automatic nudge is **not task completion**. Use `/or-send`
+or the model tool only for the waiting role owning the active assignment, not an
+idle role or an unassigned reviewer. Explicit authenticated guidance resumes that
+owner, without resetting its automatic nudge allowance. A later valid report
+remains subject to exact-once broker acceptance and normal mandatory review.

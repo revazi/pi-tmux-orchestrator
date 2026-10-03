@@ -42,6 +42,17 @@ The dashboard supports arrows or `j`/`k`, Enter to attach/watch, `d` for doctor,
 
 Tmux hosts panes; an authenticated local broker transports typed workflow reports. Ambiguous delivery fails closed rather than blindly replaying work. Worker prompts and project payloads are not retained in broker metadata. Stop and start actions require confirmation; review authority cannot be removed.
 
+Workers may end a blocked assignment with typed `orchestrator_attention`
+(`clarification`, `blocked`, `tool_failure`, or `report_failure`). Optional summary
+and question are bounded, live-parent UI-only, never stored or replayed. Parent
+updates retain only assignment/attempt/settlement metadata. An unreported
+settlement gets one private system reminder and at most one extra provider
+request; a second settlement becomes actionable `needs_attention`. Reconnect or
+restart never renews that allowance. Acknowledgement or a reminder is **not task
+completion**; only an accepted final report satisfies the assignment. Send
+follow-up only to the waiting role owning it. See the [protocol](references/protocol-v1.md#worker-attention-and-report-recovery).
+
+
 Runs can select exact role models and thinking, single/phased flow, optional built-in specialists, budgets, reviewed skills, and worker-context policy. Model-guided planning is opt-in and separately confirmed. Details and strict user-global configuration examples are in the [usage guide](references/usage.md); protocol and custom specialist details are in [protocol](references/protocol-v1.md) and [custom roles](references/custom-roles.md).
 
 ## Upgrade to 0.11.1

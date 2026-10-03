@@ -34,6 +34,7 @@ EXPECTED_FILES=(
   extensions/orchestrator-parent-protocol.js
   extensions/orchestrator-worker.js
   extensions/orchestrator-worker-context.js
+  extensions/orchestrator-worker-attention.js
   extensions/orchestrator-worker-protocol.js
   extensions/orchestrator-worker-roles.js
   extensions/orchestrator-role-metadata.js
@@ -49,6 +50,8 @@ EXPECTED_FILES=(
   pi_tmux_orchestrator/broker_observers.py
   pi_tmux_orchestrator/broker_store.py
   pi_tmux_orchestrator/broker_workflow.py
+  pi_tmux_orchestrator/broker_attention.py
+  pi_tmux_orchestrator/worker_attention.py
   pi_tmux_orchestrator/budgeting.py
   pi_tmux_orchestrator/cli.py
   pi_tmux_orchestrator/commands.py

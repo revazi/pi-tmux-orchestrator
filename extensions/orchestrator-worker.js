@@ -1,4 +1,8 @@
 import net from "node:net";
+import {
+  ATTENTION_ENTRY, attentionParameters, redactAttentionMessage,
+  REPORT_REMINDER, restoreAttentionState, validReminder,
+} from "./orchestrator-worker-attention.js";
 
 import {
   BOUNDARY_ENTRY,
@@ -96,6 +100,13 @@ export default function orchestratorWorker(pi) {
   let normalTools = [];
   let lastProgressAt = 0;
   let lastProgressPhase;
+  let attentionState = { recovery: false, reminderSeen: false, settlement: undefined };
+  let reminderPending = false;
+  let runAssignmentId;
+  let runSettled = false;
+  let guidanceEpoch = 0;
+  let attentionFinalAssignmentId;
+  const privateAttention = new Map();
 
   function applyActiveToolPolicy() {
     pi.setActiveTools(customRoleTools(ROLE, assignmentToolNames(normalTools, ROLE, activeAssignment?.kind)));
@@ -109,6 +120,7 @@ export default function orchestratorWorker(pi) {
     assignmentIds.clear();
     for (const assignmentId of restored.assignmentIds) assignmentIds.add(assignmentId);
     activeAssignment = restored.activeAssignment;
+    attentionState = restoreAttentionState(ctx.sessionManager.getEntries(), activeAssignment?.id);
     guardrailState = restoreGuardrailState(
       ctx.sessionManager.getEntries(), activeAssignment?.id,
     );
@@ -169,7 +181,7 @@ export default function orchestratorWorker(pi) {
   }
 
   function lifecycle(state, ctx, includeUsage = false) {
-    const value = message("lifecycle", { state, usage: includeUsage ? totalUsage(ctx) : null });
+    const value = message("lifecycle", { state, assignment_id: activeAssignment?.id ?? null, usage: includeUsage ? totalUsage(ctx) : null });
     brokerRequest(value).catch(() => {});
   }
 
@@ -199,10 +211,20 @@ export default function orchestratorWorker(pi) {
     }
     const duplicate = delivered.has(value.id);
     if (duplicate) {
+      if (value.type === "assignment" && value.assignment_id === activeAssignment?.id && value.recovery_waiting === true) {
+        attentionState.recovery = true;
+        attentionState.reminderSeen = true;
+        reminderPending = false;
+        recordAttentionState({ recovery: true, reminder_seen: true });
+      }
       acknowledge(value.id, "duplicate");
       return;
     }
     const isAssignment = value.type === "assignment";
+    if (deliveryHasStaleOwner(value)) {
+      acknowledge(value.id, "uncertain");
+      return;
+    }
     if (isAssignment) assertCustomAssignment(ROLE, reportRole, value.kind);
     const details = {
       delivery_id: value.id,
@@ -215,6 +237,15 @@ export default function orchestratorWorker(pi) {
     const usageBaseline = assignmentUsageBaseline(
       isAssignment, value, activeAssignment, context,
     );
+    // Bind state/tool/recovery policy before Pi can schedule a triggered turn.
+    if (isAssignment) activateAssignment(value, usageBaseline);
+    else if (value.kind === "operator_message" && value.assignment_id === activeAssignment?.id) {
+      guidanceEpoch += 1;
+      attentionFinalAssignmentId = undefined;
+      attentionState.recovery = false;
+      reminderPending = false;
+      recordAttentionState({ recovery: false });
+    }
     pi.sendMessage(
       { customType: MESSAGE_TYPE, content: value.content, display: true, details },
       deliveryOptions(value.trigger === true),
@@ -231,21 +262,30 @@ export default function orchestratorWorker(pi) {
     }
     pi.appendEntry(DELIVERY_ENTRY, details);
     delivered.add(value.id);
-    if (isAssignment) {
-      guardrailState = nextAssignmentGuardrailState(
-        guardrailState, activeAssignment, value.assignment_id,
-      );
-      activeAssignment = {
-        id: value.assignment_id,
-        round: value.round,
-        kind: value.kind,
-        usageBaseline,
-      };
-      lastProgressAt = 0;
-      lastProgressPhase = undefined;
-      applyActiveToolPolicy();
-    }
     acknowledge(value.id, "accepted");
+  }
+
+  function deliveryHasStaleOwner(value) {
+    if (value.type === "assignment") {
+      return assignmentIds.has(value.assignment_id) && activeAssignment?.id !== value.assignment_id;
+    }
+    return value.kind === "operator_message" && value.trigger === true
+      && (!activeAssignment || value.assignment_id !== activeAssignment.id);
+  }
+
+  function activateAssignment(value, usageBaseline) {
+    guardrailState = nextAssignmentGuardrailState(guardrailState, activeAssignment, value.assignment_id);
+    activeAssignment = { id: value.assignment_id, round: value.round, kind: value.kind, usageBaseline };
+    attentionFinalAssignmentId = undefined;
+    attentionState = restoreAttentionState(context.sessionManager.getEntries(), activeAssignment.id);
+    if (value.recovery_waiting === true) {
+      attentionState.recovery = true;
+      attentionState.reminderSeen = true;
+      recordAttentionState({ recovery: true, reminder_seen: true });
+    }
+    lastProgressAt = 0;
+    lastProgressPhase = undefined;
+    applyActiveToolPolicy();
   }
 
   function acceptResponse(value) {
@@ -272,6 +312,8 @@ export default function orchestratorWorker(pi) {
     ["assignment", acceptDelivery],
     ["context", acceptDelivery],
     ["abort", acceptAbort],
+    ["report_reminder", acceptReminder],
+    ["assignment_closed", acceptClosedAssignment],
   ]);
 
   function handle(value) {
@@ -308,6 +350,7 @@ export default function orchestratorWorker(pi) {
       try {
         await brokerRequest(message("hello", { generation: GENERATION }));
         lifecycle(context?.isIdle() ? "idle" : "active", context, true);
+        if (attentionState.settlement && activeAssignment) submitSettlement();
       } catch {
         socket.destroy();
       }
@@ -326,13 +369,78 @@ export default function orchestratorWorker(pi) {
     });
   }
 
+  function acceptClosedAssignment(value) {
+    if (!value || Object.keys(value).sort().join(",") !== "assignment_id,report_id,type,version"
+      || typeof value.report_id !== "string" || !/^[a-f0-9]{32}$/.test(value.report_id)
+      || value.assignment_id !== activeAssignment?.id) return;
+    // An accepted report whose response was lost is completion metadata, not a
+    // synthesized report. Do not clear a newer assignment or rerun provider work.
+    pi.appendEntry(DELIVERY_ENTRY, { kind: "report", assignment_id: value.assignment_id, report_id: value.report_id });
+    activeAssignment = undefined;
+    guardrailState = emptyGuardrailState();
+    attentionState = { recovery: false, reminderSeen: false, settlement: undefined };
+    applyActiveToolPolicy();
+  }
+
+  function recordAttentionState(data) {
+    if (!activeAssignment) return;
+    pi.appendEntry(ATTENTION_ENTRY, { assignment_id: activeAssignment.id, ...data });
+  }
+
+  function acceptReminder(value) {
+    if (!validReminder(value, activeAssignment?.id) || attentionState.recovery || attentionState.reminderSeen) return;
+    attentionState.recovery = true;
+    attentionState.reminderSeen = true;
+    reminderPending = true;
+    recordAttentionState({ recovery: true, reminder_seen: true }); // journal before scheduling, never replay
+    pi.sendMessage({ customType: MESSAGE_TYPE, content: "Report recovery: one bounded turn.", display: false,
+      details: { kind: "report_reminder", assignment_id: activeAssignment.id } }, deliveryOptions(true));
+  }
+
+  async function submitSettlement() {
+    if (!activeAssignment || !attentionState.settlement) return;
+    const assignmentId = activeAssignment.id;
+    const settlement = attentionState.settlement;
+    try {
+      await brokerRequest(message("settlement", { assignment_id: assignmentId, id: settlement }));
+      if (activeAssignment?.id === assignmentId && attentionState.settlement === settlement) {
+        attentionState.settlement = undefined;
+        recordAttentionState({ settlement: null });
+      }
+    } catch { /* stable identity is retried only on reconnect */ }
+  }
+
+  pi.registerTool({
+    name: "orchestrator_attention",
+    label: "Orchestration Attention",
+    description: "Signal clarification, a blocker, tool failure, or report failure for the active assignment, then end the turn. Optional prose goes only to the live parent UI, never retained or replayed. This is not task completion.",
+    promptGuidelines: ["Use orchestrator_attention when you cannot submit a final report. End the turn and do not wait or poll. Keep summary/question concise and free of credentials or provider payloads."],
+    parameters: attentionParameters,
+    async execute(toolCallId, _input) {
+      if (!activeAssignment) throw new Error("no_active_orchestration_assignment");
+      const attention = privateAttention.get(toolCallId);
+      privateAttention.delete(toolCallId);
+      if (!attention) throw new Error("invalid_worker_attention");
+      const assignment = activeAssignment;
+      const epoch = guidanceEpoch;
+      await brokerRequest(message("attention", { assignment_id: assignment.id, attention }));
+      if (activeAssignment?.id === assignment.id && guidanceEpoch === epoch) {
+        attentionState.recovery = true;
+        attentionFinalAssignmentId = assignment.id;
+        recordAttentionState({ recovery: true });
+      }
+      return { content: [{ type: "text", text: "Attention acknowledged, not task completion. End this turn; do not wait or poll." }],
+        details: { reason: attention.reason, assignment_id: assignment.id }, terminate: true };
+    },
+  });
+
   pi.registerTool({
     name: "orchestrator_report",
     label: "Orchestration Report",
     description: "Submit the final bounded structured result for the active assignment. This must be the final action of the assignment and ends the turn.",
     promptSnippet: "Submit a final structured orchestration result and end the assignment",
     promptGuidelines: [
-      "Use orchestrator_report exactly once as the final action for every active orchestration assignment.",
+      "Use orchestrator_report exactly once as the final action for a completed assignment; if unable to report, use orchestrator_attention instead and stop.",
       ...(ROLE === "implementer" ? ["For a plan assignment, report only relevant paths/symbols, intended changes, required checks, risks, and open questions; never claim changes, executed checks, findings, approval, or a verdict."] : []),
       "Report concise summaries, paths, checks, findings, risks, and limitations; never copy diffs, logs, prompts, credentials, provider bodies, or private payloads.",
       "After reporting, end the turn. Never wait, sleep, or poll for coordination work.",
@@ -384,6 +492,9 @@ export default function orchestratorWorker(pi) {
   }
 
   function onToolCall(event, ctx) {
+    if (activeAssignment?.id === attentionFinalAssignmentId && attentionFinalAssignmentId) {
+      return { block: true, terminate: true, reason: "Attention is acknowledged, not task completion. End the turn and await explicit parent guidance without polling." };
+    }
     const customDecision = customToolDecision(ROLE, event.toolName);
     if (customDecision) return customDecision;
     recordImmediateFollowup(event);
@@ -446,6 +557,13 @@ export default function orchestratorWorker(pi) {
   }
 
   async function onToolResult(event) {
+    if (["orchestrator_report", "orchestrator_attention"].includes(event.toolName) && event.isError) {
+      if (event.toolName === "orchestrator_report" && activeAssignment) {
+        brokerRequest(message("rejected_report", { assignment_id: activeAssignment.id })).catch(() => {});
+      }
+      privateAttention.delete(event.toolCallId);
+      return { content: [{ type: "text", text: "Orchestration signal rejected. Use the declared schema or signal attention; do not copy validation errors." }], details: {} };
+    }
     const inputPolicy = toolInputPolicies.get(event.toolCallId);
     toolInputPolicies.delete(event.toolCallId);
     const limited = await applyToolResultPolicy(event, inputPolicy);
@@ -472,12 +590,42 @@ export default function orchestratorWorker(pi) {
     if (event.message?.role === "assistant") progress("streaming", ctx);
   });
   pi.on("message_end", (event, ctx) => {
-    if (event.message?.role === "assistant") {
-      progress("streaming", ctx, { includeUsage: true, force: true });
-    }
+    if (event.message?.role === "assistant") progress("streaming", ctx, { includeUsage: true, force: true });
+    return redactAttentionMessage(event.message, (id, attention) => {
+      if (privateAttention.size < 64) privateAttention.set(id, attention);
+    });
   });
-  pi.on("agent_start", (_event, ctx) => lifecycle("active", ctx, true));
-  pi.on("agent_settled", (_event, ctx) => lifecycle(activeAssignment ? "waiting" : "idle", ctx, true));
+  pi.on("before_agent_start", (event) => {
+    if (!reminderPending) return undefined;
+    reminderPending = false;
+    return { systemPrompt: `${event.systemPrompt}\n\n${REPORT_REMINDER}` };
+  });
+  pi.on("before_provider_request", async (_event, ctx) => {
+    if (!activeAssignment || !attentionState.recovery) return undefined;
+    try {
+      await brokerRequest(message("recovery_turn", { assignment_id: activeAssignment.id }));
+    } catch {
+      ctx.abort();
+      throw new Error("orchestration_recovery_turn_exhausted");
+    }
+    return undefined;
+  });
+  pi.on("agent_start", (_event, ctx) => {
+    runAssignmentId = activeAssignment?.id;
+    runSettled = false;
+    lifecycle("active", ctx, true);
+  });
+  pi.on("agent_settled", (_event, ctx) => {
+    privateAttention.clear();
+    if (activeAssignment && runAssignmentId === activeAssignment.id && !runSettled) {
+      runSettled = true;
+      if (!attentionState.settlement) {
+        attentionState.settlement = message("settlement").id;
+        recordAttentionState({ settlement: attentionState.settlement });
+      }
+      void submitSettlement();
+    } else if (!activeAssignment) lifecycle("idle", ctx, true);
+  });
   pi.on("session_shutdown", () => {
     stopping = true;
     if (reconnectTimer) clearTimeout(reconnectTimer);

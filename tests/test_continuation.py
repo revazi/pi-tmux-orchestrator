@@ -58,7 +58,7 @@ class RepairPolicyTests(BrokerFixture):
                 database.execute(
                     "SELECT value FROM meta WHERE key='schema_version'"
                 ).fetchone()[0],
-                "10",
+                "11",
             )
             self.assertEqual(retained_repair_policy(database), repair_policy(None))
         for policy in (

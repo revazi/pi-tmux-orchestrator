@@ -83,6 +83,7 @@ export async function attachParentObserver(pi, envelope, observer, onStop, optio
   const reports = [];
   const reportIds = new Set();
   const roleStates = new Map();
+  const roleAssignments = new Map();
   const assignments = new Map(identity.assignments.map((item) => [item.name, item]));
   let workflowState = "starting";
   let round = 1;
@@ -128,7 +129,7 @@ export async function attachParentObserver(pi, envelope, observer, onStop, optio
   observer.stop = stop;
 
   function currentRoles() {
-    return [...roleStates].map(([role, state]) => ({ role, state }));
+    return [...roleStates].map(([role, state]) => ({ role, state, assignment: roleAssignments.get(role) }));
   }
 
   function currentAssignments() {
@@ -230,6 +231,10 @@ export async function attachParentObserver(pi, envelope, observer, onStop, optio
     invalidUnless(reports.length < 100, "too_many_observer_reports");
     reportIds.add(value.id);
     reports.push(value);
+    const assignment = roleAssignments.get(value.role);
+    if (assignment?.assignment_id === value.assignment_id) {
+      roleAssignments.set(value.role, { ...assignment, report_attempt: "accepted" });
+    }
     if (snapshotSeen && value.authoritative_assignment) {
       assignments.set(value.role, value.authoritative_assignment);
     }
@@ -272,7 +277,10 @@ export async function attachParentObserver(pi, envelope, observer, onStop, optio
   function acceptSnapshot(value) {
     retryCount = 0;
     const firstSnapshot = !snapshotSeen;
-    for (const item of value.roles) roleStates.set(item.role, item.state);
+    for (const item of value.roles) {
+      roleStates.set(item.role, item.state);
+      roleAssignments.set(item.role, item.assignment);
+    }
     snapshotSeen = true;
     const replayLost = snapshotReplayLost(value);
     if (firstSnapshot) acceptFirstSnapshot(value, replayLost);
@@ -296,10 +304,25 @@ export async function attachParentObserver(pi, envelope, observer, onStop, optio
     settleReady();
   }
 
+  function acceptAssignmentState(value) {
+    roleAssignments.set(value.role, value.assignment);
+    roleStates.set(value.role, value.state);
+    if (snapshotSeen) notifyProgress({ kind: "lifecycle", role: value.role, workerState: value.state });
+  }
+
+  function acceptAttention(value) {
+    if (roleAssignments.get(value.role)?.assignment_id !== value.assignment_id) return;
+    // UI notifications are live TUI/RPC transport, not sendMessage/session history.
+    // Do not retain this frame in reports, details, or reconnect buffers.
+    options.onAttention?.(value);
+  }
+
   const frameHandlers = new Map([
     ["report", acceptReport],
     ["snapshot", acceptSnapshot],
     ["lifecycle", acceptLifecycle],
+    ["assignment_state", acceptAssignmentState],
+    ["attention", acceptAttention],
     ["workflow", (value) => acceptWorkflow(value.state, value.round)],
   ]);
 

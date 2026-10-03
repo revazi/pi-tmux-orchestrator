@@ -361,4 +361,15 @@ class BrokerControlSupport:
             body,
             trigger=True,
         )
+        if workflow_state == "needs_attention":
+            database.execute(
+                "UPDATE roles SET state='active',updated_at=? WHERE role=?",
+                (utc_now(), role),
+            )
+            other_waiting = database.execute(
+                "SELECT 1 FROM roles WHERE state='waiting' AND active_assignment_id IS NOT NULL AND role!=?",
+                (role,),
+            ).fetchone()
+            if other_waiting is None:
+                set_meta(database, "workflow_state", "active")
         return None
