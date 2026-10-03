@@ -17,8 +17,15 @@ const { ExtensionRunner } = await import(pathToFileURL(join(piRoot, "dist/core/e
 const { AgentSession } = await import(pathToFileURL(join(piRoot, "dist/core/agent-session.js")));
 const { SessionManager } = await import(pathToFileURL(join(piRoot, "dist/core/session-manager.js")));
 const directory = await mkdtemp(join(tmpdir(), "pi-attention-contract-"));
-const environment = { PI_TMUX_ORCHESTRATOR_ROLE: "implementer", PI_TMUX_ORCHESTRATOR_TOKEN: "a".repeat(32),
-  PI_TMUX_ORCHESTRATOR_SOCKET: join(directory, "unused.sock"), PI_TMUX_ORCHESTRATOR_GENERATION: "1" };
+const environment = {
+  PI_TMUX_ORCHESTRATOR_ROLE: "implementer",
+  PI_TMUX_ORCHESTRATOR_TOKEN: "a".repeat(32),
+  PI_TMUX_ORCHESTRATOR_SOCKET: join(directory, "unused.sock"),
+  PI_TMUX_ORCHESTRATOR_GENERATION: "1",
+  PI_TMUX_ORCHESTRATOR_GUARDRAILS: JSON.stringify({
+    enforcement: "warn-only", warning: {}, hard: {},
+  }),
+};
 const old = Object.fromEntries(Object.keys(environment).map((key) => [key, process.env[key]]));
 Object.assign(process.env, environment);
 try {

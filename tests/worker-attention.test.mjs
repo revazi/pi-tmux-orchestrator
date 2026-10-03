@@ -85,11 +85,18 @@ async function workerHarness(t, mode) {
   });
   server.listen(socketPath);
   await once(server, "listening");
-  const environment = { PI_TMUX_ORCHESTRATOR_ROLE: "implementer", PI_TMUX_ORCHESTRATOR_TOKEN: "b".repeat(32), PI_TMUX_ORCHESTRATOR_SOCKET: socketPath, PI_TMUX_ORCHESTRATOR_GENERATION: "1" };
+  const environment = {
+    PI_TMUX_ORCHESTRATOR_ROLE: "implementer",
+    PI_TMUX_ORCHESTRATOR_TOKEN: "b".repeat(32),
+    PI_TMUX_ORCHESTRATOR_SOCKET: socketPath,
+    PI_TMUX_ORCHESTRATOR_GENERATION: "1",
+    PI_TMUX_ORCHESTRATOR_GUARDRAILS: JSON.stringify({
+      enforcement: "warn-only", warning: {}, hard: {},
+    }),
+  };
   const old = Object.fromEntries(Object.keys(environment).map((key) => [key, process.env[key]]));
   Object.assign(process.env, environment);
   const { default: worker } = await import(`../extensions/orchestrator-worker.js?attention-${mode}-${++harnessSequence}`);
-  for (const [key, value] of Object.entries(old)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
   const hooks = new Map();
   const tools = new Map();
   const entries = [];
@@ -100,7 +107,16 @@ async function workerHarness(t, mode) {
     appendEntry: (customType, data) => entries.push({ type: "custom", customType, data }), sendMessage: (value) => messages.push(value) };
   const ctx = { mode, sessionManager: { getEntries: () => entries, getBranch: () => [] }, getContextUsage: () => undefined, isIdle: () => true, abort: () => aborts.push(true) };
   worker(pi);
-  t.after(async () => { hooks.get("session_shutdown")(); peer?.destroy(); await new Promise((resolve) => server.close(resolve)); await rm(directory, { recursive: true, force: true }); });
+  t.after(async () => {
+    hooks.get("session_shutdown")();
+    peer?.destroy();
+    await new Promise((resolve) => server.close(resolve));
+    await rm(directory, { recursive: true, force: true });
+    for (const [key, value] of Object.entries(old)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
   const hello = once(incoming, "hello", { signal: AbortSignal.timeout(3000) });
   hooks.get("session_start")({}, ctx);
   await hello;
