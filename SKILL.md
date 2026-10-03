@@ -131,6 +131,8 @@ next settlement becomes `needs_attention`, with no further automatic nudge.
 Reconnect/restart does not reset this allowance; ambiguous scheduling fails
 closed. Acknowledgement or an automatic nudge is not completion. Only an accepted
 final report satisfies the assignment; guidance must target its waiting owner.
+Explicit resume authority survives reconnect/restart without rearming the
+one-turn automatic recovery gate; old pre-guidance signals cannot revoke it.
 
 ## Start a grid
 

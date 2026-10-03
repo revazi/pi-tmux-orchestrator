@@ -1455,11 +1455,12 @@ using model turns. A transition in an unprovable window remains `uncertain`.
 ### Worker is `waiting`
 
 Pi settled while an assignment remained open, usually because it did not call
-`orchestrator_report`. The broker marks the workflow `needs_attention` and an
-attached parent Pi receives an event-driven update that identifies the waiting
-role. Send one focused reminder to that role or restart it; sends to idle roles
-without the blocking assignment are rejected. The broker does not run an
-unlimited reminder loop.
+`orchestrator_report`. Without explicit attention, the first settlement receives
+one bounded automatic report-recovery turn. Explicit attention, interrupted
+recovery, or a second unreported settlement marks `needs_attention`; an attached
+parent receives an event-driven update identifying the waiting role. Send focused
+guidance to that owner or restart it; sends to idle roles without the blocking
+assignment are rejected. Neither acknowledgement nor a nudge is task completion.
 
 ### Broker pane exited
 
@@ -1504,5 +1505,8 @@ Legacy active assignments migrate without granting an automatic recovery turn.
 Acknowledgement or an automatic nudge is **not task completion**. Use `/or-send`
 or the model tool only for the waiting role owning the active assignment, not an
 idle role or an unassigned reviewer. Explicit authenticated guidance resumes that
-owner, without resetting its automatic nudge allowance. A later valid report
+owner, without resetting its automatic nudge allowance. That explicit resume
+authority survives reconnect/restart; old pre-guidance attention, settlement,
+reminder, or recovery-claim replays cannot rearm the automatic gate or revoke the
+resumed turn. A later valid report
 remains subject to exact-once broker acceptance and normal mandatory review.

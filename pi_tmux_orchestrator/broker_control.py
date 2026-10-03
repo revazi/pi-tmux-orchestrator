@@ -354,12 +354,21 @@ class BrokerControlSupport:
                 status="active",
             )
             return repair_round
+        # Explicit guidance is separate from the one-shot automatic allowance.
+        # Keep its body-free epoch through reconnect/handover; old signal replays
+        # must not revoke this authorization or publish their prose again.
         await self.deliver(
             role,
             "operator_message",
             current_round,
             body,
             trigger=True,
+            resume_id=command_id,
+        )
+        database.execute(
+            "UPDATE assignments SET resume_id=?,resume_authorized=1 "
+            "WHERE id=(SELECT active_assignment_id FROM roles WHERE role=?)",
+            (command_id, role),
         )
         if workflow_state == "needs_attention":
             database.execute(

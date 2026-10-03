@@ -20,14 +20,22 @@ if TYPE_CHECKING:
 
 class BrokerAttentionSupport:
     def _active_attention_assignment(
-        self, database: Any, client: Client, assignment_id: str
+        self,
+        database: Any,
+        client: Client,
+        assignment_id: str,
+        resume_id: str | None = None,
     ) -> Any:
         row = database.execute(
             "SELECT a.*,r.generation FROM assignments a JOIN roles r ON r.active_assignment_id=a.id "
             "WHERE a.id=? AND r.role=? AND a.state IN ('accepted','delivering')",
             (assignment_id, client.role),
         ).fetchone()
-        if row is None or row["generation"] != client.generation:
+        if (
+            row is None
+            or row["generation"] != client.generation
+            or row["resume_id"] != resume_id
+        ):
             raise OrchestrationError(
                 "Assignment is not active for this worker", "conflict"
             )
@@ -36,6 +44,10 @@ class BrokerAttentionSupport:
     def _attention_waiting(
         self, database: Any, client: Client, assignment: Any
     ) -> None:
+        database.execute(
+            "UPDATE assignments SET resume_authorized=0 WHERE id=?",
+            (assignment["id"],),
+        )
         database.execute(
             "UPDATE roles SET state='waiting',activity=NULL,activity_at=NULL,updated_at=? WHERE role=?",
             (utc_now(), client.role),
@@ -76,7 +88,7 @@ class BrokerAttentionSupport:
     ) -> None:
         with connect_broker_database(self.coord) as database:
             assignment = self._active_attention_assignment(
-                database, client, message["assignment_id"]
+                database, client, message["assignment_id"], message.get("resume_id")
             )
             if assignment["report_attempt"] == "none":
                 database.execute(
@@ -90,9 +102,12 @@ class BrokerAttentionSupport:
         attention = validate_attention(message["attention"])
         with connect_broker_database(self.coord) as database:
             assignment = self._active_attention_assignment(
-                database, client, message["assignment_id"]
+                database, client, message["assignment_id"], message.get("resume_id")
             )
-            duplicate = assignment["report_attempt"] == "attention"
+            duplicate = (
+                assignment["report_attempt"] == "attention"
+                and not assignment["resume_authorized"]
+            )
             if not duplicate:
                 database.execute(
                     "UPDATE assignments SET report_attempt='attention',attention_reason=? WHERE id=?",
@@ -122,7 +137,7 @@ class BrokerAttentionSupport:
         actionable = False
         with connect_broker_database(self.coord) as database:
             assignment = self._active_attention_assignment(
-                database, client, message["assignment_id"]
+                database, client, message["assignment_id"], message.get("resume_id")
             )
             duplicate = assignment["last_settlement_id"] == message["id"]
             if not duplicate:
@@ -138,7 +153,7 @@ class BrokerAttentionSupport:
                 )
                 if nudge:
                     database.execute(
-                        "UPDATE assignments SET reminder_state='reserved' WHERE id=?",
+                        "UPDATE assignments SET reminder_state='reserved',resume_authorized=0 WHERE id=?",
                         (assignment["id"],),
                     )
                     database.execute(
@@ -169,6 +184,7 @@ class BrokerAttentionSupport:
                         "type": "report_reminder",
                         "id": assignment["id"],
                         "assignment_id": assignment["id"],
+                        "resume_id": assignment["resume_id"],
                     },
                 )
             except Exception:
@@ -191,7 +207,7 @@ class BrokerAttentionSupport:
     ) -> None:
         with connect_broker_database(self.coord) as database:
             assignment = self._active_attention_assignment(
-                database, client, message["assignment_id"]
+                database, client, message["assignment_id"], message.get("resume_id")
             )
             allowed = (
                 assignment["reminder_state"] == "reserved"

@@ -33,9 +33,15 @@ test("attention is strict, Unicode-bounded, redacted before Pi history, and rest
   assert.ok(!JSON.stringify(replacement).includes("PRIVATE_CANARY"));
   const restored = restoreAttentionState([{ type: "custom", customType: ATTENTION_ENTRY, data: { assignment_id: assignmentId, recovery: true, settlement: "b".repeat(32) } },
     { type: "custom", customType: ATTENTION_ENTRY, data: { assignment_id: "f".repeat(32), recovery: false } }], assignmentId);
-  assert.deepEqual(restored, { recovery: true, reminderSeen: false, settlement: "b".repeat(32) });
+  assert.deepEqual(restored, { recovery: true, reminderSeen: false, settlement: "b".repeat(32), resumeId: null });
   assert.equal(validReminder({ version: 1, type: "report_reminder", id: assignmentId, assignment_id: assignmentId }, assignmentId), true);
   assert.equal(validReminder({ version: 1, type: "report_reminder", id: assignmentId, assignment_id: assignmentId, text: "private" }, assignmentId), false);
+  assert.equal(validReminder({ version: 1, type: "report_reminder", id: assignmentId, assignment_id: assignmentId }, assignmentId, "c".repeat(32)), false);
+  assert.deepEqual(restoreAttentionState([{ type: "custom", customType: ATTENTION_ENTRY }], undefined),
+    { recovery: false, reminderSeen: false, settlement: undefined, resumeId: null });
+  const bounded = restoreAttentionState([{ type: "custom", customType: ATTENTION_ENTRY, data: { assignment_id: assignmentId,
+    recovery: "private", reminder_seen: "private", resume_id: "PRIVATE_CANARY", settlement: "PRIVATE_CANARY" } }], assignmentId);
+  assert.ok(!JSON.stringify(bounded).includes("PRIVATE_CANARY"));
 });
 
 test("live parent frames reject malformed/private metadata and parent update is prose-free", () => {
@@ -101,7 +107,20 @@ async function workerHarness(t, mode) {
   const ack = once(incoming, "ack", { signal: AbortSignal.timeout(3000) });
   peer.write(workerFrame({ version: 1, type: "assignment", id: "c".repeat(32), assignment_id: assignmentId, kind: "implementation", round: 1, content: "synthetic assignment", trigger: true }));
   await ack;
-  return { hooks, tools, entries, messages, frames, incoming, ctx, aborts, send: (value) => peer.write(workerFrame(value)) };
+  return { hooks, tools, entries, messages, frames, incoming, ctx, aborts, send: (value) => peer.write(workerFrame(value)),
+    async reconnect() {
+      const connected = once(incoming, "hello", { signal: AbortSignal.timeout(3000) });
+      peer.destroy();
+      await connected;
+    },
+    async restart() {
+      hooks.get("session_shutdown")();
+      worker(pi); // same retained Pi entries, fresh extension closure
+      const connected = once(incoming, "hello", { signal: AbortSignal.timeout(3000) });
+      hooks.get("session_start")({}, ctx);
+      await connected;
+    },
+  };
 }
 
 for (const mode of ["tui", "rpc"]) {
@@ -136,7 +155,7 @@ for (const mode of ["tui", "rpc"]) {
     assert.equal(h.messages.filter((item) => item.details?.kind === "report_reminder").length, 1);
     assert.ok(!JSON.stringify(h.messages).includes("STALE_GUIDANCE_CANARY"));
     const replacement = h.hooks.get("message_end")({ message: { role: "assistant", content: [{ type: "text", text: "PRIVATE_CANARY" }, { type: "toolCall", id: "attention-call", name: "orchestrator_attention", arguments: { reason: "clarification", question: "PRIVATE_CANARY" } }] } }, h.ctx);
-    const result = await h.tools.get("orchestrator_attention").execute("attention-call", replacement.content[0].arguments);
+    const result = await h.tools.get("orchestrator_attention").execute("attention-call", replacement.message.content[0].arguments);
     assert.equal(result.terminate, true);
     assert.equal(h.hooks.get("tool_call")({ toolName: "read" }, h.ctx).terminate, true);
     assert.ok(!JSON.stringify([replacement, result, h.entries, h.messages]).includes("PRIVATE_CANARY"));
@@ -148,6 +167,59 @@ for (const mode of ["tui", "rpc"]) {
     assert.equal(report.terminate, true);
     await assert.rejects(h.tools.get("orchestrator_report").execute("report-call", { kind: "implementation", summary: "done" }, undefined, undefined, h.ctx), /no_active/);
   });
+}
+
+for (const mode of ["tui", "rpc"]) {
+  for (const cause of ["attention", "used_reminder"]) {
+    test(`${mode} explicit resume after ${cause} survives duplicate assignment, reconnect and worker handover`, async (t) => {
+      const h = await workerHarness(t, mode);
+      h.hooks.get("agent_start")({}, h.ctx);
+      if (cause === "attention") {
+        const replacement = h.hooks.get("message_end")({ message: { role: "assistant", content: [
+          { type: "toolCall", id: "call", name: "orchestrator_attention", arguments: { reason: "blocked", summary: "PRIVATE_CANARY" } },
+        ] } }, h.ctx);
+        await h.tools.get("orchestrator_attention").execute("call", replacement.message.content[0].arguments);
+      } else {
+        const settled = once(h.incoming, "settlement", { signal: AbortSignal.timeout(3000) });
+        h.hooks.get("agent_settled")({}, h.ctx);
+        await settled;
+        const barrier = once(h.incoming, "ack", { signal: AbortSignal.timeout(3000) });
+        h.send({ version: 1, type: "report_reminder", id: assignmentId, assignment_id: assignmentId });
+        h.send({ version: 1, type: "context", id: "d".repeat(32), kind: "baseline", round: 1, content: "barrier", trigger: false });
+        await barrier;
+        h.hooks.get("agent_start")({}, h.ctx);
+        await h.hooks.get("before_provider_request")({}, h.ctx);
+      }
+      const resumeId = "7".repeat(32);
+      const guidance = once(h.incoming, `delivery:${resumeId}`, { signal: AbortSignal.timeout(3000) });
+      h.send({ version: 1, type: "context", id: resumeId, kind: "operator_message", assignment_id: assignmentId,
+        resume_id: resumeId, round: 1, content: "synthetic guidance", trigger: true });
+      await guidance;
+      const settlements = h.frames.filter((frame) => frame.type === "settlement").length;
+      h.hooks.get("agent_settled")({}, h.ctx); // late settlement of the pre-guidance run
+      for (const recovery of ["duplicate", "reconnect", "restart"]) {
+        if (recovery !== "duplicate") await h[recovery]();
+        const deliveryId = recovery === "restart" ? "e".repeat(32) : "c".repeat(32);
+        const ack = once(h.incoming, `delivery:${deliveryId}`, { signal: AbortSignal.timeout(3000) });
+        h.send({ version: 1, type: "report_reminder", id: assignmentId, assignment_id: assignmentId }); // stale epoch
+        h.send({ version: 1, type: "assignment", id: deliveryId, assignment_id: assignmentId, kind: "implementation",
+          round: 1, content: "synthetic assignment", trigger: true, recovery_waiting: false, resume_id: resumeId });
+        await ack;
+        await h.hooks.get("before_provider_request")({}, h.ctx);
+        assert.equal(h.aborts.length, 0);
+        assert.equal(h.frames.filter((frame) => frame.type === "recovery_turn").length, cause === "used_reminder" ? 1 : 0);
+      }
+      assert.equal(h.frames.filter((frame) => frame.type === "settlement").length, settlements);
+      assert.equal(restoreAttentionState(h.entries, assignmentId).recovery, false);
+      assert.equal(restoreAttentionState(h.entries, assignmentId).resumeId, resumeId);
+      assert.ok(!JSON.stringify(h.entries).includes("PRIVATE_CANARY"));
+      h.hooks.get("agent_start")({}, h.ctx);
+      const settled = once(h.incoming, "settlement", { signal: AbortSignal.timeout(3000) });
+      h.hooks.get("agent_settled")({}, h.ctx);
+      assert.equal((await settled)[0].resume_id, resumeId);
+      await h.tools.get("orchestrator_report").execute("report", { kind: "implementation", summary: "done" }, undefined, undefined, h.ctx);
+    });
+  }
 }
 
 test("accepted completion replay clears only its matching assignment without synthesizing a report", async (t) => {

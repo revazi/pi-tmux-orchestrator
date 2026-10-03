@@ -38,7 +38,7 @@ from .storage import ensure_private_directory, validate_coordination_directory
 
 from .worker_context import context_policy, retained_context_policy
 
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 _ACTIVATION_RULE_PATTERN = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
 _SQLITE_BUSY_MARKERS = ("database is locked", "database is busy")
 
@@ -214,6 +214,8 @@ def initialize_broker_database(
                 report_attempt TEXT NOT NULL DEFAULT 'none' CHECK(report_attempt IN ('none','rejected','attention','accepted')),
                 attention_reason TEXT,
                 last_phase TEXT,
+                resume_id TEXT,
+                resume_authorized INTEGER NOT NULL DEFAULT 0 CHECK(resume_authorized IN (0,1)),
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
@@ -453,6 +455,23 @@ def prepare_broker_database(coord: Path) -> None:
                 "UPDATE assignments SET reminder_state='used' WHERE state!='completed'"
             )
             version = 11
+        if version == 11:
+            assignment_columns = {
+                row["name"]
+                for row in database.execute("PRAGMA table_info(assignments)")
+            }
+            for column, declaration in (
+                ("resume_id", "TEXT"),
+                (
+                    "resume_authorized",
+                    "INTEGER NOT NULL DEFAULT 0 CHECK(resume_authorized IN (0,1))",
+                ),
+            ):
+                if column not in assignment_columns:
+                    database.execute(
+                        f"ALTER TABLE assignments ADD COLUMN {column} {declaration}"
+                    )
+            version = 12
         if version != SCHEMA_VERSION:
             raise OrchestrationError("Broker database schema is unsupported")
         retained_repair_policy(database)

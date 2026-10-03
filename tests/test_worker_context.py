@@ -108,7 +108,7 @@ class WorkerContextTests(BrokerFixture):
                 database.execute(
                     "SELECT value FROM meta WHERE key='schema_version'"
                 ).fetchone()[0],
-                "11",
+                "12",
             )
 
     def test_corrupt_or_body_bearing_policy_cannot_reach_worker_launch(self):

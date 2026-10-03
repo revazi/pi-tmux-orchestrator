@@ -464,9 +464,12 @@ def validate_client_message(
             base | {"state", "usage", "assignment_id"},
         )
     elif message_type in {"settlement", "rejected_report", "recovery_turn"}:
-        expected = (base | {"assignment_id"},)
+        expected = (base | {"assignment_id"}, base | {"assignment_id", "resume_id"})
     elif message_type == "attention":
-        expected = (base | {"assignment_id", "attention"},)
+        expected = (
+            base | {"assignment_id", "attention"},
+            base | {"assignment_id", "attention", "resume_id"},
+        )
     elif message_type == "progress":
         expected = (base | {"assignment_id", "phase", "usage"},)
     elif message_type == "guardrail":
@@ -505,6 +508,11 @@ def validate_client_message(
             assignment_id
         ):
             raise OrchestrationError("Assignment ID is invalid", "invalid_protocol")
+    if "resume_id" in value and value["resume_id"] is not None:
+        if not isinstance(value["resume_id"], str) or not RPC_TOKEN_PATTERN.fullmatch(
+            value["resume_id"]
+        ):
+            raise OrchestrationError("Resume ID is invalid", "invalid_protocol")
     if message_type == "attention":
         validate_attention(value["attention"])
     if message_type == "guardrail":

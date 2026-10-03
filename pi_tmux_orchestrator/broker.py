@@ -558,7 +558,7 @@ class Broker(
     async def recover_role(self, client: Client, *, handover: bool = False) -> None:
         with connect_broker_database(self.coord) as database:
             assignment = database.execute(
-                "SELECT id,round,kind,delivery_id,state,reminder_state,report_attempt FROM assignments "
+                "SELECT id,round,kind,delivery_id,state,reminder_state,report_attempt,resume_id,resume_authorized FROM assignments "
                 "WHERE role=? AND state IN ('delivering','accepted','uncertain') "
                 "ORDER BY created_at DESC LIMIT 1",
                 (client.role,),
@@ -661,7 +661,7 @@ class Broker(
                         status="idle",
                     )
             return
-        recovery_waiting = (
+        recovery_waiting = not assignment["resume_authorized"] and (
             assignment["reminder_state"] != "none"
             or assignment["report_attempt"] == "attention"
         )
@@ -697,6 +697,7 @@ class Broker(
                 ),
                 "trigger": not recovery_waiting,
                 "recovery_waiting": recovery_waiting,
+                "resume_id": assignment["resume_id"],
             },
         )
 
@@ -867,7 +868,14 @@ class Broker(
         )
 
     async def deliver(
-        self, role: str, kind: str, round_number: int, content: str, *, trigger: bool
+        self,
+        role: str,
+        kind: str,
+        round_number: int,
+        content: str,
+        *,
+        trigger: bool,
+        resume_id: str | None = None,
     ) -> None:
         if role not in self.clients:
             return
@@ -880,6 +888,7 @@ class Broker(
                 ).fetchone()["active_assignment_id"]
             if assignment_id is not None:
                 binding["assignment_id"] = assignment_id
+                binding["resume_id"] = resume_id
         await self.send(
             self.clients[role],
             {

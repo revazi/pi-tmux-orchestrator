@@ -65,6 +65,8 @@ class AttentionProtocolTests(unittest.TestCase):
             {"assignment_id": None},
             {"raw_args": "private"},
             {"attention": {"reason": False}},
+            {"resume_id": False},
+            {"resume_id": "PRIVATE_CANARY"},
         ):
             with self.assertRaises(OrchestrationError):
                 validate_client_message({**message, **changes})
@@ -258,6 +260,121 @@ class WorkerAttentionTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.broker.reply.call_args.args[2])
         await self.broker.handle_message(self.client, self.message("settlement", "5"))
         self.assertEqual(self.broker.send.await_count, 1)
+
+    async def assert_explicit_resume_survives_recovery(self, command_id):
+        with broker_store.connect_broker_database(self.coord) as database:
+            await self.broker._handle_operator_send(
+                database, "implementer", "synthetic guidance", command_id
+            )
+        self.assertEqual(self.metadata()["resume_id"], command_id)
+        self.assertEqual(self.metadata()["resume_authorized"], 1)
+        recovered = Broker(self.coord, self.manifest)
+        recovered.worker_baselines = {"implementer": "synthetic baseline"}
+        recovered.deliver = mock.AsyncMock()
+        for handover in (False, True, False):
+            with (
+                mock.patch.object(recovered, "send", new=mock.AsyncMock()) as send,
+                mock.patch.object(recovered, "broadcast", new=mock.AsyncMock()),
+            ):
+                await recovered.recover_role(self.client, handover=handover)
+            frame = send.call_args.args[1]
+            self.assertTrue(frame["trigger"])
+            self.assertFalse(frame["recovery_waiting"])
+            self.assertEqual(frame["resume_id"], command_id)
+            self.assertEqual(self.metadata()["resume_authorized"], 1)
+            await self.broker.handle_delivery_ack(
+                self.client,
+                {"id": "9" * 32, "delivery_id": frame["id"], "status": "accepted"},
+            )
+        # All events from before the explicit send must leave its authority intact.
+        for kind, extra in (
+            ("attention", {"attention": {"reason": "blocked"}}),
+            ("settlement", {}),
+            ("rejected_report", {}),
+            ("recovery_turn", {}),
+        ):
+            with self.subTest(kind=kind), self.assertRaises(OrchestrationError):
+                await self.broker.handle_message(
+                    self.client, self.message(kind, **extra)
+                )
+            self.assertEqual(self.metadata()["resume_authorized"], 1)
+        self.assertEqual(self.broker.observer_snapshot()["state"], "active")
+
+    async def test_explicit_resume_after_nudge_survives_reconnect_restart_and_old_replay(
+        self,
+    ):
+        await self.broker.handle_message(self.client, self.message("settlement"))
+        await self.broker.handle_message(
+            self.client, self.message("recovery_turn", "4")
+        )
+        await self.broker.handle_message(self.client, self.message("settlement", "5"))
+        await self.assert_explicit_resume_survives_recovery("6" * 32)
+        await self.broker.handle_message(
+            self.client, self.message("settlement", "7", resume_id="6" * 32)
+        )
+        self.assertEqual(self.metadata()["settlement_count"], 2)
+        self.assertEqual(self.metadata()["resume_authorized"], 0)
+        self.assertEqual(self.metadata()["reminder_state"], "used")
+        self.assertEqual(
+            self.broker.send.await_count, 2
+        )  # reminder + guidance, no second nudge
+        self.assertEqual(self.broker.observer_snapshot()["state"], "needs_attention")
+
+    async def test_explicit_resume_after_attention_allows_a_new_live_signal_without_old_prose_replay(
+        self,
+    ):
+        first = self.message(
+            "attention", attention={"reason": "clarification", "question": "OLD_CANARY"}
+        )
+        await self.broker.handle_message(self.client, first)
+        await self.assert_explicit_resume_survives_recovery("6" * 32)
+        second = self.message(
+            "attention",
+            "7",
+            resume_id="6" * 32,
+            attention={"reason": "tool_failure", "question": "NEW_CANARY"},
+        )
+        await self.broker.handle_message(self.client, second)
+        await self.broker.handle_message(self.client, second)
+        self.assertEqual(self.metadata()["resume_authorized"], 0)
+        self.assertEqual(self.metadata()["attention_reason"], "tool_failure")
+        self.assertEqual(self.broker.observer_snapshot()["state"], "needs_attention")
+        live = [
+            call.args[0]
+            for call in self.broker.broadcast.call_args_list
+            if call.args[0]["type"] == "attention"
+        ]
+        self.assertEqual(len(live), 2)
+        self.assertNotIn(
+            "CANARY", (self.coord / "broker.sqlite3").read_bytes().decode("latin1")
+        )
+        with broker_store.connect_broker_database(self.coord) as database:
+            await self.broker._handle_operator_send(
+                database, "implementer", "second guidance", "8" * 32
+            )
+        with self.assertRaises(OrchestrationError):
+            await self.broker.handle_message(self.client, second)
+        self.assertEqual(self.metadata()["resume_authorized"], 1)
+        self.assertEqual(
+            len(
+                [
+                    call
+                    for call in self.broker.broadcast.call_args_list
+                    if call.args[0]["type"] == "attention"
+                ]
+            ),
+            2,
+        )
+
+    def test_schema_eleven_migration_does_not_infer_explicit_resume(self):
+        with broker_store.connect_broker_database(self.coord) as database:
+            database.execute("ALTER TABLE assignments DROP COLUMN resume_id")
+            database.execute("ALTER TABLE assignments DROP COLUMN resume_authorized")
+            broker_store.set_meta(database, "schema_version", "11")
+        broker_store.prepare_broker_database(self.coord)
+        broker_store.prepare_broker_database(self.coord)
+        self.assertIsNone(self.metadata()["resume_id"])
+        self.assertEqual(self.metadata()["resume_authorized"], 0)
 
     async def test_stale_assignment_generation_lifecycle_and_ack_cannot_reopen(self):
         for kind, extra in (

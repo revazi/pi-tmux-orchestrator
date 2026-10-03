@@ -100,9 +100,10 @@ export default function orchestratorWorker(pi) {
   let normalTools = [];
   let lastProgressAt = 0;
   let lastProgressPhase;
-  let attentionState = { recovery: false, reminderSeen: false, settlement: undefined };
+  let attentionState = { recovery: false, reminderSeen: false, settlement: undefined, resumeId: null };
   let reminderPending = false;
   let runAssignmentId;
+  let runResumeId;
   let runSettled = false;
   let guidanceEpoch = 0;
   let attentionFinalAssignmentId;
@@ -211,12 +212,7 @@ export default function orchestratorWorker(pi) {
     }
     const duplicate = delivered.has(value.id);
     if (duplicate) {
-      if (value.type === "assignment" && value.assignment_id === activeAssignment?.id && value.recovery_waiting === true) {
-        attentionState.recovery = true;
-        attentionState.reminderSeen = true;
-        reminderPending = false;
-        recordAttentionState({ recovery: true, reminder_seen: true });
-      }
+      if (value.type === "assignment" && value.assignment_id === activeAssignment?.id) syncRecoveryState(value);
       acknowledge(value.id, "duplicate");
       return;
     }
@@ -239,13 +235,7 @@ export default function orchestratorWorker(pi) {
     );
     // Bind state/tool/recovery policy before Pi can schedule a triggered turn.
     if (isAssignment) activateAssignment(value, usageBaseline);
-    else if (value.kind === "operator_message" && value.assignment_id === activeAssignment?.id) {
-      guidanceEpoch += 1;
-      attentionFinalAssignmentId = undefined;
-      attentionState.recovery = false;
-      reminderPending = false;
-      recordAttentionState({ recovery: false });
-    }
+    else acceptOperatorGuidance(value);
     pi.sendMessage(
       { customType: MESSAGE_TYPE, content: value.content, display: true, details },
       deliveryOptions(value.trigger === true),
@@ -265,6 +255,17 @@ export default function orchestratorWorker(pi) {
     acknowledge(value.id, "accepted");
   }
 
+  function acceptOperatorGuidance(value) {
+    if (value.kind !== "operator_message" || value.assignment_id !== activeAssignment?.id) return;
+    guidanceEpoch += 1;
+    attentionFinalAssignmentId = undefined;
+    attentionState.recovery = false;
+    attentionState.resumeId = value.resume_id ?? null;
+    attentionState.settlement = undefined;
+    reminderPending = false;
+    recordAttentionState({ recovery: false, resume_id: attentionState.resumeId, settlement: null });
+  }
+
   function deliveryHasStaleOwner(value) {
     if (value.type === "assignment") {
       return assignmentIds.has(value.assignment_id) && activeAssignment?.id !== value.assignment_id;
@@ -278,14 +279,25 @@ export default function orchestratorWorker(pi) {
     activeAssignment = { id: value.assignment_id, round: value.round, kind: value.kind, usageBaseline };
     attentionFinalAssignmentId = undefined;
     attentionState = restoreAttentionState(context.sessionManager.getEntries(), activeAssignment.id);
-    if (value.recovery_waiting === true) {
-      attentionState.recovery = true;
-      attentionState.reminderSeen = true;
-      recordAttentionState({ recovery: true, reminder_seen: true });
-    }
+    syncRecoveryState(value);
     lastProgressAt = 0;
     lastProgressPhase = undefined;
     applyActiveToolPolicy();
+  }
+
+  function syncRecoveryState(value) {
+    if (typeof value.recovery_waiting !== "boolean") return;
+    const resumeId = value.resume_id ?? null;
+    if (resumeId !== attentionState.resumeId) {
+      guidanceEpoch += 1;
+      attentionState.settlement = undefined;
+    }
+    attentionState.resumeId = resumeId;
+    attentionState.recovery = value.recovery_waiting;
+    if (value.recovery_waiting) attentionState.reminderSeen = true;
+    reminderPending = false;
+    recordAttentionState({ recovery: attentionState.recovery, resume_id: resumeId,
+      reminder_seen: attentionState.reminderSeen, settlement: attentionState.settlement ?? null });
   }
 
   function acceptResponse(value) {
@@ -378,7 +390,7 @@ export default function orchestratorWorker(pi) {
     pi.appendEntry(DELIVERY_ENTRY, { kind: "report", assignment_id: value.assignment_id, report_id: value.report_id });
     activeAssignment = undefined;
     guardrailState = emptyGuardrailState();
-    attentionState = { recovery: false, reminderSeen: false, settlement: undefined };
+    attentionState = { recovery: false, reminderSeen: false, settlement: undefined, resumeId: null };
     applyActiveToolPolicy();
   }
 
@@ -388,7 +400,7 @@ export default function orchestratorWorker(pi) {
   }
 
   function acceptReminder(value) {
-    if (!validReminder(value, activeAssignment?.id) || attentionState.recovery || attentionState.reminderSeen) return;
+    if (!validReminder(value, activeAssignment?.id, attentionState.resumeId) || attentionState.recovery || attentionState.reminderSeen) return;
     attentionState.recovery = true;
     attentionState.reminderSeen = true;
     reminderPending = true;
@@ -402,7 +414,7 @@ export default function orchestratorWorker(pi) {
     const assignmentId = activeAssignment.id;
     const settlement = attentionState.settlement;
     try {
-      await brokerRequest(message("settlement", { assignment_id: assignmentId, id: settlement }));
+      await brokerRequest(message("settlement", { assignment_id: assignmentId, resume_id: attentionState.resumeId, id: settlement }));
       if (activeAssignment?.id === assignmentId && attentionState.settlement === settlement) {
         attentionState.settlement = undefined;
         recordAttentionState({ settlement: null });
@@ -418,12 +430,14 @@ export default function orchestratorWorker(pi) {
     parameters: attentionParameters,
     async execute(toolCallId, _input) {
       if (!activeAssignment) throw new Error("no_active_orchestration_assignment");
-      const attention = privateAttention.get(toolCallId);
+      const captured = privateAttention.get(toolCallId);
       privateAttention.delete(toolCallId);
-      if (!attention) throw new Error("invalid_worker_attention");
+      if (!captured?.attention || captured.assignmentId !== activeAssignment.id
+        || captured.resumeId !== attentionState.resumeId) throw new Error("invalid_worker_attention");
+      const { attention } = captured;
       const assignment = activeAssignment;
       const epoch = guidanceEpoch;
-      await brokerRequest(message("attention", { assignment_id: assignment.id, attention }));
+      await brokerRequest(message("attention", { assignment_id: assignment.id, resume_id: attentionState.resumeId, attention }));
       if (activeAssignment?.id === assignment.id && guidanceEpoch === epoch) {
         attentionState.recovery = true;
         attentionFinalAssignmentId = assignment.id;
@@ -559,7 +573,7 @@ export default function orchestratorWorker(pi) {
   async function onToolResult(event) {
     if (["orchestrator_report", "orchestrator_attention"].includes(event.toolName) && event.isError) {
       if (event.toolName === "orchestrator_report" && activeAssignment) {
-        brokerRequest(message("rejected_report", { assignment_id: activeAssignment.id })).catch(() => {});
+        brokerRequest(message("rejected_report", { assignment_id: activeAssignment.id, resume_id: attentionState.resumeId })).catch(() => {});
       }
       privateAttention.delete(event.toolCallId);
       return { content: [{ type: "text", text: "Orchestration signal rejected. Use the declared schema or signal attention; do not copy validation errors." }], details: {} };
@@ -591,9 +605,12 @@ export default function orchestratorWorker(pi) {
   });
   pi.on("message_end", (event, ctx) => {
     if (event.message?.role === "assistant") progress("streaming", ctx, { includeUsage: true, force: true });
-    return redactAttentionMessage(event.message, (id, attention) => {
-      if (privateAttention.size < 64) privateAttention.set(id, attention);
+    const replacement = redactAttentionMessage(event.message, (id, attention) => {
+      if (privateAttention.size < 64) privateAttention.set(id, { attention,
+        assignmentId: activeAssignment?.id, resumeId: attentionState.resumeId });
     });
+    // Pi applies only { message } results before agent-state and journal append.
+    return replacement ? { message: replacement } : undefined;
   });
   pi.on("before_agent_start", (event) => {
     if (!reminderPending) return undefined;
@@ -603,7 +620,7 @@ export default function orchestratorWorker(pi) {
   pi.on("before_provider_request", async (_event, ctx) => {
     if (!activeAssignment || !attentionState.recovery) return undefined;
     try {
-      await brokerRequest(message("recovery_turn", { assignment_id: activeAssignment.id }));
+      await brokerRequest(message("recovery_turn", { assignment_id: activeAssignment.id, resume_id: attentionState.resumeId }));
     } catch {
       ctx.abort();
       throw new Error("orchestration_recovery_turn_exhausted");
@@ -612,12 +629,14 @@ export default function orchestratorWorker(pi) {
   });
   pi.on("agent_start", (_event, ctx) => {
     runAssignmentId = activeAssignment?.id;
+    runResumeId = attentionState.resumeId;
     runSettled = false;
     lifecycle("active", ctx, true);
   });
   pi.on("agent_settled", (_event, ctx) => {
     privateAttention.clear();
-    if (activeAssignment && runAssignmentId === activeAssignment.id && !runSettled) {
+    if (activeAssignment && runAssignmentId === activeAssignment.id
+      && runResumeId === attentionState.resumeId && !runSettled) {
       runSettled = true;
       if (!attentionState.settlement) {
         attentionState.settlement = message("settlement").id;

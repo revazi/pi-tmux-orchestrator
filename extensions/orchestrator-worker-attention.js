@@ -28,17 +28,26 @@ export function normalizeAttention(value) {
 }
 
 export function restoreAttentionState(entries, assignmentId) {
-  const state = { recovery: false, reminderSeen: false, settlement: undefined };
+  const state = { recovery: false, reminderSeen: false, settlement: undefined, resumeId: null };
+  if (!opaqueId(assignmentId)) return state;
   for (const entry of entries) {
     if (entry.type !== "custom" || entry.customType !== ATTENTION_ENTRY) continue;
-    const data = entry.data;
-    if (data?.assignment_id !== assignmentId) continue;
-    if (typeof data.recovery === "boolean") state.recovery = data.recovery;
-    if (data.reminder_seen === true) state.reminderSeen = true;
-    if (typeof data.settlement === "string" && /^[a-f0-9]{32}$/.test(data.settlement)) state.settlement = data.settlement;
-    if (data.settlement === null) state.settlement = undefined;
+    if (entry.data?.assignment_id !== assignmentId) continue;
+    applyAttentionEntry(state, entry.data);
   }
   return state;
+}
+
+function opaqueId(value) {
+  return typeof value === "string" && /^[a-f0-9]{32}$/.test(value);
+}
+
+function applyAttentionEntry(state, data) {
+  if (data.resume_id === null || opaqueId(data.resume_id)) state.resumeId = data.resume_id;
+  if (typeof data.recovery === "boolean") state.recovery = data.recovery;
+  if (data.reminder_seen === true) state.reminderSeen = true;
+  if (opaqueId(data.settlement)) state.settlement = data.settlement;
+  if (data.settlement === null) state.settlement = undefined;
 }
 
 // Pi invokes message_end before appending history or executing tool calls.
@@ -61,8 +70,9 @@ function capturedAttentionCall(item, capture) {
     arguments: { reason: attention?.reason ?? "report_failure" } };
 }
 
-export function validReminder(value, assignmentId) {
-  return value && Object.keys(value).sort().join(",") === "assignment_id,id,type,version"
+export function validReminder(value, assignmentId, resumeId = null) {
+  return value && ["assignment_id,id,type,version", "assignment_id,id,resume_id,type,version"].includes(Object.keys(value).sort().join(","))
     && value.version === 1 && value.type === "report_reminder"
+    && (value.resume_id ?? null) === resumeId
     && typeof assignmentId === "string" && value.assignment_id === assignmentId && value.id === assignmentId;
 }
