@@ -108,6 +108,7 @@ export default function orchestratorWorker(pi) {
   let guidanceEpoch = 0;
   let attentionFinalAssignmentId;
   const privateAttention = new Map();
+  const reportOwners = new Map();
 
   function applyActiveToolPolicy() {
     pi.setActiveTools(customRoleTools(ROLE, assignmentToolNames(normalTools, ROLE, activeAssignment?.kind)));
@@ -571,9 +572,12 @@ export default function orchestratorWorker(pi) {
   }
 
   async function onToolResult(event) {
+    const reportOwner = reportOwners.get(event.toolCallId);
+    reportOwners.delete(event.toolCallId);
     if (["orchestrator_report", "orchestrator_attention"].includes(event.toolName) && event.isError) {
-      if (event.toolName === "orchestrator_report" && activeAssignment) {
-        brokerRequest(message("rejected_report", { assignment_id: activeAssignment.id, resume_id: attentionState.resumeId })).catch(() => {});
+      if (event.toolName === "orchestrator_report" && reportOwner?.assignment_id === activeAssignment?.id
+        && reportOwner?.resume_id === attentionState.resumeId) {
+        brokerRequest(message("rejected_report", reportOwner)).catch(() => {});
       }
       privateAttention.delete(event.toolCallId);
       return { content: [{ type: "text", text: "Orchestration signal rejected. Use the declared schema or signal attention; do not copy validation errors." }], details: {} };
@@ -583,6 +587,14 @@ export default function orchestratorWorker(pi) {
     const limited = await applyToolResultPolicy(event, inputPolicy);
     recordResultVolume(limited);
     return toolResultPatch(event, limited);
+  }
+
+  function captureReportOwners(message) {
+    if (!activeAssignment || message?.role !== "assistant" || !Array.isArray(message.content)) return;
+    for (const item of message.content) {
+      if (item.type !== "toolCall" || item.name !== "orchestrator_report" || reportOwners.size >= 64) continue;
+      reportOwners.set(item.id, { assignment_id: activeAssignment.id, resume_id: attentionState.resumeId });
+    }
   }
 
   pi.on("session_start", (_event, ctx) => {
@@ -605,6 +617,7 @@ export default function orchestratorWorker(pi) {
   });
   pi.on("message_end", (event, ctx) => {
     if (event.message?.role === "assistant") progress("streaming", ctx, { includeUsage: true, force: true });
+    captureReportOwners(event.message);
     const replacement = redactAttentionMessage(event.message, (id, attention) => {
       if (privateAttention.size < 64) privateAttention.set(id, { attention,
         assignmentId: activeAssignment?.id, resumeId: attentionState.resumeId });
@@ -635,6 +648,7 @@ export default function orchestratorWorker(pi) {
   });
   pi.on("agent_settled", (_event, ctx) => {
     privateAttention.clear();
+    reportOwners.clear();
     if (activeAssignment && runAssignmentId === activeAssignment.id
       && runResumeId === attentionState.resumeId && !runSettled) {
       runSettled = true;

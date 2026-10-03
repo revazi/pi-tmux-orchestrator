@@ -222,6 +222,30 @@ for (const mode of ["tui", "rpc"]) {
   }
 }
 
+test("late report-schema result cannot classify a newer assignment as rejected", async (t) => {
+  const h = await workerHarness(t, "tui");
+  h.hooks.get("message_end")({ message: { role: "assistant", content: [
+    { type: "toolCall", id: "old-report", name: "orchestrator_report", arguments: { kind: "implementation", summary: "done" } },
+  ] } }, h.ctx);
+  await h.tools.get("orchestrator_report").execute("old-report", { kind: "implementation", summary: "done" }, undefined, undefined, h.ctx);
+  const nextAssignment = "f".repeat(32);
+  const ack = once(h.incoming, "ack", { signal: AbortSignal.timeout(3000) });
+  h.send({ version: 1, type: "assignment", id: "e".repeat(32), assignment_id: nextAssignment, kind: "implementation", round: 2,
+    content: "synthetic next assignment", trigger: true });
+  await ack;
+  const error = { toolName: "orchestrator_report", toolCallId: "old-report", isError: true,
+    content: [{ type: "text", text: "PRIVATE_VALIDATION_CANARY" }] };
+  const result = await h.hooks.get("tool_result")(error);
+  h.hooks.get("message_end")({ message: { role: "assistant", content: [
+    { type: "toolCall", id: "current-report", name: "orchestrator_report", arguments: { raw: "PRIVATE_ARGS_CANARY" } },
+  ] } }, h.ctx);
+  const rejected = once(h.incoming, "rejected_report", { signal: AbortSignal.timeout(3000) });
+  await h.hooks.get("tool_result")({ ...error, toolCallId: "current-report" });
+  assert.equal((await rejected)[0].assignment_id, nextAssignment);
+  assert.equal(h.frames.filter((frame) => frame.type === "rejected_report").length, 1);
+  assert.ok(!JSON.stringify([result, h.frames, h.entries]).includes("PRIVATE_"));
+});
+
 test("accepted completion replay clears only its matching assignment without synthesizing a report", async (t) => {
   const h = await workerHarness(t, "tui");
   const stale = { version: 1, type: "assignment_closed", assignment_id: "f".repeat(32), report_id: "e".repeat(32) };

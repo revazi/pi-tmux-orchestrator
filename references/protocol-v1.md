@@ -467,7 +467,9 @@ The additive broker-v1 worker frames use the existing authenticated base keys
   excluding C0/C1 controls and unpaired surrogates. No other fields are accepted.
 - `rejected_report`: adds `assignment_id`. Includes failures observed by
   Pi's report `tool_result` schema/execute path and broker validation failures;
-  never includes raw arguments, errors, or provider text.
+  never includes raw arguments, errors, or provider text. The bridge pins schema
+  results to the emitting assistant's assignment/epoch; a late result cannot
+  classify a newer assignment as rejected.
 - `settlement`: adds `assignment_id`. The bridge journals a stable opaque
   request ID before transport; duplicate settlement and reconnect retry do not
   increment the counter again or schedule another nudge.
