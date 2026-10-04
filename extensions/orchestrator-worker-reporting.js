@@ -14,7 +14,7 @@ const STANDARD_REPORT_FIELDS = [
 const PLAN_REPORT_MAX_ITEMS = 12;
 const PLAN_REPORT_MAX_ITEM_CHARS = 300;
 const PLAN_REPORT_MAX_SUMMARY_CHARS = 1000;
-const PLAN_READ_ONLY_TOOLS = new Set(["read", "bash", "grep", "find", "ls", "orchestrator_report"]);
+const PLAN_READ_ONLY_TOOLS = new Set(["read", "bash", "grep", "find", "ls", "orchestrator_report", "orchestrator_attention"]);
 const PROGRESS_INTERVAL_MS = 500;
 
 function text(value, limit) {

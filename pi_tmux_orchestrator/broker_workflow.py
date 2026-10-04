@@ -29,6 +29,7 @@ from .protocol import (
 from .role_registry import valid_custom_role_id
 from .specialist_activation import decide_custom_specialist, decide_specialist
 from .storage import manifest_transport
+from .worker_attention import record_report_rejection
 
 if TYPE_CHECKING:
     from .broker import Client
@@ -138,6 +139,20 @@ class BrokerWorkflowSupport:
         )
 
     async def handle_report(self, client: Client, message: dict[str, Any]) -> None:
+        try:
+            await self._handle_report(client, message)
+        except OrchestrationError:
+            # Record only the classification, never arguments or validation text.
+            with connect_broker_database(self.coord) as database:
+                record_report_rejection(
+                    database,
+                    message.get("assignment_id"),
+                    client.role,
+                    client.generation,
+                )
+            raise
+
+    async def _handle_report(self, client: Client, message: dict[str, Any]) -> None:
         report = validate_report(
             message["report"], client.role, custom_contracts=self.custom_contracts
         )
@@ -247,7 +262,7 @@ class BrokerWorkflowSupport:
                     ),
                 )
             database.execute(
-                "UPDATE assignments SET state='completed',updated_at=? WHERE id=?",
+                "UPDATE assignments SET state='completed',report_attempt='accepted',updated_at=? WHERE id=?",
                 (utc_now(), assignment_id),
             )
             database.execute(

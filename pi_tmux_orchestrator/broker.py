@@ -19,6 +19,7 @@ from .budgeting import packaged_budget_policy, validate_budget_config
 from .broker_control import BrokerControlSupport
 from .broker_observers import BrokerObserverSupport, Observer
 from .broker_workflow import BrokerWorkflowSupport
+from .broker_attention import BrokerAttentionSupport
 from .broker_store import (
     broker_paths,
     connect_broker_database,
@@ -44,6 +45,7 @@ from .dashboard import BrokerDashboard
 from .models import OrchestrationError
 from .output import bounded_message
 from .protocol import encode_frame, validate_client_message
+from .worker_attention import record_report_rejection
 from .role_contracts import validate_assignment_kind
 from .specialist_activation import decide_initial_probe
 from .storage import load_manifest, secure_write
@@ -59,7 +61,12 @@ class Client:
     send_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
 
-class Broker(BrokerControlSupport, BrokerObserverSupport, BrokerWorkflowSupport):
+class Broker(
+    BrokerControlSupport,
+    BrokerObserverSupport,
+    BrokerWorkflowSupport,
+    BrokerAttentionSupport,
+):
     def __init__(self, coord: Path, manifest: dict[str, Any]) -> None:
         self.coord = coord
         self.manifest = manifest
@@ -363,15 +370,33 @@ class Broker(BrokerControlSupport, BrokerObserverSupport, BrokerWorkflowSupport)
                     await self.recover_role(client, handover=handover)
             self.refresh_dashboard()
             while True:
-                message = await self.read_frame(reader)
-                if message["role"] != role:
+                raw_message = await self.read_raw_frame(reader)
+                if raw_message.get("role") != role:
                     raise OrchestrationError(
                         "Worker cannot impersonate another role", "forbidden"
                     )
-                if not secrets.compare_digest(message["token"], hello["token"]):
+                if not isinstance(
+                    raw_message.get("token"), str
+                ) or not secrets.compare_digest(raw_message["token"], hello["token"]):
                     raise OrchestrationError(
                         "Worker authentication failed", "unauthorized"
                     )
+                try:
+                    message = validate_client_message(
+                        raw_message, custom_contracts=self.custom_contracts
+                    )
+                except OrchestrationError:
+                    if raw_message.get("type") == "report":
+                        with connect_broker_database(self.coord) as database:
+                            record_report_rejection(
+                                database,
+                                raw_message.get("assignment_id"),
+                                role,
+                                client.generation,
+                            )
+                    raise OrchestrationError(
+                        "Worker message rejected", "invalid_protocol"
+                    ) from None
                 request_id = message["id"]
                 await self.handle_message(client, message)
                 request_id = None
@@ -479,8 +504,17 @@ class Broker(BrokerControlSupport, BrokerObserverSupport, BrokerWorkflowSupport)
                 await self.handle_lifecycle(client, message)
             elif message["type"] == "report":
                 await self.handle_report(client, message)
+                await self.broadcast_assignment_state(client)
             elif message["type"] == "progress":
                 await self.handle_progress(client, message)
+            elif message["type"] == "attention":
+                await self.handle_attention(client, message)
+            elif message["type"] == "settlement":
+                await self.handle_settlement(client, message)
+            elif message["type"] == "rejected_report":
+                await self.handle_rejected_report(client, message)
+            elif message["type"] == "recovery_turn":
+                await self.handle_recovery_turn(client, message)
             elif message["type"] == "guardrail":
                 await self.handle_guardrail(client, message)
             elif message["type"] == "ack":
@@ -524,7 +558,7 @@ class Broker(BrokerControlSupport, BrokerObserverSupport, BrokerWorkflowSupport)
     async def recover_role(self, client: Client, *, handover: bool = False) -> None:
         with connect_broker_database(self.coord) as database:
             assignment = database.execute(
-                "SELECT id,round,kind,delivery_id,state FROM assignments "
+                "SELECT id,round,kind,delivery_id,state,reminder_state,report_attempt,resume_id,resume_authorized FROM assignments "
                 "WHERE role=? AND state IN ('delivering','accepted','uncertain') "
                 "ORDER BY created_at DESC LIMIT 1",
                 (client.role,),
@@ -598,6 +632,21 @@ class Broker(BrokerControlSupport, BrokerObserverSupport, BrokerWorkflowSupport)
                     trigger=False,
                 )
         if assignment is None:
+            with connect_broker_database(self.coord, readonly=True) as database:
+                accepted = database.execute(
+                    "SELECT id,assignment_id FROM reports WHERE role=? ORDER BY created_at DESC LIMIT 1",
+                    (client.role,),
+                ).fetchone()
+            if accepted is not None:
+                await self.send(
+                    client,
+                    {
+                        "version": BROKER_PROTOCOL_VERSION,
+                        "type": "assignment_closed",
+                        "assignment_id": accepted["assignment_id"],
+                        "report_id": accepted["id"],
+                    },
+                )
             if handover:
                 with connect_broker_database(self.coord) as database:
                     database.execute(
@@ -612,6 +661,19 @@ class Broker(BrokerControlSupport, BrokerObserverSupport, BrokerWorkflowSupport)
                         status="idle",
                     )
             return
+        recovery_waiting = not assignment["resume_authorized"] and (
+            assignment["reminder_state"] != "none"
+            or assignment["report_attempt"] == "attention"
+        )
+        if recovery_waiting:
+            with connect_broker_database(self.coord) as database:
+                database.execute(
+                    "UPDATE assignments SET reminder_state='used' WHERE id=? AND reminder_state='reserved'",
+                    (assignment["id"],),
+                )
+                self._attention_waiting(database, client, assignment)
+            await self.broadcast_assignment_state(client)
+            await self.broadcast_workflow("needs_attention", assignment["round"])
         delivery_id = assignment["delivery_id"]
         if handover:
             delivery_id = secrets.token_hex(16)
@@ -633,7 +695,9 @@ class Broker(BrokerControlSupport, BrokerObserverSupport, BrokerWorkflowSupport)
                 "content": self._assignment(
                     client.role, assignment["round"], assignment["kind"]
                 ),
-                "trigger": True,
+                "trigger": not recovery_waiting,
+                "recovery_waiting": recovery_waiting,
+                "resume_id": assignment["resume_id"],
             },
         )
 
@@ -804,16 +868,33 @@ class Broker(BrokerControlSupport, BrokerObserverSupport, BrokerWorkflowSupport)
         )
 
     async def deliver(
-        self, role: str, kind: str, round_number: int, content: str, *, trigger: bool
+        self,
+        role: str,
+        kind: str,
+        round_number: int,
+        content: str,
+        *,
+        trigger: bool,
+        resume_id: str | None = None,
     ) -> None:
         if role not in self.clients:
             return
         delivery_id = secrets.token_hex(16)
+        binding = {}
+        if kind == "operator_message":
+            with connect_broker_database(self.coord, readonly=True) as database:
+                assignment_id = database.execute(
+                    "SELECT active_assignment_id FROM roles WHERE role=?", (role,)
+                ).fetchone()["active_assignment_id"]
+            if assignment_id is not None:
+                binding["assignment_id"] = assignment_id
+                binding["resume_id"] = resume_id
         await self.send(
             self.clients[role],
             {
                 "version": BROKER_PROTOCOL_VERSION,
                 "type": "context",
+                **binding,
                 "id": delivery_id,
                 "round": round_number,
                 "kind": kind,
@@ -842,8 +923,9 @@ class Broker(BrokerControlSupport, BrokerObserverSupport, BrokerWorkflowSupport)
         with connect_broker_database(self.coord) as database:
             assignment = database.execute(
                 "SELECT id,round,boundary_effective FROM assignments "
-                "WHERE delivery_id=? AND role=?",
-                (message["delivery_id"], client.role),
+                "WHERE delivery_id=? AND role=? AND state IN ('delivering','accepted','uncertain') "
+                "AND id=(SELECT active_assignment_id FROM roles WHERE role=?)",
+                (message["delivery_id"], client.role, client.role),
             ).fetchone()
             if assignment is not None:
                 state = (
@@ -1006,6 +1088,9 @@ class Broker(BrokerControlSupport, BrokerObserverSupport, BrokerWorkflowSupport)
                     "Worker progress assignment is not active", "conflict"
                 )
             phase = message["phase"]
+            database.execute(
+                "UPDATE assignments SET last_phase=? WHERE id=?", (phase, assignment_id)
+            )
             previous = role_row["activity"]
             changes = [
                 "activity=?",
@@ -1044,9 +1129,48 @@ class Broker(BrokerControlSupport, BrokerObserverSupport, BrokerWorkflowSupport)
             raise OrchestrationError("Provider usage is invalid", "invalid_protocol")
         now = utc_now()
         with connect_broker_database(self.coord) as database:
-            retained_state = database.execute(
-                "SELECT state FROM roles WHERE role=?", (client.role,)
-            ).fetchone()["state"]
+            retained_role = database.execute(
+                "SELECT state,active_assignment_id FROM roles WHERE role=?",
+                (client.role,),
+            ).fetchone()
+            retained_state = retained_role["state"]
+            if (
+                "assignment_id" not in message
+                and retained_state == "waiting"
+                and retained_role["active_assignment_id"] is not None
+                and state != "uncertain"
+            ):
+                await self.reply(client, message["id"], True, status="recorded")
+                return
+            if "assignment_id" in message:
+                # Hello may precede assignment replay. An unassigned greeting
+                # cannot clear or reopen the broker's retained active boundary.
+                if (
+                    message["assignment_id"] is None
+                    and retained_role["active_assignment_id"] is not None
+                ):
+                    await self.reply(client, message["id"], True, status="recorded")
+                    return
+                if message["assignment_id"] != retained_role["active_assignment_id"]:
+                    completed = database.execute(
+                        "SELECT 1 FROM reports WHERE assignment_id=? AND role=?",
+                        (message["assignment_id"], client.role),
+                    ).fetchone()
+                    if (
+                        retained_role["active_assignment_id"] is None
+                        and completed is not None
+                    ):
+                        await self.reply(client, message["id"], True, status="recorded")
+                        return
+                    raise OrchestrationError(
+                        "Worker lifecycle assignment is not active", "conflict"
+                    )
+                # Only settlement/report/control may change a waiting boundary.
+                if retained_state == "waiting" and state != "uncertain":
+                    state = "waiting"
+                if state == "waiting":
+                    await self.reply(client, message["id"], True, status="recorded")
+                    return
             # The actual worker sends its ordinary idle/active lifecycle directly
             # after hello. During a prepared replacement, only the delivery ack
             # proves the handover boundary; do not let that lifecycle erase the

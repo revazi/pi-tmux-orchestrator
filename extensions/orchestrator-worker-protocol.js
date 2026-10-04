@@ -71,6 +71,9 @@ export function validDeliveryEnvelope(value) {
     && value.content.length <= 32_768
     && Number.isInteger(value.round) && value.round > 0
     && typeof value.trigger === "boolean"
+    && (value.recovery_waiting === undefined || typeof value.recovery_waiting === "boolean")
+    && (value.resume_id === undefined || value.resume_id === null
+      || (typeof value.resume_id === "string" && /^[a-f0-9]{32}$/.test(value.resume_id)))
     && (value.type !== "assignment" || (
       typeof value.assignment_id === "string" && /^[a-f0-9]{32}$/.test(value.assignment_id)
       && typeof value.kind === "string"

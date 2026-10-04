@@ -23,6 +23,7 @@ from .constants import (
 )
 from .models import OrchestrationError
 from .role_contracts import resolve_role_contract
+from .worker_attention import validate_attention
 
 REPORT_KINDS = frozenset(
     {"plan", "implementation", "review", "probe", "playwright", "django"}
@@ -458,7 +459,17 @@ def validate_client_message(
     elif message_type == "report":
         expected = _report_client_key_sets(base)
     elif message_type == "lifecycle":
-        expected = (base | {"state", "usage"},)
+        expected = (
+            base | {"state", "usage"},
+            base | {"state", "usage", "assignment_id"},
+        )
+    elif message_type in {"settlement", "rejected_report", "recovery_turn"}:
+        expected = (base | {"assignment_id"}, base | {"assignment_id", "resume_id"})
+    elif message_type == "attention":
+        expected = (
+            base | {"assignment_id", "attention"},
+            base | {"assignment_id", "attention", "resume_id"},
+        )
     elif message_type == "progress":
         expected = (base | {"assignment_id", "phase", "usage"},)
     elif message_type == "guardrail":
@@ -486,6 +497,24 @@ def validate_client_message(
         raise OrchestrationError(
             "Broker worker generation is invalid", "invalid_protocol"
         )
+    if message_type in {
+        "attention",
+        "settlement",
+        "rejected_report",
+        "recovery_turn",
+    } or (message_type == "lifecycle" and value.get("assignment_id") is not None):
+        assignment_id = value.get("assignment_id")
+        if not isinstance(assignment_id, str) or not RPC_TOKEN_PATTERN.fullmatch(
+            assignment_id
+        ):
+            raise OrchestrationError("Assignment ID is invalid", "invalid_protocol")
+    if "resume_id" in value and value["resume_id"] is not None:
+        if not isinstance(value["resume_id"], str) or not RPC_TOKEN_PATTERN.fullmatch(
+            value["resume_id"]
+        ):
+            raise OrchestrationError("Resume ID is invalid", "invalid_protocol")
+    if message_type == "attention":
+        validate_attention(value["attention"])
     if message_type == "guardrail":
         _validate_guardrail_message(value)
     if message_type == "progress":

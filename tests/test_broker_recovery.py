@@ -54,6 +54,11 @@ class BrokerRecoveryTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
                     now,
                 ),
             )
+        with broker_store.connect_broker_database(self.coord) as database:
+            database.execute(
+                "UPDATE roles SET active_assignment_id=? WHERE role='implementer'",
+                (assignment_id,),
+            )
         client = Client("implementer", mock.Mock(), mock.Mock())
         message = {
             "id": "3" * 32,
@@ -251,10 +256,9 @@ class BrokerRecoveryTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
         with (
             mock.patch.object(broker, "_verify_peer"),
             mock.patch.object(
-                broker, "read_raw_frame", new=mock.AsyncMock(return_value=hello)
-            ),
-            mock.patch.object(
-                broker, "read_frame", new=mock.AsyncMock(return_value=request)
+                broker,
+                "read_raw_frame",
+                new=mock.AsyncMock(side_effect=[hello, request]),
             ),
             mock.patch.object(broker, "maybe_start_workflow", new=mock.AsyncMock()),
             mock.patch.object(
@@ -890,7 +894,7 @@ class BrokerRecoveryTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
                 },
             )
             snapshot = broker_store.public_broker_snapshot(self.coord)
-            self.assertEqual(snapshot["workflow"]["state"], "active")
+            self.assertEqual(snapshot["workflow"]["state"], "needs_attention")
             await broker.handle_lifecycle(
                 client,
                 {
@@ -905,7 +909,6 @@ class BrokerRecoveryTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
             broadcast_workflow.await_args_list,
             [
                 mock.call("needs_attention", 1),
-                mock.call("active", 1),
                 mock.call("uncertain", 1),
             ],
         )
@@ -1002,7 +1005,7 @@ class BrokerRecoveryTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
             deliver.assert_awaited_once()
             self.assertEqual(
                 broker_store.public_broker_snapshot(self.coord)["workflow"]["state"],
-                "needs_attention",
+                "active",
             )
             broadcast_workflow.assert_not_awaited()
 
@@ -1019,4 +1022,4 @@ class BrokerRecoveryTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
                 broker_store.public_broker_snapshot(self.coord)["workflow"]["state"],
                 "active",
             )
-            broadcast_workflow.assert_awaited_once_with("active", 1)
+            broadcast_workflow.assert_not_awaited()

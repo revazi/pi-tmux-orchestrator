@@ -64,6 +64,11 @@ for file in "$ROOT/extensions"/*.js "$ROOT/scripts"/*.mjs "$ROOT/tests"/*.mjs "$
 done
 shopt -u nullglob
 node --test "$ROOT/tests/extension.test.mjs"
+if command -v pi >/dev/null 2>&1; then
+  node "$ROOT/tests/pi-worker-attention-contract.mjs"
+else
+  printf '%s\n' 'SKIP installed-Pi worker attention persistence contract (pi not available).'
+fi
 "$ROOT/scripts/test-coverage.sh" "$TEST_ROOT/coverage/coverage-final.json"
 node "$ROOT/scripts/token-efficiency-baseline.mjs" --check
 node "$ROOT/scripts/result-volume-baseline.mjs" --check

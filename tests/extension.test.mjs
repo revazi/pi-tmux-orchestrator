@@ -37,6 +37,7 @@ import {
 } from "../extensions/orchestrator-dashboard.js";
 import { updateTestHooks as updateHooks } from "../extensions/orchestrator-update.js";
 import { testHooks as workerHooks } from "../extensions/orchestrator-worker.js";
+import "./worker-attention.test.mjs";
 import { filterWorkerContext as filterWorkerContextDirect } from "../extensions/orchestrator-worker-context.js";
 import {
   deliveryOptions as deliveryOptionsDirect,
@@ -2346,7 +2347,10 @@ test("authenticated broker observer steers progress and returns structured final
           round: 2,
           roles: [
             { role: "implementer", state: "idle" },
-            { role: "reviewer", state: "active" },
+            { role: "reviewer", state: "active", assignment: {
+              assignment_id: assignmentId, assignment_kind: "review", settlement_count: 1,
+              report_attempt: "attention", attention_reason: "clarification", reminder_state: "none", activity_phase: "tool",
+            } },
             { role: custom.name, state: "recovering" },
           ],
           report_count: 0,
@@ -2363,6 +2367,14 @@ test("authenticated broker observer steers progress and returns structured final
           session,
           role: "reviewer",
           state: "waiting",
+        }));
+        socket.write(testHooks.brokerFrame({
+          version: 1, type: "attention", session, role: "reviewer", assignment_id: assignmentId,
+          attention: { reason: "clarification", question: "PRIVATE_LIVE_ATTENTION_CANARY" },
+        }));
+        socket.write(testHooks.brokerFrame({
+          version: 1, type: "attention", session, role: "reviewer", assignment_id: "f".repeat(32),
+          attention: { reason: "blocked", summary: "STALE_PRIVATE_CANARY" },
         }));
         socket.write(testHooks.brokerFrame({
           version: 1,
@@ -2406,6 +2418,7 @@ test("authenticated broker observer steers progress and returns structured final
     const observer = { closed: false, socket: undefined, timer: undefined, stop: () => {} };
     let stopped = false;
     const deliveredMessages = [];
+    const liveAttention = [];
     const parentMessage = new Promise((resolve) => {
       void testHooks.attachParentObserver(
         {
@@ -2423,10 +2436,13 @@ test("authenticated broker observer steers progress and returns structured final
         },
         observer,
         () => { stopped = true; },
-        { triggerInitialActionable: false },
+        { triggerInitialActionable: false, onAttention: (value) => liveAttention.push(value.attention) },
       );
     });
     const delivered = await parentMessage;
+    assert.deepEqual(liveAttention, [{ reason: "clarification", question: "PRIVATE_LIVE_ATTENTION_CANARY" }]);
+    assert.doesNotMatch(JSON.stringify(deliveredMessages), /PRIVATE_LIVE_ATTENTION_CANARY|STALE_PRIVATE_CANARY/);
+    assert.match(delivered.message.content, /attempt=accepted/);
     assert.equal(delivered.message.customType, "pi-tmux-orchestrator-parent-v1");
     assert.equal(delivered.message.details.state, "ready");
     assert.match(delivered.message.content, /reviewer report \(round 2\)/);

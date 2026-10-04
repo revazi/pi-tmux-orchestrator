@@ -16,31 +16,31 @@
     "lean_prompt_is_prefix": true
   },
   "lean_prompt": {
-    "characters": 1708,
-    "utf8_bytes": 1710
+    "characters": 1874,
+    "utf8_bytes": 1876
   },
   "last_observation": {
-    "pi_version": "0.87.1",
+    "pi_version": "1.0.0",
     "before": {
-      "characters": 5046,
-      "utf8_bytes": 5046,
+      "characters": 5166,
+      "utf8_bytes": 5166,
       "skill_discovery": true,
       "loaded_skills": [
         "discovered"
       ]
     },
     "after": {
-      "characters": 2482,
-      "utf8_bytes": 2484,
+      "characters": 2648,
+      "utf8_bytes": 2650,
       "skill_discovery": false,
       "loaded_skills": [
         "opted"
       ]
     },
     "reduction": {
-      "characters": 2564,
-      "utf8_bytes": 2562,
-      "character_percent": 50.8
+      "characters": 2518,
+      "utf8_bytes": 2516,
+      "character_percent": 48.7
     }
   }
 }

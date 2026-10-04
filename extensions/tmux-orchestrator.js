@@ -1319,6 +1319,7 @@ export default function tmuxOrchestratorExtension(pi) {
   pi.registerProvider(typeSafeAuthProvider());
   const observers = new Map();
   let shuttingDown = false;
+  let liveParentContext;
 
   async function superviseStart(envelope, observerOptions = {}) {
     const coordination = envelope.data?.paths?.coordination;
@@ -1343,7 +1344,10 @@ export default function tmuxOrchestratorExtension(pi) {
         envelope,
         observer,
         () => observers.delete(coordination),
-        observerOptions,
+        { ...observerOptions, onAttention: (value) => {
+          const text = [value.attention.summary, value.attention.question].filter(Boolean).join("\n");
+          liveParentContext?.ui?.notify(`${value.role}: ${value.attention.reason}${text ? `\n${text}` : ""}`, "warning");
+        } },
       );
       await attached.ready;
       return { session, status: "watching" };
@@ -1415,6 +1419,7 @@ export default function tmuxOrchestratorExtension(pi) {
     pi.registerCommand(name, { description, handler });
   }
   pi.on("session_start", (_event, ctx) => {
+    liveParentContext = ctx;
     if (!terminalRequest) scheduleOrchestratorUpdateNotice(ctx);
   });
   pi.on("session_shutdown", () => {

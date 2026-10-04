@@ -5,7 +5,7 @@ const RESERVED_SUFFIXES = new Set([
   "coordinator", "writer", "review", "system", "user", "assistant", "tool",
   "django-expert", "playwright-tester", "technical-probe",
 ]);
-const CUSTOM_READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls", "orchestrator_report"]);
+const CUSTOM_READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls", "orchestrator_report", "orchestrator_attention"]);
 
 export function validCustomRoleId(role) {
   return typeof role === "string" && role.length <= 32 && role.trim() === role

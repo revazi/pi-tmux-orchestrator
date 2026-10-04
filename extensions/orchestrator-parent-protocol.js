@@ -1,4 +1,5 @@
 import { normalizeReport } from "./orchestrator-worker-reporting.js";
+import { ATTENTION_REASONS, normalizeAttention } from "./orchestrator-worker-attention.js";
 
 const MAX_BROKER_FRAME_BYTES = 256 * 1024;
 export const BROKER_PROTOCOL_VERSION = 1;
@@ -43,10 +44,33 @@ function validateResponse(value, requestId) {
   );
 }
 
+function validAssignmentMetadata(value) {
+  if (value === null) return true;
+  return exactKeys(value, ["assignment_id", "assignment_kind", "settlement_count", "report_attempt", "attention_reason", "reminder_state", "activity_phase"])
+    && typeof value.assignment_id === "string" && /^[a-f0-9]{32}$/.test(value.assignment_id)
+    && ["plan", "implementation", "review", "probe", "playwright", "django"].includes(value.assignment_kind)
+    && Number.isInteger(value.settlement_count) && value.settlement_count >= 0 && value.settlement_count <= 2
+    && ["none", "rejected", "attention", "accepted"].includes(value.report_attempt)
+    && (value.attention_reason === null || ATTENTION_REASONS.includes(value.attention_reason))
+    && ["none", "reserved", "used"].includes(value.reminder_state)
+    && (value.activity_phase === null || ["thinking", "streaming", "tool", "reporting"].includes(value.activity_phase));
+}
+
 function validSnapshotRole(item, roles) {
-  return exactKeys(item, ["role", "state"])
+  return (exactKeys(item, ["role", "state"]) || (exactKeys(item, ["role", "state", "assignment"]) && validAssignmentMetadata(item.assignment)))
     && roles.has(item.role)
     && WORKER_STATES.has(item.state);
+}
+
+function validateAssignmentState(value, roles) {
+  invalidUnless(exactKeys(value, ["version", "type", "session", "role", "state", "assignment"])
+    && roles.has(value.role) && WORKER_STATES.has(value.state) && validAssignmentMetadata(value.assignment), "invalid_observer_assignment_state");
+}
+
+function validateAttention(value, roles) {
+  invalidUnless(exactKeys(value, ["version", "type", "session", "role", "assignment_id", "attention"])
+    && roles.has(value.role) && typeof value.assignment_id === "string" && /^[a-f0-9]{32}$/.test(value.assignment_id), "invalid_observer_attention");
+  normalizeAttention(value.attention);
 }
 
 function validSnapshotRoles(items, roles) {
@@ -260,6 +284,8 @@ const FRAME_VALIDATORS = new Map([
   ["workflow", validateWorkflow],
   ["lifecycle", validateLifecycle],
   ["report", validateReport],
+  ["assignment_state", validateAssignmentState],
+  ["attention", validateAttention],
 ]);
 
 export function validateObserverFrame(value, session, requestId, roles = LEGACY_ROLES) {

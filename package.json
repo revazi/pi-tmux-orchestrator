@@ -63,6 +63,7 @@
     "extensions/orchestrator-parent-protocol.js",
     "extensions/orchestrator-worker.js",
     "extensions/orchestrator-worker-context.js",
+    "extensions/orchestrator-worker-attention.js",
     "extensions/orchestrator-worker-protocol.js",
     "extensions/orchestrator-worker-reporting.js",
     "extensions/orchestrator-worker-usage.js",

@@ -70,8 +70,9 @@ Workers authenticate with `hello`, then report one of:
 - `uncertain`: the bridge cannot prove the prior transition.
 
 A socket close records `disconnected`. A worker settling with an active
-assignment and no report marks the workflow `needs_attention`. Retained PIDs
-never imply liveness.
+assignment and no report/attention receives one bounded automatic recovery turn;
+explicit attention, interrupted recovery, or the next unreported settlement
+marks `needs_attention`. Retained PIDs never imply liveness.
 
 While an assignment is active, the bridge sends throttled, assignment-bound
 `progress` frames for real Pi turn, assistant-stream, tool, and report-tool
@@ -137,8 +138,8 @@ poll and must end the turn when there is no active assignment.
    retain normal steering semantics. During `needs_attention`, only a waiting
    role that still owns an active assignment accepts a triggered send; other
    targets are rejected without changing workflow state or starting an
-   unassigned provider turn. The assigned worker's subsequent `active`
-   lifecycle transition resumes the workflow.
+   unassigned provider turn. The authenticated send resumes that owner; ordinary lifecycle frames cannot
+   reopen a waiting attention boundary.
 
 Only the implementer has normal write tools. Other roles are read-only. When the
 broker creates an implementer `plan` assignment, the shared bridge temporarily
@@ -204,7 +205,8 @@ Explicit `watch` retains existing-outcome supervision semantics.
 
 ## Structured reports
 
-The worker bridge exposes one terminating tool: `orchestrator_report`.
+The worker bridge exposes terminating `orchestrator_report` and non-completing
+`orchestrator_attention` tools. Only an accepted report satisfies an assignment.
 
 Implementation, review, and specialist reports use these common bounded fields:
 
@@ -453,3 +455,84 @@ metadata, and manifest v5 adds the external configuration path/schema plus the
 bounded exact-project mapping selection while retaining that protocol. Earlier
 manifests report project configuration as unavailable. All remain readable, and there is no
 option or fallback that starts the legacy file coordination protocol.
+
+## Worker attention and report recovery
+
+The additive broker-v1 worker frames use the existing authenticated base keys
+`version,type,role,token,id` and strict exact-key validation:
+
+- `attention`: adds `assignment_id` and `attention`, a strict object requiring
+  `reason` from `clarification|blocked|tool_failure|report_failure`; optional
+  `summary`/`question` are nonempty strings of at most 500 Unicode code points,
+  excluding C0/C1 controls and unpaired surrogates. No other fields are accepted.
+- `rejected_report`: adds `assignment_id`. Includes failures observed by
+  Pi's report `tool_result` schema/execute path and broker validation failures;
+  never includes raw arguments, errors, or provider text. The bridge pins schema
+  results to the emitting assistant's assignment/epoch; a late result cannot
+  classify a newer assignment as rejected.
+- `settlement`: adds `assignment_id`. The bridge journals a stable opaque
+  request ID before transport; duplicate settlement and reconnect retry do not
+  increment the counter again or schedule another nudge.
+- `recovery_turn`: adds `assignment_id`. Before each recovery provider
+  request the bridge claims the broker's durable one-use allowance. A repeated
+  claim, retry, stale generation/assignment, or disconnected claim aborts before
+  another request. This bounds provider requests, not merely agent runs.
+- New `lifecycle` frames add `assignment_id` (null when unassigned). Legacy
+  lifecycle shape remains readable, but cannot grant an automatic recovery turn.
+
+These four signals also carry nullable `resume_id`, the body-free identity of
+the latest explicit operator guidance. Omitted/null is accepted only before any
+such guidance; a stale epoch is rejected without changing assignment state.
+`report_reminder` carries the same epoch, and assignment recovery synchronizes
+it even for duplicate deliveries. The worker journals it and binds settlement to
+the run's starting assignment and epoch, so late pre-guidance settlement cannot
+pause a resumed turn.
+
+SQLite schema 12 retains per-assignment enums `report_attempt` (`none`, `rejected`,
+`attention`, `accepted`), `reminder_state` (`none`, `reserved`, `used`), optional
+bounded `attention_reason`/last phase, saturated `settlement_count` (0–2), and
+last settlement identity, plus private nullable `resume_id` and boolean
+`resume_authorized`. These two resume fields are not public projections and carry
+no prose. Schema-11 migration defaults to no explicit authorization, never infers
+it from old attention/reminder metadata. Legacy completed reports migrate to `accepted`;
+legacy active assignments conservatively consume their recovery allowance.
+Accepted reports retain the UNIQUE assignment constraint. Stale delivery acks
+cannot resurrect a completed or replaced assignment.
+
+First settlement without report/attention atomically reserves the reminder
+before sending strict `report_reminder` with `version,type,id,assignment_id,resume_id`
+(the two IDs equal the assignment ID). There is no private body in that frame:
+the shared TUI/RPC bridge injects fixed system guidance for the one recovery run.
+A second settlement becomes waiting/`needs_attention`. Explicit attention skips
+the reminder and becomes actionable immediately. Scheduling/claim uncertainty
+or reconnect/restart after reservation becomes actionable and consumes any
+remaining allowance. A metadata-only `assignment_closed` frame (`version,type,assignment_id,report_id`)
+reconciles an accepted report whose response was lost; the bridge journals only
+the acceptance identity, ignores mismatched assignments, and never synthesizes
+or resubmits a report. A recovered attention assignment is delivered with `trigger=false`
+and `recovery_waiting=true`; no new unsolicited turn is granted. An explicitly
+confirmed operator send is assignment-bound and may resume only its waiting
+owner without replenishing the automatic allowance. Its durable explicit
+authorization makes subsequent reconnect/handover use `recovery_waiting=false`,
+not the exhausted automatic provider gate. A new attention or settlement clears
+that authorization; a new explicit send changes the epoch. Duplicate/stale
+pre-guidance signals cannot clear newer authorization or replay old prose.
+
+Live observer `assignment_state` frames contain exactly
+`version,type,session,role,state,assignment`. `assignment` is null or metadata
+with `assignment_id,assignment_kind,settlement_count,report_attempt,
+attention_reason,reminder_state,activity_phase`. Snapshot roles add the same
+metadata as optional `assignment` for the active or latest completed assignment. Live `attention` frames contain exactly
+`version,type,session,role,assignment_id,attention`. Their prose bypasses replay
+buffers and all durable/public projections. The parent uses only an ephemeral
+TUI/RPC UI notification, never `sendMessage`, appendEntry, model tool results,
+or provider context. Worker `message_end` captures attention in memory and
+returns Pi's `{ message: replacement }` contract to replace its arguments and
+accompanying text/thinking in agent state before Pi persistence;
+error results are replaced with fixed guidance. Reconnection replays only
+metadata, not prose. No parent connected means no prose delivery.
+
+Acknowledgement or an automatic report-recovery nudge is not task completion.
+No report is synthesized; only exact-once accepted final reports route workflow
+or fulfill specialist/reviewer evidence. These model-free contracts and probes
+do not establish production provider-wire acceptance.
