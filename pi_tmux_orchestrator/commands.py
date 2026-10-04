@@ -12,6 +12,12 @@ from pathlib import Path
 from typing import Any
 
 from . import runtime
+from .recovery import (
+    complete_stop,
+    live_stop_target,
+    locked_stop_claim,
+    require_live_run,
+)
 from .budgeting import (
     budget_config_path,
     load_budget_config,
@@ -456,6 +462,7 @@ def status_command(args: argparse.Namespace) -> CommandResult:
     return CommandResult(
         data={
             "session": session,
+            "run_id": coord.name,
             "project": manifest["project"],
             "execution_profile": profile,
             "project_config": project_config,
@@ -539,6 +546,7 @@ def attach_command(args: argparse.Namespace) -> CommandResult:
     return CommandResult(
         data={
             "session": session,
+            "run_id": coord.name,
             "project": manifest["project"],
             "transport": manifest_transport(manifest),
             "mode": "switch-client" if inside_tmux else "attach-client",
@@ -561,7 +569,7 @@ def control_target(args: argparse.Namespace) -> tuple[str, Path, dict[str, Any]]
     run_id = getattr(args, "run", None)
     if run_id is not None:
         coord, manifest = resolve_supervisor_target(
-            args.session, run_id, require_rpc=True
+            args.session, run_id, require_rpc=False
         )
         return manifest["session"], coord, manifest
     session, coord = resolve_session(args.session)
@@ -712,6 +720,9 @@ def abort_command(args: argparse.Namespace) -> CommandResult:
             "run_id": coord.name,
             "role": args.role,
             "aborted": True,
+            "abort_requested": True,
+            "completion": "not_observed",
+            "workflow_completed": False,
             "transport": manifest_transport(manifest),
             "acknowledged": True,
             "command_id": acknowledgement["id"],
@@ -728,14 +739,25 @@ def restart_command(args: argparse.Namespace) -> CommandResult:
             "restart respawns the role's worker process and preserves its brokered "
             "Pi conversation and JSONL history; pass --yes"
         )
-    session, coord = resolve_session(args.session)
-    manifest = load_manifest(coord, expected_session=session)
+    session, coord, manifest = control_target(args)
+    if getattr(args, "run", None) is not None:
+        require_live_run(session, coord, resolve_session)
     if args.role not in manifest["roles"]:
         available = ", ".join(manifest["roles"].keys())
         raise OrchestrationError(
             f"Role {args.role!r} is not in {session}; available: {available}"
         )
     role = manifest["roles"][args.role]
+    command_id = getattr(args, "command_id", None)
+    if command_id and manifest.get("version", 0) < 3:
+        raise OrchestrationError(
+            "Idempotent restart requires a brokered run", "invalid_arguments"
+        )
+    if command_id and any((args.provider, args.model, args.thinking)):
+        raise OrchestrationError(
+            "Idempotent restart uses retained launch settings; model overrides require a new confirmed non-idempotent restart",
+            "invalid_arguments",
+        )
     revalidate_worker_resources(manifest, args.role)
     if args.provider:
         role["provider"] = args.provider
@@ -745,10 +767,33 @@ def restart_command(args: argparse.Namespace) -> CommandResult:
         role["thinking"] = args.thinking
     if not args.skip_model_check:
         validate_model(args.role, role)
-    save_manifest(coord, manifest)
+    if any((args.provider, args.model, args.thinking)):
+        save_manifest(coord, manifest)
     broker_handover_prepared = manifest.get("version", 0) >= 3
+    acknowledgement = None
     if broker_handover_prepared:
-        broker_control_request(coord, args.role, "restart")
+        acknowledgement = broker_control_request(
+            coord,
+            args.role,
+            "restart",
+            **({"command_id": command_id} if command_id else {}),
+        )
+        if acknowledgement.get("duplicate", False):
+            return CommandResult(
+                data={
+                    "session": session,
+                    "run_id": coord.name,
+                    "role": public_role(args.role, role, manifest_transport(manifest)),
+                    "restarted": False,
+                    "acknowledged": True,
+                    "duplicate": True,
+                    "command_id": acknowledgement.get("id"),
+                    "command_status": "accepted",
+                    "completion": "uncertain",
+                    "retry": "new_command_id",
+                    "workflow_completed": False,
+                }
+            )
     try:
         if manifest_transport(manifest) == RPC_TRANSPORT:
             rpc_paths = rpc_role_paths(coord, args.role, create=True)
@@ -786,16 +831,91 @@ def restart_command(args: argparse.Namespace) -> CommandResult:
             "session": session,
             "role": public_role(args.role, role, manifest_transport(manifest)),
             "restarted": True,
+            "run_id": coord.name,
+            "acknowledged": acknowledgement is not None,
+            "command_id": acknowledgement.get("id") if acknowledgement else None,
+            "command_status": acknowledgement.get("status")
+            if acknowledgement
+            else None,
+            "duplicate": False,
+            "completion": "respawned",
+            "workflow_completed": False,
         }
     )
+
+
+def _stop_with_receipt(
+    session: str, coord: Path, command_id: str
+) -> tuple[bool, bool, bool]:
+    duplicate = None
+    try:
+        with locked_stop_claim(coord, command_id) as (receipt, duplicate, status):
+            if status == "completed":
+                return duplicate, False, True
+            target = live_stop_target(session, coord)
+            if target is None and not duplicate:
+                raise OrchestrationError(
+                    "Exact run is not hosted by a live session", "broker_not_live"
+                )
+            if target is not None:
+                tmux(["kill-session", "-t", target])
+            # A lost kill acknowledgement can be reconciled by a successful
+            # absence observation; an unavailable server is never proof of stop.
+            complete_stop(receipt)
+            return duplicate, target is not None, False
+    except Exception as error:
+        code = (
+            error.code if isinstance(error, OrchestrationError) else "broker_uncertain"
+        )
+        raise OrchestrationError(
+            "Stop completion is unproven; inspect the exact run before retrying",
+            code,
+            data={
+                "session": session,
+                "run_id": coord.name,
+                "command_id": command_id,
+                **({"duplicate": duplicate} if duplicate is not None else {}),
+                "command_status": "uncertain",
+                "completion": "uncertain",
+                "retry": "same_command_id"
+                if code == "broker_uncertain"
+                else "inspect_exact_run",
+            },
+        ) from None
 
 
 def stop_command(args: argparse.Namespace) -> CommandResult:
     if not args.yes:
         raise OrchestrationError("stop kills the selected tmux agent grid; pass --yes")
-    session, coord = resolve_session(args.session)
-    manifest = load_manifest(coord, expected_session=session)
-    tmux(["kill-session", "-t", exact_session_target(session)])
+    session, coord, manifest = control_target(args)
+    command_id = getattr(args, "command_id", None)
+    duplicate = False
+    stop_attempted = True
+    if command_id:
+        if getattr(args, "run", None) is None:
+            raise OrchestrationError(
+                "Idempotent stop requires --run", "invalid_arguments"
+            )
+        duplicate, stop_attempted, replayed = _stop_with_receipt(
+            session, coord, command_id
+        )
+        if replayed:
+            return CommandResult(
+                data={
+                    "session": session,
+                    "run_id": coord.name,
+                    "stopped": True,
+                    "state_retained": True,
+                    "command_id": command_id,
+                    "duplicate": True,
+                    "stop_attempted": False,
+                    "completion": "completed",
+                }
+            )
+    else:
+        if getattr(args, "run", None) is not None:
+            require_live_run(session, coord, resolve_session)
+        tmux(["kill-session", "-t", exact_session_target(session)])
     if manifest.get("version") in {3, 4}:
         socket_path = broker_paths(coord)["socket"]
         try:
@@ -823,6 +943,11 @@ def stop_command(args: argparse.Namespace) -> CommandResult:
         data={
             "session": session,
             "stopped": True,
+            "run_id": coord.name,
+            "command_id": command_id,
+            "duplicate": duplicate,
+            "stop_attempted": stop_attempted,
+            "completion": "completed",
             "state_retained": True,
             "paths": {"coordination": str(coord)},
             "registry_finalization": {

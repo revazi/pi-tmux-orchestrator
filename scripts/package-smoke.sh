@@ -69,6 +69,7 @@ EXPECTED_FILES=(
   pi_tmux_orchestrator/prompts.py
   pi_tmux_orchestrator/profiles.py
   pi_tmux_orchestrator/protocol.py
+  pi_tmux_orchestrator/recovery.py
   pi_tmux_orchestrator/relay.py
   pi_tmux_orchestrator/rpc.py
   pi_tmux_orchestrator/rpc_protocol.py

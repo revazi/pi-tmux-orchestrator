@@ -65,20 +65,29 @@ def broker_control_request(
     }
     stream = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     stream.settimeout(timeout)
+    connected = False
     try:
         stream.connect(str(broker_paths(coord)["socket"]))
+        connected = True
         stream.sendall(encode_frame(request))
         size = int.from_bytes(_recv_exact(stream, 4), "big")
         if not 1 <= size <= MAX_BROKER_FRAME_BYTES:
-            raise OrchestrationError("Broker response size is invalid")
+            raise OrchestrationError(
+                "Broker response size is invalid; delivery is uncertain",
+                "broker_uncertain",
+            )
         try:
             response = json.loads(_recv_exact(stream, size))
         except (UnicodeDecodeError, json.JSONDecodeError) as error:
-            raise OrchestrationError("Broker response is invalid") from error
+            raise OrchestrationError(
+                "Broker response is invalid; delivery is uncertain", "broker_uncertain"
+            ) from error
     except (FileNotFoundError, ConnectionRefusedError, socket.timeout) as error:
         raise OrchestrationError(
-            "Broker is unavailable; command delivery was not accepted",
-            "broker_not_ready",
+            "Broker delivery is uncertain"
+            if connected
+            else "Broker is unavailable; command was not sent",
+            "broker_uncertain" if connected else "broker_not_ready",
         ) from error
     except OSError as error:
         raise OrchestrationError(
@@ -95,14 +104,26 @@ def broker_control_request(
         or response.get("id") != request_id
         or type(response.get("success")) is not bool
         or type(response.get("duplicate")) is not bool
+        or response.get("success") != (response.get("status") == "accepted")
         or response.get("status") not in {"accepted", "uncertain", "conflict"}
     ):
-        raise OrchestrationError("Broker response is invalid")
+        raise OrchestrationError(
+            "Broker response is invalid; delivery is uncertain", "broker_uncertain"
+        )
     if not response["success"]:
         raise OrchestrationError(
             f"Broker reported {response['status']} command delivery",
             "broker_uncertain"
             if response["status"] == "uncertain"
             else "broker_rejected",
+            data={
+                "command_id": request_id,
+                "command_status": response["status"],
+                "duplicate": response["duplicate"],
+                "completion": "uncertain",
+                "retry": "new_command_id"
+                if response["status"] == "uncertain"
+                else "inspect_exact_run",
+            },
         )
     return response

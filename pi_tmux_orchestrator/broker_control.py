@@ -130,7 +130,7 @@ class BrokerControlSupport:
                     status = "accepted"
                 else:
                     status = "conflict"
-            elif role not in self.clients or (
+            elif (action != "restart" and role not in self.clients) or (
                 action in {"restart", "continue"} and role not in self.worker_baselines
             ):
                 status = "uncertain"
@@ -212,7 +212,10 @@ class BrokerControlSupport:
                         raise OrchestrationError(
                             "Restart launch metadata is unavailable"
                         ) from error
-                    restarted_client = self.clients[role]
+                    # A fresh, confirmed restart can recover a lost handover even
+                    # after the old client disconnected. Matching IDs above only
+                    # replay their receipt and never advance another generation.
+                    restarted_client = self.clients.get(role)
                     database.execute(
                         "UPDATE roles SET generation=generation+1,state='restarting',"
                         "updated_at=? WHERE role=?",

@@ -348,9 +348,9 @@ test("registers one bounded model tool, auth-only TypeSafe provider, and exact c
     }),
     { type: "api_key", source: "TYPESAFE_API_KEY" },
   );
-  assert.deepEqual(tool.parameters.properties.action.enum, ["doctor", "models", "list", "status", "watch", "attach", "start", "send"]);
-  assert.equal(tool.parameters.properties.action.enum.includes("restart"), false);
-  assert.equal(tool.parameters.properties.action.enum.includes("stop"), false);
+  assert.deepEqual(tool.parameters.properties.action.enum, ["doctor", "models", "list", "status", "watch", "attach", "start", "send", "stop", "restart", "abort"]);
+  assert.equal(tool.parameters.properties.action.enum.includes("restart"), true);
+  assert.equal(tool.parameters.properties.action.enum.includes("stop"), true);
   assert.equal(tool.parameters.properties.profile.pattern, "^[a-z][a-z0-9-]{0,31}$");
   assert.deepEqual(tool.parameters.properties.implementationFlow.enum, ["single", "phased"]);
   assert.equal(tool.parameters.properties.maxRepairRounds.type, "integer");
@@ -6294,7 +6294,7 @@ test("stop selects an exact session and requires explicit UI confirmation before
     const action = args[2];
     const data = action === "list"
       ? { sessions: [{ session: "pi-test", project: "/tmp/project", valid: true }] }
-      : { session: "pi-test", stopped: true };
+      : { session: args.at(-1), run_id: "synthetic-run", stopped: true, completion: "completed" };
     return { code: 0, stdout: JSON.stringify(success(action, data)) };
   });
   const ctx = context({
@@ -6302,10 +6302,11 @@ test("stop selects an exact session and requires explicit UI confirmation before
     confirmations: [true],
   });
   await commands.get("or-stop").handler("", ctx);
-  assert.deepEqual(argvs.map((args) => args.slice(1)), [
-    ["--json", "list"],
-    ["--json", "stop", "pi-test", "--yes"],
+  assert.deepEqual(argvs.slice(0, 2).map((args) => args.slice(1)), [
+    ["--json", "list"], ["--json", "status", "--", "pi-test"],
   ]);
+  assert.deepEqual(argvs[2].slice(1, 5), ["--json", "stop", "--yes", "--run=synthetic-run"]);
+  assert.deepEqual(argvs[2].slice(-2), ["--", "pi-test"]);
   assert.equal(ctx.calls.inputs.length, 0);
   assert.match(ctx.calls.confirmations[0].message, /retained/);
 
@@ -6314,12 +6315,12 @@ test("stop selects an exact session and requires explicit UI confirmation before
     confirmations: [true],
   });
   await commands.get("or-dashboard").handler("", dashboardCtx);
-  assert.deepEqual(argvs.at(-1).slice(1), ["--json", "stop", "pi-dashboard", "--yes"]);
+  assert.deepEqual(argvs.at(-1).slice(-2), ["--", "pi-dashboard"]);
   assert.match(dashboardCtx.calls.confirmations[0].message, /pi-dashboard/);
 
   const declinedCtx = context({ confirmations: [false] });
   await commands.get("or-stop").handler("pi-other", declinedCtx);
-  assert.equal(argvs.length, 3);
+  assert.equal(argvs.filter((args) => args[2] === "stop").length, 2);
 });
 
 function scopedPolicy({ constraints = {}, staticRoles = [], customRoles = [], workerCandidates } = {}) {
@@ -6642,4 +6643,229 @@ for (const scopes of SCOPE_COMBINATIONS) test(`scopes ${scopes.join("+")} abort 
       return choiceResponse(request, Object.fromEntries(Object.keys(request.questions).map((id) => [id, "unauthorized"])));
     },
   }), /typesafe_answer_invalid/);
+});
+
+test("model recovery controls require separate exact-run confirmation in TUI and RPC", async () => {
+  for (const mode of ["tui", "rpc"]) {
+    for (const action of ["stop", "restart"]) {
+      for (const approved of [false, true]) {
+        const calls = [];
+        const input = { action, session: "pi-exact", role: "implementer", commandId: "a".repeat(32) };
+        const { tool } = harness(async (_cmd, args) => {
+          calls.push(args);
+          const command = args[2];
+          return { code: 0, stdout: JSON.stringify(success(command, command === "status"
+            ? { session: "pi-exact", run_id: "run-1", roles: [{ name: "implementer" }] }
+            : { session: "pi-exact", role: { name: "implementer" }, acknowledged: true, completion: action === "stop" ? "completed" : "respawned" })) };
+        });
+        const ctx = context({ confirmations: [approved], trusted: true, context: { mode } });
+        if (!approved) {
+          await assert.rejects(tool.execute("call", input, undefined, undefined, ctx), new RegExp(`${action}_confirmation_declined`));
+          assert.equal(calls.length, 1);
+        } else {
+          const result = await tool.execute("call", input, undefined, undefined, ctx);
+          assert.equal(result.details.command, action);
+          const control = calls[1];
+          assert.ok(control.includes("--yes"));
+          assert.ok(control.includes("--run=run-1"));
+          assert.deepEqual(control.slice(-2), ["--", "pi-exact"]);
+          assert.equal(control[control.indexOf("--command-id") + 1], input.commandId);
+          if (action === "restart") assert.match(result.content[0].text, /Not workflow completion/);
+        }
+        assert.equal(ctx.calls.confirmations.length, 1);
+        assert.match(ctx.calls.confirmations[0].message, /run-1/);
+      }
+    }
+  }
+});
+
+test("model recovery rejects invalid identities, stale selection and missing confirmation channels", async () => {
+  for (const action of ["stop", "restart", "abort"]) {
+    for (const session of [undefined, "", ".", "..", " pi-exact", "pi*", "=pi", "pi:agents", "x".repeat(129), 12]) {
+      const { tool } = harness(async () => assert.fail("invalid input must not execute"));
+      await assert.rejects(tool.execute("call", { action, session, role: "implementer" }, undefined, undefined, context()), /invalid_exact_session/);
+    }
+    for (const field of [{ commandId: "bad" }, { run: "../run" }, { run: ".." }]) {
+      const { tool } = harness(async () => assert.fail("invalid identity must not execute"));
+      await assert.rejects(tool.execute("call", { action, session: "pi-exact", role: "implementer", ...field }, undefined, undefined, context()), /invalid_(command_id|exact_run)/);
+    }
+  }
+  for (const mode of ["tui", "rpc", "print"]) {
+    const { tool } = harness(async () => assert.fail("no UI must not execute"));
+    for (const action of ["stop", "restart"]) {
+      await assert.rejects(tool.execute("call", { action, session: "pi-exact", role: "implementer" }, undefined, undefined, context({ context: { mode, hasUI: false } })), /requires_interactive_confirmation/);
+    }
+  }
+  for (const action of ["restart", "abort"]) {
+    const { tool } = harness(async () => assert.fail("invalid role must not execute"));
+    for (const role of [undefined, "all", "implementer*", "custom:bad", "implementer\n"]) {
+      await assert.rejects(tool.execute("call", { action, session: "pi-exact", role }, undefined, undefined, context()), /invalid_control_role/);
+    }
+  }
+  const { tool } = harness(async (_cmd, args) => ({ code: 0, stdout: JSON.stringify(success(args[2], { run_id: "new-run", roles: [{ name: "implementer" }] })) }));
+  const ctx = context({ confirmations: [true] });
+  await assert.rejects(tool.execute("call", { action: "restart", session: "pi-exact", role: "implementer", run: "old-run" }, undefined, undefined, ctx), /stale_control_run/);
+  assert.equal(ctx.calls.confirmations.length, 0);
+});
+
+test("model recovery preserves uncertainty, unavailable codes, IDs, and redacts raw failures", async () => {
+  for (const mode of ["tui", "rpc"]) {
+    for (const reason of ["broker_not_ready", "broker_uncertain", "broker_rejected", "throw", "malformed"]) {
+      const { tool } = harness(async (_cmd, args) => {
+        if (args[2] === "status") return { code: 0, stdout: JSON.stringify(success("status", { run_id: "run-1", roles: [{ name: "implementer" }] })) };
+        if (reason === "throw") throw new Error("SYNTHETIC_PRIVATE_CANARY");
+        return { code: 2, stdout: reason === "malformed" ? "SYNTHETIC_PRIVATE_CANARY" : JSON.stringify({ schema_version: "1", command: args[2], success: false, data: { prompt: "SYNTHETIC_PRIVATE_CANARY" }, error: { code: reason, message: "SYNTHETIC_PRIVATE_CANARY" } }) };
+      });
+      for (const action of ["stop", "restart", "abort"]) {
+        const ctx = context({ confirmations: [true], context: { mode } });
+        const result = await tool.execute("call", { action, session: "pi-exact", role: "implementer", commandId: "a".repeat(32) }, undefined, undefined, ctx);
+        assert.equal(result.details.success, false);
+        assert.equal(result.details.data.command_id, "a".repeat(32));
+        assert.equal(result.details.error.code, ["throw", "malformed"].includes(reason) ? "control_delivery_uncertain" : reason);
+        assert.doesNotMatch(JSON.stringify([result, ctx.calls]), /SYNTHETIC_PRIVATE_CANARY/);
+      }
+    }
+    const { tool } = harness(async () => ({ code: 0, stdout: JSON.stringify(success("status", { run_id: "run-1", roles: [{ name: "implementer" }] })) }));
+    const ctx = context({ context: { mode } });
+    ctx.ui.confirm = async () => { throw new Error("SYNTHETIC_PRIVATE_CANARY"); };
+    await assert.rejects(tool.execute("call", { action: "stop", session: "pi-exact" }, undefined, undefined, ctx), /stop_confirmation_unavailable/);
+  }
+});
+
+test("retained stop retry confirms exact run, abort has no destructive approval, duplicate restart stays uncertain", async () => {
+  const calls = [];
+  const { tool } = harness(async (_cmd, args) => {
+    calls.push(args);
+    const action = args[2];
+    const data = ["status", "supervisor"].includes(action) ? { run_id: "run-1", roles: [{ name: "implementer" }] }
+      : { session: "pi-exact", role: action === "abort" ? "implementer" : { name: "implementer" }, acknowledged: true,
+        duplicate: true, completion: action === "stop" ? "completed" : "uncertain", restarted: false };
+    return { code: 0, stdout: JSON.stringify(success(action, data)) };
+  });
+  for (const action of ["stop", "restart", "abort"]) {
+    const ctx = context({ confirmations: [true], context: { mode: "rpc" } });
+    const result = await tool.execute("call", { action, session: "pi-exact", run: "run-1", role: "implementer", commandId: "b".repeat(32) }, undefined, undefined, ctx);
+    assert.equal(ctx.calls.confirmations.length, action === "abort" ? 0 : 1);
+    if (action === "restart") assert.match(result.content[0].text, /completion uncertain; duplicate, no new respawn.*Not workflow completion/);
+    if (action === "abort") assert.match(result.content[0].text, /operation completion not observed/);
+  }
+  assert.equal(calls.filter((args) => args[2] === "supervisor").length, 1);
+});
+
+test("model start exact session validation and actionable collision never initiate cleanup", async () => {
+  const collision = { session: "pi-exact", orchestrated: true, workflow: { state: "active", round: 1, implementation_flow: "phased" },
+    roles: [{ role: "implementer", state: "busy", generation: 1 }], next_actions: [
+      { action: "status", session: "pi-exact" }, { action: "attach", session: "pi-exact" },
+      { action: "stop", session: "pi-exact", requires: "interactive_confirmation" }, { action: "start", requires: "different_exact_session" }] };
+  const { tool } = harness(async (_cmd, args) => {
+    assert.equal(args[2], "start");
+    assert.ok(args.includes("--dry-run"));
+    assert.equal(args[args.indexOf("--session") + 1], "pi-exact");
+    return { code: 2, stdout: JSON.stringify({ schema_version: "1", command: "start", success: false, data: { collision }, error: { code: "session_collision", message: "Exact session exists" } }) };
+  });
+  const ctx = context();
+  const result = await tool.execute("call", { action: "start", session: "pi-exact", task: "Synthetic task" }, undefined, undefined, ctx);
+  assert.deepEqual(result.details.data.collision, collision);
+  assert.match(result.content[0].text, /Nothing replaced.*status.*attach.*stop \(separate confirmation\).*choose another exact start session/);
+  assert.equal(ctx.calls.confirmations.length, 0);
+  for (const session of ["", "bad session", "a".repeat(129), "=pi", "pi*"]) {
+    await assert.rejects(tool.execute("call", { action: "start", session, task: "Synthetic task" }, undefined, undefined, context()), /invalid_exact_session/);
+  }
+});
+
+test("recovery preflight read errors are redacted and cancellation before control sends nothing", async () => {
+  for (const action of ["stop", "restart", "abort"]) {
+    const { tool } = harness(async () => { throw new Error("SYNTHETIC_PRIVATE_READ_CANARY"); });
+    const ctx = context({ confirmations: [true] });
+    const result = await tool.execute("call", { action, session: "pi-exact", role: "implementer" }, undefined, undefined, ctx);
+    assert.equal(result.details.error.code, "control_not_sent");
+    assert.equal(result.details.data.control_sent, false);
+    assert.equal(result.details.command, action);
+    assert.equal(ctx.calls.confirmations.length, 0);
+    assert.doesNotMatch(JSON.stringify(result), /CANARY/);
+  }
+  const signal = { aborted: false };
+  const { tool } = harness(async (_cmd, args) => {
+    assert.equal(args[2], "status", "cancelled confirmation must never run control");
+    return { code: 0, stdout: JSON.stringify(success("status", { run_id: "run-1", roles: [{ name: "implementer" }] })) };
+  });
+  const ctx = context();
+  ctx.ui.confirm = async () => { signal.aborted = true; return true; };
+  const result = await tool.execute("call", { action: "restart", session: "pi-exact", role: "implementer" }, signal, undefined, ctx);
+  assert.equal(result.details.error.code, "control_not_sent");
+  assert.equal(result.details.data.control_sent, false);
+});
+
+test("TUI/RPC recovery errors preserve only validated receipt metadata and actionable retry distinctions", async () => {
+  for (const mode of ["tui", "rpc"]) {
+    for (const retry of ["same_command_id", "new_command_id", "inspect_exact_run", "SYNTHETIC_PRIVATE_CANARY"]) {
+      const { tool } = harness(async (_cmd, args) => {
+        if (["status", "supervisor"].includes(args[2])) return { code: 0, stdout: JSON.stringify(success(args[2], { run_id: "run-1", roles: [{ name: "implementer" }] })) };
+        return { code: 2, stdout: JSON.stringify({ schema_version: "1", command: args[2], success: false,
+          data: { duplicate: true, completion: "uncertain", command_status: "uncertain", retry, prompt: "SYNTHETIC_PRIVATE_CANARY", run_id: "SYNTHETIC_PRIVATE_CANARY" },
+          error: { code: "broker_uncertain", message: "SYNTHETIC_PRIVATE_CANARY" } }) };
+      });
+      for (const action of ["stop", "restart", "abort"]) {
+        const ctx = context({ confirmations: [true], context: { mode } });
+        const result = await tool.execute("call", { action, session: "pi-exact", role: "implementer", run: "run-1", commandId: "a".repeat(32) }, undefined, undefined, ctx);
+        assert.equal(result.details.data.duplicate, true);
+        assert.equal(result.details.data.completion, "uncertain");
+        assert.equal(result.details.data.command_status, "uncertain");
+        assert.equal(result.details.data.run_id, "run-1");
+        assert.equal(result.details.data.retry, retry === "SYNTHETIC_PRIVATE_CANARY" ? "same_command_id" : retry);
+        assert.doesNotMatch(JSON.stringify([result, ctx.calls]), /CANARY/);
+        if (retry === "new_command_id") assert.match(result.content[0].text, /new command ID.*separate confirmation/);
+        if (retry === "same_command_id") assert.match(result.content[0].text, /same command ID to reconcile/);
+        assert.equal(ctx.calls.confirmations.length, action === "abort" ? 0 : 1);
+      }
+    }
+    const { tool } = harness(async (_cmd, args) => {
+      if (args[2] === "status") return { code: 0, stdout: JSON.stringify(success("status", { run_id: "run-1" })) };
+      return { code: 2, stdout: JSON.stringify({ schema_version: "1", command: "stop", success: false,
+        data: { duplicate: "SYNTHETIC_PRIVATE_CANARY", completion: "SYNTHETIC_PRIVATE_CANARY", command_status: "SYNTHETIC_PRIVATE_CANARY" },
+        error: { code: "broker_uncertain", message: "SYNTHETIC_PRIVATE_CANARY" } }) };
+    });
+    const result = await tool.execute("call", { action: "stop", session: "pi-exact" }, undefined, undefined, context({ confirmations: [true], context: { mode } }));
+    assert.equal(result.details.data.completion, "not_observed");
+    assert.equal(result.details.data.duplicate, undefined);
+    assert.equal(result.details.data.command_status, undefined);
+    assert.doesNotMatch(JSON.stringify(result), /CANARY/);
+  }
+});
+
+test("fresh TUI/RPC recovery after duplicate restart requires a new explicit call and confirmation", async () => {
+  for (const mode of ["tui", "rpc"]) {
+    const calls = [];
+    const { tool } = harness(async (_cmd, args) => {
+      calls.push(args);
+      if (args[2] === "status") return { code: 0, stdout: JSON.stringify(success("status", { run_id: "run-1", roles: [{ name: "implementer" }], broker: { roles: [{ role: "implementer", state: "uncertain" }] } })) };
+      const duplicate = args[args.indexOf("--command-id") + 1] === "a".repeat(32);
+      return { code: 0, stdout: JSON.stringify(success("restart", { session: "pi-exact", role: { name: "implementer" }, acknowledged: true, duplicate,
+        completion: duplicate ? "uncertain" : "respawned", restarted: !duplicate })) };
+    });
+    const input = { action: "restart", session: "pi-exact", role: "implementer", run: "run-1", commandId: "a".repeat(32) };
+    const duplicate = await tool.execute("call", input, undefined, undefined, context({ confirmations: [true], context: { mode } }));
+    assert.equal(calls.length, 2, "must not automatically recover from duplicate acknowledgement");
+    assert.match(duplicate.content[0].text, /fresh recovery needs a new command ID and separate confirmation/);
+    const declined = context({ confirmations: [false], context: { mode } });
+    await assert.rejects(tool.execute("call", { ...input, commandId: "b".repeat(32) }, undefined, undefined, declined), /restart_confirmation_declined/);
+    assert.equal(calls.length, 3);
+    const ctx = context({ confirmations: [true], context: { mode } });
+    const recovered = await tool.execute("call", { ...input, commandId: "b".repeat(32) }, undefined, undefined, ctx);
+    assert.equal(recovered.details.data.completion, "respawned");
+    assert.equal(ctx.calls.confirmations.length, 1);
+    assert.equal(calls.length, 5);
+  }
+});
+
+test("same-ID reconciled stop summary distinguishes a fresh kill from receipt replay", async () => {
+  for (const mode of ["tui", "rpc"]) {
+    const { tool } = harness(async (_cmd, args) => ({ code: 0, stdout: JSON.stringify(success(args[2], args[2] === "supervisor" ? { run_id: "run-1" }
+      : { session: "pi-exact", duplicate: true, completion: "completed", stop_attempted: true })) }));
+    const ctx = context({ confirmations: [true], context: { mode } });
+    const result = await tool.execute("call", { action: "stop", session: "pi-exact", run: "run-1", commandId: "a".repeat(32) }, undefined, undefined, ctx);
+    assert.match(result.content[0].text, /same-ID recovery of the original run/);
+    assert.doesNotMatch(result.content[0].text, /no new stop/);
+    assert.equal(ctx.calls.confirmations.length, 1);
+  }
 });

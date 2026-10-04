@@ -38,6 +38,38 @@ Then run `/or-start Describe the change` or ask naturally to use the orchestrato
 
 The dashboard supports arrows or `j`/`k`, Enter to attach/watch, `d` for doctor, `r` to refresh, `x` for confirmed stop, `?` for help, and `q`/Escape to close. Opening it does not run doctor or poll in the background.
 
+## Model-tool recovery (Unreleased)
+
+The bounded `tmux_orchestrator` tool also supports exact-session `stop` and
+exact-role `restart`/`abort`, through the authoritative CLI and broker. Stop and
+restart each ask for **separate interactive TUI or RPC confirmation** tied to the
+selected run; project trust or a prior start approval cannot authorize them.
+Abort requests cancellation, not completion. A restart acknowledgement is not a
+completed handover or completed task; duplicate restart retries never respawn
+again and report uncertain completion. After inspecting a stuck handover, request
+a fresh restart with a **new command ID and separate confirmation**; an uncertain
+role state does not block recovery. Abort still requires a connected worker, and
+restart still requires the broker's live in-memory baseline and resource checks.
+
+Start may supply an exact `session` (1–128 ASCII letters, digits, `_`, `.`, `-`; `.`/`..` are reserved).
+A collision returns metadata-only `data.collision`: exact session, safely
+available retained workflow/role states, and valid next actions. Inspect status,
+attach in a tmux TUI, separately confirm stop, or explicitly choose another start
+session. Ordinary non-orchestrator sessions cannot be stopped through this tool.
+Nothing automatically stops, replaces, renames, or reuses existing work.
+
+Controls accept optional exact `run` and 32-character lowercase hexadecimal
+`commandId`. Keep both when retrying an uncertain command; stop/restart bind the
+confirmed run automatically. A confirmed same-ID stop retry can reconcile an
+interrupted receipt: it stops only the original live run, or completes after a
+successful observation that the session is absent. Concurrent retries fail
+uncertain without waiting. A completed stop receipt can be replayed after
+retention without killing a new same-name session; unavailable observations and
+replacement sessions never authorize a kill or claim completion. Retained state is never proof
+of a live broker. The five slash commands and package version 0.11.1 are unchanged.
+See [recovery usage](references/usage.md#model-tool-recovery-controls) and
+[compatibility](references/protocol-v1.md#compatibility).
+
 ## Safety and configuration
 
 Tmux hosts panes; an authenticated local broker transports typed workflow reports. Ambiguous delivery fails closed rather than blindly replaying work. Worker prompts and project payloads are not retained in broker metadata. Stop and start actions require confirmation; review authority cannot be removed.

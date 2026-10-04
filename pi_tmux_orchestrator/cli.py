@@ -596,11 +596,23 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="confirm the worker-process respawn",
     )
+    restart.add_argument("--run", help="exact retained coordination run ID")
+    restart.add_argument(
+        "--command-id",
+        type=rpc_command_id,
+        help="idempotency key; duplicates never repeat respawn",
+    )
     restart.set_defaults(handler=restart_command)
 
     stop = subparsers.add_parser("stop", help="stop one orchestration")
     stop.add_argument("session", nargs="?")
     stop.add_argument("--yes", action="store_true")
+    stop.add_argument("--run", help="exact retained coordination run ID")
+    stop.add_argument(
+        "--command-id",
+        type=rpc_command_id,
+        help="idempotency key bound to the exact run",
+    )
     stop.set_defaults(handler=stop_command)
 
     planner_policy = subparsers.add_parser(
@@ -743,6 +755,7 @@ def main() -> int:
         result = CommandResult(
             code=2,
             error_code=error.code,
+            data=error.data,
             error_message=bounded_message(error),
         )
     except subprocess.CalledProcessError as error:

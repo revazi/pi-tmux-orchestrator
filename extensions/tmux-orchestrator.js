@@ -64,7 +64,7 @@ import {
 const CLI_PATH = fileURLToPath(new URL("../bin/pi-tmux-agents", import.meta.url));
 const MAX_VISIBLE_CHARS = 12_000;
 const DIGEST_PATTERN = /^[a-f0-9]{64}$/;
-const ACTIONS = ["doctor", "models", "list", "status", "watch", "attach", "start", "send"];
+const ACTIONS = ["doctor", "models", "list", "status", "watch", "attach", "start", "send", "stop", "restart", "abort"];
 
 const parameters = {
   type: "object",
@@ -90,7 +90,9 @@ const parameters = {
       pattern: "^[a-z][a-z0-9-]{0,31}$",
       description: "Packaged or strict user-global execution profile for start",
     },
-    session: { type: "string", description: "Exact orchestration session for status, watch, attach, or send" },
+    session: { type: "string", minLength: 1, maxLength: 128, pattern: "^(?!\\.{1,2}$)[A-Za-z0-9_.-]{1,128}$", description: "Optional exact session name for start; exact orchestration session for reads or controls. Never fuzzy matching" },
+    run: { type: "string", maxLength: 160, pattern: "^[A-Za-z0-9_.-]+$", description: "Optional exact retained run ID for controls; must match the live session. Stop/restart bind the confirmed run automatically" },
+    commandId: { type: "string", pattern: "^[a-f0-9]{32}$", description: "Optional idempotency key for send/abort/restart/stop; reuse it and the exact run to resolve unknown delivery. Duplicate restart never respawns: inspect state, then use a new ID and separate confirmation for fresh recovery. Interrupted stop retries reconcile only the original run" },
     role: controlRoleParameters,
     task: { type: "string", maxLength: 65536, description: "Self-contained start objective; transferred through a private file" },
     contextCapsule: contextCapsuleParameters,
@@ -344,7 +346,11 @@ function appendProjectCustomRoleArgs(args, input) {
 }
 
 function appendStartIdentityArgs(args, input, paths) {
-  if (input.session) args.push("--session", input.session);
+  if (input.session) {
+    validateExactSession(input.session);
+    if (input.session.startsWith("-")) args.push(`--session=${input.session}`);
+    else args.push("--session", input.session);
+  }
   if (paths.contextCapsule) args.push("--context-capsule-file", paths.contextCapsule);
   if (paths.planning) args.push("--planning-record-file", paths.planning);
 }
@@ -533,6 +539,7 @@ function startContextFailure(allowRpc) {
 
 function validateStartRequest(input, ctx, allowRpc = false) {
   if (!validStartContext(ctx, allowRpc)) throw new Error(startContextFailure(allowRpc));
+  if (input.session !== undefined) validateExactSession(input.session);
   if (!input.task || !String(input.task).trim()) throw new Error("start_requires_task");
   if (input.probeTask && input.withProbe === false) throw new Error("probe_task_requires_role");
   if (input.playwrightTask && input.withPlaywright === false) throw new Error("playwright_task_requires_role");
@@ -874,16 +881,146 @@ async function attachAndSupervise(pi, input, signal, ctx, superviseStart) {
   return runAttach(pi, { session: statusEnvelope.data?.session }, signal, ctx);
 }
 
+function validateExactSession(session) {
+  if (typeof session !== "string" || !/^[A-Za-z0-9_.-]{1,128}$/.test(session) || [".", ".."].includes(session)) {
+    throw new Error("invalid_exact_session");
+  }
+  return session;
+}
+
+function controlIdentityArgs(input) {
+  const args = [];
+  if (input.run !== undefined) {
+    if (typeof input.run !== "string" || !/^[A-Za-z0-9_.-]{1,160}$/.test(input.run) || [".", ".."].includes(input.run)) {
+      throw new Error("invalid_exact_run");
+    }
+    args.push(`--run=${input.run}`);
+  }
+  if (input.commandId !== undefined) {
+    if (typeof input.commandId !== "string" || !/^[a-f0-9]{32}$/.test(input.commandId)) {
+      throw new Error("invalid_command_id");
+    }
+    args.push("--command-id", input.commandId);
+  }
+  return args;
+}
+
+function requireRecoveryConfirmation(ctx, action) {
+  if (!ctx.hasUI || !["tui", "rpc"].includes(ctx.mode) || typeof ctx.ui?.confirm !== "function") {
+    throw new Error(`${action}_requires_interactive_confirmation`);
+  }
+}
+
+function selectedRecoveryRun(input, status) {
+  const run = status.data?.run_id;
+  if (typeof run !== "string" || !/^[A-Za-z0-9_.-]{1,160}$/.test(run) || [".", ".."].includes(run)) {
+    throw new Error("control_run_identity_unavailable");
+  }
+  if (input.run !== undefined && input.run !== run) throw new Error("stale_control_run");
+  if (input.action !== "stop" && !(status.data?.roles || []).some((role) => role.name === input.role)) {
+    throw new Error("invalid_control_role");
+  }
+  return run;
+}
+
+async function confirmRecovery(ctx, action, session, role, run) {
+  let confirmed;
+  try {
+    confirmed = await ctx.ui.confirm(
+      action === "stop" ? "Stop tmux orchestration?" : "Restart exact worker role?",
+      action === "stop"
+        ? `Kill only ${session} (run ${run})? External coordination state and child session records are retained.`
+        : `Respawn only ${session}/${role} (run ${run})? Pi conversation/history is retained. Acknowledgement is not workflow completion.`,
+    );
+  } catch {
+    throw new Error(`${action}_confirmation_unavailable`);
+  }
+  if (confirmed !== true) throw new Error(`${action}_confirmation_declined`);
+}
+
+async function runRecovery(pi, input, signal, ctx) {
+  const session = validateExactSession(input.session);
+  const action = input.action;
+  if (action !== "stop" && !validControlRole(input.role)) throw new Error("invalid_control_role");
+  const commandId = input.commandId ?? randomUUID().replaceAll("-", "");
+  controlIdentityArgs({ ...input, commandId });
+  if (action !== "abort") requireRecoveryConfirmation(ctx, action);
+  // Bind approval to the run being displayed, not a future same-name session.
+  const status = action !== "stop" || input.run === undefined
+    ? await runControlCli(pi, "status", ["--", session], signal, { ...input, commandId })
+    : await runControlCli(pi, "supervisor", ["snapshot", `--run=${input.run}`, "--", session], signal, { ...input, commandId });
+  if (!status.success) return {
+    ...status, command: action,
+    data: { ...status.data, control_sent: false },
+    error: { code: "control_not_sent", message: "Exact run metadata is unavailable; recovery control was not sent. Inspect the exact session or retained run." },
+  };
+  const run = selectedRecoveryRun(input, status);
+  if (action === "abort") {
+    return runControlCli(pi, action, ["--role", input.role, ...controlIdentityArgs({ run, commandId }), "--", session], signal, { ...input, run, commandId });
+  }
+  await confirmRecovery(ctx, action, session, input.role, run);
+  return runControlCli(pi, action, [
+    ...(action === "restart" ? ["--role", input.role] : []),
+    "--yes", ...controlIdentityArgs({ run, commandId }), "--", session,
+  ], signal, { ...input, run, commandId });
+}
+
+async function runControlCli(pi, action, args, signal, input) {
+  if (signal?.aborted) return {
+    schema_version: "1", command: action, success: false,
+    data: { session: input.session, run_id: input.run ?? null, command_id: input.commandId, control_sent: false },
+    error: { code: "control_not_sent", message: "Recovery was cancelled before delivery; control was not sent." },
+  };
+  let envelope;
+  try {
+    envelope = await runCli(pi, action, args, signal);
+  } catch {
+    envelope = {
+      schema_version: "1", command: action, success: false, data: null,
+      error: { code: "control_delivery_uncertain", message: "Control delivery or completion is uncertain; inspect the exact run and reuse the command ID, never assume completion." },
+    };
+  }
+  return envelope.success ? envelope : recoveryFailure(envelope, action, input);
+}
+
+function recoveryFailureMessage(code, retry) {
+  if (["broker_not_ready", "broker_not_live"].includes(code)) {
+    return "Exact live broker/run is unavailable; no completion is claimed.";
+  }
+  return {
+    new_command_id: "Control completion is unproven; inspect the exact run, then use a new command ID for fresh recovery. Stop/restart still require separate confirmation.",
+    inspect_exact_run: "Control was rejected or completion is unproven; inspect the exact run before selecting a recovery action.",
+    same_command_id: "Control delivery/completion is uncertain; inspect the exact run and retry the same command ID to reconcile, never assume completion.",
+  }[retry];
+}
+
+function recoveryFailure(envelope, action, input) {
+  // Controls return only validated recovery metadata, never an external/raw body.
+  const code = ["broker_not_ready", "broker_not_live", "broker_uncertain", "broker_rejected", "invalid_arguments"].includes(envelope.error?.code) ? envelope.error.code : "control_delivery_uncertain";
+  const retry = ["same_command_id", "new_command_id", "inspect_exact_run"].includes(envelope.data?.retry) ? envelope.data.retry : "same_command_id";
+  return {
+    schema_version: "1", command: action, success: false,
+    data: { session: input.session, role: input.action === "stop" ? null : input.role, run_id: input.run ?? null,
+      command_id: input.commandId, completion: envelope.data?.completion === "uncertain" ? "uncertain" : "not_observed",
+      ...(typeof envelope.data?.duplicate === "boolean" ? { duplicate: envelope.data.duplicate } : {}),
+      ...(["accepted", "uncertain", "conflict"].includes(envelope.data?.command_status) ? { command_status: envelope.data.command_status } : {}),
+      retry },
+    error: { code, message: recoveryFailureMessage(code, retry) },
+  };
+}
+
 async function runSend(pi, input, signal) {
   if (!input.session || !input.role || !input.message || !String(input.message).trim()) {
     throw new Error("send_requires_session_role_message");
   }
+  validateExactSession(input.session);
+  const identity = controlIdentityArgs(input);
   if (!validControlRole(input.role)) throw new Error("invalid_send_role");
   return withPrivateFiles({ message: input.message }, (paths) =>
     runCli(
       pi,
       "send",
-      [input.session, "--role", input.role, "--message-file", paths.message],
+      [...(input.session.startsWith("-") ? [] : [input.session]), "--role", input.role, "--message-file", paths.message, ...identity, ...(input.session.startsWith("-") ? ["--", input.session] : [])],
       signal,
     ),
   );
@@ -940,6 +1077,17 @@ const successSummaries = {
       ? `Acknowledged by ${data.session}/${data.role}`
       : `Sent to ${data.session}/${data.role}`;
   },
+  stop(data) {
+    return data.completion === "completed"
+      ? `Stopped exact ${data.session}; coordination state retained${data.duplicate ? data.stop_attempted ? " (same-ID recovery of the original run)" : " (duplicate receipt; no new stop)" : ""}.`
+      : `Stop outcome uncertain for ${data.session}; inspect status before retrying.`;
+  },
+  restart(data) {
+    return `Restart ${data.acknowledged ? "acknowledged" : "requested"} for ${data.session}/${data.role?.name}; ${data.completion === "respawned" ? "pane respawned" : "completion uncertain"}${data.duplicate ? "; duplicate, no new respawn" : ""}. Not workflow completion.${data.duplicate ? " Inspect state; fresh recovery needs a new command ID and separate confirmation." : ""}`;
+  },
+  abort(data) {
+    return `Abort acknowledged for ${data.session}/${data.role}; operation completion not observed. Not workflow completion.`;
+  },
   doctor(data) {
     const failed = (data.commands || []).filter((item) => item.status === "fail").length;
     return failed ? `${failed} prerequisite check(s) failed` : "Prerequisite checks complete";
@@ -948,6 +1096,11 @@ const successSummaries = {
 
 function compactSummary(envelope) {
   if (!envelope.success) {
+    if (envelope.error?.code === "session_collision") {
+      const collision = envelope.data?.collision;
+      const actions = (collision?.next_actions || []).map((item) => item.action === "start" ? "choose another exact start session" : `${item.action}${item.action === "stop" ? " (separate confirmation)" : ""}`).join(", ");
+      return `Session collision: ${bounded(collision?.session, 128)}. Nothing replaced. Next: ${actions || "choose another exact start session"}.`;
+    }
     return `Failed (${bounded(envelope.error?.code, 80)}): ${bounded(envelope.error?.message, 400)}`;
   }
   const summarize = successSummaries[envelope.command];
@@ -1007,6 +1160,10 @@ async function actionEnvelope(pi, input, signal, ctx, superviseStart) {
       return startAction(pi, input, signal, ctx, superviseStart);
     case "send":
       return runSend(pi, input, signal);
+    case "stop":
+    case "restart":
+    case "abort":
+      return runRecovery(pi, input, signal, ctx);
     default:
       throw new Error("unsupported_action");
   }
@@ -1025,6 +1182,11 @@ async function executeAction(pi, input, signal, ctx, superviseStart = () => {}) 
       ...(envelope.planner_usage ? { usage: envelope.planner_usage } : {}),
     };
   } catch (error) {
+    if (["stop", "restart", "abort"].includes(input.action)) {
+      const reason = error instanceof Error ? error.message : "control_failed";
+      const safe = /^(invalid_exact_session|invalid_exact_run|invalid_command_id|invalid_control_role|control_run_identity_unavailable|stale_control_run|(stop|restart)_confirmation_(declined|unavailable)|(stop|restart)_requires_interactive_confirmation|orchestrator_request_cancelled)$/.test(reason);
+      throw new Error(safe ? reason : "control_failed_before_confirmation");
+    }
     const policyFailure = workerCandidatesFailure(error);
     if (policyFailure) throw new Error(`${policyFailure.code}: ${policyFailure.message}`);
     throw new Error(bounded(error instanceof Error ? error.message : "orchestrator_error", 200));
@@ -1220,12 +1382,11 @@ function createCommandHandlers(pi, superviseStart = () => {}) {
   };
 
   const stopSession = async (session, ctx) => {
-    const confirmed = await ctx.ui.confirm(
-      "Stop tmux orchestration?",
-      `Kill only ${bounded(session, 160)}? External coordination state and child session records are retained.`,
-    );
-    if (!confirmed) return;
-    await runCommandCli(pi, "stop", [session, "--yes"], ctx);
+    try {
+      notifyEnvelope(ctx, await runRecovery(pi, { action: "stop", session }, ctx.signal, ctx));
+    } catch {
+      notifyCommandFailure(ctx, "stop");
+    }
   };
 
   const stop = async (args, ctx) => {
@@ -1382,7 +1543,7 @@ export default function tmuxOrchestratorExtension(pi) {
   pi.registerTool({
     name: "tmux_orchestrator",
     label: "Tmux Orchestrator",
-    description: "Supervise bounded doctor, available-model discovery, list, status, watch, attach, start, or send actions through the Pi runtime and bundled Python tmux orchestrator. Start resolves strict user-global exact-project defaults for profile/models, single or phased flow, enabled specialists, exact-project custom read-only specialists, and the workspace capsule; explicit per-run values win. With dynamicPlan=true, planningScopes independently authorizes topology/models/thinking; omission preserves all three axes. Fixed axes resolve effective policy as authoritative locks, not choices. It makes one separately confirmed preflight provider call before preview to choose the bounded built-in worker roster and exact per-role model/thinking settings from strict version-5 external workerCandidates exact approved pools validated against Pi's available/scoped catalog, using non-secret capability and declared catalog cost-hint facts without name-based quality or recency inference. Exact run/project/global role locks override pools; custom roles keep fixed bindings. Without pools, every planner-eligible role including optional roles must have an authoritative exact provider/model lock, or the start fails before planning with configuration guidance; it never falls back to the full catalog. Both Jev and Pi use the same approved worker scope; the decision-model identity is independent. Confirmation and the immediate start acknowledgement show pool source/count and exact selected assignments, not configuration bodies;  TypeSafe authentication configured through /login typesafe or TYPESAFE_API_KEY selects the bundled direct jev-latest typed-decision adapter, its absence lets an exact operator-supplied Pi decisionModel win, and absence of both uses the strict user-global exact Pi preferred identity and ordered cross-provider fallbacks with configured cancel or explicitly confirmed static/manual behavior when none are eligible. Pi decision-call thinking follows decision-model policy; worker thinking uses each selected model's supported levels through max. It may also omit project custom specialists with projectCustomRoles=false, select deterministic or forced specialist activation, this parent Pi's current model, exact user-requested per-role provider/model/thinking overrides, strict per-run budget overrides, an opt-in additional repair-round cap, and explicit per-role retain/prune worker context. Never invent custom role IDs. The invoking Pi remains the parent; normal starts create no separate parent Pi or controller. Watch subscribes this Pi to lifecycle and final-report updates. Attach watches future transitions and switches its existing tmux client into native Pi worker panes without replaying an already-actionable initial outcome as a new parent task; prefix then L returns without stopping workers or changing this Pi's project context. New runs are watched automatically. Start always requires interactive confirmation.",
+    description: "Supervise bounded doctor, available-model discovery, list, status, watch, attach, start, send, stop, restart, or abort actions through the Pi runtime and bundled Python tmux orchestrator. Start resolves strict user-global exact-project defaults for profile/models, single or phased flow, enabled specialists, exact-project custom read-only specialists, and the workspace capsule; explicit per-run values win. With dynamicPlan=true, planningScopes independently authorizes topology/models/thinking; omission preserves all three axes. Fixed axes resolve effective policy as authoritative locks, not choices. It makes one separately confirmed preflight provider call before preview to choose the bounded built-in worker roster and exact per-role model/thinking settings from strict version-5 external workerCandidates exact approved pools validated against Pi's available/scoped catalog, using non-secret capability and declared catalog cost-hint facts without name-based quality or recency inference. Exact run/project/global role locks override pools; custom roles keep fixed bindings. Without pools, every planner-eligible role including optional roles must have an authoritative exact provider/model lock, or the start fails before planning with configuration guidance; it never falls back to the full catalog. Both Jev and Pi use the same approved worker scope; the decision-model identity is independent. Confirmation and the immediate start acknowledgement show pool source/count and exact selected assignments, not configuration bodies;  TypeSafe authentication configured through /login typesafe or TYPESAFE_API_KEY selects the bundled direct jev-latest typed-decision adapter, its absence lets an exact operator-supplied Pi decisionModel win, and absence of both uses the strict user-global exact Pi preferred identity and ordered cross-provider fallbacks with configured cancel or explicitly confirmed static/manual behavior when none are eligible. Pi decision-call thinking follows decision-model policy; worker thinking uses each selected model's supported levels through max. It may also omit project custom specialists with projectCustomRoles=false, select deterministic or forced specialist activation, this parent Pi's current model, exact user-requested per-role provider/model/thinking overrides, strict per-run budget overrides, an opt-in additional repair-round cap, and explicit per-role retain/prune worker context. Never invent custom role IDs. The invoking Pi remains the parent; normal starts create no separate parent Pi or controller. Watch subscribes this Pi to lifecycle and final-report updates. Attach watches future transitions and switches its existing tmux client into native Pi worker panes without replaying an already-actionable initial outcome as a new parent task; prefix then L returns without stopping workers or changing this Pi's project context. New runs are watched automatically. Start always requires interactive confirmation. Stop/restart require separate interactive TUI or RPC confirmation bound to the exact run; abort targets only the exact selected role. commandId is an optional 32-hex idempotency key; preserve it and run on retry. Acknowledgement is not completion and duplicate restart completion remains uncertain. Optional start session uses the CLI 1-128 character allowlist. Collisions return bounded metadata and next actions; never automatically stop, replace, rename, or reuse a session.",
     promptSnippet: "Inspect or operate local Pi tmux orchestrations through the authoritative Python CLI",
     promptGuidelines: [
       "Use tmux_orchestrator instead of rebuilding tmux orchestration state; before a start, synthesize a bounded contextCapsule from the current conversation when prior decisions or work matter; include only task-relevant state, constraints, acceptance criteria, paths, evidence, and open questions, never the full transcript. Prefer dynamicPlan=true when the user asks the orchestrator to decide worker count, roles, models, or thinking before launch, and select planningScopes only for the authorized axes. Omission preserves the legacy all-axis request and static defaults do not change. Fixed axes are resolved operator/project/global/profile locks, not fake planner choices; that mode requires separate approval for one preflight provider call and another confirmation for launch. TypeSafe authentication configured through /login typesafe or TYPESAFE_API_KEY selects the bundled direct jev-latest adapter before every Pi decision model. Without TypeSafe authentication, use an exact Pi decisionModel only when the user supplied it; it wins over the strict user-global exact Pi preferred identity and ordered cross-provider fallbacks, then the explicit cancel/static policy. Dynamic planning may select only fixed built-ins and freshly validated exact-project custom read-only specialists; projectCustomRoles=false omits custom candidates. Enable workspaceCapsule only for an explicit cold-assignment experiment and supply only bounded existing project-relative workspaceRelevantPaths, never a repository tree; it supplements discovery and never replaces reading governing instructions. Do not claim workspace-capsule savings or correctness without authoritative provider and review evidence. Do not claim dynamic-planning savings or correctness without separately reviewed provider and outcome evidence. Dynamic planning uses only operator-approved exact workerCandidates pools from external version-5 configuration, validated against Pi's available/scoped catalog, plus higher-precedence exact run/project/global role locks and custom fixed bindings. Per-role pools replace the all-role pool. Without a pool, every planner-eligible role including optional roles must have an authoritative exact provider/model lock; otherwise stop before the provider call and guide the operator to configure pools or exact overrides. Never invent or expand approval, silently offer the full catalog, infer quality or recency from names, or treat declared catalog cost hints as observed spend. Jev and Pi fallback enforce identical approved worker scope; decision-model lookup remains independent. Use bounded pool source/count and exact selected assignments from confirmation and immediate start acknowledgement as authoritative launch metadata, never configuration bodies. Use implementationFlow=phased for complex work that benefits from read-only discovery before editing; use single for simple work or compatibility. Configured specialists use conservative deterministic activation gates after launch; pass forceSpecialists only when the user explicitly requires that enabled role to run regardless of a skip predicate. Exact-project customRoles from validated user-global configuration are included unless projectCustomRoles is false; never invent custom role identifiers, providers, models, tools, or contracts. After starting or explicitly watching a run, ensure the invoking Pi is watching it for lifecycle and final reports. Once watching, end the turn and rely on broker updates: never run sleep commands or repeatedly poll status/tmux while waiting for a watched orchestration. Attaching to an existing run watches future transitions but does not replay an already-actionable initial outcome into the current Pi; returning with tmux prefix then L does not change the current Pi's project context. Honor an explicit economy, balanced, thorough, or user-configured profile request through profile. Honor explicit user model/provider/thinking requests through useParentModel or modelOverrides; those overrides win over profile values. Use the models action to resolve available exact identifiers when needed; never invent a Pi provider/model identifier or inspect provider credentials. Omitted overrides use the exact canonical project mapping, then the user's global orchestrator model configuration, selected/default profile, and packaged defaults. Honor explicit per-run budget requests through budgetOverrides; omitted values use the strict user-global budget policy and packaged warn-only defaults, and never infer hard thresholds. Honor explicit repair-round cap requests through maxRepairRounds; omission disables the cap and 0 pauses before the first repair. This is separate from observational budgets and does not cap active-assignment tokens. Continuation approval remains operator-only through the confirmed terminal CLI; never approve your own continuation. Honor explicit retain/prune requests through workerContext for enabled roles; omitted roles keep prune. Retention may increase cost, reuse hints are advisory metadata observations, and historical checks or approval never replace required verification and review. Do not infer retention, switch live policies, or request unsupported compact/fresh modes. Worker skill discovery is disabled; pass workerSkills only for exact Markdown paths the user explicitly reviewed, never infer skills. When the user asks to enter, navigate, or directly steer the live workers, use attach rather than watch; attach requires the invoking Pi to be inside tmux. Prefer native Pi TUI workers and use rpcWorkers only after an explicit request for headless panes. The invoking Pi remains responsible for interpreting reports and deciding follow-up. When a workflow needs attention, send only to a waiting role that owns the active assignment; never trigger an idle role or reviewer without a broker assignment. Never create file handoffs, poll coordination state, claim parent project trust applies to child Pi sessions, or equate command acknowledgement with task completion.",

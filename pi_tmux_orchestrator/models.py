@@ -7,9 +7,16 @@ from . import runtime
 
 
 class OrchestrationError(RuntimeError):
-    def __init__(self, message: str, code: str = "orchestration_error") -> None:
+    def __init__(
+        self,
+        message: str,
+        code: str = "orchestration_error",
+        *,
+        data: dict[str, Any] | None = None,
+    ) -> None:
         super().__init__(message)
         self.code = code
+        self.data = data
 
 
 class CLIUsageError(OrchestrationError):

@@ -46,6 +46,7 @@ from .context_capsules import render_worker_baseline
 from .custom_role_resources import select_custom_start
 from .role_registry import valid_custom_role_id
 from .models import CommandResult, OrchestrationError
+from .recovery import collision_metadata
 from .output import human_print, public_role
 from .planning import (
     bind_planning_record,
@@ -620,7 +621,9 @@ def start_command(args: argparse.Namespace) -> CommandResult:
     )
     if session_exists(session):
         raise OrchestrationError(
-            f"tmux session already exists: {session}. Use status/stop or choose --session."
+            f"Exact tmux session already exists: {session}. Inspect it or choose another exact session; no work was replaced.",
+            "session_collision",
+            data={"collision": collision_metadata(session)},
         )
 
     roles = ["implementer", "reviewer"]
