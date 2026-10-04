@@ -1,3 +1,6 @@
+import { syntheticEvidenceFixture } from "./fixtures/planner-evidence.mjs";
+import { plannerEvidenceLines, strictPlannerJson, MAX_EVIDENCE_BYTES, buildPlannerEvidence } from "../extensions/orchestrator-planner-evidence.js";
+import { plannerEvidenceDigest } from "../extensions/orchestrator-planning.js";
 import assert from "node:assert/strict";
 import { TASK_INTENTS, taskIntentMetadata, validateTaskIntent } from "../extensions/orchestrator-intent.js";
 import { access, chmod, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
@@ -3444,8 +3447,8 @@ test("worker pool thinking eligibility preserves ordered metadata, digest, and e
     { role: "reviewer", source: "role-pool", count: 1 },
     { role: "probe", source: "exact-lock", count: 1 },
   ] });
-  // Pin the digest produced by the resolver before helper extraction.
-  assert.equal(scope.digest, "d562c9e4d1cf57f7bdc86b386f33a502f5df001390b2b1183101ac0924fcbc4f");
+  // Pin the binary64-v1 candidate fact binding.
+  assert.equal(scope.digest, "ceac60e2d9a36e67a15a456dff4e00a64635459df59f4cc35c08fff0d194abdc");
   for (const [policy, roleLocks, message] of [
     [configured, [{ role: "implementer", thinking: "max" }], "dynamic_planning_locked_thinking_unsupported"],
     [null, [{ role: "implementer" }], "approved_worker_pool_required"],
@@ -3765,7 +3768,7 @@ test("TypeSafe Jev precedes explicit Pi decision models and configured fallback"
   assert.equal(result.plan.usage.totalTokens, 366);
   assert.equal(JSON.stringify(result).includes("test-typesafe-key"), false);
   assert.equal(JSON.stringify(result).includes("Prefer a compact roster"), false);
-  assert.match(result.plan.roles[0].reason, /Jev retained the required role/);
+  assert.match(result.plan.roles[0].reason, /Required role retained under fixed authority/);
 
   const manyModels = Array.from({ length: 30 }, (_, index) => ({
     provider: "many", id: `model-${index}`, reasoning: true,
@@ -6433,7 +6436,7 @@ for (const selector of [undefined, ...SCOPE_COMBINATIONS]) test(`planning scopes
     assert.ok(["a", "b"].includes(role.model));
   }
   const retained = planningRecordForPreview(result.plan);
-  assert.equal(retained.version, 4);
+  assert.equal(retained.version, 5);
   assert.deepEqual(retained.scopes, scopes);
   assert.equal(JSON.stringify(retained).includes(input.task), false);
 });
@@ -6563,7 +6566,7 @@ test("fully locked scopes ask suitability once; rejection, invalid choices and u
 });
 
 for (const scopes of SCOPE_COMBINATIONS) test(`scoped start ${scopes.join("+")} cancellation, stale preview, dry-run and no-launch failure`, async () => {
-  for (const mode of ["cancel-call", "cancel-launch", "stale-policy", "stale-lock", "stale-preview", "dry-run", "bad-answer", "launch"]) {
+  for (const mode of ["cancel-call", "cancel-launch", "stale-policy", "stale-lock", "stale-preview", "stale-evidence", "dry-run", "bad-answer", "launch"]) {
     let providerCalls = 0;
     let starts = 0;
     let launches = 0;
@@ -6589,6 +6592,7 @@ for (const scopes of SCOPE_COMBINATIONS) test(`scoped start ${scopes.join("+")} 
       const planning = await boundPlanningFromArgs(args);
       previewPlanning = planning;
       if (mode === "stale-preview") planning.locks[0].thinking = "invalid";
+      if (mode === "stale-evidence") planning.evidence.decisions.at(-1).confidence = 0.5;
       return { code: 0, stdout: JSON.stringify(success("start", { roles, planning, project: process.cwd(), session: "pi-scopes", dry_run: args.includes("--dry-run"), trust: { child_bypass: false }, paths: { state_root: "/tmp/synthetic", coordination: null } })) };
     });
     const ctx = context({ confirmations: mode === "cancel-call" ? [false] : mode === "cancel-launch" ? [true, false] : [true, true], context: { modelRegistry: {
@@ -7009,11 +7013,11 @@ for (const recommendation of TASK_INTENTS) {
           assert.match(ctx.calls.confirmations[1].message, new RegExp(`dynamic recommendation=${recommendation}`));
           assert.match(ctx.calls.confirmations[1].message, /Explicit operator intent wins/);
           const record = result.data.planning;
-          assert.equal(record.version, 4);
+          assert.equal(record.version, 5);
           assert.deepEqual(record.task_intent, result.data.task_intent);
-          assert.equal(record.bindings.decision, metadataDigest({ version: 1, roles: record.roles, scopes: record.scopes, locks: record.locks, task_intent: record.task_intent }));
+          assert.equal(record.bindings.decision, metadataDigest({ version: 1, roles: record.roles, scopes: record.scopes, locks: record.locks, task_intent: record.task_intent, evidence: plannerEvidenceDigest(record.evidence) }));
         }
-        assert.doesNotMatch(JSON.stringify(result), /PRIVATE_INTENT_TASK|rationale|"reason"/);
+        assert.doesNotMatch(JSON.stringify(result), /PRIVATE_INTENT_TASK|"reason"/);
       }
     }
   });
@@ -7092,8 +7096,177 @@ test("Jev validates every bounded intent recommendation in its existing one-call
       assert.equal(plan.taskIntentRecommendation, recommendation);
       assert.equal(plan.taskIntent.effective, "change");
       const retained = JSON.stringify(planningRecordForPreview(plan));
-      assert.doesNotMatch(retained, /PRIVATE_JEV_INTENT_TASK|synthetic-key|"reason"|rationale/);
+      assert.doesNotMatch(retained, /PRIVATE_JEV_INTENT_TASK|synthetic-key|"reason"/);
     }
     assert.equal(calls, 1);
+  }
+});
+
+test("accepted Choice evidence retains independent confidence, exact facts and canonical top-three ties", async () => {
+  const { record, request, plan } = await syntheticEvidenceFixture();
+  assert.equal(record.version, 5);
+  const evidence = record.evidence;
+  assert.deepEqual(evidence.catalog, request.state.candidate_model_capabilities);
+  const axis = evidence.decisions.find((item) => item.axis === "model" && item.role === "implementer");
+  assert.equal(axis.confidence, 0.77);
+  assert.equal(axis.selected_probability, 0.4);
+  const byId = new Map(axis.options.map((item) => [item.id, item]));
+  assert.deepEqual(axis.alternatives.map((id) => byId.get(id).identity.model), ["candidate-1", "candidate-2", "candidate-3"]);
+  for (const item of axis.options) {
+    assert.equal(item.identity.role, "implementer");
+    assert.equal(item.identity.thinking, null); // model-axis marginal, not a joint assignment
+    assert.equal(item.identity.facts, plannerEvidenceDigest(evidence.catalog.find((model) => model.provider === item.identity.provider && model.model === item.identity.model)));
+  }
+  const thinking = evidence.decisions.find((item) => item.axis === "thinking" && item.role === "implementer");
+  assert.equal(thinking.options[0].identity.models.length, 5); // not conditioned on selected model
+  assert.equal(thinking.confidence, 0.77);
+  assert.equal(evidence.decisions.find((item) => item.axis === "roster" && item.role === "probe").authority, "planner");
+  assert.deepEqual(evidence.provider_comparison, { state: "homogeneous", rationale: "rationale_unavailable" });
+  assert.equal(record.bindings.decision, metadataDigest({ version: 1, roles: record.roles, scopes: record.scopes, locks: record.locks, task_intent: record.task_intent, evidence: plannerEvidenceDigest(evidence) }));
+  const rendered = plannerEvidenceLines(evidence).join("\n");
+  assert.match(rendered, /confidence=0.77; probability=0.4; alternatives: p\/candidate-1/);
+  assert.match(rendered, /not Jev reasoning/);
+  const parent = testHooks.parentUpdateContent("pi-evidence", "ready", 1, [], [], [], evidence);
+  assert.match(parent.content, /Planner evidence v1: typesafe_choice/);
+  assert.match(parent.content, /alternatives: p\/candidate-1/);
+  for (const value of [JSON.stringify(record), rendered, parent.content]) assert.doesNotMatch(value, /PRIVATE_|SYNTHETIC_KEY|endpoint|instructions|hidden_reasoning/);
+  assert.ok(plan.roles.every((role) => !role.reason.includes("assignment confidence")));
+  const dashboard = dashboardSnapshot();
+  dashboard.list.data.sessions[0].planning = record;
+  assert.match(dashboardHooks.dashboardPlainLines(dashboard).join("\n"), /evidence v1 typesafe_choice homogeneous rationale_unavailable/);
+  assert.match(plannerEvidenceLines({ version: 1, projection: "summary", source: evidence.source, provider_comparison: evidence.provider_comparison }).join("\n"), /exact status\/snapshot/);
+});
+
+test("Pi and fixed authority evidence never fabricate probabilities; existing composition is retained", async () => {
+  for (const source of ["typesafe_choice", "pi_selection"]) {
+    const { record } = await syntheticEvidenceFixture({ source, fixed: true });
+    const evidence = record.evidence;
+    assert.equal(evidence.source, source);
+    assert.equal(evidence.decisions.at(-1).axis, "composition");
+    for (const item of evidence.decisions.filter((item) => item.authority === "fixed" || source === "pi_selection")) {
+      assert.equal(item.confidence, null);
+      assert.equal(item.selected_probability, null);
+      assert.deepEqual(item.alternatives, []);
+      assert.ok(item.options.every((option) => option.probability === null));
+    }
+    assert.match(plannerEvidenceLines(evidence).join("\n"), /fixed.*probabilities unavailable/);
+  }
+  const mixed = await syntheticEvidenceFixture({ mixed: true });
+  assert.equal(mixed.record.evidence.provider_comparison.state, "mixed");
+  assert.match(plannerEvidenceLines(undefined)[0], /unavailable/);
+  assert.match(plannerEvidenceLines({ version: 1, status: "unavailable" })[0], /unavailable/);
+});
+
+test("Choice distributions fail closed on normalization, bounds and unknown option keys", async () => {
+  for (const mutateAnswer of [
+    (_id, answer) => { answer.probabilities[answer.choice] = 0.9; },
+    (_id, answer) => { answer.probabilities[answer.choice] = -1; },
+    (_id, answer) => { answer.probabilities[answer.choice] = Infinity; },
+    (_id, answer) => { answer.probabilities.unrecognized = 0; },
+    (_id, answer) => { answer.confidence = 1.01; },
+    (_id, answer) => { answer.confidence = null; },
+  ]) await assert.rejects(syntheticEvidenceFixture({ mutateAnswer }), /typesafe_answer_invalid/);
+  // Tolerance is an admission tolerance, not renormalization or synthesized evidence.
+  const tolerated = await syntheticEvidenceFixture({ mutateAnswer: (_id, answer) => { answer.probabilities[answer.choice] += 1e-8; } });
+  assert.equal(tolerated.record.evidence.decisions.at(-1).selected_probability, 0.40000001);
+});
+
+test("strict planner JSON rejects duplicate escaped keys and excessive nesting without retaining bodies", async () => {
+  assert.deepEqual(strictPlannerJson('{"answers":{"task_intent":"change"}}'), { answers: { task_intent: "change" } });
+  for (const text of [
+    '{"answers":{},"answers":{}}',
+    '{"answers":{"model_00":"m0","model_00":"m1"}}',
+    '{"answers":{"a":1,"\\u0061":2}}',
+    '['.repeat(65) + '0' + ']'.repeat(65),
+  ]) assert.throws(() => strictPlannerJson(text), /invalid_planner_json/);
+  assert.throws(() => strictPlannerJson('{broken'), SyntaxError);
+  const { request } = await syntheticEvidenceFixture();
+  await assert.rejects(requestTypeSafe(request, { apiKey: "SYNTHETIC_KEY", fetchImpl: async () => new Response('{"answers":{},"answers":{"PRIVATE_BODY":"ignored"}}', { status: 200 }) }), /^Error: typesafe_response_not_json$/);
+});
+
+test("evidence size admission is bounded and numeric fact digests are cross-runtime canonical", async () => {
+  assert.equal(plannerEvidenceDigest({ rate: 1 }), plannerEvidenceDigest({ rate: 1.0 }));
+  assert.equal(plannerEvidenceDigest({ rate: -0 }), plannerEvidenceDigest({ rate: 0 }));
+  const { record } = await syntheticEvidenceFixture();
+  const candidate = { provider: "p", modelId: "bounded", thinkingLevels: ["off"], capabilities: { oversized: "x".repeat(MAX_EVIDENCE_BYTES) } };
+  const request = { inclusions: new Map(), assignments: new Map(), fixedAssignments: new Map([["implementer", { provider: "p", model: "bounded", thinking: "off" }]]), request: { state: {} } };
+  const role = { role: "implementer", provider: "p", model: "bounded", thinking: "off" };
+  const selection = { locks: [{ role: "implementer", inclusion: true, provider: "p", model: "bounded", thinking: "off" }], workerScope: { candidatesByRole: new Map([["implementer", new Set(["p\0bounded"])]]) } };
+  assert.throws(() => buildPlannerEvidence(request, [candidate], { roles: [role], task_intent: "change" }, selection, { task_intent: { confidence: 1, probabilities: { change: 1, investigation: 0, review: 0, advisory: 0 } } }, "typesafe_choice"), /planner_evidence_too_large/);
+  assert.ok(Buffer.byteLength(JSON.stringify(record.evidence)) < MAX_EVIDENCE_BYTES);
+});
+
+test("authenticated parent attachment carries accepted evidence to final content without new wire fields", async () => {
+  const { record } = await syntheticEvidenceFixture();
+  const directory = await mkdtemp(join(tmpdir(), "pi-evidence-parent-"));
+  const socketPath = join(directory, "broker.sock");
+  const session = "pi-evidence-parent";
+  const roles = record.roles.map((item) => ({ name: item.id, provider: item.provider, model: item.model, thinking: item.thinking, transport: "rpc" }));
+  await writeFile(join(directory, "control.token"), `${"a".repeat(32)}\n`, { mode: 0o600 });
+  const observer = { closed: false, socket: undefined, timer: undefined, stop: () => {} };
+  let server;
+  try {
+    server = net.createServer((socket) => socket.once("data", (chunk) => {
+      const hello = JSON.parse(chunk.subarray(4, chunk.readUInt32BE(0) + 4).toString("utf8"));
+      socket.write(testHooks.brokerFrame({ version: 1, type: "response", id: hello.id, success: true, status: "observing" }));
+      socket.write(testHooks.brokerFrame({ version: 1, type: "snapshot", session, state: "active", round: 1,
+        roles: roles.map((item) => ({ role: item.name, state: "idle" })), report_count: 0, report_replay_complete: true }));
+      socket.write(testHooks.brokerFrame({ version: 1, type: "workflow", session, state: "ready", round: 1 }));
+    }));
+    await new Promise((resolve, reject) => { server.once("error", reject); server.listen(socketPath, resolve); });
+    const message = await new Promise((resolve, reject) => {
+      void testHooks.attachParentObserver({ sendMessage: (value) => { if (value.details.state === "ready") resolve(value); } },
+        { data: { session, roles, planning: record, paths: { coordination: directory, observer_socket: socketPath } } },
+        observer, () => {}, { triggerInitialActionable: false }).catch(reject);
+    });
+    assert.match(message.content, /immutable launch metadata/);
+    assert.match(message.content, /implementer: provider=p model=candidate-0 thinking=low/);
+    assert.match(message.content, /Planner evidence v1: typesafe_choice/);
+    assert.match(message.content, /confidence=0.77; probability=0.4; alternatives/);
+    assert.doesNotMatch(message.content, /PRIVATE_|SYNTHETIC_KEY|endpoint|instructions/);
+  } finally {
+    observer.stop();
+    await new Promise((resolve) => server?.close(resolve) ?? resolve());
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("TypeSafe accepted evidence survives exact preview and TUI/RPC launch confirmation without Pi fallback", async () => {
+  const previousFetch = globalThis.fetch;
+  const previousKey = process.env.TYPESAFE_API_KEY;
+  delete process.env.TYPESAFE_API_KEY;
+  try {
+    for (const mode of ["tui", "rpc"]) {
+      let calls = 0;
+      globalThis.fetch = async (_endpoint, options) => {
+        calls += 1;
+        const request = JSON.parse(options.body);
+        return new Response(JSON.stringify({ model: "jev-1.13.0", usage: { input_tokens: 1, output_tokens: 1 },
+          answers: Object.fromEntries(Object.entries(request.questions).map(([id, question]) => {
+            const labels = Object.keys(question.criteria);
+            const choice = id === "task_intent" ? "change" : labels[0];
+            return [id, { type: "choice", choice, confidence: 0.83,
+              probabilities: Object.fromEntries(labels.map((label) => [label, label === choice ? 0.65 : 0.35 / (labels.length - 1)])) }];
+          })) }), { status: 200 });
+      };
+      const harness = intentStartHarness("change");
+      const registry = { ...harness.registry, getProviderAuth: async () => ({ auth: { apiKey: "SYNTHETIC_KEY" }, source: "stored API key" }) };
+      const ctx = context({ confirmations: [true, true], context: { mode, modelRegistry: registry } });
+      const result = await testHooks.runStart(harness.pi, { task: "PRIVATE_TYPED_TASK", taskIntent: "change", dynamicPlan: true, planningScopes: ["topology"], withProbe: false, withPlaywright: false, withDjangoExpert: false }, undefined, ctx, { allowRpc: true });
+      const evidence = result.data.planning.evidence;
+      assert.equal(evidence.source, "typesafe_choice");
+      assert.equal(evidence.decisions.at(-1).axis, "composition");
+      assert.equal(evidence.decisions.at(-1).confidence, 0.83);
+      assert.equal(evidence.decisions.at(-1).selected_probability, 0.65);
+      assert.equal(calls, 1);
+      assert.equal(harness.providerCalls(), 0);
+      assert.match(ctx.calls.confirmations[1].message, /Planner evidence v1: typesafe_choice/);
+      assert.match(ctx.calls.confirmations[1].message, /confidence=0.83; probability=0.65/);
+      assert.doesNotMatch(JSON.stringify(result), /PRIVATE_TYPED_TASK|SYNTHETIC_KEY|hidden_reasoning/);
+    }
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousKey === undefined) delete process.env.TYPESAFE_API_KEY;
+    else process.env.TYPESAFE_API_KEY = previousKey;
   }
 });

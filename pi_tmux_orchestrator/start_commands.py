@@ -729,7 +729,7 @@ def start_command(args: argparse.Namespace) -> CommandResult:
     }
     intent = (
         planning["task_intent"]
-        if planning and planning["version"] == 4
+        if planning and planning["version"] in {4, 5}
         else task_intent_metadata(operator_intent)
     )
     data: dict[str, Any] = {

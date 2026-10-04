@@ -37,6 +37,7 @@ from .constants import (
     MANIFEST_V11_FIELDS,
     MAX_CONTROLLER_STATE_BYTES,
     MAX_MANIFEST_BYTES,
+    MAX_EVIDENCE_MANIFEST_BYTES,
     PANE_ID_PATTERN,
     READ_ONLY_TOOLS,
     ROLE_FIELDS,
@@ -512,9 +513,37 @@ def validate_manifest(
                 raise OrchestrationError(
                     f"Manifest role {role_name} session path is not canonical"
                 )
+    if (value.get("planning") or {}).get("version") == 5:
+        planned = value["planning"]["roles"]
+        if any(
+            item["contract"]
+            != value["roles"]
+            .get(item["id"], {})
+            .get("custom_role", {})
+            .get("contract", item["id"])
+            for item in planned
+        ):
+            raise OrchestrationError(
+                "Planning evidence differs from launch role contracts"
+            )
+        if {item["id"] for item in planned} != set(value["roles"]) or any(
+            any(
+                item[field] != value["roles"][item["id"]][field]
+                for field in ("provider", "model", "thinking")
+            )
+            for item in planned
+        ):
+            raise OrchestrationError(
+                "Planning evidence differs from immutable launch assignments"
+            )
+    maximum = (
+        MAX_EVIDENCE_MANIFEST_BYTES
+        if (value.get("planning") or {}).get("version") == 5
+        else MAX_MANIFEST_BYTES
+    )
     if (
         len((json.dumps(value, indent=2, sort_keys=True) + "\n").encode("utf-8"))
-        > MAX_MANIFEST_BYTES
+        > maximum
     ):
         raise OrchestrationError("Orchestration manifest exceeds the safety limit")
     return value
@@ -615,7 +644,7 @@ def load_manifest(
     manifest_path = coord / "manifest.json"
     try:
         content = read_regular_file(
-            manifest_path, "orchestration manifest", MAX_MANIFEST_BYTES
+            manifest_path, "orchestration manifest", MAX_EVIDENCE_MANIFEST_BYTES
         )
         value = json.loads(
             content.decode("utf-8"), object_pairs_hook=unique_json_object

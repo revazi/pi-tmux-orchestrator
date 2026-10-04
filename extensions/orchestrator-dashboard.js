@@ -485,7 +485,9 @@ function sessionProfile(session) {
 function sessionPlanning(session) {
   if (session.planning?.mode !== "dynamic") return "plan static";
   const scopes = session.planning.scopes?.join("+");
-  return scopes ? `plan dynamic (${scopes})` : "plan dynamic";
+  const evidence = session.planning.evidence;
+  const audit = evidence?.source ? `evidence v1 ${evidence.source} ${evidence.provider_comparison?.state} rationale_unavailable` : "evidence unavailable";
+  return `${scopes ? `plan dynamic (${scopes})` : "plan dynamic"}; ${audit}`;
 }
 
 function sessionUsage(session) {

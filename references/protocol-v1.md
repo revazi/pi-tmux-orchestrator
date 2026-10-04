@@ -60,6 +60,81 @@ provenance fields as unavailable. Profile/project configuration therefore
 changes deterministic startup resolution and bounded manifest metadata, but not
 frame shape, authentication, report ACLs, or delivery/recovery semantics.
 
+## Accepted planner evidence (Unreleased)
+
+Planning **v5** extends v4 with required `evidence` **v1**, without changing manifest
+v10/v11 or launch-assignment authority. Planning v1–v4 validation/read contracts
+remain intact. Retained static/legacy reads project `{version: 1, status:
+"unavailable"}` as evidence; this read projection is not written into old records.
+Supervisor capabilities advertise evidence v1, exact snapshots, and summary
+collections. Protocol observer frames are unchanged: the parent attaches evidence
+from the validated start/status envelope and includes it in final actionable
+content alongside (never instead of) immutable worker assignments.
+
+Evidence has exactly `version`, `source`, `catalog`, `eligibility`, `decisions`, and
+`provider_comparison`. Source is `typesafe_choice` or `pi_selection`. The catalog
+is the exact sorted public provider/model/thinking-level/capability projection
+supplied to the planner, with strict capability/status/declared-cost schemas and
+no arbitrary fields. Eligibility follows retained candidate-role order, with
+sorted unique exact provider/model identities and matching counts. Its canonical
+facts and scope digest must reconstruct the retained candidate-set binding.
+
+Each ordered decision has exactly `axis`, `role`, `authority`, `selected`,
+`confidence`, `selected_probability`, `options`, `alternatives`. Axes are roster,
+model, thinking (in lock-role order), then task_intent, then composition only when
+the fully fixed worker plan actually had a suitability question. Model/thinking
+questions for omitted eligible roles are evidence of questions, not assignments.
+Authority is fixed or planner. Each option has exactly `id` (identity SHA-256),
+`identity`, `probability`; selected/alternatives reference those exact IDs.
+
+Identity forms are `{role,inclusion}` for roster;
+`{role,provider,model,thinking:null,facts}` for the independent model axis;
+`{role,thinking,models:[{provider,model,facts}]}` for the independent thinking axis
+with all exact supporting eligible models; `{intent}` for the recommendation;
+and `{decision:accept|reject}` for suitability. Fact digests reference exact
+catalog entries. Final role/model/thinking tuples must separately match immutable
+accepted assignments and locks. There is no joint probability or synthesized
+conditional probability.
+
+Direct Choice confidence and every option probability are finite `[0,1]` metadata;
+the probability sum must be within `1e-6` of one without renormalization. Selected
+confidence is independent of selected probability. Top-k is exactly
+`min(3, option_count-1)` nonselected IDs ordered by descending probability and
+ascending canonical identity for ties. Canonical identities sort lexically by
+role/provider/model, role/thinking, role/include-or-omit, intent, or suitability;
+fact hashes and provider catalog position do not decide ties. Options themselves
+use that canonical identity order. Fixed/singleton axes and Pi selections have
+null confidence/selected_probability/option probabilities and empty alternatives;
+Pi selections must never masquerade as Jev one-hot distributions.
+
+`provider_comparison` is exactly `{state:homogeneous|mixed,
+rationale:rationale_unavailable}` derived from selected launch providers. It is
+explicitly unavailable rationale, never Jev reasoning or a measured/causal
+cost/quality/reliability claim. No additional provider question is introduced.
+
+Evidence is at most 224 KiB compact UTF-8 JSON, 100 catalog entries, 13 candidate
+roles, 41 decisions, and three top alternatives. Planning-file reads are at most
+256 KiB; only planning-v5 manifests admit up to 1 MiB serialized JSON, while
+static/legacy manifest limits remain 64 KiB. Full exact status/snapshot evidence
+is bounded; collections replace it with `{version,projection:"summary",source,
+decision_binding,decision_count,provider_comparison}`. Dashboard shows this audit
+summary; exact snapshots/status provide the full evidence.
+
+Fact/catalog and evidence digests use `SHA256(canonical_json({encoding:
+"binary64-v1",value:encoded_metadata}))`: every JSON number becomes
+`{"$number":"16 lowercase hex digits of IEEE-754 binary64 big-endian"}` (zero
+normalizes negative zero); arrays retain order, object keys sort, booleans/strings/
+null remain unchanged. This is domain-separated from existing metadata digests
+and avoids cross-runtime decimal formatting differences. Option IDs continue to
+use existing canonical identity metadata digests. Planning-v5 decision metadata
+binds the **evidence digest**, roles, scopes, locks, and intent; the accepted start
+binding also binds that digest and the candidate-set/policy/input/config bindings.
+Malformed, duplicate, oversize, inconsistent, fact-mismatched, non-normalized, or
+stale metadata is rejected before launch. Digests are integrity/staleness checks,
+not provider signatures. No private bodies, credentials, endpoints, raw responses,
+errors, hidden reasoning, report/diff/log text, or arbitrary explanatory prose are
+part of this contract. This cannot diagnose the unretained failed #174 response.
+
 ## Task-intent admission and compatibility (Unreleased)
 
 Admission is outside broker protocol v1; wire authentication, assignments,
@@ -93,7 +168,7 @@ fresh CLI input. Node verifies CLI preview metadata and the bound record before
 confirmation, revalidates policy/catalog bindings, and refuses intent changes
 after confirmation. Legacy planning v1 remains read-only; v2/v3 admission stays
 compatible for omitted intent only, with no intent recommendation evidence.
-Explicit intent requires a fresh v4 dynamic preview, not attaching an enum to a
+Explicit intent requires a fresh v4/v5 dynamic preview, not attaching an enum to a
 legacy decision. Older package readers fail closed on new manifest versions;
 use the matching installed package for controls. There is no hot upgrade of a
 live broker and no broker wire-version bump.

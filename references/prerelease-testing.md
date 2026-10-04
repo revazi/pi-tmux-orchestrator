@@ -108,6 +108,32 @@ intent remains unavailable, not inferred from report kind. These are synthetic
 admission/control-plane checks, not live-provider inference or production-wire
 acceptance. No advisory assignment/report workflow is added.
 
+### Accepted decision-evidence gate (Unreleased)
+
+Issue #193 uses **model-free synthetic fixtures only**; do not repeat the stopped
+#174 direct-Jev attempt or infer its missing provider response. Run focused
+`PYTHONPATH=tests python3 -m unittest test_planning test_planner_evidence` and
+`node --test tests/extension.test.mjs`, then the pinned full `scripts/test.sh`
+(Ruff 0.11.11), exact package verification/smoke, measured Node coverage and
+Fallow 3.22.0 identity-baseline/changed-file gates, and `git diff --check`.
+
+Check planning-v5/evidence-v1 preview, final TUI/RPC confirmation, persisted
+manifest v10/v11 reopen, human/JSON status, list/Supervisor summaries versus exact
+snapshots, dashboard, and parent final evidence. Confirm exact supplied facts,
+binary64 digest agreement (including tiny declared rates), selected confidence
+versus probability, independent model/thinking axes, canonical top-three ties,
+fixed/singleton authority, Pi probability unavailability, all seven scope
+combinations/locks, trusted custom specialists, omitted roles, existing suitability
+questions, homogeneous/mixed provider `rationale_unavailable`, and immutable
+launch assignments. Malformed/duplicate/non-normalized/oversized/fact-mismatched
+and stale/tampered evidence must cause no launch. Static/planning-v1–v4 evidence
+is unavailable, not reconstructed. Test sentinels for every private body surface;
+no model/provider traffic, credentials, raw errors, or endpoint retention is
+necessary. Synthetic wire/schema/package checks are not production acceptance,
+quality, cost-savings, or a diagnosis of #174. Keep version 0.11.1, static defaults,
+and historical benchmark/release notes unchanged; obtain independent approval
+before opening a focused PR.
+
 ### Automated provider-free planning gate
 
 Approved-pool migration is a new fail-closed dynamic-start gate: upgrade the

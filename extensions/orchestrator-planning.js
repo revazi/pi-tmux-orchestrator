@@ -18,6 +18,21 @@ export function metadataDigest(value) {
   return createHash("sha256").update(JSON.stringify(canonicalValue(value)), "utf8").digest("hex");
 }
 
+// Domain-separated binary64 encoding avoids Python/JS decimal-format differences.
+export function plannerEvidenceDigest(value) {
+  const encode = (item) => {
+    if (typeof item === "number") {
+      const bytes = Buffer.alloc(8);
+      bytes.writeDoubleBE(item === 0 ? 0 : item);
+      return { $number: bytes.toString("hex") };
+    }
+    if (Array.isArray(item)) return item.map(encode);
+    if (item && typeof item === "object") return Object.fromEntries(Object.entries(item).map(([field, child]) => [field, encode(child)]));
+    return item;
+  };
+  return metadataDigest({ encoding: "binary64-v1", value: encode(value) });
+}
+
 export function publicPlannerCandidate(candidate) {
   return {
     provider: candidate.provider,
@@ -36,7 +51,7 @@ export function plannerCandidateDigest(candidates) {
     if (leftIdentity > rightIdentity) return 1;
     return 0;
   });
-  return metadataDigest(projected);
+  return plannerEvidenceDigest(projected);
 }
 
 function planningUsage(value) {
@@ -84,11 +99,12 @@ function validPlanningBindings(bindings) {
 export function planningRecordForPreview(plan) {
   const roles = planningRoles(plan.roles);
   const intent = plan.taskIntent ?? taskIntentMetadata(undefined, plan.taskIntentRecommendation ?? null);
-  const decision = metadataDigest({ version: 1, roles, scopes: plan.scopes, locks: plan.locks, task_intent: intent });
+  const decision = metadataDigest({ version: 1, roles, scopes: plan.scopes, locks: plan.locks, task_intent: intent, evidence: plannerEvidenceDigest(plan.evidence) });
   const bindings = plan.bindings;
   if (!validPlanningBindings(bindings)) throw new Error("invalid_planning_bindings");
   return {
-    version: 4,
+    version: 5,
+    evidence: plan.evidence,
     task_intent: intent,
     mode: "dynamic",
     scopes: plan.scopes,

@@ -6,6 +6,9 @@ All notable changes to this project are documented here.
 
 ### Added
 
+- Added bounded accepted-plan evidence v1 in planning v5: exact supplied non-secret candidate facts, separate Choice confidence/probability and canonical top-three alternatives for roster, independent model/thinking axes, task-intent recommendation, and existing suitability decisions. Fixed authority and Pi probability unavailability are explicit; homogeneous/mixed provider rationale is unavailable, not Jev reasoning or a quality/cost/reliability claim.
+- Added strict cross-runtime fact/evidence digest bindings, normalization/order/count/byte/duplicate validation, stale-preview refusal, persistence/reopen, exact status/Supervisor and collection/dashboard/parent projections, and model-free Python/Node/CLI/TUI/RPC/package coverage. Immutable launch assignments, legacy planning-v1–v4/manifests, version 0.11.1, and static defaults remain authoritative/unchanged. No private bodies or live calls are retained or authorized; this does not diagnose the stopped #174 response.
+
 - Added Stage 1 explicit `change|investigation|review|advisory` task-intent admission across model-tool, slash, and terminal starts. Non-change work offers direct-parent redirection/cancellation without tmux, broker, worker, manifest, or implementation/change claims; static starts make no classifier call. Coding work keeps one writer and mandatory review; no advisory assignment/report workflow was added.
 - Added a bounded intent recommendation within the existing authorized dynamic call, explicit-operator precedence, visible confirmation, planning-v4 intent bindings, and body-free manifest-v10/v11/Supervisor intent metadata. Added provider-free Python/Node/CLI/TUI/RPC coverage for intents, conflicts, malformed/redacted inputs, cancellation, retained provenance, and stale/tampered previews. Version remains 0.11.1; legacy manifests/planning reads remain supported.
 

@@ -7,6 +7,7 @@ import argparse
 from .constants import SUPERVISOR_API_VERSION
 from .models import CommandResult
 from .output import human_print
+from .planner_evidence import planner_evidence_lines
 from .planning import planning_lock_lines, planning_scopes_label
 from .supervisor_api import (
     public_supervisor_run,
@@ -50,7 +51,9 @@ def supervisor_sessions_command(_: argparse.Namespace) -> CommandResult:
 
 def supervisor_runs_command(args: argparse.Namespace) -> CommandResult:
     runs, issues, truncated = retained_runs(args.session, limit=args.limit)
-    values = [public_supervisor_run(coord, manifest) for coord, manifest in runs]
+    values = [
+        public_supervisor_run(coord, manifest, summary=True) for coord, manifest in runs
+    ]
     for value in values:
         human_print(
             f"{value['session']} run={value['run_id']} transport={value['transport']}"
@@ -78,7 +81,7 @@ def supervisor_snapshot_command(args: argparse.Namespace) -> CommandResult:
             f"Planning scopes: {planning_scopes_label(planning)}; "
             f"decision source={planning['decision_model']['source']}"
         )
-        for line in planning_lock_lines(planning):
+        for line in planning_lock_lines(planning) + planner_evidence_lines(planning):
             human_print(line)
     for role in data["roles"]:
         worker = role["worker"]

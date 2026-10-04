@@ -1,3 +1,4 @@
+import { plannerEvidenceLines } from "./orchestrator-planner-evidence.js";
 import { chmod, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -1080,6 +1081,7 @@ const successSummaries = {
     return [summary,
       `Decision source: ${data.planning.decision_model?.source || "unavailable"}`,
       planningScopesConfirmation(data.planning.scopes, data.planning.locks, false),
+      ...plannerEvidenceLines(data.planning.evidence),
     ].join("\n");
   },
   watch(data) {
@@ -1099,6 +1101,7 @@ const successSummaries = {
     return [summary,
       `Decision source: ${data.planning.decision_model?.source || "unavailable"}`,
       planningScopesConfirmation(data.planning.scopes, data.planning.locks, false),
+      ...plannerEvidenceLines(data.planning.evidence),
       workerCandidatesConfirmation(data.planning.worker_candidates),
       "Exact selected assignments:",
       ...(data.planning.roles || []).map((role) => `${role.id}: ${role.provider}/${role.model} thinking=${role.thinking}`),
@@ -1141,7 +1144,8 @@ function compactSummary(envelope) {
 
 function safeDetails(envelope) {
   const serialized = JSON.stringify(envelope);
-  if (serialized.length <= MAX_VISIBLE_CHARS) return envelope;
+  const limit = envelope.success === true && ["start", "status", "watch", "attach"].includes(envelope.command) && envelope.data?.planning?.version === 5 ? 256 * 1024 : MAX_VISIBLE_CHARS;
+  if (Buffer.byteLength(serialized, "utf8") <= limit) return envelope;
   return {
     schema_version: envelope.schema_version,
     command: envelope.command,

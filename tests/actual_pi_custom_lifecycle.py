@@ -477,7 +477,8 @@ def run_transport(
         if (
             retained_manifest["version"] != 11
             or retained_manifest["planning"] != planning
-            or retained["planning"] != planning
+            or retained["planning"]
+            != {**planning, "evidence": {"version": 1, "status": "unavailable"}}
         ):
             raise AssertionError(
                 "actual Pi lifecycle lost fixed accepted planning provenance"

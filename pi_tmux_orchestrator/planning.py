@@ -14,12 +14,13 @@ from .models import OrchestrationError
 from .role_registry import valid_custom_role_id
 from .task_intent import validate_intent_metadata
 
-PLANNING_VERSION = 4
+PLANNING_VERSION = 5
+INTENT_PLANNING_VERSION = 4
 SCOPED_PLANNING_VERSION = 3
 POOL_PLANNING_VERSION = 2
 LEGACY_PLANNING_VERSION = 1
 PLANNING_DECISION_VERSION = 1
-MAX_PLANNING_RECORD_BYTES = 32 * 1024
+MAX_PLANNING_RECORD_BYTES = 256 * 1024
 MAX_PLANNING_ROLES = len(KNOWN_ROLES) + 8
 DIGEST_PATTERN = re.compile(r"[a-f0-9]{64}")
 REQUEST_ID_PATTERN = re.compile(r"[a-f0-9]{32}")
@@ -159,13 +160,21 @@ def validate_planning_record(
     version = value.get("version")
     fields = PLANNING_FIELDS | (
         {"worker_candidates"}
-        if version in {POOL_PLANNING_VERSION, SCOPED_PLANNING_VERSION, PLANNING_VERSION}
+        if version
+        in {
+            POOL_PLANNING_VERSION,
+            SCOPED_PLANNING_VERSION,
+            INTENT_PLANNING_VERSION,
+            PLANNING_VERSION,
+        }
         else set()
     )
-    if version in {SCOPED_PLANNING_VERSION, PLANNING_VERSION}:
+    if version in {SCOPED_PLANNING_VERSION, INTENT_PLANNING_VERSION, PLANNING_VERSION}:
         fields |= {"scopes", "locks"}
-    if version == PLANNING_VERSION:
+    if version in {INTENT_PLANNING_VERSION, PLANNING_VERSION}:
         fields |= {"task_intent"}
+    if version == PLANNING_VERSION:
+        fields |= {"evidence"}
     if set(value) != fields:
         raise OrchestrationError("Planning record has missing or unknown fields")
     if (
@@ -175,6 +184,7 @@ def validate_planning_record(
             LEGACY_PLANNING_VERSION,
             POOL_PLANNING_VERSION,
             SCOPED_PLANNING_VERSION,
+            INTENT_PLANNING_VERSION,
             PLANNING_VERSION,
         }
         or value.get("mode") != "dynamic"
@@ -240,15 +250,12 @@ def validate_planning_record(
         for field in PLANNING_BINDING_FIELDS
     }
     decision_metadata = {"version": PLANNING_DECISION_VERSION, "roles": roles}
-    if version in {SCOPED_PLANNING_VERSION, PLANNING_VERSION}:
+    if version in {SCOPED_PLANNING_VERSION, INTENT_PLANNING_VERSION, PLANNING_VERSION}:
         decision_metadata.update(validate_scope_metadata(value, roles))
-    if version == PLANNING_VERSION:
+    if version in {INTENT_PLANNING_VERSION, PLANNING_VERSION}:
         decision_metadata["task_intent"] = validate_intent_metadata(
             value["task_intent"], launched=True
         )
-    expected_decision = metadata_digest(decision_metadata)
-    if bindings["decision"] != expected_decision:
-        raise OrchestrationError("Planning decision binding is invalid")
     result = {
         "version": version,
         "mode": "dynamic",
@@ -262,14 +269,28 @@ def validate_planning_record(
         "bindings": bindings,
         "usage": _planning_usage(value.get("usage")),
     }
-    if version in {SCOPED_PLANNING_VERSION, PLANNING_VERSION}:
+    if version in {SCOPED_PLANNING_VERSION, INTENT_PLANNING_VERSION, PLANNING_VERSION}:
         result.update(validate_scope_metadata(value, roles))
-    if version == PLANNING_VERSION:
+    if version in {INTENT_PLANNING_VERSION, PLANNING_VERSION}:
         result["task_intent"] = decision_metadata["task_intent"]
-    if version in {POOL_PLANNING_VERSION, SCOPED_PLANNING_VERSION, PLANNING_VERSION}:
+    if version in {
+        POOL_PLANNING_VERSION,
+        SCOPED_PLANNING_VERSION,
+        INTENT_PLANNING_VERSION,
+        PLANNING_VERSION,
+    }:
         result["worker_candidates"] = validate_candidate_metadata(
             value["worker_candidates"], identities
         )
+    if version == PLANNING_VERSION:
+        from .planner_evidence import validate_planner_evidence
+
+        result["evidence"] = validate_planner_evidence(value["evidence"], result)
+        from .planner_evidence import evidence_digest
+
+        decision_metadata["evidence"] = evidence_digest(result["evidence"])
+    if bindings["decision"] != metadata_digest(decision_metadata):
+        raise OrchestrationError("Planning decision binding is invalid")
     return result
 
 
@@ -439,16 +460,18 @@ def load_planning_record(
     if not source.is_absolute():
         raise OrchestrationError("Planning record path must be absolute")
     from .storage import read_regular_file
+    from .configuration import unique_json_object
 
     try:
         raw = read_regular_file(source, "planning record", MAX_PLANNING_RECORD_BYTES)
-        value = json.loads(raw.decode("utf-8"))
-    except (UnicodeError, ValueError) as error:
+        value = json.loads(raw.decode("utf-8"), object_pairs_hook=unique_json_object)
+    except (UnicodeError, ValueError, RecursionError) as error:
         raise OrchestrationError("Planning record is not valid UTF-8 JSON") from error
     record = validate_planning_record(value, allow_unbound=allow_unbound)
     if record["version"] not in {
         POOL_PLANNING_VERSION,
         SCOPED_PLANNING_VERSION,
+        INTENT_PLANNING_VERSION,
         PLANNING_VERSION,
     }:
         raise OrchestrationError(
@@ -514,7 +537,9 @@ def bind_planning_record(
     candidate_policy: dict[str, Any] | None = None,
     operator_intent: str | None = None,
 ) -> dict[str, Any]:
-    if record["version"] == PLANNING_VERSION:
+    from .planner_evidence import evidence_digest
+
+    if record["version"] in {INTENT_PLANNING_VERSION, PLANNING_VERSION}:
         if record["task_intent"]["operator"] != operator_intent:
             raise OrchestrationError(
                 "Operator intent changed after planning", "stale_planning_binding"
@@ -527,6 +552,7 @@ def bind_planning_record(
     if record["version"] in {
         POOL_PLANNING_VERSION,
         SCOPED_PLANNING_VERSION,
+        INTENT_PLANNING_VERSION,
         PLANNING_VERSION,
     }:
         metadata = record["worker_candidates"]
@@ -551,16 +577,49 @@ def bind_planning_record(
                     "Planning selected an unapproved worker model",
                     "stale_planning_binding",
                 )
+        if record["version"] == PLANNING_VERSION and candidate_policy is not None:
+            locks = {lock["role"]: lock for lock in record["locks"]}
+            for item in record["evidence"]["eligibility"]:
+                role = item["role"]
+                if sources[role] not in {"all-pool", "role-pool"}:
+                    continue
+                pool = candidate_policy["roles"].get(role, candidate_policy["all"])
+                expected_source = (
+                    "role-pool" if role in candidate_policy["roles"] else "all-pool"
+                )
+                if sources[role] != expected_source:
+                    raise OrchestrationError(
+                        "Planning evidence pool source changed",
+                        "stale_planning_binding",
+                    )
+                if any(identity not in pool for identity in item["identities"]) or (
+                    locks[role]["thinking"] is None
+                    and len(item["identities"]) != len(pool)
+                ):
+                    raise OrchestrationError(
+                        "Planning evidence contains an unapproved worker option",
+                        "stale_planning_binding",
+                    )
         start_config_digest = metadata_digest(
             {
                 "resolved_start": start_config_digest,
                 **(
                     {"scopes": record["scopes"], "locks": record["locks"]}
-                    if record["version"] in {SCOPED_PLANNING_VERSION, PLANNING_VERSION}
+                    if record["version"]
+                    in {
+                        SCOPED_PLANNING_VERSION,
+                        INTENT_PLANNING_VERSION,
+                        PLANNING_VERSION,
+                    }
                     else {}
                 ),
                 **(
                     {"task_intent": record["task_intent"]}
+                    if record["version"] in {INTENT_PLANNING_VERSION, PLANNING_VERSION}
+                    else {}
+                ),
+                **(
+                    {"evidence": evidence_digest(record["evidence"])}
                     if record["version"] == PLANNING_VERSION
                     else {}
                 ),
@@ -610,7 +669,9 @@ def bind_planning_record(
     return validate_planning_record(bound)
 
 
-def retained_planning(manifest: dict[str, Any]) -> dict[str, Any]:
+def retained_planning(
+    manifest: dict[str, Any], *, summary: bool = False
+) -> dict[str, Any]:
     if (
         manifest.get("version") not in {8, 9, 10, 11}
         or manifest.get("planning") is None
@@ -625,5 +686,23 @@ def retained_planning(manifest: dict[str, Any]) -> dict[str, Any]:
             "roles": [],
             "bindings": None,
             "usage": None,
+            "evidence": {"version": 1, "status": "unavailable"},
         }
-    return validate_planning_record(manifest["planning"])
+    record = validate_planning_record(manifest["planning"])
+    if summary and record.get("evidence"):
+        evidence = record["evidence"]
+        return {
+            **record,
+            "evidence": {
+                "version": 1,
+                "projection": "summary",
+                "source": evidence["source"],
+                "decision_binding": record["bindings"]["decision"],
+                "decision_count": len(evidence["decisions"]),
+                "provider_comparison": evidence["provider_comparison"],
+            },
+        }
+    return {
+        **record,
+        "evidence": record.get("evidence", {"version": 1, "status": "unavailable"}),
+    }

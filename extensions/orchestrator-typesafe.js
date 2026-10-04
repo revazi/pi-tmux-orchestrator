@@ -1,3 +1,4 @@
+import { strictPlannerJson } from "./orchestrator-planner-evidence.js";
 const TYPESAFE_ENDPOINT = "https://api.typesafe.ai/v1/systemone";
 const TYPESAFE_MODEL = "jev-latest";
 const TYPESAFE_PROVIDER_ID = "typesafe";
@@ -203,7 +204,7 @@ async function parsedResponse(response) {
   const text = await boundedResponseText(response);
   if (!text) throw new Error("typesafe_response_invalid_size");
   try {
-    return JSON.parse(text);
+    return strictPlannerJson(text);
   } catch {
     throw new Error("typesafe_response_not_json");
   }

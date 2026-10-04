@@ -487,7 +487,13 @@ class PlanningAdmissionTests(JsonCliFixture):
                             snapshot = supervisor_api.supervisor_snapshot(
                                 "pi-planning-provenance", None
                             )
-                        self.assertEqual(snapshot["planning"], plan)
+                        self.assertEqual(
+                            snapshot["planning"],
+                            {
+                                **plan,
+                                "evidence": {"version": 1, "status": "unavailable"},
+                            },
+                        )
                         output = io.StringIO()
                         with (
                             redirect_stdout(output),
@@ -530,7 +536,13 @@ class PlanningAdmissionTests(JsonCliFixture):
                                 mock.Mock(session="pi-planning-provenance", run=None)
                             )
                             terminal_planning.terminal_dynamic_start(terminal_args)
-                        self.assertEqual(status.data["planning"], plan)
+                        self.assertEqual(
+                            status.data["planning"],
+                            {
+                                **plan,
+                                "evidence": {"version": 1, "status": "unavailable"},
+                            },
+                        )
                         text = output.getvalue()
                         if version == 3:
                             self.assertIn("scopes=topology", text)
@@ -565,7 +577,13 @@ class PlanningAdmissionTests(JsonCliFixture):
         self.assertEqual(manifest["planning"], envelope["data"]["planning"])
         self.assertEqual(loaded["planning"], manifest["planning"])
         supervisor = ORCHESTRATOR.public_supervisor_run(coordination, loaded)
-        self.assertEqual(supervisor["planning"], manifest["planning"])
+        self.assertEqual(
+            supervisor["planning"],
+            {
+                **manifest["planning"],
+                "evidence": {"version": 1, "status": "unavailable"},
+            },
+        )
         self.assertEqual(supervisor["planning"]["scopes"], ["topology"])
         self.assertEqual(supervisor["planning"]["locks"], record["locks"])
         self.assertEqual(manifest["planning"]["status"], "accepted")
@@ -582,7 +600,10 @@ class PlanningAdmissionTests(JsonCliFixture):
         del record["worker_candidates"]
         record["bindings"]["input"] = "a" * 64
         record["bindings"]["start_config"] = "b" * 64
-        self.assertEqual(retained_planning({"version": 8, "planning": record}), record)
+        self.assertEqual(
+            retained_planning({"version": 8, "planning": record}),
+            {**record, "evidence": {"version": 1, "status": "unavailable"}},
+        )
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "legacy.json"
             path.write_text(json.dumps(record), encoding="utf-8")

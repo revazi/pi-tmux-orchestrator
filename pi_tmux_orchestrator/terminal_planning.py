@@ -328,6 +328,7 @@ def terminal_dynamic_start(args: Any) -> CommandResult:
         human_print(NON_CHANGE_NOTICE)
     planning = data.get("planning")
     if isinstance(planning, dict):
+        from .planner_evidence import planner_evidence_lines
         from .planning import planning_lock_lines, planning_scopes_label
 
         human_print(
@@ -335,7 +336,7 @@ def terminal_dynamic_start(args: Any) -> CommandResult:
             f"decision source={(planning.get('decision_model') or {}).get('source') or 'unavailable'}"
         )
 
-        for line in planning_lock_lines(planning):
+        for line in planning_lock_lines(planning) + planner_evidence_lines(planning):
             human_print(line)
         pool = planning.get("worker_candidates", {})
         human_print(

@@ -675,7 +675,70 @@ for dynamic runs, not for static/manual or legacy planning records. Human
 `list`/`status` output and the dashboard do not display task intent. These read
 surfaces never retain or return the task, context capsule, planner prompt/reasoning,
 provider response body, credentials, endpoints, or custom resource paths/bodies.
-Legacy/static manifests are reported as static/manual planning provenance.
+Static manifests report static/manual planning provenance; legacy dynamic
+records remain dynamic with missing authority/evidence explicitly unavailable.
+
+### Accepted-plan evidence v1 (Unreleased)
+
+Fresh accepted previews use planning v5, compatible with manifest v10/v11. The
+versioned evidence projection retains only canonical supplied metadata. Exact
+preview/launch confirmation, persisted/reopened records, CLI JSON/human `status`,
+Supervisor snapshots, and parent final updates expose selected confidence,
+selected probability, and up to **three nonselected alternatives** for every
+existing question. Dashboard rows and JSON `list` / Supervisor collection reads
+use small digest-bound availability/source/provider-comparison summaries; use
+exact `status` or a Supervisor snapshot for full options and facts.
+
+Direct TypeSafe Choice confidence is retained separately from the selected
+option's probability; neither is treated as a calibrated success rate. All
+validated option probabilities are retained as metadata to audit normalization
+and top-k completeness. Alternatives sort by probability descending, then exact
+canonical identity ascending (role/provider/model for model options; role/thinking
+for thinking options; role/include-or-omit, intent, or suitability for other
+axes). The sum must be within `1e-6` of one; values are finite and in `[0,1]`, and
+are not renormalized. The chosen option need not be the highest-probability option.
+
+Model and thinking questions are **independent marginal axes**, not a joint model/
+thinking score. Model options have `thinking: null`; thinking options identify
+every exact eligible supporting provider/model and its fact digest, not an
+invented conditional score for the selected model. The final selected tuple is
+validated separately. Decisions for an omitted eligible specialist document
+questions answered, not an assignment or authority to launch that role.
+
+Operator/policy locks and sole eligible options have `authority: fixed`, null
+confidence/probability, and no alternatives; original scopes/locks show whether
+the value was locked or deterministic singleton. `source: pi_selection` retains
+Pi fallback choices but no confidence, probabilities, or fabricated one-hot
+alternatives. Task intent records the recommendation separately from effective
+operator authority. Fully locked requests retain the actual `composition`
+suitability question when present, not a new provider request.
+
+`provider_comparison` identifies `homogeneous` or `mixed`, with explicit
+`rationale: rationale_unavailable` in both cases. This is **not Jev reasoning**
+and does not claim causal preference, coding quality, reliability, latency,
+measured cost, or savings. Capability/cost facts are the exact bounded non-secret
+projection supplied to the planner, not billing or observed runtime evidence.
+
+Evidence is capped at 224 KiB, 100 catalog candidates, 13 eligible roles, 41
+decisions, and three displayed alternatives per probabilistic decision. Planning
+files are capped at 256 KiB; only manifests containing planning v5 use the bounded
+1 MiB serialized-manifest ceiling (older/static manifest limits are unchanged).
+Canonical fact digests use a domain-separated binary64 numeric encoding so
+JavaScript/Python formatting differences do not change declared cost bindings.
+Candidate-set, decision, and accepted-start digests bind evidence to exact facts,
+eligibility, scopes/locks, selected assignments, input/config, and confirmation.
+Digests provide integrity/staleness checks, **not provider signatures or proof of
+hidden reasoning**. Invalid fields, duplicate keys/options, noncanonical ordering,
+non-normalized maps, oversized records, mismatched facts, or stale evidence fail
+closed before tmux/worker launch.
+
+Planning v1–v4 and older manifests remain readable with evidence explicitly
+unavailable; existing admission compatibility is preserved. Static runs never
+fabricate planner evidence. No task, prompt, context, guidance, endpoint,
+credential, raw response, provider error body, or hidden reasoning is retained.
+The stopped #174 attempt yielded no accepted plan: this feature cannot recover or
+diagnose its absent response. No new live planner call is authorized here.
+
 Dry-run previews return accepted metadata but write no coordination state.
 
 Deterministic specialist activation remains authoritative after launch; the
