@@ -1209,11 +1209,17 @@ def main() -> int:
             or "--append-system-prompt" in tui_argv
         ):
             raise AssertionError(f"TUI worker resource policy drifted: {tui_argv}")
+        tui_socket_path = ORCHESTRATOR.broker_paths(tui_coord)["socket"]
+        deadline = time.time() + 8
+        while time.time() < deadline and not tui_socket_path.exists():
+            time.sleep(0.05)
+        if not tui_socket_path.exists():
+            raise AssertionError("TUI broker socket did not start")
         tui_clients = []
         for index, role in enumerate(tui_manifest["roles"]):
             stream = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             stream.settimeout(4)
-            stream.connect(str(ORCHESTRATOR.broker_paths(tui_coord)["socket"]))
+            stream.connect(str(tui_socket_path))
             stream.sendall(
                 frame(
                     {
