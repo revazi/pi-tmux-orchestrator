@@ -23,6 +23,60 @@ The natural-language path uses the `tmux_orchestrator` model tool and preserves
 the same preview, trust, and confirmation boundaries. The standalone CLI and
 model tool retain their full command/action surfaces.
 
+### Model-tool recovery controls
+
+`tmux_orchestrator` has `stop`, `restart`, and `abort` actions (Unreleased), with no
+new slash commands. These are thin adapters to the canonical CLI controls, not a
+second workflow engine. For example, use synthetic identities like:
+
+```json
+{"action":"restart","session":"pi-example-agents","role":"implementer","run":"exact-run-id","commandId":"0123456789abcdef0123456789abcdef"}
+```
+
+- `stop`: exact orchestration session only. Separate interactive TUI/RPC approval
+  names the run and retains coordination/Pi history. Missing/disconnected UI,
+  cancellation, or decline cannot pass `--yes`.
+- `restart`: exact enabled role only (including a selected trusted custom identity).
+  Separate interactive approval respawns the worker using retained launch settings;
+  mandatory broker generation/resource checks still apply. A second command during
+  handover fails uncertain. Duplicate accepted IDs never repeat the tmux respawn.
+- `abort`: exact enabled role only, requesting broker cancellation without a
+  destructive confirmation. `acknowledged` means accepted delivery, **not terminal
+  operation or task completion**. Existing `aborted` is a request flag, not evidence
+  of terminal completion; `completion=not_observed` makes this explicit.
+
+The adapters read the exact live/retained run before controlling it and pass
+`--run` so approval cannot silently select a new same-name run. Optional `run`
+selects an exact retained record but never supplies live-control authority.
+`commandId` is optional 32-character lowercase hex; if omitted, recovery generates
+one and exposes it on failures/success. Preserve that ID **and exact run** on a
+retry. Stop receipts are private, bounded metadata-only files in the retained run:
+`completion=completed` can replay after stop; an interrupted claim is uncertain
+and never repeats the kill. Restart `completion=respawned` means only that tmux
+accepted the pane respawn, not completed recovery. A duplicate restart reports
+`completion=uncertain` and `restarted=false`; inspect status rather than inventing
+completion. Missing broker before connection is `broker_not_ready`; a timeout or
+transport loss after connection is `broker_uncertain`. Neither is success.
+
+Start accepts optional exact `session`, sharing CLI validation: 1–128 ASCII
+letters/digits/underscores/dots/hyphens, without trimming or fuzzy matching (`.`/`..` are reserved). CLI
+controls retain existing defaults/confirmation flags and add `--run` and
+`--command-id` to restart/stop; idempotent stop requires `--run`, and idempotent
+restart requires a brokered run and retained launch settings (no model overrides). Model-tool restart does not expose model changes;
+use the separately confirmed existing CLI path for those.
+
+On collision, schema-v1 returns `success=false`, `error.code=session_collision`,
+and bounded `data.collision` with exact session, orchestrator-marker validity,
+optional run ID, safely available retained workflow (`state`, `round`, flow),
+role (`role`, `state`, `generation`) metadata, and `next_actions`. State provenance
+is explicitly not liveness. A valid marked run offers `status`, `attach` (interactive
+TUI/tmux and broker-capable run only), `stop` (separate confirmation), or `start` with a different exact
+name. Unknown/invalid/non-orchestrator metadata offers only a different name, not
+a destructive action. Unavailable state remains null/unknown; raw exceptions,
+private bodies, resource/provider payloads, and paths are omitted. Dashboard `x`
+and `/or-stop` share the same confirmation/run-binding handler. Nothing
+**automatically stops, replaces, renames, or reuses** a session.
+
 A regular interactive Pi session checks the public npm package metadata once at
 startup and shows a non-blocking warning only when a newer release is available.
 The dashboard's Tasklight-style About footer reuses cached update metadata and

@@ -24,6 +24,7 @@ Provide a small, reusable, intentionally tmux-scoped Pi skill and modular standa
 - `pi_tmux_orchestrator/continuation.py`: opt-in run-wide repair admission and explicit one-round approval policy
 - `pi_tmux_orchestrator/broker.py`: single-writer runtime, worker transport, delivery, and lifecycle/recovery
 - `pi_tmux_orchestrator/broker_workflow.py`: report acceptance, bounded run-state projection, and single/phased specialist/reviewer routing
+- `pi_tmux_orchestrator/recovery.py`: bounded collision metadata, exact-live-run binding, and private duplicate-safe stop receipts
 - `pi_tmux_orchestrator/broker_control.py`: authenticated idempotent operator send/abort/restart handling
 - `pi_tmux_orchestrator/broker_observers.py`: read-only parent-observer authentication, replay, snapshots, and fan-out
 - `pi_tmux_orchestrator/broker_store.py`: private metadata-only SQLite control plane and retained implementation-flow/activation selections

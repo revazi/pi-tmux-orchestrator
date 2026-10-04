@@ -39,6 +39,147 @@ def receive(stream: socket.socket) -> dict[str, object]:
     return json.loads(payload)
 
 
+def model_recovery(
+    mode: str, input_value: dict[str, object], approve: bool, root: Path
+) -> dict[str, object]:
+    environment = os.environ.copy()
+    environment["PI_TMUX_AGENTS_HOME"] = str(root / "state")
+    environment["PATH"] = str(root) + os.pathsep + environment["PATH"]
+    environment["SMOKE_MODEL_CATALOG"] = str(root / "model-catalog.json")
+    result = subprocess.run(
+        [
+            "node",
+            str(ROOT / "tests/fixtures/model-recovery.mjs"),
+            mode,
+            json.dumps(input_value),
+            "yes" if approve else "no",
+        ],
+        env=environment,
+        text=True,
+        capture_output=True,
+        check=True,
+        timeout=20,
+    )
+    value = json.loads(result.stdout)
+    if "SYNTHETIC_CONTEXT_CAPSULE_CANARY" in json.dumps(value):
+        raise AssertionError("model recovery exposed a private body")
+    return value
+
+
+def exercise_model_recovery(mode: str, session: str, coord: Path, root: Path) -> None:
+    manifest = ORCHESTRATOR.load_manifest(coord)
+    (root / "model-catalog.json").write_text(
+        json.dumps([[v["provider"], v["model"]] for v in manifest["roles"].values()])
+    )
+    for key, value in (
+        ("PATH", str(root) + os.pathsep + os.environ["PATH"]),
+        ("SMOKE_MODEL_CATALOG", str(root / "model-catalog.json")),
+    ):
+        subprocess.run(
+            ["tmux", "set-environment", "-t", f"={session}", key, value], check=True
+        )
+    collision = model_recovery(
+        "tui",
+        {
+            "action": "start",
+            "session": session,
+            "project": str(ROOT),
+            "task": "Synthetic collision only",
+        },
+        False,
+        root,
+    )
+    if (
+        collision["result"]["details"]["error"]["code"] != "session_collision"
+        or collision["confirmations"]
+    ):
+        raise AssertionError(
+            "model collision did not remain actionable and non-destructive"
+        )
+    for action in ("stop", "restart"):
+        declined = model_recovery(
+            mode,
+            {"action": action, "session": session, "role": "implementer"},
+            False,
+            root,
+        )
+        if declined.get(
+            "error"
+        ) != f"{action}_confirmation_declined" or not ORCHESTRATOR.session_exists(
+            session
+        ):
+            raise AssertionError("declined recovery mutated live work")
+    abort_input = {
+        "action": "abort",
+        "session": session,
+        "role": "implementer",
+        "run": coord.name,
+        "commandId": "1" * 32,
+    }
+    aborted = model_recovery(mode, abort_input, False, root)
+    duplicate_abort = model_recovery(mode, abort_input, False, root)
+    if (
+        not aborted["result"]["details"]["data"]["acknowledged"]
+        or aborted["confirmations"]
+        or not duplicate_abort["result"]["details"]["data"]["duplicate"]
+    ):
+        raise AssertionError("exact abort acknowledgement/idempotency changed")
+    restart_input = {
+        "action": "restart",
+        "session": session,
+        "role": "implementer",
+        "run": coord.name,
+        "commandId": "2" * 32,
+    }
+    restarted = model_recovery(mode, restart_input, True, root)
+    retry = model_recovery(mode, restart_input, True, root)
+    if (
+        restarted["result"]["details"]["data"]["completion"] != "respawned"
+        or retry["result"]["details"]["data"]["completion"] != "uncertain"
+        or not retry["result"]["details"]["data"]["duplicate"]
+    ):
+        raise AssertionError(
+            "restart duplicate repeated respawn or claimed workflow completion"
+        )
+    stale = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    stale.settimeout(4)
+    try:
+        stale.connect(str(ORCHESTRATOR.broker_paths(coord)["socket"]))
+        stale.sendall(
+            frame(
+                {
+                    "version": 1,
+                    "type": "hello",
+                    "role": "implementer",
+                    "token": (coord / "implementer.token").read_text().strip(),
+                    "id": "3" * 32,
+                    "generation": 1,
+                }
+            )
+        )
+        header = stale.recv(4)
+        if header:
+            response = json.loads(stale.recv(int.from_bytes(header, "big")))
+            if response.get("success") is not False:
+                raise AssertionError("stale worker generation was admitted")
+    finally:
+        stale.close()
+    stop_input = {
+        "action": "stop",
+        "session": session,
+        "run": coord.name,
+        "commandId": "4" * 32,
+    }
+    stopped = model_recovery(mode, stop_input, True, root)
+    retry = model_recovery(mode, stop_input, True, root)
+    if (
+        not stopped["result"]["details"]["data"]["stopped"]
+        or not retry["result"]["details"]["data"]["duplicate"]
+        or ORCHESTRATOR.session_exists(session)
+    ):
+        raise AssertionError("exact stop retained retry did not deduplicate")
+
+
 def assert_attach_detach_reuses_invoking_parent() -> None:
     socket_name = f"pi-attach-smoke-{os.getpid()}"
     invoking_session = "invoking-pi"
@@ -285,6 +426,8 @@ def main() -> int:
     fake_pi.write_text(
         "#!/usr/bin/env python3\n"
         "import json, os, sys, time\n"
+        "if '--list-models' in sys.argv:\n"
+        "    print('provider model'); [print(*v) for v in json.load(open(os.environ['SMOKE_MODEL_CATALOG']))]; raise SystemExit(0)\n"
         "mode='rpc' if '--mode' in sys.argv else 'tui'\n"
         "role=os.environ.get('PI_TMUX_ORCHESTRATOR_ROLE','unknown')\n"
         "if role != 'unknown':\n"
@@ -925,9 +1068,27 @@ def main() -> int:
                 "live continuation approval reset or duplicated the allowance"
             )
 
+        exercise_model_recovery("rpc", session, coord, temporary_root)
+        unknown_collision = model_recovery(
+            "tui",
+            {
+                "action": "start",
+                "session": prefix_collision,
+                "project": str(ROOT),
+                "task": "Synthetic non-orchestrator collision",
+            },
+            False,
+            temporary_root,
+        )
+        if [
+            v["action"]
+            for v in unknown_collision["result"]["details"]["data"]["collision"][
+                "next_actions"
+            ]
+        ] != ["start"]:
+            raise AssertionError("non-orchestrator collision offered invalid controls")
         for stream in clients.values():
             stream.close()
-        ORCHESTRATOR.stop_command(argparse.Namespace(session=session, yes=True))
         if not ORCHESTRATOR.session_exists(prefix_collision):
             raise AssertionError("exact stop affected prefix-collision session")
 
@@ -982,7 +1143,31 @@ def main() -> int:
             or "--append-system-prompt" in tui_argv
         ):
             raise AssertionError(f"TUI worker resource policy drifted: {tui_argv}")
-        ORCHESTRATOR.stop_command(argparse.Namespace(session=tui_session, yes=True))
+        tui_clients = []
+        for index, role in enumerate(tui_manifest["roles"]):
+            stream = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            stream.settimeout(4)
+            stream.connect(str(ORCHESTRATOR.broker_paths(tui_coord)["socket"]))
+            stream.sendall(
+                frame(
+                    {
+                        "version": 1,
+                        "type": "hello",
+                        "role": role,
+                        "token": (tui_coord / f"{role}.token").read_text().strip(),
+                        "id": str(index + 5) * 32,
+                        "generation": 1,
+                    }
+                )
+            )
+            if not receive(stream)["success"]:
+                raise AssertionError("TUI synthetic peer was not admitted")
+            tui_clients.append(stream)
+        for stream in tui_clients:
+            receive(stream)  # baseline follows admission of every role
+        exercise_model_recovery("tui", tui_session, tui_coord, temporary_root)
+        for stream in tui_clients:
+            stream.close()
         deadline = time.time() + 3
         for path in (
             ORCHESTRATOR.broker_paths(coord)["socket"],
@@ -1015,6 +1200,9 @@ def main() -> int:
         )
         print("OK metadata-only status and Supervisor API v2 retained reads")
         print("OK exact tmux targeting preserved prefix collision")
+        print(
+            "OK model-tool TUI/RPC confirmed recovery, collisions, retained duplicate stop/restart/abort and stale generations"
+        )
         cleanup()
         return 0
     finally:

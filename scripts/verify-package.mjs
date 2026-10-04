@@ -34,6 +34,7 @@ const pythonFiles = [
   "prompts.py",
   "profiles.py",
   "protocol.py",
+  "recovery.py",
   "relay.py",
   "rpc.py",
   "rpc_protocol.py",

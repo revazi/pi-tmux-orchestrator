@@ -440,7 +440,53 @@ requires at least a 50% reduction and currently observes 99,170 before versus
 context-size proxy, not provider-specific token savings or production-wire
 acceptance.
 
+## Bounded model-tool recovery projection (Unreleased)
+
+No worker/control wire version or durable broker schema changes. Model-tool
+`stop`, `restart`, `abort`, optional start `session`, exact control `run`, and
+32-lowercase-hex `commandId` adapt authoritative CLI paths. Stop/restart require
+separate interactive TUI/RPC approval bound to that exact run; abort needs an
+exact enabled role. Fresh controls require matching live tmux hosting. Existing
+role tokens and generation/handover checks remain authoritative; retained reads
+are not liveness. Matching broker IDs replay acknowledgement only. The CLI skips
+respawn for duplicate restart acknowledgement and projects `completion=uncertain`,
+`duplicate=true`, `restarted=false`; a successful first tmux respawn projects
+`completion=respawned`, never workflow completion. Concurrent new restart/abort
+commands during `restarting`/`recovering`/`uncertain` fail uncertain.
+
+Stop is local tmux lifecycle, not a new broker action. Optional idempotent stop
+requires exact `--run` and stores at most 4096 private body-free receipts under
+`stop-receipts/`. Exclusive creation precedes kill, interrupted claims remain
+uncertain, and a completed receipt can replay without inspecting/killing a later
+same-name session. `command_id`, `run_id`, `duplicate`, and `completion` are
+additive CLI output fields. Abort's historical `aborted` boolean denotes a
+request; new `abort_requested`, `completion=not_observed`, and
+`workflow_completed=false` distinguish acknowledgement from termination.
+Transport failure before connection is unavailable; loss/timeout after connection
+is uncertain. Model recovery errors expose fixed messages/identity metadata,
+not raw transport/process/provider errors. No automatic destructive retry occurs.
+
+Schema-v1 start collision errors add `error.code=session_collision` and
+`data.collision`: exact session, validated marked-run flag, optional run ID,
+retained-state provenance (not liveness), optional workflow state/round/flow,
+bounded role identity/state/generation, and valid next-action descriptors.
+Optional reads fail closed without emitting raw errors or private bodies. Only
+valid orchestration metadata offers status/confirmed stop (attach additionally
+requires a broker-capable run); other tmux
+sessions offer a different explicit start name. No automatic stop, replacement,
+rename, or reuse is permitted.
+
 ## Compatibility
+
+The recovery additions keep package version 0.11.1, JSON schema-v1, broker-v1,
+and Supervisor API v2. The five slash commands are unchanged. Session names now
+share a 1–128-character ASCII letters/digits/`_`/`.`/`-` bound across CLI and tool;
+existing generated names fit; `.`/`..` are reserved. Legacy names exceeding it must be managed outside
+the bounded surface. Older retained records remain readable; missing workflow
+state stays unavailable. Idempotent restart requires manifest v3+ broker hosting;
+legacy non-idempotent confirmed CLI restart remains available. No retained read
+can authorize a new live operation; preserve in-flight installations rather than
+assuming hot-upgrade compatibility.
 
 Retained `0.4.x` manifests remain readable and operable through compatibility
 code. Live parent observation requires a broker process from `0.6.0` or later;

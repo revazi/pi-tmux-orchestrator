@@ -130,6 +130,12 @@ class BrokerControlSupport:
                     status = "accepted"
                 else:
                     status = "conflict"
+            elif action in {"restart", "abort"} and role_state in {
+                "restarting",
+                "recovering",
+                "uncertain",
+            }:
+                status = "uncertain"
             elif role not in self.clients or (
                 action in {"restart", "continue"} and role not in self.worker_baselines
             ):

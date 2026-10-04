@@ -63,9 +63,13 @@ def slugify(value: str) -> str:
 
 
 def validate_session_name(value: str) -> str:
-    if not re.fullmatch(r"[A-Za-z0-9_.-]+", value):
+    if (
+        not isinstance(value, str)
+        or not re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", value)
+        or value in {".", ".."}
+    ):
         raise OrchestrationError(
-            "Session names may contain only letters, digits, underscores, dots, and hyphens"
+            "Session names require 1-128 letters, digits, underscores, dots, or hyphens; dot-only path identities are reserved"
         )
     return value
 

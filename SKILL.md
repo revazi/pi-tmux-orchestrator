@@ -11,8 +11,25 @@ Prefer the compact extension surface—`/or-dashboard`, `/or-start`, `/or-models
 runs, shows concise help/about metadata, runs doctor only after `d`, attaches
 with Enter, and confirms stop with `x`. Duplicate `/orchestrator-*` and
 read-only helper slash commands are intentionally not registered. The bounded
-`tmux_orchestrator` tool exposes the complete authoritative control plane. New
-starts are watched automatically; use its
+`tmux_orchestrator` tool exposes bounded actions backed by the authoritative CLI/control plane. For recovery, supply an exact `session` and enabled `role` for `restart` or
+`abort`; `stop` targets only that exact session. Stop/restart require separate
+interactive TUI or RPC confirmation bound to the selected run, never inferred
+from parent trust/start approval. Decline or unavailable confirmation changes
+nothing. Abort acknowledgement does not prove operation completion; restart
+acknowledgement/respawn does not prove handover or task completion. Reuse the same
+32-lowercase-hex `commandId` and exact `run` on uncertain retries. Duplicate
+restart never respawns again; completed stop receipts remain readable after stop
+without authorizing a replacement session. A fresh control must target the exact
+live run, not merely retained metadata.
+
+Optional start `session` uses the CLI's 1–128 ASCII letters/digits/`_`/`.`/`-`
+allowlist (`.`/`..` are reserved). On `session_collision`, inspect bounded `data.collision` workflow/role
+metadata and valid next actions (`status`, TUI/tmux `attach`, separately confirmed
+`stop`, or an explicitly different start session). Never automatically stop,
+replace, rename, or reuse a colliding session; non-orchestrator collisions offer
+only a different start name. No new slash command is registered.
+
+New starts are watched automatically; use its
 `watch` action for an existing run so the parent receives lifecycle and final
 updates. `/or-send` and `/or-stop` with an omitted session list valid running
 orchestrations for explicit selection; model-tool calls should continue to use

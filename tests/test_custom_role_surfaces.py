@@ -332,10 +332,12 @@ class CustomRoleSurfaceTests(
                 ).fetchone()[0],
                 2,
             )
-        with self.assertRaises(OrchestrationError):
-            await BrokerControlSupport.handle_control(
-                harness, mock.Mock(), mock.Mock(), self.control_message("restart")
-            )
+        # A new command during handover fails uncertain without a second generation
+        # increment or reading revoked resources; a duplicate only replays acceptance.
+        await BrokerControlSupport.handle_control(
+            harness, mock.Mock(), mock.Mock(), self.control_message("restart")
+        )
+        self.assertEqual(harness.send_raw.await_args.args[1]["status"], "uncertain")
         await BrokerControlSupport.handle_control(
             harness, mock.Mock(), mock.Mock(), self.control_message("restart_failed")
         )

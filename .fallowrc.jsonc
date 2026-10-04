@@ -3,7 +3,8 @@
   "entry": [
     "extensions/orchestrator-worker.js",
     "scripts/node-coverage-reporter.mjs",
-    "tests/pi-worker-attention-contract.mjs"
+    "tests/pi-worker-attention-contract.mjs",
+    "tests/fixtures/model-recovery.mjs"
   ],
   // These same-named hooks are intentionally module-scoped test adapters.
   "ignoreExports": [
