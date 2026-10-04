@@ -355,13 +355,15 @@ There is exactly one separately authorized provider call, no retry/failover call
 and the unchanged final launch confirmation. Preflight authorization, immediate
 acknowledgement, preview, final confirmation, terminal output, and retained reads
 identify scopes, authoritative operator/policy locks, and decision source.
-Planning v3 retains only scope/lock metadata, exact assignments, bounded pool
-counts, usage, and binding digests, never task/context/config/provider bodies.
-Its decision and start bindings include scopes and locks; stale policy, catalog,
-preview, or scope/lock changes reject launch. Planning v1/v2 remains readable;
-retained reads label their absent scopes and locks as unavailable (legacy record),
-never inferred planner authority. This display does not change v2 admission's
-historical all-axis meaning. Fresh previews emit v3.
+Planning v4 retains only bounded task-intent and scope/lock metadata, exact
+assignments, bounded pool counts, usage, and binding digests, never
+task/context/config/provider bodies. Its decision and start bindings include
+intent, scopes, and locks; stale policy, catalog, preview, or intent/scope/lock
+changes reject launch. Planning v1/v2 remain readable; retained reads label their
+absent scopes and locks as unavailable (legacy record), never inferred planner
+authority. This display does not change v2 admission's historical all-axis meaning.
+Planning v3 remains readable and admissible with unavailable intent in that
+record; fresh previews emit v4.
 
 Decision-service precedence is:
 
@@ -381,7 +383,8 @@ The planner policy is stored in the `planner` member of the same authoritative
 user-global `~/.pi/agent/tmux-orchestrator.json` model/profile configuration.
 The planner member remains optional in version-4 and version-5 files.
 Version 5 adds the separate strict `workerCandidates` policy described below;
-broker-v1 is unchanged; new starts retain intent in manifest v10/v11 (legacy v8/v9 remain readable). Existing configuration versions 1–4 remain valid
+broker-v1 is unchanged; new starts retain intent in manifest v10/v11 (legacy
+v8/v9 remain readable). Existing configuration versions 1–4 remain valid
 for ordinary starts and fully locked dynamic starts. A
 separate legacy `~/.pi/agent/tmux-orchestrator-planner.json` file (or a configured
 `PI_TMUX_ORCHESTRATOR_PLANNER_CONFIG` path) is no longer read as active policy:
@@ -469,17 +472,18 @@ the resolved worker union. No recency, quality, or orchestration reliability is
 inferred from names. Natural-language guidance cannot create or expand approval.
 Planning-call confirmation shows bounded pool source/count per eligible role;
 final confirmation and the immediate start acknowledgement show exact selected
-provider/model/thinking assignments. Retained planning v4 adds bounded intent metadata to selected scopes, authoritative locks, bounded
-pool source/count metadata, exact assignments, and digests, not pool/configuration
-bodies. The private topology v3 projection supplies the exact policy to preflight;
-do not copy that configuration projection into status or handoffs.
+provider/model/thinking assignments. Retained planning v4 adds bounded intent
+metadata to selected scopes, authoritative locks, bounded pool source/count
+metadata, exact assignments, and digests, not pool/configuration bodies. The
+private topology v3 projection supplies the exact policy to preflight; do not
+copy that configuration projection into status or handoffs.
 
 **Migration:** retain existing fields, change the root version to 5, and add
 reviewed exact pools using `/or-models` identities. Existing version-4 custom
 bindings remain supported. Alternatively, keep versions 1–4 and supply exact
 locks for every eligible role. Static/manual starts require no pool and retain
 their existing precedence. Retained planning v1 in manifests v8/v9 stays readable;
-it is not accepted as input for a new launch. Generate a fresh v3 preview.
+it is not accepted as input for a new launch. Generate a fresh v4 preview.
 Revalidation uses the original operator inputs, never planner-generated overrides
 as approval, and rejects changes to pool policy/source, role membership, approved
 availability, canonical capabilities, or resolved configuration after preview.
@@ -657,10 +661,12 @@ After final admission, the existing partial-start rollback kills only the exact
 new tmux session, marks the retained startup failed, and does not rewrite the
 accepted planning record.
 
-Manifest schemas v8/v9 retain only body-free planning provenance: dynamic mode,
-accepted status, decision model identity/thinking/source, selected exact
-role/model/thinking tuples and fixed custom contracts, timestamps, request ID,
-and binding digests. `list`, `status`, the dashboard, and Supervisor run/session
+New manifest schemas v10/v11 retain bounded task-intent metadata for admitted
+change work and only body-free planning provenance: dynamic mode, accepted
+status, decision model identity/thinking/source, selected exact role/model/thinking
+tuples and fixed custom contracts, timestamps, request ID, and binding digests.
+Legacy v8/v9 manifests remain readable with unavailable intent, not inferred
+intent evidence. `list`, `status`, the dashboard, and Supervisor run/session
 reads project that same bounded metadata. They never retain or return the task,
 context capsule, planner prompt/reasoning, provider response body, credentials,
 endpoints, or custom resource paths/bodies. Legacy/static manifests are reported

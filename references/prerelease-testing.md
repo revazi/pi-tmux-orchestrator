@@ -142,7 +142,7 @@ and planner/RPC timeout failures. Fake completion fixtures exercise strict parsi
 and shared start admission but are not production inference evidence.
 
 The real-tmux layer injects a fixed accepted decision, binds it through dry-run
-and launch, and exercises manifest v8/v9 TUI/RPC startup, custom startup rollback,
+and launch, and exercises manifest v10/v11 TUI/RPC startup, custom startup rollback,
 broker and worker restart, exact cleanup, and retained status/Supervisor reads.
 The staged actual-Pi layer repeats custom TUI/RPC lifecycle acceptance with a
 local no-inference catalog and a network request sentinel. Security assertions
@@ -515,8 +515,11 @@ and Pi fallback synthetic transports, asserting identical authorized questions,
 fixed-axis locks, exact pool membership, one call, body-free provenance,
 cancellation, malformed choices, stale policy/locks/preview, dry-run, and no-launch
 failures. Python tests cover effective policy precedence, CLI/terminal forwarding,
-v3 record validation/admission, and stale scope bindings. This is synthetic
-evidence, not production TypeSafe/Pi wire acceptance.
+current v4 record validation/admission, legacy v3 compatibility, and stale
+scope/intent bindings. Assert every Jev/Pi Choice question uses the established
+`type`, `instructions`, and `criteria` shape (including `task_intent`), with no
+new top-level guidance field. This is synthetic contract evidence, not
+production TypeSafe/Pi wire acceptance.
 
 For separately authorized manual acceptance, compare topology-only and
 topology-plus-thinking against the deterministic preview for every eligible

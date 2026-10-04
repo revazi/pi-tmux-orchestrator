@@ -686,7 +686,9 @@ function typesafeDecisionRequest(
   const lockedConfirmation = ensureTypeSafeQuestion(state, dynamicGuidance);
   state.questions.task_intent = {
     type: "choice",
-    decision: "Recommend the task intent only; this is not launch authority and cannot override explicit operator intent. Non-change work stays in the parent, not the coding workflow.",
+    instructions: {
+      decision: "Recommend the task intent only; this is not launch authority and cannot override explicit operator intent. Non-change work stays in the parent, not the coding workflow.",
+    },
     criteria: {
       change: "Repository implementation or change is requested.",
       investigation: "Read-only investigation without repository changes.",

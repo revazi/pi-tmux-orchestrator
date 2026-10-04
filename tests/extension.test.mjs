@@ -6360,6 +6360,18 @@ function piDecisionText(value, decision) {
   }) });
 }
 
+// Synthetic contract regression, not live-provider schema acceptance.
+function assertChoiceRequestContract(request) {
+  for (const question of Object.values(request.questions)) {
+    assert.deepEqual(Object.keys(question).sort(), ["criteria", "instructions", "type"]);
+    assert.equal(question.type, "choice");
+  }
+  const intent = request.questions.task_intent;
+  assert.deepEqual(Object.keys(intent.instructions), ["decision"]);
+  assert.match(intent.instructions.decision, /not launch authority.*cannot override explicit operator intent/);
+  assert.deepEqual(Object.keys(intent.criteria), TASK_INTENTS);
+}
+
 function questionAnswers(request, select = (id, choices) => id.startsWith("include") ? "omit" : choices[0]) {
   return Object.fromEntries(Object.entries(request.questions).map(([id, question]) => [id, select(id, Object.keys(question.criteria))]));
 }
@@ -6405,6 +6417,7 @@ for (const selector of [undefined, ...SCOPE_COMBINATIONS]) test(`planning scopes
   });
   assert.equal(calls, 2); // exactly one request per backend
   assert.deepEqual(requests[0], requests[1]);
+  requests.forEach(assertChoiceRequestContract);
   const questions = Object.keys(requests[0].questions);
   for (const [axis, prefix] of [["topology", "include_"], ["models", "model_"], ["thinking", "thinking_"]]) {
     assert.equal(questions.some((id) => id.startsWith(prefix)), scopes.includes(axis));
@@ -6495,6 +6508,7 @@ test("omitted all-axis requests honor fully locked suitability and identical bac
   const pi = selectDecisionModel(ctx, { provider: "p", model: "a" }, plannerPolicy());
   const result = await runPreflightPlanner(ctx, input, "/synthetic", pi, topology);
   assert.deepEqual(Object.keys(request.questions), ["locked_plan", "task_intent"]);
+  assertChoiceRequestContract(request);
   assert.deepEqual(result.plan.scopes, ["topology", "models", "thinking"]);
   assert.equal(calls, 1);
   answer = "reject";
@@ -6504,6 +6518,7 @@ test("omitted all-axis requests honor fully locked suitability and identical bac
     typesafeApiKey: "synthetic-key", typesafeFetch: async (_url, options) => {
       const other = JSON.parse(options.body);
       assert.deepEqual(other, request);
+      assertChoiceRequestContract(other);
       return choiceResponse(other, { locked_plan: "reject", task_intent: "change" });
     },
   }), /locked_plan_rejected/);
@@ -6967,7 +6982,7 @@ function intentStartHarness(recommendation, { tamper, staticPath = false } = {})
     providerCalls += 1;
     assert.equal(staticPath, false, "static starts never classify");
     const payload = JSON.parse(request.messages[0].content[0].text);
-    assert.equal(Object.hasOwn(payload.questions, "task_intent"), true);
+    assertChoiceRequestContract(payload);
     return { stopReason: "stop", content: [{ type: "text", text: JSON.stringify({ answers: questionAnswers(payload, (id, choices) => id === "task_intent" ? recommendation : choices[0]) }) }], usage: { input: 1, output: 1 } };
   } };
   return { pi, tool, calls, registry, providerCalls: () => providerCalls };
@@ -7066,7 +7081,7 @@ test("Jev validates every bounded intent recommendation in its existing one-call
       typesafeApiKey: "synthetic-key", typesafeFetch: async (_url, options) => {
         calls += 1;
         const request = JSON.parse(options.body);
-        assert.deepEqual(Object.keys(request.questions.task_intent.criteria), TASK_INTENTS);
+        assertChoiceRequestContract(request);
         assert.equal(request.state.task_intent.operator, "change");
         return choiceResponse(request, questionAnswers(request, (id, choices) => id === "task_intent" ? recommendation : choices[0]));
       },
