@@ -315,6 +315,40 @@ better, or that guidance improves cost or quality. The model-free regression
 still supplies the separate negative case proving that a changed guidance digest
 rejects launch before workers start.
 
+#### Issue #174 direct-Jev benchmark stop evidence — 2026-10-04
+
+The owner separately authorized the frozen three-pair matrix with no repeats and
+a $5 maximum total provider-reported spend. The arms used disposable
+fixed-revision dependency-free fixtures, the packaged `economy` profile, `single`
+flow, a one-repair-round cap, native TUI workers, and exact role locks. A separate
+explicit `investigation` intent check returned `direct-parent` before creating a
+session or coordination root, so the no-change case made no planning or worker
+call.
+
+The simple static arm reached `ready` after mandatory review with no repair or
+operator correction, and its required tests passed. Its two workers made 10
+provider calls using 18,668 input, 1,051 output, 10,624 cache-read, 0 cache-write,
+and 248 reasoning tokens, with $0.0480468 provider-reported cost and 58.684
+seconds from manifest creation to ready. The exact launch assignments were
+`openai/gpt-6.1-sol` at `low` for the implementer and `xai/grok-4.7` at `low`
+for the reviewer.
+
+The matching dynamic arm passed approved-pool admission only after every
+planner-eligible role had an exact lock. Its one authorized direct TypeSafe
+attempt then returned the bounded `dynamic_planning_failed` terminal result.
+The selected-service failure created no tmux session or coordination root and
+did not trigger a Pi fallback or worker call. The terminal boundary intentionally
+retained no raw provider response and exposed no planner usage for the failed
+attempt, so its latency, token count, and monetary cost remain unavailable rather
+than estimated. In accordance with the predeclared stop rule, the specialist and
+ambiguous pairs were not started and no repeat was attempted.
+
+This is one failed direct-Jev benchmark attempt, not a general failure-rate or
+quality estimate. It demonstrates fail-closed launch and fallback behavior but
+does not satisfy the direct-Jev rollout gate. A repeat or broader matrix requires
+fresh provider-call authorization after the bounded failure is diagnosable; no
+default rollout is authorized.
+
 #### Issue #174 fallback benchmark evidence
 
 One explicitly authorized provider-backed run of the frozen three-case matrix was
