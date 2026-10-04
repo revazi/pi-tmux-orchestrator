@@ -670,7 +670,7 @@ tuples and fixed custom contracts, timestamps, request ID, and binding digests.
 Legacy v8/v9 manifests remain readable with unavailable intent, not inferred
 intent evidence. Supervisor run/session reads expose top-level `task_intent`
 for new manifests in both static and dynamic modes; legacy intent is null/unavailable.
-`list` and `status` JSON expose intent only within accepted planning-v4 metadata
+`list` and `status` JSON expose intent only within accepted planning-v4/v5 metadata
 for dynamic runs, not for static/manual or legacy planning records. Human
 `list`/`status` output and the dashboard do not display task intent. These read
 surfaces never retain or return the task, context capsule, planner prompt/reasoning,

@@ -101,8 +101,8 @@ and manifests in both TUI/RPC presentations. `--yes` cannot convert non-change
 into coding. Check intent-selection and final-confirmation cancellation; ordinary
 static change starts must have no classifier call and retain one writer plus
 mandatory review. The existing dynamic call's bounded recommendation must be
-shown, subordinate to explicit intent, and bound in planning-v4/v10–v11 manifest
-metadata. Check every enum, omitted-versus-explicit precedence, malformed values,
+shown, subordinate to explicit intent, and bound in accepted planning-v4/v5
+records retained in manifest v10/v11. Check every enum, omitted-versus-explicit precedence, malformed values,
 stale/tampered preview rejection, retained reads, and body redaction. Legacy
 intent remains unavailable, not inferred from report kind. These are synthetic
 admission/control-plane checks, not live-provider inference or production-wire
