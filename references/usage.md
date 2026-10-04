@@ -348,12 +348,14 @@ TUI: `/or-start --plan=topology,thinking TASK`, or `/or-start --plan-scopes TASK
 for the seven-choice form. Cancelling the form starts nothing. Existing
 `/or-start --plan TASK` remains the all-axis compatibility path.
 
-Direct TypeSafe Jev and Pi fallback receive equivalent bounded questions only
-for authorized, unlocked axes. Fully locked assignments generate no model or
-thinking questions; a fully locked roster still gets one suitability question.
-There is exactly one separately authorized provider call, no retry/failover call,
-and the unchanged final launch confirmation. Preflight authorization, immediate
-acknowledgement, preview, final confirmation, terminal output, and retained reads
+Direct TypeSafe Jev and Pi fallback receive equivalent bounded axis-selection
+questions only for authorized, unlocked axes. Fully locked assignments generate
+no model or thinking questions; a fully locked roster gets one `locked_plan`
+suitability question plus the `task_intent` recommendation question included in
+every dynamic request. Both questions share the same single separately authorized
+provider call with no retry/failover call; final launch confirmation remains a
+separate step. Preflight authorization, immediate acknowledgement, preview, final
+confirmation, terminal output, and retained reads
 identify scopes, authoritative operator/policy locks, and decision source.
 Planning v4 retains only bounded task-intent and scope/lock metadata, exact
 assignments, bounded pool counts, usage, and binding digests, never
@@ -666,12 +668,15 @@ change work and only body-free planning provenance: dynamic mode, accepted
 status, decision model identity/thinking/source, selected exact role/model/thinking
 tuples and fixed custom contracts, timestamps, request ID, and binding digests.
 Legacy v8/v9 manifests remain readable with unavailable intent, not inferred
-intent evidence. `list`, `status`, the dashboard, and Supervisor run/session
-reads project that same bounded metadata. They never retain or return the task,
-context capsule, planner prompt/reasoning, provider response body, credentials,
-endpoints, or custom resource paths/bodies. Legacy/static manifests are reported
-as static/manual provenance. Dry-run previews return accepted metadata but write
-no coordination state.
+intent evidence. Supervisor run/session reads expose top-level `task_intent`
+for new manifests in both static and dynamic modes; legacy intent is null/unavailable.
+`list` and `status` JSON expose intent only within accepted planning-v4 metadata
+for dynamic runs, not for static/manual or legacy planning records. Human
+`list`/`status` output and the dashboard do not display task intent. These read
+surfaces never retain or return the task, context capsule, planner prompt/reasoning,
+provider response body, credentials, endpoints, or custom resource paths/bodies.
+Legacy/static manifests are reported as static/manual planning provenance.
+Dry-run previews return accepted metadata but write no coordination state.
 
 Deterministic specialist activation remains authoritative after launch; the
 planner cannot force it. The model tool reports nested planner usage to Pi's

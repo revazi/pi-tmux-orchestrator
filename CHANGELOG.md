@@ -18,7 +18,7 @@ All notable changes to this project are documented here.
 
 ### Fixed
 
-- Kept the dynamic task-intent question inside the established Jev/Pi Choice `instructions` contract, with provider-free shape regressions across intents, planning scopes, and locked plans. Updated current preview/manifest guidance to planning v4 and manifests v10/v11 while preserving legacy compatibility.
+- Kept the dynamic task-intent question inside the established Jev/Pi Choice `instructions` contract, with provider-free shape regressions across intents, planning scopes, and locked plans. Updated current preview/manifest guidance to planning v4 and manifests v10/v11 while preserving legacy compatibility; clarified which retained read surfaces expose intent and the two questions included in fully locked dynamic requests.
 - Kept fresh exact-role restart/abort available during uncertain handover: a new confirmed restart can recover after the old worker disconnects, without repeating a duplicate respawn or bypassing baseline/resource/generation checks. Confirmed same-ID stop retries now serialize and reconcile interrupted receipts using the original run's immutable tmux identity or verified absence, never a replacement or unavailable server. Recovery errors preserve validated duplicate/completion/retry metadata with fixed redacted guidance.
 
 ## 0.11.1 - 2026-10-02
