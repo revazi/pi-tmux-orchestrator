@@ -332,12 +332,21 @@ class CustomRoleSurfaceTests(
                 ).fetchone()[0],
                 2,
             )
-        # A new command during handover fails uncertain without a second generation
-        # increment or reading revoked resources; a duplicate only replays acceptance.
-        await BrokerControlSupport.handle_control(
-            harness, mock.Mock(), mock.Mock(), self.control_message("restart")
-        )
-        self.assertEqual(harness.send_raw.await_args.args[1]["status"], "uncertain")
+        # A fresh recovery command still revalidates revoked resources before
+        # changing generation; only a matching duplicate replays acceptance.
+        with self.assertRaises(OrchestrationError):
+            await BrokerControlSupport.handle_control(
+                harness, mock.Mock(), mock.Mock(), self.control_message("restart")
+            )
+        with broker_store.connect_broker_database(
+            self.coord, readonly=True
+        ) as database:
+            self.assertEqual(
+                database.execute(
+                    "SELECT generation FROM roles WHERE role=?", (self.name,)
+                ).fetchone()[0],
+                2,
+            )
         await BrokerControlSupport.handle_control(
             harness, mock.Mock(), mock.Mock(), self.control_message("restart_failed")
         )

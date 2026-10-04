@@ -451,15 +451,30 @@ role tokens and generation/handover checks remain authoritative; retained reads
 are not liveness. Matching broker IDs replay acknowledgement only. The CLI skips
 respawn for duplicate restart acknowledgement and projects `completion=uncertain`,
 `duplicate=true`, `restarted=false`; a successful first tmux respawn projects
-`completion=respawned`, never workflow completion. Concurrent new restart/abort
-commands during `restarting`/`recovering`/`uncertain` fail uncertain.
+`completion=respawned`, never workflow completion. After inspection, a fresh
+command ID can recover `restarting`/`recovering`/`uncertain`: restart still
+revalidates resources and requires the in-memory baseline, but can advance a
+new generation after the old client disconnects. Abort still requires a connected
+client. Role state alone is not a recovery refusal. A fresh model-tool restart
+always requires separate confirmation; no duplicate automatically respawns.
 
 Stop is local tmux lifecycle, not a new broker action. Optional idempotent stop
 requires exact `--run` and stores at most 4096 private body-free receipts under
-`stop-receipts/`. Exclusive creation precedes kill, interrupted claims remain
-uncertain, and a completed receipt can replay without inspecting/killing a later
-same-name session. `command_id`, `run_id`, `duplicate`, and `completion` are
-additive CLI output fields. Abort's historical `aborted` boolean denotes a
+`stop-receipts/`. Exclusive creation precedes kill; interrupted claims remain
+uncertain until explicitly confirmed same-ID reconciliation. A nonblocking
+POSIX directory lock serializes claim/read/kill/completion, including different
+IDs, and releases on process exit. A single successful tmux observation binds
+name, immutable session ID, and exact run before kill; a later same-name
+replacement cannot match the kill target. A successful absence observation can
+complete an interrupted receipt without another kill. Unavailable observations
+never prove absence; a live replacement fails `broker_not_live` without mutation.
+Completed receipts replay without inspecting/killing any later same-name session.
+Old uncertain/completed receipt shapes remain readable; no migration is required.
+`command_id`, `run_id`, `duplicate`, `completion`, and `stop_attempted` are
+additive CLI output fields. Validated control-error metadata also carries
+`command_status` and `retry=same_command_id|new_command_id|inspect_exact_run`:
+unknown delivery is reconciled with the same ID, while a stored uncertain broker
+refusal needs a fresh ID after resolving the blocker. Abort's historical `aborted` boolean denotes a
 request; new `abort_requested`, `completion=not_observed`, and
 `workflow_completed=false` distinguish acknowledgement from termination.
 Transport failure before connection is unavailable; loss/timeout after connection

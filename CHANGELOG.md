@@ -13,6 +13,10 @@ All notable changes to this project are documented here.
 - Added independently selectable dynamic `topology`, `models`, and `thinking` scopes across the Pi model tool, seven-choice TUI form, and terminal CLI, with effective-policy fixed-axis locks, equivalent bounded Jev/Pi questions, one separately confirmed call, and unchanged final launch confirmation. Omitted scopes preserve explicit all-axis `dynamicPlan=true` compatibility; static defaults are unchanged.
 - Added body-free planning-v3 scope/lock provenance and admission bindings, scope-aware confirmations/acknowledgement/retained reads, and model-free combination, precedence, cancellation, stale-preview, and no-launch coverage. Existing planning-v1/v2 reads and v2 all-axis admission remain supported; missing retained scope/lock metadata is labeled legacy/unavailable, not inferred as planner authority.
 
+### Fixed
+
+- Kept fresh exact-role restart/abort available during uncertain handover: a new confirmed restart can recover after the old worker disconnects, without repeating a duplicate respawn or bypassing baseline/resource/generation checks. Confirmed same-ID stop retries now serialize and reconcile interrupted receipts using the original run's immutable tmux identity or verified absence, never a replacement or unavailable server. Recovery errors preserve validated duplicate/completion/retry metadata with fixed redacted guidance.
+
 ## 0.11.1 - 2026-10-02
 
 ### Added

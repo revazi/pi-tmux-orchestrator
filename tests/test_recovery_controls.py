@@ -98,7 +98,7 @@ class RecoveryControlsTests(unittest.TestCase):
                     return_value=(coord, self.manifest()),
                 ),
                 mock.patch.object(
-                    commands, "resolve_session", return_value=("pi-exact", coord)
+                    commands, "live_stop_target", return_value="$42"
                 ) as resolve,
                 mock.patch.object(commands, "tmux") as tmux,
                 mock.patch.object(
@@ -114,7 +114,7 @@ class RecoveryControlsTests(unittest.TestCase):
                 )
                 duplicate = commands.stop_command(args)
                 self.assertTrue(duplicate.data["duplicate"])
-                tmux.assert_called_once_with(["kill-session", "-t", "=pi-exact"])
+                tmux.assert_called_once_with(["kill-session", "-t", "$42"])
 
     def test_stale_run_invalid_role_and_missing_confirmation_do_not_mutate(self):
         manifest = self.manifest()
@@ -261,7 +261,56 @@ class RecoveryControlsTests(unittest.TestCase):
             )
             self.assertIsNone(value["workflow"])
 
-    def test_uncertain_stop_receipt_never_repeats_kill(self):
+    def test_interrupted_stop_can_reconcile_the_same_id_and_original_run(self):
+        with tempfile.TemporaryDirectory() as directory:
+            coord = Path(directory)
+            args = build_parser().parse_args(
+                [
+                    "stop",
+                    "pi-exact",
+                    "--run",
+                    "run-1",
+                    "--command-id",
+                    "b" * 32,
+                    "--yes",
+                ]
+            )
+            with (
+                mock.patch.object(
+                    commands,
+                    "control_target",
+                    return_value=("pi-exact", coord, self.manifest()),
+                ),
+                mock.patch.object(commands, "live_stop_target", return_value="$42"),
+                mock.patch.object(
+                    commands,
+                    "broker_paths",
+                    return_value={"socket": coord / "missing.sock"},
+                ),
+                mock.patch.object(
+                    commands,
+                    "tmux",
+                    side_effect=[OSError("SYNTHETIC_PRIVATE_CANARY"), None],
+                ) as tmux,
+            ):
+                with self.assertRaises(OrchestrationError) as caught:
+                    commands.stop_command(args)
+                self.assertEqual(caught.exception.code, "broker_uncertain")
+                self.assertFalse(caught.exception.data["duplicate"])
+                self.assertEqual(caught.exception.data["completion"], "uncertain")
+                self.assertEqual(caught.exception.data["retry"], "same_command_id")
+                self.assertNotIn("CANARY", str(caught.exception))
+                retried = commands.stop_command(args)
+                self.assertTrue(retried.data["duplicate"])
+                self.assertTrue(retried.data["stop_attempted"])
+                self.assertEqual(retried.data["completion"], "completed")
+                replay = commands.stop_command(args)
+                self.assertFalse(replay.data["stop_attempted"])
+                self.assertEqual(
+                    tmux.call_args_list, [mock.call(["kill-session", "-t", "$42"])] * 2
+                )
+
+    def test_interrupted_stop_after_kill_can_complete_from_verified_absence(self):
         with tempfile.TemporaryDirectory() as directory:
             coord = Path(directory)
             args = build_parser().parse_args(
@@ -282,20 +331,126 @@ class RecoveryControlsTests(unittest.TestCase):
                     return_value=("pi-exact", coord, self.manifest()),
                 ),
                 mock.patch.object(
-                    commands, "resolve_session", return_value=("pi-exact", coord)
+                    commands, "live_stop_target", side_effect=["$42", None]
                 ),
                 mock.patch.object(
-                    commands, "tmux", side_effect=OSError("SYNTHETIC_PRIVATE_CANARY")
-                ) as tmux,
+                    commands,
+                    "broker_paths",
+                    return_value={"socket": coord / "missing.sock"},
+                ),
+                mock.patch.object(commands, "tmux") as tmux,
+                mock.patch.object(
+                    commands,
+                    "complete_stop",
+                    side_effect=[OSError("SYNTHETIC_PRIVATE_CANARY"), None],
+                ),
             ):
-                with self.assertRaises(OSError):
+                with self.assertRaises(OrchestrationError):
                     commands.stop_command(args)
+                retried = commands.stop_command(args)
+                self.assertTrue(retried.data["duplicate"])
+                self.assertFalse(retried.data["stop_attempted"])
+                self.assertEqual(retried.data["completion"], "completed")
+                tmux.assert_called_once_with(["kill-session", "-t", "$42"])
+
+    def test_interrupted_stop_does_not_kill_a_replacement_or_infer_unavailable_absence(
+        self,
+    ):
+        for code in ("broker_not_live", "broker_uncertain"):
+            with self.subTest(code=code), tempfile.TemporaryDirectory() as directory:
+                coord = Path(directory)
+                recovery.claim_stop(coord, "b" * 32)
+                args = build_parser().parse_args(
+                    [
+                        "stop",
+                        "pi-exact",
+                        "--run",
+                        "run-1",
+                        "--command-id",
+                        "b" * 32,
+                        "--yes",
+                    ]
+                )
+                with (
+                    mock.patch.object(
+                        commands,
+                        "control_target",
+                        return_value=("pi-exact", coord, self.manifest()),
+                    ),
+                    mock.patch.object(
+                        commands,
+                        "live_stop_target",
+                        side_effect=OrchestrationError(
+                            "SYNTHETIC_PRIVATE_CANARY", code
+                        ),
+                    ),
+                    mock.patch.object(commands, "tmux") as tmux,
+                ):
+                    with self.assertRaises(OrchestrationError) as caught:
+                        commands.stop_command(args)
+                    self.assertEqual(caught.exception.code, code)
+                    self.assertTrue(caught.exception.data["duplicate"])
+                    self.assertEqual(caught.exception.data["completion"], "uncertain")
+                    self.assertNotIn("CANARY", str(caught.exception))
+                    tmux.assert_not_called()
+                    self.assertEqual(
+                        recovery.claim_stop(coord, "b" * 32)[2], "uncertain"
+                    )
+
+    def test_stop_reconciliation_serializes_without_waiting_and_releases_after_failure(
+        self,
+    ):
+        with tempfile.TemporaryDirectory() as directory:
+            coord = Path(directory)
+            with recovery.locked_stop_claim(coord, "b" * 32):
                 with self.assertRaises(OrchestrationError) as caught:
-                    commands.stop_command(args)
+                    with recovery.locked_stop_claim(coord, "c" * 32):
+                        self.fail("concurrent stop must not acquire claim")
                 self.assertEqual(caught.exception.code, "broker_uncertain")
-                self.assertTrue(caught.exception.data["duplicate"])
+                self.assertFalse(
+                    (coord / "stop-receipts" / f"{'c' * 32}.json").exists()
+                )
+            with (
+                self.assertRaises(OSError),
+                recovery.locked_stop_claim(coord, "b" * 32),
+            ):
+                raise OSError("synthetic crash")
+            with recovery.locked_stop_claim(coord, "b" * 32) as (_, duplicate, status):
+                self.assertTrue(duplicate)
+                self.assertEqual(status, "uncertain")
+
+    def test_live_stop_target_binds_immutable_identity_and_requires_successful_observation(
+        self,
+    ):
+        coord = Path("/synthetic/run-1")
+        for stdout, expected in (
+            ("pi-exact\t$42\t/synthetic/run-1\npi-other\t$43\t/other", "$42"),
+            ("pi-other\t$43\t/other", None),
+        ):
+            with mock.patch.object(
+                recovery, "tmux", return_value=mock.Mock(returncode=0, stdout=stdout)
+            ):
+                self.assertEqual(recovery.live_stop_target("pi-exact", coord), expected)
+        for result, code in (
+            (
+                mock.Mock(returncode=1, stdout="SYNTHETIC_PRIVATE_CANARY"),
+                "broker_uncertain",
+            ),
+            (
+                mock.Mock(returncode=0, stdout="pi-exact\t$99\t/synthetic/replacement"),
+                "broker_not_live",
+            ),
+            (
+                mock.Mock(returncode=0, stdout="pi-exact\t=pi-exact\t/synthetic/run-1"),
+                "broker_not_live",
+            ),
+            (mock.Mock(returncode=0, stdout="pi-exact"), "broker_not_live"),
+        ):
+            with mock.patch.object(recovery, "tmux", return_value=result):
+                with self.assertRaises(OrchestrationError) as caught:
+                    recovery.live_stop_target("pi-exact", coord)
+                self.assertEqual(caught.exception.code, code)
                 self.assertNotIn("CANARY", str(caught.exception))
-                tmux.assert_called_once()
 
     def test_restart_unavailable_invalid_role_and_override_id_never_respawn(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -366,6 +521,60 @@ class RecoveryControlsTests(unittest.TestCase):
                 commands.abort_command(args)
             self.assertEqual(caught.exception.code, "broker_not_live")
             control.assert_not_called()
+
+    def test_stored_broker_refusal_preserves_duplicate_and_fresh_id_guidance(self):
+        for status in ("uncertain", "conflict"):
+            for duplicate in (False, True):
+                response = {
+                    "version": 1,
+                    "type": "response",
+                    "id": "b" * 32,
+                    "success": False,
+                    "status": status,
+                    "duplicate": duplicate,
+                }
+                payload = json.dumps(response).encode()
+                stream = mock.MagicMock()
+                stream.recv.side_effect = [len(payload).to_bytes(4, "big"), payload]
+                with (
+                    mock.patch.object(
+                        broker_client, "read_regular_file", return_value=b"a" * 32
+                    ),
+                    mock.patch.object(
+                        broker_client,
+                        "broker_paths",
+                        return_value={"socket": Path("/synthetic/socket")},
+                    ),
+                    mock.patch.object(
+                        broker_client.socket, "socket", return_value=stream
+                    ),
+                ):
+                    with self.assertRaises(OrchestrationError) as caught:
+                        broker_client.broker_control_request(
+                            Path("/synthetic"),
+                            "implementer",
+                            "restart",
+                            command_id="b" * 32,
+                        )
+                    self.assertEqual(
+                        caught.exception.data,
+                        {
+                            "command_id": "b" * 32,
+                            "command_status": status,
+                            "duplicate": duplicate,
+                            "completion": "uncertain",
+                            "retry": "new_command_id"
+                            if status == "uncertain"
+                            else "inspect_exact_run",
+                        },
+                    )
+                    self.assertEqual(
+                        caught.exception.code,
+                        "broker_uncertain"
+                        if status == "uncertain"
+                        else "broker_rejected",
+                    )
+                    stream.close.assert_called_once()
 
     def test_malformed_or_inconsistent_broker_acknowledgements_are_uncertain(self):
         valid = {

@@ -12,7 +12,12 @@ from pathlib import Path
 from typing import Any
 
 from . import runtime
-from .recovery import claim_stop, complete_stop, require_live_run
+from .recovery import (
+    complete_stop,
+    live_stop_target,
+    locked_stop_claim,
+    require_live_run,
+)
 from .budgeting import (
     budget_config_path,
     load_budget_config,
@@ -785,6 +790,7 @@ def restart_command(args: argparse.Namespace) -> CommandResult:
                     "command_id": acknowledgement.get("id"),
                     "command_status": "accepted",
                     "completion": "uncertain",
+                    "retry": "new_command_id",
                     "workflow_completed": False,
                 }
             )
@@ -838,30 +844,62 @@ def restart_command(args: argparse.Namespace) -> CommandResult:
     )
 
 
+def _stop_with_receipt(
+    session: str, coord: Path, command_id: str
+) -> tuple[bool, bool, bool]:
+    duplicate = None
+    try:
+        with locked_stop_claim(coord, command_id) as (receipt, duplicate, status):
+            if status == "completed":
+                return duplicate, False, True
+            target = live_stop_target(session, coord)
+            if target is None and not duplicate:
+                raise OrchestrationError(
+                    "Exact run is not hosted by a live session", "broker_not_live"
+                )
+            if target is not None:
+                tmux(["kill-session", "-t", target])
+            # A lost kill acknowledgement can be reconciled by a successful
+            # absence observation; an unavailable server is never proof of stop.
+            complete_stop(receipt)
+            return duplicate, target is not None, False
+    except Exception as error:
+        code = (
+            error.code if isinstance(error, OrchestrationError) else "broker_uncertain"
+        )
+        raise OrchestrationError(
+            "Stop completion is unproven; inspect the exact run before retrying",
+            code,
+            data={
+                "session": session,
+                "run_id": coord.name,
+                "command_id": command_id,
+                **({"duplicate": duplicate} if duplicate is not None else {}),
+                "command_status": "uncertain",
+                "completion": "uncertain",
+                "retry": "same_command_id"
+                if code == "broker_uncertain"
+                else "inspect_exact_run",
+            },
+        ) from None
+
+
 def stop_command(args: argparse.Namespace) -> CommandResult:
     if not args.yes:
         raise OrchestrationError("stop kills the selected tmux agent grid; pass --yes")
     session, coord, manifest = control_target(args)
     command_id = getattr(args, "command_id", None)
-    receipt = None
+    duplicate = False
+    stop_attempted = True
     if command_id:
         if getattr(args, "run", None) is None:
             raise OrchestrationError(
                 "Idempotent stop requires --run", "invalid_arguments"
             )
-        receipt, duplicate, status = claim_stop(coord, command_id)
-        if duplicate:
-            if status != "completed":
-                raise OrchestrationError(
-                    "Prior stop completion is uncertain; inspect exact session",
-                    "broker_uncertain",
-                    data={
-                        "session": session,
-                        "run_id": coord.name,
-                        "command_id": command_id,
-                        "duplicate": True,
-                    },
-                )
+        duplicate, stop_attempted, replayed = _stop_with_receipt(
+            session, coord, command_id
+        )
+        if replayed:
             return CommandResult(
                 data={
                     "session": session,
@@ -870,14 +908,14 @@ def stop_command(args: argparse.Namespace) -> CommandResult:
                     "state_retained": True,
                     "command_id": command_id,
                     "duplicate": True,
+                    "stop_attempted": False,
                     "completion": "completed",
                 }
             )
-    if getattr(args, "run", None) is not None:
-        require_live_run(session, coord, resolve_session)
-    tmux(["kill-session", "-t", exact_session_target(session)])
-    if receipt is not None:
-        complete_stop(receipt)
+    else:
+        if getattr(args, "run", None) is not None:
+            require_live_run(session, coord, resolve_session)
+        tmux(["kill-session", "-t", exact_session_target(session)])
     if manifest.get("version") in {3, 4}:
         socket_path = broker_paths(coord)["socket"]
         try:
@@ -907,7 +945,8 @@ def stop_command(args: argparse.Namespace) -> CommandResult:
             "stopped": True,
             "run_id": coord.name,
             "command_id": command_id,
-            "duplicate": False,
+            "duplicate": duplicate,
+            "stop_attempted": stop_attempted,
             "completion": "completed",
             "state_retained": True,
             "paths": {"coordination": str(coord)},

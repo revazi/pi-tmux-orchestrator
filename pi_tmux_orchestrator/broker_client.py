@@ -116,5 +116,14 @@ def broker_control_request(
             "broker_uncertain"
             if response["status"] == "uncertain"
             else "broker_rejected",
+            data={
+                "command_id": request_id,
+                "command_status": response["status"],
+                "duplicate": response["duplicate"],
+                "completion": "uncertain",
+                "retry": "new_command_id"
+                if response["status"] == "uncertain"
+                else "inspect_exact_run",
+            },
         )
     return response

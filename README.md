@@ -46,7 +46,10 @@ restart each ask for **separate interactive TUI or RPC confirmation** tied to th
 selected run; project trust or a prior start approval cannot authorize them.
 Abort requests cancellation, not completion. A restart acknowledgement is not a
 completed handover or completed task; duplicate restart retries never respawn
-again and report uncertain completion.
+again and report uncertain completion. After inspecting a stuck handover, request
+a fresh restart with a **new command ID and separate confirmation**; an uncertain
+role state does not block recovery. Abort still requires a connected worker, and
+restart still requires the broker's live in-memory baseline and resource checks.
 
 Start may supply an exact `session` (1–128 ASCII letters, digits, `_`, `.`, `-`; `.`/`..` are reserved).
 A collision returns metadata-only `data.collision`: exact session, safely
@@ -57,8 +60,12 @@ Nothing automatically stops, replaces, renames, or reuses existing work.
 
 Controls accept optional exact `run` and 32-character lowercase hexadecimal
 `commandId`. Keep both when retrying an uncertain command; stop/restart bind the
-confirmed run automatically. A completed stop receipt can be replayed after
-retention without killing a new same-name session. Retained state is never proof
+confirmed run automatically. A confirmed same-ID stop retry can reconcile an
+interrupted receipt: it stops only the original live run, or completes after a
+successful observation that the session is absent. Concurrent retries fail
+uncertain without waiting. A completed stop receipt can be replayed after
+retention without killing a new same-name session; unavailable observations and
+replacement sessions never authorize a kill or claim completion. Retained state is never proof
 of a live broker. The five slash commands and package version 0.11.1 are unchanged.
 See [recovery usage](references/usage.md#model-tool-recovery-controls) and
 [compatibility](references/protocol-v1.md#compatibility).

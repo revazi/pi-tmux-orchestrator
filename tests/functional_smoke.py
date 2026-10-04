@@ -21,6 +21,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from pi_tmux_orchestrator.planning import metadata_digest  # noqa: E402
+from pi_tmux_orchestrator.recovery import claim_stop  # noqa: E402
 from tests.support import ORCHESTRATOR  # noqa: E402
 
 SCRIPT = ROOT / "bin" / "pi-tmux-agents"
@@ -124,6 +125,29 @@ def exercise_model_recovery(mode: str, session: str, coord: Path, root: Path) ->
         or not duplicate_abort["result"]["details"]["data"]["duplicate"]
     ):
         raise AssertionError("exact abort acknowledgement/idempotency changed")
+    # Simulate a CLI interruption after broker acceptance but before respawn.
+    # A duplicate only resolves acceptance; a fresh confirmed ID must recover
+    # even if the old client has already disconnected in the handover window.
+    ORCHESTRATOR.broker_control_request(
+        coord, "implementer", "restart", command_id="5" * 32
+    )
+    interrupted = model_recovery(
+        mode,
+        {
+            "action": "restart",
+            "session": session,
+            "role": "implementer",
+            "run": coord.name,
+            "commandId": "5" * 32,
+        },
+        True,
+        root,
+    )
+    if (
+        interrupted["result"]["details"]["data"]["completion"] != "uncertain"
+        or interrupted["result"]["details"]["data"]["restarted"]
+    ):
+        raise AssertionError("accepted interrupted restart unexpectedly respawned")
     restart_input = {
         "action": "restart",
         "session": session,
@@ -140,6 +164,18 @@ def exercise_model_recovery(mode: str, session: str, coord: Path, root: Path) ->
     ):
         raise AssertionError(
             "restart duplicate repeated respawn or claimed workflow completion"
+        )
+    # A failed respawn handover is also recoverable with a new confirmed ID.
+    ORCHESTRATOR.broker_control_request(
+        coord, "implementer", "restart", command_id="6" * 32
+    )
+    ORCHESTRATOR.broker_control_request(coord, "implementer", "restart_failed")
+    recovered = model_recovery(
+        mode, {**restart_input, "commandId": "7" * 32}, True, root
+    )
+    if recovered["result"]["details"]["data"]["completion"] != "respawned":
+        raise AssertionError(
+            "fresh confirmed restart could not recover failed handover"
         )
     stale = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     stale.settimeout(4)
@@ -170,14 +206,44 @@ def exercise_model_recovery(mode: str, session: str, coord: Path, root: Path) ->
         "run": coord.name,
         "commandId": "4" * 32,
     }
+    # Interrupted before kill: the same command ID may finish after another
+    # explicit confirmation, but decline must leave both session and receipt.
+    claim_stop(coord, "4" * 32)
+    declined = model_recovery(mode, stop_input, False, root)
+    if declined.get(
+        "error"
+    ) != "stop_confirmation_declined" or not ORCHESTRATOR.session_exists(session):
+        raise AssertionError("interrupted stop retry bypassed confirmation")
     stopped = model_recovery(mode, stop_input, True, root)
     retry = model_recovery(mode, stop_input, True, root)
     if (
         not stopped["result"]["details"]["data"]["stopped"]
+        or not stopped["result"]["details"]["data"]["duplicate"]
+        or not stopped["result"]["details"]["data"]["stop_attempted"]
         or not retry["result"]["details"]["data"]["duplicate"]
         or ORCHESTRATOR.session_exists(session)
     ):
         raise AssertionError("exact stop retained retry did not deduplicate")
+    # Retained uncertain/completed receipts must never touch a replacement.
+    claim_stop(coord, "8" * 32)
+    subprocess.run(["tmux", "new-session", "-d", "-s", session], check=True)
+    try:
+        replacement = model_recovery(
+            mode, {**stop_input, "commandId": "8" * 32}, True, root
+        )
+        replay = model_recovery(mode, stop_input, True, root)
+        if (
+            replacement["result"]["details"]["error"]["code"] != "broker_not_live"
+            or not replacement["result"]["details"]["data"]["duplicate"]
+            or replacement["result"]["details"]["data"]["completion"] != "uncertain"
+            or replay["result"]["details"]["data"]["stop_attempted"]
+            or not ORCHESTRATOR.session_exists(session)
+        ):
+            raise AssertionError(
+                "retained stop receipt touched or authorized a replacement"
+            )
+    finally:
+        subprocess.run(["tmux", "kill-session", "-t", f"={session}"], check=True)
 
 
 def assert_attach_detach_reuses_invoking_parent() -> None:

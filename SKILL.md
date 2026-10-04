@@ -18,9 +18,15 @@ from parent trust/start approval. Decline or unavailable confirmation changes
 nothing. Abort acknowledgement does not prove operation completion; restart
 acknowledgement/respawn does not prove handover or task completion. Reuse the same
 32-lowercase-hex `commandId` and exact `run` on uncertain retries. Duplicate
-restart never respawns again; completed stop receipts remain readable after stop
-without authorizing a replacement session. A fresh control must target the exact
-live run, not merely retained metadata.
+restart never respawns again: inspect state, then use a new command ID and
+separate confirmation for a fresh restart of a stuck handover. Fresh restart
+requires the broker's in-memory baseline and resource checks, but not an old
+worker connection; abort requires a connected worker. A confirmed same-ID stop
+retry serializes reconciliation and targets only the original live run's tmux
+identity, or completes after a successful absence observation. Unavailable reads
+and replacement sessions cannot prove completion or authorize a kill. Completed
+stop receipts remain readable after stop without authorizing a replacement
+session. A fresh control must target the exact live run, not merely retained metadata.
 
 Optional start `session` uses the CLI's 1–128 ASCII letters/digits/`_`/`.`/`-`
 allowlist (`.`/`..` are reserved). On `session_collision`, inspect bounded `data.collision` workflow/role

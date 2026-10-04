@@ -38,10 +38,14 @@ second workflow engine. For example, use synthetic identities like:
   cancellation, or decline cannot pass `--yes`.
 - `restart`: exact enabled role only (including a selected trusted custom identity).
   Separate interactive approval respawns the worker using retained launch settings;
-  mandatory broker generation/resource checks still apply. A second command during
-  handover fails uncertain. Duplicate accepted IDs never repeat the tmux respawn.
+  mandatory broker generation/resource checks still apply. Duplicate accepted IDs
+  never repeat the tmux respawn. After inspecting a stuck handover, a **new ID and
+  separate confirmation** authorize a fresh recovery even in `restarting`,
+  `recovering`, or `uncertain`. Restart needs the broker's in-memory baseline,
+  not a still-connected old worker; revoked resources still block recovery.
 - `abort`: exact enabled role only, requesting broker cancellation without a
-  destructive confirmation. `acknowledged` means accepted delivery, **not terminal
+  destructive confirmation. An uncertain role state does not block abort to a
+  connected worker; a missing connection still fails uncertain. `acknowledged` means accepted delivery, **not terminal
   operation or task completion**. Existing `aborted` is a request flag, not evidence
   of terminal completion; `completion=not_observed` makes this explicit.
 
@@ -51,12 +55,23 @@ selects an exact retained record but never supplies live-control authority.
 `commandId` is optional 32-character lowercase hex; if omitted, recovery generates
 one and exposes it on failures/success. Preserve that ID **and exact run** on a
 retry. Stop receipts are private, bounded metadata-only files in the retained run:
-`completion=completed` can replay after stop; an interrupted claim is uncertain
-and never repeats the kill. Restart `completion=respawned` means only that tmux
-accepted the pane respawn, not completed recovery. A duplicate restart reports
-`completion=uncertain` and `restarted=false`; inspect status rather than inventing
-completion. Missing broker before connection is `broker_not_ready`; a timeout or
-transport loss after connection is `broker_uncertain`. Neither is success.
+`completion=completed` can replay after stop. An interrupted claim stays uncertain
+until an explicitly confirmed same-ID retry reconciles it under a nonblocking
+local lock: stop only the original live run, or complete from a successful tmux
+observation of absence. A same-name replacement is never targeted; an unavailable
+server is not evidence of absence. The kill uses an immutable tmux session ID,
+so a replacement between observation and kill cannot be stopped. Concurrent
+claims fail uncertain without waiting and can be retried. `stop_attempted`
+distinguishes a reconciled kill from a receipt replay/verified absence.
+Restart `completion=respawned` means only that tmux accepted the pane respawn,
+not completed recovery. A duplicate restart reports `completion=uncertain` and
+`restarted=false`; inspect status, then issue a fresh separately confirmed ID if
+recovery is needed. Error metadata preserves validated `duplicate`,
+`command_status`, `completion`, and `retry` (`same_command_id`, `new_command_id`,
+or `inspect_exact_run`), never raw errors. Unknown broker delivery should first
+be resolved with the same ID; a stored uncertain refusal needs a fresh ID after
+the blocker is resolved. Missing broker before connection is `broker_not_ready`;
+a timeout or transport loss after connection is `broker_uncertain`. Neither is success.
 
 Start accepts optional exact `session`, sharing CLI validation: 1–128 ASCII
 letters/digits/underscores/dots/hyphens, without trimming or fuzzy matching (`.`/`..` are reserved). CLI

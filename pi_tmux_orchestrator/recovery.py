@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import re
+from contextlib import contextmanager
 from itertools import islice
 from pathlib import Path
 from typing import Any, Callable
@@ -15,10 +17,11 @@ from .models import OrchestrationError
 from .storage import (
     ensure_private_directory,
     load_manifest,
+    open_directory,
     read_regular_file,
     secure_write,
 )
-from .tmux import session_option
+from .tmux import session_option, tmux
 
 
 def require_live_run(
@@ -169,6 +172,59 @@ def claim_stop(coord: Path, command_id: str) -> tuple[Path, bool, str]:
     if value not in ({"status": "uncertain"}, {"status": "completed"}):
         raise OrchestrationError("Stop receipt is invalid", "broker_uncertain")
     return receipt, True, value["status"]
+
+
+@contextmanager
+def locked_stop_claim(coord: Path, command_id: str):
+    """Serialize reconciliation, kill, and completion without waiting/polling."""
+    directory = coord / "stop-receipts"
+    ensure_private_directory(directory)
+    descriptor = open_directory(directory)
+    try:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise OrchestrationError(
+                "Stop is in progress; retry the exact run and command ID",
+                "broker_uncertain",
+            ) from None
+        yield claim_stop(coord, command_id)
+    finally:
+        os.close(descriptor)
+
+
+def live_stop_target(session: str, coord: Path) -> str | None:
+    """Read name, immutable tmux ID, and run binding in one server observation.
+
+    Only a successful read can prove absence. The returned ID cannot address a
+    same-name replacement if the original exits between this read and the kill.
+    """
+    result = tmux(
+        ["list-sessions", "-F", "#{session_name}\t#{session_id}\t#{@pi_agents_coord}"],
+        check=False,
+        capture=True,
+    )
+    if result.returncode != 0:
+        raise OrchestrationError(
+            "Exact session observation is unavailable", "broker_uncertain"
+        )
+    for line in result.stdout.splitlines():
+        name, separator, identity = line.partition("\t")
+        if name != session:
+            continue
+        target, binding_separator, binding = identity.partition("\t")
+        if (
+            not separator
+            or not binding_separator
+            or not re.fullmatch(r"\$[0-9]+", target)
+            or binding != str(coord)
+        ):
+            raise OrchestrationError(
+                "Control requires the exact run hosted by the live tmux session",
+                "broker_not_live",
+            )
+        return target
+    return None
 
 
 def complete_stop(receipt: Path) -> None:

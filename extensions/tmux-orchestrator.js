@@ -92,7 +92,7 @@ const parameters = {
     },
     session: { type: "string", minLength: 1, maxLength: 128, pattern: "^(?!\\.{1,2}$)[A-Za-z0-9_.-]{1,128}$", description: "Optional exact session name for start; exact orchestration session for reads or controls. Never fuzzy matching" },
     run: { type: "string", maxLength: 160, pattern: "^[A-Za-z0-9_.-]+$", description: "Optional exact retained run ID for controls; must match the live session. Stop/restart bind the confirmed run automatically" },
-    commandId: { type: "string", pattern: "^[a-f0-9]{32}$", description: "Optional idempotency key for send/abort/restart/stop; reuse the same key and exact run when retrying uncertain delivery. Never repeat a restart respawn on duplicate" },
+    commandId: { type: "string", pattern: "^[a-f0-9]{32}$", description: "Optional idempotency key for send/abort/restart/stop; reuse it and the exact run to resolve unknown delivery. Duplicate restart never respawns: inspect state, then use a new ID and separate confirmation for fresh recovery. Interrupted stop retries reconcile only the original run" },
     role: controlRoleParameters,
     task: { type: "string", maxLength: 65536, description: "Self-contained start objective; transferred through a private file" },
     contextCapsule: contextCapsuleParameters,
@@ -980,19 +980,33 @@ async function runControlCli(pi, action, args, signal, input) {
       error: { code: "control_delivery_uncertain", message: "Control delivery or completion is uncertain; inspect the exact run and reuse the command ID, never assume completion." },
     };
   }
-  if (!envelope.success) {
-    // Controls return only fixed recovery metadata, never an external/raw error body.
-    const unavailable = ["broker_not_ready", "broker_not_live"].includes(envelope.error?.code);
-    const code = ["broker_not_ready", "broker_not_live", "broker_uncertain", "broker_rejected", "invalid_arguments"].includes(envelope.error?.code) ? envelope.error.code : "control_delivery_uncertain";
-    return {
-      schema_version: "1", command: action, success: false,
-      data: { session: input.session, role: input.action === "stop" ? null : input.role, run_id: input.run ?? null,
-        command_id: input.commandId, completion: "not_observed" },
-      error: { code,
-        message: unavailable ? "Exact live broker/run is unavailable; no completion is claimed." : "Control was rejected or delivery/completion is uncertain; inspect the exact run and reuse the command ID." },
-    };
+  return envelope.success ? envelope : recoveryFailure(envelope, action, input);
+}
+
+function recoveryFailureMessage(code, retry) {
+  if (["broker_not_ready", "broker_not_live"].includes(code)) {
+    return "Exact live broker/run is unavailable; no completion is claimed.";
   }
-  return envelope;
+  return {
+    new_command_id: "Control completion is unproven; inspect the exact run, then use a new command ID for fresh recovery. Stop/restart still require separate confirmation.",
+    inspect_exact_run: "Control was rejected or completion is unproven; inspect the exact run before selecting a recovery action.",
+    same_command_id: "Control delivery/completion is uncertain; inspect the exact run and retry the same command ID to reconcile, never assume completion.",
+  }[retry];
+}
+
+function recoveryFailure(envelope, action, input) {
+  // Controls return only validated recovery metadata, never an external/raw body.
+  const code = ["broker_not_ready", "broker_not_live", "broker_uncertain", "broker_rejected", "invalid_arguments"].includes(envelope.error?.code) ? envelope.error.code : "control_delivery_uncertain";
+  const retry = ["same_command_id", "new_command_id", "inspect_exact_run"].includes(envelope.data?.retry) ? envelope.data.retry : "same_command_id";
+  return {
+    schema_version: "1", command: action, success: false,
+    data: { session: input.session, role: input.action === "stop" ? null : input.role, run_id: input.run ?? null,
+      command_id: input.commandId, completion: envelope.data?.completion === "uncertain" ? "uncertain" : "not_observed",
+      ...(typeof envelope.data?.duplicate === "boolean" ? { duplicate: envelope.data.duplicate } : {}),
+      ...(["accepted", "uncertain", "conflict"].includes(envelope.data?.command_status) ? { command_status: envelope.data.command_status } : {}),
+      retry },
+    error: { code, message: recoveryFailureMessage(code, retry) },
+  };
 }
 
 async function runSend(pi, input, signal) {
@@ -1065,11 +1079,11 @@ const successSummaries = {
   },
   stop(data) {
     return data.completion === "completed"
-      ? `Stopped exact ${data.session}; coordination state retained${data.duplicate ? " (duplicate receipt; no new stop)" : ""}.`
+      ? `Stopped exact ${data.session}; coordination state retained${data.duplicate ? data.stop_attempted ? " (same-ID recovery of the original run)" : " (duplicate receipt; no new stop)" : ""}.`
       : `Stop outcome uncertain for ${data.session}; inspect status before retrying.`;
   },
   restart(data) {
-    return `Restart ${data.acknowledged ? "acknowledged" : "requested"} for ${data.session}/${data.role?.name}; ${data.completion === "respawned" ? "pane respawned" : "completion uncertain"}${data.duplicate ? "; duplicate, no new respawn" : ""}. Not workflow completion.`;
+    return `Restart ${data.acknowledged ? "acknowledged" : "requested"} for ${data.session}/${data.role?.name}; ${data.completion === "respawned" ? "pane respawned" : "completion uncertain"}${data.duplicate ? "; duplicate, no new respawn" : ""}. Not workflow completion.${data.duplicate ? " Inspect state; fresh recovery needs a new command ID and separate confirmation." : ""}`;
   },
   abort(data) {
     return `Abort acknowledged for ${data.session}/${data.role}; operation completion not observed. Not workflow completion.`;

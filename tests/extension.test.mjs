@@ -6795,3 +6795,77 @@ test("recovery preflight read errors are redacted and cancellation before contro
   assert.equal(result.details.error.code, "control_not_sent");
   assert.equal(result.details.data.control_sent, false);
 });
+
+test("TUI/RPC recovery errors preserve only validated receipt metadata and actionable retry distinctions", async () => {
+  for (const mode of ["tui", "rpc"]) {
+    for (const retry of ["same_command_id", "new_command_id", "inspect_exact_run", "SYNTHETIC_PRIVATE_CANARY"]) {
+      const { tool } = harness(async (_cmd, args) => {
+        if (["status", "supervisor"].includes(args[2])) return { code: 0, stdout: JSON.stringify(success(args[2], { run_id: "run-1", roles: [{ name: "implementer" }] })) };
+        return { code: 2, stdout: JSON.stringify({ schema_version: "1", command: args[2], success: false,
+          data: { duplicate: true, completion: "uncertain", command_status: "uncertain", retry, prompt: "SYNTHETIC_PRIVATE_CANARY", run_id: "SYNTHETIC_PRIVATE_CANARY" },
+          error: { code: "broker_uncertain", message: "SYNTHETIC_PRIVATE_CANARY" } }) };
+      });
+      for (const action of ["stop", "restart", "abort"]) {
+        const ctx = context({ confirmations: [true], context: { mode } });
+        const result = await tool.execute("call", { action, session: "pi-exact", role: "implementer", run: "run-1", commandId: "a".repeat(32) }, undefined, undefined, ctx);
+        assert.equal(result.details.data.duplicate, true);
+        assert.equal(result.details.data.completion, "uncertain");
+        assert.equal(result.details.data.command_status, "uncertain");
+        assert.equal(result.details.data.run_id, "run-1");
+        assert.equal(result.details.data.retry, retry === "SYNTHETIC_PRIVATE_CANARY" ? "same_command_id" : retry);
+        assert.doesNotMatch(JSON.stringify([result, ctx.calls]), /CANARY/);
+        if (retry === "new_command_id") assert.match(result.content[0].text, /new command ID.*separate confirmation/);
+        if (retry === "same_command_id") assert.match(result.content[0].text, /same command ID to reconcile/);
+        assert.equal(ctx.calls.confirmations.length, action === "abort" ? 0 : 1);
+      }
+    }
+    const { tool } = harness(async (_cmd, args) => {
+      if (args[2] === "status") return { code: 0, stdout: JSON.stringify(success("status", { run_id: "run-1" })) };
+      return { code: 2, stdout: JSON.stringify({ schema_version: "1", command: "stop", success: false,
+        data: { duplicate: "SYNTHETIC_PRIVATE_CANARY", completion: "SYNTHETIC_PRIVATE_CANARY", command_status: "SYNTHETIC_PRIVATE_CANARY" },
+        error: { code: "broker_uncertain", message: "SYNTHETIC_PRIVATE_CANARY" } }) };
+    });
+    const result = await tool.execute("call", { action: "stop", session: "pi-exact" }, undefined, undefined, context({ confirmations: [true], context: { mode } }));
+    assert.equal(result.details.data.completion, "not_observed");
+    assert.equal(result.details.data.duplicate, undefined);
+    assert.equal(result.details.data.command_status, undefined);
+    assert.doesNotMatch(JSON.stringify(result), /CANARY/);
+  }
+});
+
+test("fresh TUI/RPC recovery after duplicate restart requires a new explicit call and confirmation", async () => {
+  for (const mode of ["tui", "rpc"]) {
+    const calls = [];
+    const { tool } = harness(async (_cmd, args) => {
+      calls.push(args);
+      if (args[2] === "status") return { code: 0, stdout: JSON.stringify(success("status", { run_id: "run-1", roles: [{ name: "implementer" }], broker: { roles: [{ role: "implementer", state: "uncertain" }] } })) };
+      const duplicate = args[args.indexOf("--command-id") + 1] === "a".repeat(32);
+      return { code: 0, stdout: JSON.stringify(success("restart", { session: "pi-exact", role: { name: "implementer" }, acknowledged: true, duplicate,
+        completion: duplicate ? "uncertain" : "respawned", restarted: !duplicate })) };
+    });
+    const input = { action: "restart", session: "pi-exact", role: "implementer", run: "run-1", commandId: "a".repeat(32) };
+    const duplicate = await tool.execute("call", input, undefined, undefined, context({ confirmations: [true], context: { mode } }));
+    assert.equal(calls.length, 2, "must not automatically recover from duplicate acknowledgement");
+    assert.match(duplicate.content[0].text, /fresh recovery needs a new command ID and separate confirmation/);
+    const declined = context({ confirmations: [false], context: { mode } });
+    await assert.rejects(tool.execute("call", { ...input, commandId: "b".repeat(32) }, undefined, undefined, declined), /restart_confirmation_declined/);
+    assert.equal(calls.length, 3);
+    const ctx = context({ confirmations: [true], context: { mode } });
+    const recovered = await tool.execute("call", { ...input, commandId: "b".repeat(32) }, undefined, undefined, ctx);
+    assert.equal(recovered.details.data.completion, "respawned");
+    assert.equal(ctx.calls.confirmations.length, 1);
+    assert.equal(calls.length, 5);
+  }
+});
+
+test("same-ID reconciled stop summary distinguishes a fresh kill from receipt replay", async () => {
+  for (const mode of ["tui", "rpc"]) {
+    const { tool } = harness(async (_cmd, args) => ({ code: 0, stdout: JSON.stringify(success(args[2], args[2] === "supervisor" ? { run_id: "run-1" }
+      : { session: "pi-exact", duplicate: true, completion: "completed", stop_attempted: true })) }));
+    const ctx = context({ confirmations: [true], context: { mode } });
+    const result = await tool.execute("call", { action: "stop", session: "pi-exact", run: "run-1", commandId: "a".repeat(32) }, undefined, undefined, ctx);
+    assert.match(result.content[0].text, /same-ID recovery of the original run/);
+    assert.doesNotMatch(result.content[0].text, /no new stop/);
+    assert.equal(ctx.calls.confirmations.length, 1);
+  }
+});
