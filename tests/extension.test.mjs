@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { TASK_INTENTS, taskIntentMetadata, validateTaskIntent } from "../extensions/orchestrator-intent.js";
 import { access, chmod, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -79,6 +80,7 @@ async function waitFor(predicate, timeoutMs = 1_000) {
 }
 
 function success(command, data = {}) {
+  if (command === "start") data = { task_intent: data.planning?.task_intent ?? taskIntentMetadata(undefined), ...data };
   return { schema_version: "1", command, success: true, data, error: null };
 }
 
@@ -196,7 +198,17 @@ function harness(exec) {
   const providers = [];
   const shortcuts = new Map();
   const pi = {
-    exec,
+    exec: async (command, args, options) => {
+      const result = await exec(command, args, options);
+      if (args[2] === "start" && args.includes("--task-intent") && result.stdout) {
+        const envelope = JSON.parse(result.stdout);
+        if (envelope.data?.task_intent?.source === "default") {
+          envelope.data.task_intent = taskIntentMetadata(args[args.indexOf("--task-intent") + 1]);
+          return { ...result, stdout: JSON.stringify(envelope) };
+        }
+      }
+      return result;
+    },
     sendMessage(message, options) { messages.push({ message, options }); },
     registerTool(tool) { tools.push(tool); },
     registerProvider(provider) { providers.push(provider); },
@@ -247,6 +259,7 @@ function context(overrides = {}) {
       setWidget: (key, value) => calls.widgets.push({ key, value }),
       select: async (title, options) => {
         calls.selections.push({ title, options });
+        if (title.startsWith("Task intent") && !overrides.intentSelection) return "change";
         return selections ? selections.shift() : overrides.selection;
       },
       editor: async (title, prefill) => {
@@ -270,7 +283,7 @@ function context(overrides = {}) {
 test("parent planning contracts require approved pools or exact locks, never the full catalog", async () => {
   const { tool } = harness(async () => assert.fail("no CLI call"));
   const skill = await readFile(new URL("../SKILL.md", import.meta.url), "utf8");
-  for (const contract of [skill, tool.description, ...tool.promptGuidelines]) {
+  for (const contract of [skill, tool.description, tool.promptGuidelines[0]]) {
     assert.match(contract, /workerCandidates/);
     assert.match(contract, /every planner-eligible role/);
     assert.match(contract, /exact run\/project\/global/i);
@@ -3491,11 +3504,11 @@ test("Pi and TypeSafe offer identical role-approved scope and reject available b
     typesafeFetch: async (_url, options) => {
       const request = JSON.parse(options.body);
       jevPayload = request.state;
-      assert.deepEqual(Object.keys(request.questions), ["model_00"]);
+      assert.deepEqual(Object.keys(request.questions), ["model_00", "task_intent"]);
       assert.deepEqual(Object.keys(request.questions.model_00.criteria), ["m1", "m2"]); // never reviewer-only or unapproved
 
       return new Response(JSON.stringify({ model: "jev-1.13.0", usage: { input_tokens: 1, output_tokens: 1 },
-        answers: { model_00: { type: "choice", choice: "m1", confidence: 1, probabilities: { m1: 1, m2: 0 } } } }), { status: 200 });
+        answers: { model_00: { type: "choice", choice: "m1", confidence: 1, probabilities: { m1: 1, m2: 0 } }, task_intent: { type: "choice", choice: "change", confidence: 1, probabilities: { change: 1, investigation: 0, review: 0, advisory: 0 } } } }), { status: 200 });
     },
   });
   assert.deepEqual(piPayload.candidate_model_capabilities, jevPayload.candidate_model_capabilities);
@@ -3511,7 +3524,7 @@ test("Pi and TypeSafe offer identical role-approved scope and reject available b
   await assert.rejects(runPreflightPlanner(ctx, { task: "Synthetic" }, "/project", jevSelection, topology, undefined, undefined, {
     typesafeApiKey: "synthetic-key",
     typesafeFetch: async () => new Response(JSON.stringify({ model: "jev-1.13.0", usage: { input_tokens: 1, output_tokens: 1 },
-      answers: { model_00: { type: "choice", choice: "m0", confidence: 1, probabilities: { m1: 1, m2: 0 } } } }), { status: 200 }),
+      answers: { model_00: { type: "choice", choice: "m0", confidence: 1, probabilities: { m1: 1, m2: 0 } }, task_intent: { type: "choice", choice: "change", confidence: 1, probabilities: { change: 1, investigation: 0, review: 0, advisory: 0 } } } }), { status: 200 }),
   }), /typesafe_answer_invalid/);
   decision.roles[0].model = "decision-unapproved";
   await assert.rejects(runPreflightPlanner(ctx, { task: "Synthetic" }, "/project", piSelection, topology), /typesafe_answer_invalid/);
@@ -6335,6 +6348,7 @@ function piDecisionText(value, decision) {
   const request = JSON.parse(value.messages[0].content[0].text);
   const selected = new Map(decision.roles.map((role) => [role.role, role]));
   return JSON.stringify({ answers: questionAnswers(request, (id, choices) => {
+    if (id === "task_intent") return decision.task_intent ?? "change";
     const role = selected.get(request.questions[id].instructions?.role);
     if (id.startsWith("include_")) return role ? "include" : "omit";
     if (id.startsWith("model_") && role) {
@@ -6406,7 +6420,7 @@ for (const selector of [undefined, ...SCOPE_COMBINATIONS]) test(`planning scopes
     assert.ok(["a", "b"].includes(role.model));
   }
   const retained = planningRecordForPreview(result.plan);
-  assert.equal(retained.version, 3);
+  assert.equal(retained.version, 4);
   assert.deepEqual(retained.scopes, scopes);
   assert.equal(JSON.stringify(retained).includes(input.task), false);
 });
@@ -6476,11 +6490,11 @@ test("omitted all-axis requests honor fully locked suitability and identical bac
     request = JSON.parse(value.messages[0].content[0].text);
     assert.match(value.systemPrompt, /Return exactly \{"answers"/);
     assert.equal(value.systemPrompt.includes('"roles"'), false);
-    return { stopReason: "stop", content: [{ type: "text", text: JSON.stringify({ answers: { locked_plan: answer } }) }] };
+    return { stopReason: "stop", content: [{ type: "text", text: JSON.stringify({ answers: { locked_plan: answer, task_intent: "change" } }) }] };
   } } };
   const pi = selectDecisionModel(ctx, { provider: "p", model: "a" }, plannerPolicy());
   const result = await runPreflightPlanner(ctx, input, "/synthetic", pi, topology);
-  assert.deepEqual(Object.keys(request.questions), ["locked_plan"]);
+  assert.deepEqual(Object.keys(request.questions), ["locked_plan", "task_intent"]);
   assert.deepEqual(result.plan.scopes, ["topology", "models", "thinking"]);
   assert.equal(calls, 1);
   answer = "reject";
@@ -6490,7 +6504,7 @@ test("omitted all-axis requests honor fully locked suitability and identical bac
     typesafeApiKey: "synthetic-key", typesafeFetch: async (_url, options) => {
       const other = JSON.parse(options.body);
       assert.deepEqual(other, request);
-      return choiceResponse(other, { locked_plan: "reject" });
+      return choiceResponse(other, { locked_plan: "reject", task_intent: "change" });
     },
   }), /locked_plan_rejected/);
 });
@@ -6520,12 +6534,12 @@ test("fully locked scopes ask suitability once; rejection, invalid choices and u
   let request;
   const ctx = { modelRegistry: { getAvailable: () => SCOPE_MODELS, complete: async (_model, value) => {
     request = JSON.parse(value.messages[0].content[0].text);
-    return { stopReason: "stop", content: [{ type: "text", text: JSON.stringify({ answers: { locked_plan: "accept" } }) }] };
+    return { stopReason: "stop", content: [{ type: "text", text: JSON.stringify({ answers: { locked_plan: "accept", task_intent: "change" } }) }] };
   } } };
   const selection = selectDecisionModel(ctx, { provider: "p", model: "a" }, plannerPolicy());
   await runPreflightPlanner(ctx, input, "/synthetic", selection, topology);
-  assert.deepEqual(Object.keys(request.questions), ["locked_plan"]);
-  ctx.modelRegistry.complete = async () => ({ stopReason: "stop", content: [{ type: "text", text: '{"answers":{"locked_plan":"reject"}}' }] });
+  assert.deepEqual(Object.keys(request.questions), ["locked_plan", "task_intent"]);
+  ctx.modelRegistry.complete = async () => ({ stopReason: "stop", content: [{ type: "text", text: '{"answers":{"locked_plan":"reject","task_intent":"change"}}' }] });
   await assert.rejects(runPreflightPlanner(ctx, input, "/synthetic", selection, topology), /locked_plan_rejected/);
   ctx.modelRegistry.complete = async () => ({ stopReason: "stop", content: [{ type: "text", text: '{"answers":{"model_00":"m99"}}' }] });
   await assert.rejects(runPreflightPlanner(ctx, input, "/synthetic", selection, topology), /answers_incomplete/);
@@ -6867,5 +6881,204 @@ test("same-ID reconciled stop summary distinguishes a fresh kill from receipt re
     assert.match(result.content[0].text, /same-ID recovery of the original run/);
     assert.doesNotMatch(result.content[0].text, /no new stop/);
     assert.equal(ctx.calls.confirmations.length, 1);
+  }
+});
+
+test("intent schema and malformed values fail closed without leaking supplied values", async () => {
+  const { tool } = harness(async () => { throw new Error("unexpected CLI call"); });
+  assert.deepEqual(tool.parameters.properties.taskIntent.enum, TASK_INTENTS);
+  assert.match(tool.promptGuidelines[1], /explicit operator taskIntent/);
+  assert.match(tool.promptGuidelines[1], /one-writer plus mandatory-review/);
+  for (const taskIntent of [null, "", "CHANGE", " change", "PRIVATE_INTENT_BODY", true, [], {}, 1]) {
+    assert.throws(() => validateTaskIntent(taskIntent), /invalid_task_intent/);
+    await assert.rejects(tool.execute("intent", { action: "start", task: "Synthetic", taskIntent }, undefined, undefined, context()), /invalid_task_intent/);
+  }
+});
+
+test("each explicit non-change intent redirects or cancels before static/dynamic resources, trust or workers", async () => {
+  const canary = "PRIVATE_INTENT_BODY_40e9";
+  for (const taskIntent of TASK_INTENTS.slice(1)) {
+    for (const dynamicPlan of [false, true]) {
+      for (const rpcWorkers of [false, true]) {
+        for (const direct of [false, true]) {
+          let cliCalls = 0;
+          let supervised = 0;
+          const handlers = testHooks.createCommandHandlers({ exec: async () => { cliCalls += 1; throw new Error("unexpected CLI call"); } }, () => { supervised += 1; });
+          const ctx = context({ confirmations: [direct], context: { modelRegistry: { getAvailable: () => { throw new Error("unexpected catalog read"); } } } });
+          const { pi, tool } = harness(async () => { cliCalls += 1; throw new Error("unexpected CLI call"); });
+          const input = { action: "start", taskIntent, dynamicPlan, rpcWorkers, task: canary, approveProject: true, project: "/nonexistent" };
+          const result = await tool.execute("intent", input, undefined, undefined, ctx);
+          assert.equal(result.details.data.disposition, direct ? "direct-parent" : "cancelled");
+          assert.equal(result.details.data.launched, false);
+          assert.equal(result.details.data.task_intent.effective, taskIntent);
+          assert.equal(Object.hasOwn(result.details.data, "implementation_flow"), false);
+          assert.equal(ctx.calls.confirmations.length, 1);
+          assert.equal(ctx.calls.confirmations[0].title, "Answer directly in parent?");
+          assert.match(result.content[0].text, /parent can answer directly/);
+          assert.doesNotMatch(JSON.stringify(result), new RegExp(canary));
+          assert.equal(cliCalls, 0);
+          // Slash requests share the same admission and never attach a parent observer.
+          const slashCtx = context({ intentSelection: true, selections: [taskIntent], confirmations: [direct] });
+          await handlers.start(dynamicPlan ? `--plan ${canary}` : canary, slashCtx);
+          assert.equal(cliCalls, 0);
+          assert.equal(supervised, 0);
+          assert.equal(slashCtx.calls.confirmations.length, 1);
+          // Confirmed terminal RPC uses exactly the same disposition and no CLI call.
+          const rpcCtx = context({ confirmations: [direct], context: { mode: "rpc" } });
+          const rpcResult = await testHooks.runStart(pi, input, undefined, rpcCtx, { allowRpc: true });
+          assert.equal(rpcResult.data.disposition, result.details.data.disposition);
+        }
+      }
+    }
+  }
+});
+
+test("intent selection cancellation and aborted starts create nothing", async () => {
+  const { pi, commands, tool } = harness(async () => { throw new Error("unexpected CLI call"); });
+  const ctx = context({ intentSelection: true, selections: [undefined] });
+  await commands.get("or-start").handler("Synthetic", ctx);
+  assert.equal(ctx.calls.confirmations.length, 0);
+  const controller = new AbortController();
+  controller.abort();
+  await assert.rejects(tool.execute("intent", { action: "start", task: "Synthetic", taskIntent: "advisory" }, controller.signal, undefined, context()), /start_cancelled/);
+  const rpc = context({ context: { mode: "rpc" } });
+  await assert.rejects(testHooks.runStart(pi, { task: "Synthetic", taskIntent: "review" }, undefined, rpc), /interactive_tui/);
+  const preview = await testHooks.runStart(pi, { task: "Synthetic", taskIntent: "review" }, undefined, context(), { previewOnly: true });
+  assert.equal(preview.data.disposition, "direct-parent");
+  assert.equal(preview.data.dry_run, true);
+});
+
+function intentStartHarness(recommendation, { tamper, staticPath = false } = {}) {
+  const calls = [];
+  let providerCalls = 0;
+  const { pi, tool } = harness(async (_command, args) => {
+    calls.push(args);
+    if (args[2] === "planner-policy") return { code: 0, stdout: JSON.stringify(plannerPolicyEnvelope(plannerPolicy({ preferred: { provider: "p", model: "a", thinking: "low" } }))) };
+    if (args[2] === "planner-topology") return { code: 0, stdout: JSON.stringify(plannerTopologyEnvelope(scopedPolicy({ optionalRoles: [] }))) };
+    assert.equal(args[2], "start");
+    const planning = await boundPlanningFromArgs(args);
+    const intent = planning?.task_intent ?? taskIntentMetadata(args.includes("--task-intent") ? args[args.indexOf("--task-intent") + 1] : undefined);
+    const data = { session: "pi-intent", dry_run: args.includes("--dry-run"), task_intent: intent,
+      roles: planning ? planning.roles.map(({ id, ...role }) => ({ name: id, ...role })) : ["implementer", "reviewer"].map((name) => ({ name, provider: "p", model: "a", thinking: "low" })), planning, paths: {} };
+    tamper?.(data);
+    return { code: 0, stdout: JSON.stringify(success("start", data)) };
+  });
+  const registry = { getAvailable: () => SCOPE_MODELS, complete: async (_model, request) => {
+    providerCalls += 1;
+    assert.equal(staticPath, false, "static starts never classify");
+    const payload = JSON.parse(request.messages[0].content[0].text);
+    assert.equal(Object.hasOwn(payload.questions, "task_intent"), true);
+    return { stopReason: "stop", content: [{ type: "text", text: JSON.stringify({ answers: questionAnswers(payload, (id, choices) => id === "task_intent" ? recommendation : choices[0]) }) }], usage: { input: 1, output: 1 } };
+  } };
+  return { pi, tool, calls, registry, providerCalls: () => providerCalls };
+}
+
+for (const recommendation of TASK_INTENTS) {
+  test(`dynamic intent recommendation ${recommendation} is previewed once and subordinate to explicit change in TUI/RPC`, async () => {
+    for (const operator of [undefined, "change"]) {
+      for (const mode of ["tui", "rpc"]) {
+        const harness = intentStartHarness(recommendation);
+        const ctx = context({ confirmations: [true, true], context: { mode, modelRegistry: harness.registry } });
+        const input = { task: "PRIVATE_INTENT_TASK", dynamicPlan: true, planningScopes: ["topology"], ...(operator ? { taskIntent: operator } : {}) };
+        const result = await testHooks.runStart(harness.pi, input, undefined, ctx, { allowRpc: true });
+        assert.equal(harness.providerCalls(), 1);
+        assert.deepEqual(result.data.task_intent, taskIntentMetadata(operator, recommendation));
+        if (!operator && recommendation !== "change") {
+          assert.equal(result.data.disposition, "direct-parent");
+          assert.equal(result.data.launched, false);
+          assert.equal(harness.calls.some((args) => args[2] === "start"), false);
+          assert.equal(ctx.calls.confirmations[1].title, "Answer directly in parent?");
+        } else {
+          assert.equal(harness.calls.filter((args) => args[2] === "start").length, 2);
+          assert.equal(ctx.calls.confirmations[1].title, "Start tmux orchestration?");
+          assert.match(ctx.calls.confirmations[1].message, new RegExp(`dynamic recommendation=${recommendation}`));
+          assert.match(ctx.calls.confirmations[1].message, /Explicit operator intent wins/);
+          const record = result.data.planning;
+          assert.equal(record.version, 4);
+          assert.deepEqual(record.task_intent, result.data.task_intent);
+          assert.equal(record.bindings.decision, metadataDigest({ version: 1, roles: record.roles, scopes: record.scopes, locks: record.locks, task_intent: record.task_intent }));
+        }
+        assert.doesNotMatch(JSON.stringify(result), /PRIVATE_INTENT_TASK|rationale|"reason"/);
+      }
+    }
+  });
+}
+
+test("static explicit and omitted change have no classifier call; final cancellation never launches", async () => {
+  for (const taskIntent of [undefined, "change"]) {
+    for (const confirmed of [false, true]) {
+      const harness = intentStartHarness(null, { staticPath: true });
+      const ctx = context({ confirmations: [confirmed], context: { modelRegistry: harness.registry } });
+      const run = () => testHooks.runStart(harness.pi, { task: "Synthetic", ...(taskIntent ? { taskIntent } : {}) }, undefined, ctx);
+      if (confirmed) assert.deepEqual((await run()).data.task_intent, taskIntentMetadata(taskIntent));
+      else await assert.rejects(run(), /start_confirmation_declined/);
+      assert.equal(harness.providerCalls(), 0);
+      assert.equal(harness.calls.length, confirmed ? 2 : 1);
+    }
+  }
+});
+
+test("dynamic recommendations cannot silently launch on cancellation or malformed decisions", async () => {
+  for (const recommendation of TASK_INTENTS) {
+    const harness = intentStartHarness(recommendation);
+    const ctx = context({ confirmations: [true, false], context: { modelRegistry: harness.registry } });
+    const run = () => testHooks.runStart(harness.pi, { task: "Synthetic", dynamicPlan: true }, undefined, ctx);
+    if (recommendation === "change") await assert.rejects(run(), /start_confirmation_declined/);
+    else assert.equal((await run()).data.disposition, "cancelled");
+    assert.equal(harness.providerCalls(), 1);
+    assert.equal(harness.calls.filter((args) => args[2] === "start" && !args.includes("--dry-run")).length, 0);
+  }
+  for (const recommendation of [null, {}, [], true, "CHANGE", "PRIVATE_RECOMMENDATION_BODY"]) {
+    const harness = intentStartHarness(recommendation);
+    const ctx = context({ confirmations: [true], context: { modelRegistry: harness.registry } });
+    await assert.rejects(testHooks.runStart(harness.pi, { task: "Synthetic", dynamicPlan: true }, undefined, ctx), /typesafe_answer_invalid/);
+    assert.equal(harness.calls.some((args) => args[2] === "start"), false);
+  }
+});
+
+test("tampered intent preview metadata, dynamic bindings and stale intent cannot launch", async () => {
+  for (const tamper of [
+    (data) => { data.task_intent = null; },
+    (data) => { data.task_intent = taskIntentMetadata("review"); },
+    (data) => { data.planning = { ...data.planning, task_intent: taskIntentMetadata("change", "review") }; },
+  ]) {
+    const harness = intentStartHarness("change", { tamper });
+    const ctx = context({ confirmations: [true, true], context: { modelRegistry: harness.registry } });
+    await assert.rejects(testHooks.runStart(harness.pi, { task: "Synthetic", dynamicPlan: true, taskIntent: "change" }, undefined, ctx), /task_intent_preview_mismatch|dynamic_planning_binding_mismatch/);
+    assert.equal(harness.calls.filter((args) => args[2] === "start").length, 1);
+  }
+  const harness = intentStartHarness(null, { staticPath: true });
+  const input = { task: "Synthetic", taskIntent: "change" };
+  const ctx = context({ context: { modelRegistry: harness.registry } });
+  ctx.ui.confirm = async () => { input.taskIntent = "review"; return true; };
+  await assert.rejects(testHooks.runStart(harness.pi, input, undefined, ctx), /stale_task_intent_preview/);
+  assert.equal(harness.calls.length, 1);
+});
+
+test("Jev validates every bounded intent recommendation in its existing one-call contract", async () => {
+  const topology = validatePlannerTopology(scopedPolicy());
+  const input = { task: "PRIVATE_JEV_INTENT_TASK", taskIntent: "change", dynamicPlan: true, planningScopes: ["topology"], withProbe: false, withPlaywright: false, withDjangoExpert: false };
+  const ctx = { modelRegistry: { getAvailable: () => SCOPE_MODELS } };
+  const selection = selectDecisionModel(ctx, undefined, plannerPolicy(), [], { typesafeApiKey: "synthetic-key" });
+  for (const recommendation of [...TASK_INTENTS, "PRIVATE_INVALID_RECOMMENDATION"]) {
+    let calls = 0;
+    const run = () => runPreflightPlanner(ctx, input, "/synthetic", selection, topology, undefined, undefined, {
+      typesafeApiKey: "synthetic-key", typesafeFetch: async (_url, options) => {
+        calls += 1;
+        const request = JSON.parse(options.body);
+        assert.deepEqual(Object.keys(request.questions.task_intent.criteria), TASK_INTENTS);
+        assert.equal(request.state.task_intent.operator, "change");
+        return choiceResponse(request, questionAnswers(request, (id, choices) => id === "task_intent" ? recommendation : choices[0]));
+      },
+    });
+    if (!TASK_INTENTS.includes(recommendation)) await assert.rejects(run(), /typesafe_answer_invalid/);
+    else {
+      const { plan } = await run();
+      assert.equal(plan.taskIntentRecommendation, recommendation);
+      assert.equal(plan.taskIntent.effective, "change");
+      const retained = JSON.stringify(planningRecordForPreview(plan));
+      assert.doesNotMatch(retained, /PRIVATE_JEV_INTENT_TASK|synthetic-key|"reason"|rationale/);
+    }
+    assert.equal(calls, 1);
   }
 });

@@ -17,7 +17,7 @@ Keep these results distinct:
    reconnection, restart, revocation, retained provenance, and cleanup without
    sending a prompt. It does not exercise planner inference or claim generated
    reports.
-3. **Local tmux acceptance** exercises fixed accepted v8/v9 plans across TUI/RPC
+3. **Local tmux acceptance** exercises fixed accepted v10/v11 manifests across TUI/RPC
    broker panes, routing, rollback, restart, cleanup, and retained metadata;
    model-free peers cover report paths.
 4. **Provider-backed acceptance** measures real model behavior and usage. It can
@@ -91,6 +91,22 @@ state and a non-secret local model catalog, and fails if its provider-request
 sentinel receives traffic. It covers actual-Pi custom TUI/RPC startup and recovery,
 not inference or a complete report round. If Pi is unavailable, that layer is
 reported as skipped rather than replaced by synthetic evidence.
+
+### Automated provider-free task-intent gate
+
+Stage 1 accepts exactly `change|investigation|review|advisory` on model-tool,
+slash, and terminal starts. Verify explicit non-change redirection/cancellation
+before planner calls, trust bypass, private launch files, tmux, broker, workers,
+and manifests in both TUI/RPC presentations. `--yes` cannot convert non-change
+into coding. Check intent-selection and final-confirmation cancellation; ordinary
+static change starts must have no classifier call and retain one writer plus
+mandatory review. The existing dynamic call's bounded recommendation must be
+shown, subordinate to explicit intent, and bound in planning-v4/v10–v11 manifest
+metadata. Check every enum, omitted-versus-explicit precedence, malformed values,
+stale/tampered preview rejection, retained reads, and body redaction. Legacy
+intent remains unavailable, not inferred from report kind. These are synthetic
+admission/control-plane checks, not live-provider inference or production-wire
+acceptance. No advisory assignment/report workflow is added.
 
 ### Automated provider-free planning gate
 

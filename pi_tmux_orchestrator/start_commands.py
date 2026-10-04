@@ -14,6 +14,12 @@ from pathlib import Path
 from typing import Any
 
 from . import runtime
+from .task_intent import (
+    task_intent_metadata,
+    validate_task_intent,
+    redirect_task_intent,
+    validate_intent_metadata,
+)
 from .broker import initialize_broker_run
 from .budgeting import (
     effective_budget_policy,
@@ -131,6 +137,7 @@ def construct_start_manifest(
     configs: dict[str, dict[str, Any]],
     custom_role_registry: str | None,
     planning: dict[str, Any] | None = None,
+    task_intent: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Construct retained launch metadata; custom resources remain body-free."""
     custom_roles = [role for role in roles if valid_custom_role_id(role)]
@@ -145,11 +152,11 @@ def construct_start_manifest(
     ):
         raise OrchestrationError("Start role bindings are inconsistent")
     manifest: dict[str, Any] = {
-        "version": (
-            (9 if custom_roles else 8)
-            if planning is not None
-            else (7 if custom_roles else 5)
+        "version": 11 if custom_roles else 10,
+        "task_intent": validate_intent_metadata(
+            task_intent or task_intent_metadata(None), launched=True
         ),
+        "planning": planning,
         "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
         "session": session,
         "window": WINDOW,
@@ -167,8 +174,6 @@ def construct_start_manifest(
     }
     if custom_roles:
         manifest["custom_role_registry"] = custom_role_registry
-    if planning is not None:
-        manifest["planning"] = planning
     for role in roles:
         manifest["roles"][role] = {
             **configs[role],
@@ -192,7 +197,7 @@ def wait_for_custom_startup(
     timeout: float = CUSTOM_STARTUP_TIMEOUT_SECONDS,
 ) -> None:
     """Require a stable authenticated custom broker/worker startup."""
-    if manifest.get("version") not in {6, 7, 9} or not any(
+    if manifest.get("version") not in {6, 7, 9, 11} or not any(
         valid_custom_role_id(role) for role in roles
     ):
         raise OrchestrationError("Custom startup admission requires manifest v6+")
@@ -406,6 +411,11 @@ def create_tmux_grid(
 
 
 def start_command(args: argparse.Namespace) -> CommandResult:
+    operator_intent = getattr(args, "task_intent", None)
+    if operator_intent is not None:
+        validate_task_intent(operator_intent)
+        if operator_intent != "change":
+            return redirect_task_intent(operator_intent, dry_run=bool(args.dry_run))
     if getattr(args, "dynamic_plan", False):
         from .terminal_planning import terminal_dynamic_start
 
@@ -709,6 +719,7 @@ def start_command(args: argparse.Namespace) -> CommandResult:
             configs=configs,
             dry_run=bool(args.dry_run),
             candidate_policy=configured_models.get("worker_candidates"),
+            operator_intent=operator_intent,
         )
 
     project_config_metadata = public_project_config(matched_project)
@@ -716,7 +727,13 @@ def start_command(args: argparse.Namespace) -> CommandResult:
         "path": str(model_config_path(project)),
         "version": configured_models["version"],
     }
+    intent = (
+        planning["task_intent"]
+        if planning and planning["version"] == 4
+        else task_intent_metadata(operator_intent)
+    )
     data: dict[str, Any] = {
+        "task_intent": intent,
         "project": str(project),
         "session": session,
         "implementation_flow": implementation_flow,
@@ -809,6 +826,9 @@ def start_command(args: argparse.Namespace) -> CommandResult:
             "Custom roles: registry-bound read-only specialists "
             f"(source={next(iter(sources))})."
         )
+    human_print(
+        f"Task intent: {intent['effective']} (source={intent['source']}; recommendation={intent['recommendation'] or 'none'})."
+    )
     human_print(f"Project: {project}")
     human_print(f"Session: {session}")
     human_print("Roles:")
@@ -916,6 +936,7 @@ def start_command(args: argparse.Namespace) -> CommandResult:
             configs=configs,
             custom_role_registry=custom_selection["registry_path"],
             planning=planning,
+            task_intent=intent,
         )
 
         ensure_private_directory(coord / "sessions")
@@ -938,7 +959,7 @@ def start_command(args: argparse.Namespace) -> CommandResult:
             worker_context_overrides=context_policy["overrides"],
         )
         create_tmux_grid(session, project, coord, roles, manifest)
-        if manifest["version"] in {6, 7, 9}:
+        if manifest["version"] in {6, 7, 9, 11}:
             wait_for_custom_startup(session, coord, roles, manifest)
         secure_write(coord / "startup-state", "RUNNING\n")
     except BaseException:

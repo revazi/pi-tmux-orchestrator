@@ -404,7 +404,7 @@ class PlanningAdmissionTests(JsonCliFixture):
         self.assertEqual(failed["error"]["code"], "stale_planning_binding")
         self.assertNotIn("PRIVATE_TASK", raw)
 
-    def test_accepted_launch_uses_manifest_v8_with_body_free_provenance(self):
+    def test_accepted_launch_uses_manifest_v10_with_body_free_provenance(self):
         code, static, raw, _ = self.start("RETAINED_PRIVATE_TASK", "--dry-run")
         self.assertEqual(code, 0, raw)
         record = scope_planning_record(static["data"]["roles"], ["topology"])
@@ -561,7 +561,7 @@ class PlanningAdmissionTests(JsonCliFixture):
                         self.assertEqual(text.count("source=configured-fallback"), 3)
                         self.assertNotIn("RETAINED_PRIVATE_TASK", text)
         self.assertEqual((code, stderr), (0, ""), raw)
-        self.assertEqual(manifest["version"], 8)
+        self.assertEqual(manifest["version"], 10)
         self.assertEqual(manifest["planning"], envelope["data"]["planning"])
         self.assertEqual(loaded["planning"], manifest["planning"])
         supervisor = ORCHESTRATOR.public_supervisor_run(coordination, loaded)

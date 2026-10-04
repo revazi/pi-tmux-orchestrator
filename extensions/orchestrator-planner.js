@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { TASK_INTENTS, taskIntentMetadata, taskIntentConfirmation, validateTaskIntent } from "./orchestrator-intent.js";
 import { planningLocks, planningScopesConfirmation, scopedTopology } from "./orchestrator-planning-scopes.js";
 import {
   resolveWorkerCandidates,
@@ -504,6 +505,7 @@ function plannerPayload(input, project, candidates, policy, topology) {
     if (task) roleTasks[role] = String(task);
   }
   return {
+    task_intent: taskIntentMetadata(input.taskIntent),
     planning_scopes: topology.scopes,
     task: String(input.task),
     role_tasks: roleTasks,
@@ -682,6 +684,16 @@ function typesafeDecisionRequest(
     );
   }
   const lockedConfirmation = ensureTypeSafeQuestion(state, dynamicGuidance);
+  state.questions.task_intent = {
+    type: "choice",
+    decision: "Recommend the task intent only; this is not launch authority and cannot override explicit operator intent. Non-change work stays in the parent, not the coding workflow.",
+    criteria: {
+      change: "Repository implementation or change is requested.",
+      investigation: "Read-only investigation without repository changes.",
+      review: "Independent review without repository changes.",
+      advisory: "Advice or explanation without repository changes.",
+    },
+  };
   return {
     request: {
       state: typesafeQuestionState(payload, dynamicGuidance),
@@ -858,7 +870,7 @@ function parseTypeSafeDecision(responseValue, requestValue, candidates, input, p
   validateTypeSafeLockedPlan(response, requestValue);
   const roles = typeSafeDecisionRoles(policy, inclusionByRole, assignments);
   const decision = validatePlannerDecision(
-    { version: 1, roles }, candidates, input, policy, topology,
+    { version: 1, roles, task_intent: typesafeChoiceAnswer(response.answers.task_intent, new Set(TASK_INTENTS)).choice }, candidates, input, policy, topology,
   );
   return { decision, model: response.model, usage: response.usage };
 }
@@ -1011,7 +1023,8 @@ export function validatePlannerDecision(value, candidates, input, policy, topolo
   policy.workerScope ??= resolveWorkerCandidates(
     candidates, topology.workerCandidates ?? null, lockedRoleConstraints(input, policy, topology),
   );
-  if (!exactFields(value, ["version", "roles"]) || value.version !== 1) {
+  const fields = Object.hasOwn(value ?? {}, "task_intent") ? ["version", "roles", "task_intent"] : ["version", "roles"];
+  if (!exactFields(value, fields) || value.version !== 1) {
     throw new Error("invalid_planner_decision");
   }
   if (!Array.isArray(value.roles) || value.roles.length < 2
@@ -1026,6 +1039,7 @@ export function validatePlannerDecision(value, candidates, input, policy, topolo
   validateDecisionRoster(seen, input, policy);
   return {
     version: 1,
+    ...(Object.hasOwn(value, "task_intent") ? { task_intent: validateTaskIntent(value.task_intent) } : {}),
     roles: roles.sort(
       (left, right) => policy.roles.indexOf(left.role) - policy.roles.indexOf(right.role),
     ),
@@ -1196,6 +1210,8 @@ export async function runPreflightPlanner(
     input: plannedStartInput(input, decision),
     plan: {
       version: decision.version,
+      taskIntent: taskIntentMetadata(input.taskIntent, decision.task_intent ?? null),
+      taskIntentRecommendation: decision.task_intent ?? null,
       decisionModel: {
         provider: selection.provider,
         model: decisionModel,
@@ -1231,6 +1247,7 @@ export function plannerPlanConfirmation(plan) {
     : `Decision model: ${plan.decisionModel.provider}/${plan.decisionModel.model} thinking=${plan.decisionModel.thinking} source=${plan.decisionModel.source}`;
   return [
     decision,
+    taskIntentConfirmation(plan.taskIntent ?? taskIntentMetadata(undefined, plan.taskIntentRecommendation ?? null)),
     workerCandidatesConfirmation(plan.workerCandidates),
     planningScopesConfirmation(plan.scopes, plan.locks),
     `Operator planning constraints: ${plan.operatorOverrides.length ? plan.operatorOverrides.join("; ") : "none"}`,

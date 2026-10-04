@@ -634,7 +634,7 @@ async def run_transport(
             manifest,
         )
         if (
-            manifest["version"] != 9
+            manifest["version"] != 11
             or manifest["custom_role_registry"] != str(registry)
             or manifest["planning"]["status"] != "accepted"
         ):

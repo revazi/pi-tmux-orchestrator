@@ -12,8 +12,10 @@ from typing import Any
 from .constants import KNOWN_ROLES, THINKING_LEVELS
 from .models import OrchestrationError
 from .role_registry import valid_custom_role_id
+from .task_intent import validate_intent_metadata
 
-PLANNING_VERSION = 3
+PLANNING_VERSION = 4
+SCOPED_PLANNING_VERSION = 3
 POOL_PLANNING_VERSION = 2
 LEGACY_PLANNING_VERSION = 1
 PLANNING_DECISION_VERSION = 1
@@ -157,17 +159,24 @@ def validate_planning_record(
     version = value.get("version")
     fields = PLANNING_FIELDS | (
         {"worker_candidates"}
-        if version in {POOL_PLANNING_VERSION, PLANNING_VERSION}
+        if version in {POOL_PLANNING_VERSION, SCOPED_PLANNING_VERSION, PLANNING_VERSION}
         else set()
     )
-    if version == PLANNING_VERSION:
+    if version in {SCOPED_PLANNING_VERSION, PLANNING_VERSION}:
         fields |= {"scopes", "locks"}
+    if version == PLANNING_VERSION:
+        fields |= {"task_intent"}
     if set(value) != fields:
         raise OrchestrationError("Planning record has missing or unknown fields")
     if (
         type(version) is not int
         or version
-        not in {LEGACY_PLANNING_VERSION, POOL_PLANNING_VERSION, PLANNING_VERSION}
+        not in {
+            LEGACY_PLANNING_VERSION,
+            POOL_PLANNING_VERSION,
+            SCOPED_PLANNING_VERSION,
+            PLANNING_VERSION,
+        }
         or value.get("mode") != "dynamic"
     ):
         raise OrchestrationError("Planning record version or mode is invalid")
@@ -231,8 +240,12 @@ def validate_planning_record(
         for field in PLANNING_BINDING_FIELDS
     }
     decision_metadata = {"version": PLANNING_DECISION_VERSION, "roles": roles}
-    if version == PLANNING_VERSION:
+    if version in {SCOPED_PLANNING_VERSION, PLANNING_VERSION}:
         decision_metadata.update(validate_scope_metadata(value, roles))
+    if version == PLANNING_VERSION:
+        decision_metadata["task_intent"] = validate_intent_metadata(
+            value["task_intent"], launched=True
+        )
     expected_decision = metadata_digest(decision_metadata)
     if bindings["decision"] != expected_decision:
         raise OrchestrationError("Planning decision binding is invalid")
@@ -249,9 +262,11 @@ def validate_planning_record(
         "bindings": bindings,
         "usage": _planning_usage(value.get("usage")),
     }
-    if version == PLANNING_VERSION:
+    if version in {SCOPED_PLANNING_VERSION, PLANNING_VERSION}:
         result.update(validate_scope_metadata(value, roles))
-    if version in {POOL_PLANNING_VERSION, PLANNING_VERSION}:
+    if version == PLANNING_VERSION:
+        result["task_intent"] = decision_metadata["task_intent"]
+    if version in {POOL_PLANNING_VERSION, SCOPED_PLANNING_VERSION, PLANNING_VERSION}:
         result["worker_candidates"] = validate_candidate_metadata(
             value["worker_candidates"], identities
         )
@@ -431,7 +446,11 @@ def load_planning_record(
     except (UnicodeError, ValueError) as error:
         raise OrchestrationError("Planning record is not valid UTF-8 JSON") from error
     record = validate_planning_record(value, allow_unbound=allow_unbound)
-    if record["version"] not in {POOL_PLANNING_VERSION, PLANNING_VERSION}:
+    if record["version"] not in {
+        POOL_PLANNING_VERSION,
+        SCOPED_PLANNING_VERSION,
+        PLANNING_VERSION,
+    }:
         raise OrchestrationError(
             "Legacy planning records are read-only; create a fresh approved-pool preview"
         )
@@ -493,8 +512,23 @@ def bind_planning_record(
     configs: dict[str, dict[str, Any]],
     dry_run: bool,
     candidate_policy: dict[str, Any] | None = None,
+    operator_intent: str | None = None,
 ) -> dict[str, Any]:
-    if record["version"] in {POOL_PLANNING_VERSION, PLANNING_VERSION}:
+    if record["version"] == PLANNING_VERSION:
+        if record["task_intent"]["operator"] != operator_intent:
+            raise OrchestrationError(
+                "Operator intent changed after planning", "stale_planning_binding"
+            )
+    elif operator_intent is not None:
+        raise OrchestrationError(
+            "Legacy planning cannot bind explicit intent; create a fresh preview",
+            "stale_planning_binding",
+        )
+    if record["version"] in {
+        POOL_PLANNING_VERSION,
+        SCOPED_PLANNING_VERSION,
+        PLANNING_VERSION,
+    }:
         metadata = record["worker_candidates"]
         if (metadata["source"] == "configured") != (candidate_policy is not None):
             raise OrchestrationError(
@@ -522,6 +556,11 @@ def bind_planning_record(
                 "resolved_start": start_config_digest,
                 **(
                     {"scopes": record["scopes"], "locks": record["locks"]}
+                    if record["version"] in {SCOPED_PLANNING_VERSION, PLANNING_VERSION}
+                    else {}
+                ),
+                **(
+                    {"task_intent": record["task_intent"]}
                     if record["version"] == PLANNING_VERSION
                     else {}
                 ),
@@ -572,7 +611,10 @@ def bind_planning_record(
 
 
 def retained_planning(manifest: dict[str, Any]) -> dict[str, Any]:
-    if manifest.get("version") not in {8, 9}:
+    if (
+        manifest.get("version") not in {8, 9, 10, 11}
+        or manifest.get("planning") is None
+    ):
         return {
             "mode": "static",
             "status": "unavailable",

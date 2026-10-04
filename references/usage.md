@@ -23,6 +23,53 @@ The natural-language path uses the `tmux_orchestrator` model tool and preserves
 the same preview, trust, and confirmation boundaries. The standalone CLI and
 model tool retain their full command/action surfaces.
 
+### Explicit task intent (Unreleased)
+
+Start accepts exactly `change`, `investigation`, `review`, or `advisory` through
+model-tool `taskIntent`, terminal `--task-intent`, and the `/or-start` selector.
+Select operator intent, not a model-inferred label. For example:
+
+```sh
+pi-tmux-agents start --task-intent investigation --task 'Synthetic read-only question.'
+pi-tmux-agents start --project "$PWD" --task-intent change --task-file /tmp/task.md --dry-run
+```
+
+`change` uses the existing one-implementer writer and mandatory reviewer. The
+other values describe work without repository edits. Stage 1 does not launch a
+separate read-only workflow: Pi shows why coding orchestration may be unnecessary
+and asks **Answer directly in parent?** Yes returns `disposition=direct-parent`;
+No returns `disposition=cancelled`. Both return `launched=false`, create no
+orchestration resources, and submit no implementation/change claims. Slash
+intent-selection cancellation stops before preview. CLI non-change starts print
+the same warning and return `direct-parent` immediately, even with `--yes`,
+`--approve-project`, `--dynamic-plan`, or `--rpc-workers`. They do not resolve
+launch configuration or call a planner. A new explicit `change` request is
+required for coding; there is no proceed-anyway override and no automatic parent
+prompt injection. The normal model-tool start still requires TUI confirmation;
+the internal terminal dynamic adapter uses confirmed RPC, and both worker
+presentation modes share unchanged coding authority.
+
+Intent omission preserves ordinary static change tasks. Static starts make no
+classification provider call. The existing separately authorized dynamic call
+includes one bounded `task_intent` choice alongside topology/model/thinking
+questions, even for topology-only planning; this is a recommendation, not an
+additional planning axis or authority. Explicit intent wins. With omitted intent,
+a non-change recommendation offers direct-parent/cancel before CLI launch preview,
+trust bypass, or worker creation. Terminal dynamic redirection declines the
+parent-answer confirmation by default and returns `cancelled` with a notice;
+`--yes` confirms coding launch only. Dynamic `--dry-run` shows the non-change
+redirection without creating a run. Explicit `change` retains a conflicting
+recommendation in final confirmation and proceeds only with launch approval.
+Malformed choices fail closed, and the decision/preview/config bindings cover
+intent metadata and explicit-versus-omitted selection. A changed or tampered
+accepted preview cannot launch. Only `{version, operator, recommendation,
+effective, source}` metadata is retained; no task, rationale, or provider bodies.
+
+Use the parent directly for explanations or focused read-only work where multiple
+agents add little value. Phased inspect/plan is still a coding precursor that
+automatically advances to implementation, not an investigation/advisory escape
+hatch. No role, tool ACL, report schema, or mandatory-review rule is weakened.
+
 ### Model-tool recovery controls
 
 `tmux_orchestrator` has `stop`, `restart`, and `abort` actions (Unreleased), with no
@@ -334,7 +381,7 @@ The planner policy is stored in the `planner` member of the same authoritative
 user-global `~/.pi/agent/tmux-orchestrator.json` model/profile configuration.
 The planner member remains optional in version-4 and version-5 files.
 Version 5 adds the separate strict `workerCandidates` policy described below;
-manifest v8/v9 and broker-v1 are unchanged. Existing versions 1–4 remain valid
+broker-v1 is unchanged; new starts retain intent in manifest v10/v11 (legacy v8/v9 remain readable). Existing configuration versions 1–4 remain valid
 for ordinary starts and fully locked dynamic starts. A
 separate legacy `~/.pi/agent/tmux-orchestrator-planner.json` file (or a configured
 `PI_TMUX_ORCHESTRATOR_PLANNER_CONFIG` path) is no longer read as active policy:
@@ -422,7 +469,7 @@ the resolved worker union. No recency, quality, or orchestration reliability is
 inferred from names. Natural-language guidance cannot create or expand approval.
 Planning-call confirmation shows bounded pool source/count per eligible role;
 final confirmation and the immediate start acknowledgement show exact selected
-provider/model/thinking assignments. Retained planning v3 contains only selected scopes, authoritative locks, bounded
+provider/model/thinking assignments. Retained planning v4 adds bounded intent metadata to selected scopes, authoritative locks, bounded
 pool source/count metadata, exact assignments, and digests, not pool/configuration
 bodies. The private topology v3 projection supplies the exact policy to preflight;
 do not copy that configuration projection into status or handoffs.

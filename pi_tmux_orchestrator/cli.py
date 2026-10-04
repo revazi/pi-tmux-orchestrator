@@ -60,6 +60,7 @@ from .worker_resources import worker_skill_argument
 from .role_registry import role_registry_command, valid_custom_role_id
 from .role_contracts import valid_role_identity
 from .worker_context import worker_context_argument
+from .task_intent import validate_task_intent
 
 
 def worker_skill(value: str) -> tuple[str, str]:
@@ -72,6 +73,13 @@ def worker_skill(value: str) -> tuple[str, str]:
 def worker_context(value: str) -> tuple[str, str]:
     try:
         return worker_context_argument(value)
+    except OrchestrationError as error:
+        raise argparse.ArgumentTypeError(str(error)) from error
+
+
+def task_intent_argument(value: str) -> str:
+    try:
+        return validate_task_intent(value)
     except OrchestrationError as error:
         raise argparse.ArgumentTypeError(str(error)) from error
 
@@ -258,6 +266,12 @@ def build_parser() -> argparse.ArgumentParser:
     start.add_argument("--project", default=os.getcwd())
     start.add_argument("--task")
     start.add_argument("--task-file")
+    start.add_argument(
+        "--task-intent",
+        type=task_intent_argument,
+        choices=("change", "investigation", "review", "advisory"),
+        help="explicit intent; non-change redirects to the parent without launching; omission preserves change compatibility",
+    )
     start.add_argument("--context-capsule")
     start.add_argument("--context-capsule-file")
     workspace_capsule = start.add_mutually_exclusive_group()

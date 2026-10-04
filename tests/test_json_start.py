@@ -410,7 +410,7 @@ class JsonStartTests(JsonCliFixture):
                 envelope["data"]["paths"]["observer_socket"], expected_socket
             )
             manifest = create_grid.call_args.args[4]
-            self.assertEqual(manifest["version"], 5)
+            self.assertEqual(manifest["version"], 10)
             self.assertEqual(
                 manifest["execution_profile"],
                 {

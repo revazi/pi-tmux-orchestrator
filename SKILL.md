@@ -51,6 +51,29 @@ public overlay API does not expose row-click callbacks. The standalone `pi-tmux-
 is authoritative; do not hand-build
 panes, file handoffs, relay scripts, or polling loops.
 
+## Task-intent admission
+
+Ask for operator intent before coding orchestration: `change`, `investigation`,
+`review`, or `advisory`. Pass an explicitly selected value as model-tool
+`taskIntent` / CLI `--task-intent`; `/or-start` provides the same selector. Never
+infer an explicit operator choice. Omission preserves static change compatibility.
+Choose orchestration for repository changes benefiting from one writer plus
+mandatory independent review; the parent can usually answer explanations,
+read-only investigation, or review directly.
+
+Stage 1 offers direct-parent redirection or cancellation for explicit non-change
+intent, never an implementation assignment/report. The terminal CLI emits a
+redirection notice; `--yes` does not override it. Neither route starts tmux,
+broker, workers, manifests, or worker provider calls, and it does not inject a
+new parent turn. A fresh explicit `change` request is needed to launch coding.
+Static admission makes no classifier call. The existing separately authorized
+dynamic call may recommend bounded intent; it is previewed, bound, and cannot
+override operator intent. A non-change recommendation with omitted intent also
+redirects/cancels. Explicit `change` can still launch after the conflicting
+recommendation is shown in final confirmation. Do not use phased inspect/plan as
+an advisory workflow: it automatically advances to implementation. Intent
+provenance retains only enums/source, not task/rationale/provider bodies.
+
 ## Operating rules
 
 1. Resolve the target project and read its governing instructions before launch.
