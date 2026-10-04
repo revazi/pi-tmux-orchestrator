@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { buildPlannerEvidence, plannerEvidenceLines, strictPlannerJson, PROBABILITY_TOLERANCE } from "./orchestrator-planner-evidence.js";
 import { TASK_INTENTS, taskIntentMetadata, taskIntentConfirmation, validateTaskIntent } from "./orchestrator-intent.js";
 import { planningLocks, planningScopesConfirmation, scopedTopology } from "./orchestrator-planning-scopes.js";
 import {
@@ -707,7 +708,11 @@ function typesafeDecisionRequest(
   };
 }
 
-function typesafeChoiceAnswer(value, options) {
+function typesafeChoiceAnswer(value, options, source = "typesafe_choice") {
+  if (source === "pi_selection") {
+    if (typeof value !== "string" || !options.has(value)) throw new Error("typesafe_answer_invalid");
+    return { choice: value };
+  }
   if (!exactFields(value, ["type", "choice", "confidence", "probabilities"])
       || value.type !== "choice" || typeof value.choice !== "string"
       || !options.has(value.choice)
@@ -727,7 +732,10 @@ function typesafeChoiceAnswer(value, options) {
       })) {
     throw new Error("typesafe_answer_invalid");
   }
-  return { choice: value.choice, confidence: value.confidence };
+  if (Math.abs(probabilityKeys.reduce((sum, choice) => sum + value.probabilities[choice], 0) - 1) > PROBABILITY_TOLERANCE) {
+    throw new Error("typesafe_answer_invalid");
+  }
+  return { choice: value.choice, confidence: value.confidence, probabilities: value.probabilities };
 }
 
 function validatedTypeSafeModel(value) {
@@ -781,16 +789,8 @@ function typesafeResponse(value, expectedQuestions) {
   };
 }
 
-function typesafeReason(required, inclusionConfidence, assignmentConfidence) {
-  const signals = [];
-  if (inclusionConfidence !== undefined) {
-    signals.push(`roster confidence=${inclusionConfidence.toFixed(2)}`);
-  }
-  if (assignmentConfidence !== undefined) {
-    signals.push(`assignment confidence=${assignmentConfidence.toFixed(2)}`);
-  }
-  const selection = required ? "retained the required role" : "included this specialist";
-  return `Jev ${selection}${signals.length ? ` (${signals.join(", ")})` : " with a locked assignment"}.`;
+function typesafeReason(required) {
+  return required ? "Required role retained under fixed authority; decision axes are recorded separately." : "Planner included this specialist; decision axes are recorded separately.";
 }
 
 function typeSafeInclusionAnswers(response, requestValue) {
@@ -798,7 +798,7 @@ function typeSafeInclusionAnswers(response, requestValue) {
   for (const [questionId, role] of requestValue.inclusions) {
     const answer = typesafeChoiceAnswer(
       response.answers[questionId],
-      new Set(["include", "omit"]),
+      new Set(["include", "omit"]), response.source,
     );
     inclusionByRole.set(role, answer);
   }
@@ -807,38 +807,33 @@ function typeSafeInclusionAnswers(response, requestValue) {
 
 function typeSafeAssignmentAnswers(response, requestValue) {
   const assignmentByRole = new Map(requestValue.fixedAssignments);
-  const assignmentConfidence = new Map();
   for (const [role, assignment] of requestValue.assignments) {
     let selectedModelIndex = assignment.axes.candidateIndexes[0];
     let selectedThinking = assignment.axes.thinkingLevels[0];
-    let confidence = 1;
     if (assignment.modelQuestion) {
       const options = new Set(Object.keys(requestValue.questions[assignment.modelQuestion].criteria));
-      const answer = typesafeChoiceAnswer(response.answers[assignment.modelQuestion], options);
+      const answer = typesafeChoiceAnswer(response.answers[assignment.modelQuestion], options, response.source);
       selectedModelIndex = Number.parseInt(answer.choice.slice(1), 36);
-      confidence = answer.confidence;
     }
     if (assignment.thinkingQuestion) {
       const options = new Set(Object.keys(requestValue.questions[assignment.thinkingQuestion].criteria));
-      const answer = typesafeChoiceAnswer(response.answers[assignment.thinkingQuestion], options);
+      const answer = typesafeChoiceAnswer(response.answers[assignment.thinkingQuestion], options, response.source);
       selectedThinking = answer.choice;
-      confidence = Math.min(confidence, answer.confidence);
     }
     const tuple = assignment.axes.eligible.find((item) => (
       item.modelIndex === selectedModelIndex && item.thinking === selectedThinking
     ));
     if (!tuple) throw new Error("typesafe_assignment_tuple_invalid");
     assignmentByRole.set(role, tuple);
-    assignmentConfidence.set(role, confidence);
   }
-  return { assignmentByRole, assignmentConfidence };
+  return { assignmentByRole };
 }
 
 function validateTypeSafeLockedPlan(response, requestValue) {
   if (!requestValue.lockedConfirmation) return;
   const answer = typesafeChoiceAnswer(
     response.answers[requestValue.lockedConfirmation],
-    new Set(["accept", "reject"]),
+    new Set(["accept", "reject"]), response.source,
   );
   if (answer.choice !== "accept") throw new Error("typesafe_locked_plan_rejected");
 }
@@ -857,24 +852,22 @@ function typeSafeDecisionRoles(policy, inclusionByRole, assignments) {
       thinking: assignment.thinking,
       reason: typesafeReason(
         policy.required.has(role),
-        inclusion?.confidence,
-        assignments.assignmentConfidence.get(role),
       ),
     });
   }
   return roles;
 }
 
-function parseTypeSafeDecision(responseValue, requestValue, candidates, input, policy, topology) {
-  const response = typesafeResponse(responseValue, requestValue.questions);
+function parseTypeSafeDecision(responseValue, requestValue, candidates, input, policy, topology, source = "typesafe_choice") {
+  const response = { ...typesafeResponse(responseValue, requestValue.questions), source };
   const inclusionByRole = typeSafeInclusionAnswers(response, requestValue);
   const assignments = typeSafeAssignmentAnswers(response, requestValue);
   validateTypeSafeLockedPlan(response, requestValue);
   const roles = typeSafeDecisionRoles(policy, inclusionByRole, assignments);
   const decision = validatePlannerDecision(
-    { version: 1, roles, task_intent: typesafeChoiceAnswer(response.answers.task_intent, new Set(TASK_INTENTS)).choice }, candidates, input, policy, topology,
+    { version: 1, roles, task_intent: typesafeChoiceAnswer(response.answers.task_intent, new Set(TASK_INTENTS), source).choice }, candidates, input, policy, topology,
   );
-  return { decision, model: response.model, usage: response.usage };
+  return { decision, model: response.model, usage: response.usage, answers: source === "pi_selection" ? Object.fromEntries(Object.entries(response.answers).map(([id, choice]) => [id, { choice }])) : response.answers };
 }
 
 async function completeTypeSafeDecision(
@@ -1113,17 +1106,13 @@ async function completeScopedPlannerDecision(ctx, selection, request, candidates
   const response = await completePlannerDecision(ctx, selection, serialized, SYSTEM_PROMPT, requestId, signal);
   const text = responseText(response);
   let value;
-  try { value = JSON.parse(text); } catch { throw new Error("planner_response_not_json"); }
+  try { value = strictPlannerJson(text); } catch { throw new Error("planner_response_not_json"); }
   if (!exactFields(value, ["answers"]) || !value.answers || typeof value.answers !== "object") {
     throw new Error("invalid_planner_decision");
   }
-  const answers = Object.fromEntries(Object.entries(value.answers).map(([id, choice]) => {
-    const options = Object.keys(request.questions[id]?.criteria ?? {});
-    return [id, { type: "choice", choice, confidence: 1, probabilities: Object.fromEntries(options.map((option) => [option, option === choice ? 1 : 0])) }];
-  }));
-  const parsed = parseTypeSafeDecision({ model: TYPESAFE_MODEL, answers, usage: { input_tokens: 0, output_tokens: 0 } }, request, candidates, input, policy, topology);
+  const parsed = parseTypeSafeDecision({ model: TYPESAFE_MODEL, answers: value.answers, usage: { input_tokens: 0, output_tokens: 0 } }, request, candidates, input, policy, topology, "pi_selection");
   parsed.decision.roles = parsed.decision.roles.map((role) => ({ ...role, reason: `Preflight accepted the ${policy.required.has(role.role) ? "required" : "optional"} role within authorized scopes and locks.` }));
-  return { decision: parsed.decision, usage: response.usage };
+  return { decision: parsed.decision, usage: response.usage, answers: parsed.answers };
 }
 
 async function completePlannerDecision(ctx, selection, serialized, systemPrompt, requestId, signal) {
@@ -1184,6 +1173,7 @@ export async function runPreflightPlanner(
   const createdAtMs = Date.now();
   let decision;
   let usage;
+  let answers;
   let decisionModel = selection.modelId;
   if (selection.kind === "typesafe") {
     const completed = await completeTypeSafeDecision(
@@ -1197,6 +1187,7 @@ export async function runPreflightPlanner(
     );
     decision = completed.decision;
     usage = completed.usage;
+    answers = completed.answers;
     decisionModel = completed.model;
   } else {
     if (typeof ctx?.modelRegistry?.complete !== "function") {
@@ -1205,6 +1196,7 @@ export async function runPreflightPlanner(
     const completed = await completeScopedPlannerDecision(ctx, selection, questionSet, candidates, input, policy, topology, requestId, signal);
     decision = completed.decision;
     usage = completed.usage;
+    answers = completed.answers;
   }
   if (signal?.aborted) throw new Error("planner_request_cancelled");
   const acceptedAtMs = Date.now();
@@ -1212,6 +1204,7 @@ export async function runPreflightPlanner(
     input: plannedStartInput(input, decision),
     plan: {
       version: decision.version,
+      evidence: buildPlannerEvidence(questionSet, candidates, decision, selection, answers, selection.kind === "typesafe" ? "typesafe_choice" : "pi_selection"),
       taskIntent: taskIntentMetadata(input.taskIntent, decision.task_intent ?? null),
       taskIntentRecommendation: decision.task_intent ?? null,
       decisionModel: {
@@ -1253,6 +1246,7 @@ export function plannerPlanConfirmation(plan) {
     workerCandidatesConfirmation(plan.workerCandidates),
     planningScopesConfirmation(plan.scopes, plan.locks),
     `Operator planning constraints: ${plan.operatorOverrides.length ? plan.operatorOverrides.join("; ") : "none"}`,
+    ...plannerEvidenceLines(plan.evidence),
     `Selected ${plan.roles.length} workers:`,
     ...roles,
   ].join("\n");

@@ -878,6 +878,13 @@ def _full_layout(
         presentation_frame=presentation_frame,
     )
     lines.append(_transport_line(manifest, snapshot, compact=False))
+    planning = manifest.get("planning")
+    if planning:
+        evidence = planning.get("evidence")
+        text = "Planner evidence unavailable (legacy)"
+        if evidence and evidence.get("source"):
+            text = f"Planner evidence v1 {evidence['source']}; {evidence['provider_comparison']['state']}; rationale_unavailable; status for axis alternatives"
+        lines.append(_line(text, "muted"))
     now = _now_flow_line(
         snapshot, unicode=unicode, presentation_frame=presentation_frame
     )

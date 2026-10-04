@@ -70,7 +70,7 @@ async function readObserverIdentity(envelope) {
   invalidUnless(safeTokenMetadata(await lstat(tokenPath)), "observer_token_unsafe");
   const token = (await readFile(tokenPath, "ascii")).trim();
   invalidUnless(/^[a-f0-9]{32}$/.test(token), "observer_token_invalid");
-  return { session, socketPath, token, roles, assignments };
+  return { session, socketPath, token, roles, assignments, evidence: envelope.data.planning?.evidence };
 }
 
 export async function attachParentObserver(pi, envelope, observer, onStop, options = {}) {
@@ -172,6 +172,7 @@ export async function attachParentObserver(pi, envelope, observer, onStop, optio
       reports,
       currentRoles(),
       currentAssignments(),
+      identity.evidence,
     );
     try {
       pi.sendMessage(

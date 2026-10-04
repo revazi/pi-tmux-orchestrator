@@ -24,6 +24,7 @@ EXPECTED_FILES=(
   extensions/orchestrator-models.js
   extensions/orchestrator-planner.js
   extensions/orchestrator-planning.js
+  extensions/orchestrator-planner-evidence.js
   extensions/orchestrator-intent.js
   extensions/orchestrator-planning-scopes.js
   extensions/orchestrator-worker-candidates.js
@@ -67,6 +68,7 @@ EXPECTED_FILES=(
   pi_tmux_orchestrator/planner_policy.py
   pi_tmux_orchestrator/planner_topology.py
   pi_tmux_orchestrator/planning.py
+  pi_tmux_orchestrator/planner_evidence.py
   pi_tmux_orchestrator/task_intent.py
   pi_tmux_orchestrator/prompts.py
   pi_tmux_orchestrator/profiles.py

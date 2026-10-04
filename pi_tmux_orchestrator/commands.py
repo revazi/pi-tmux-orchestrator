@@ -49,6 +49,7 @@ from .constants import (
 )
 from .models import CommandResult, OrchestrationError
 from .output import bounded_message, human_print, public_role
+from .planner_evidence import planner_evidence_lines
 from .planning import planning_lock_lines, planning_scopes_label, retained_planning
 from .profiles import (
     public_execution_profile,
@@ -181,7 +182,7 @@ def list_command(_: argparse.Namespace) -> CommandResult:
                     "execution_profile": retained_execution_profile(manifest),
                     "project_config": retained_project_config(manifest),
                     "orchestration_config": retained_orchestration_config(manifest),
-                    "planning": retained_planning(manifest),
+                    "planning": retained_planning(manifest, summary=True),
                     "dashboard": orchestration_dashboard_summary(coord, manifest),
                     "roles": role_values,
                     "paths": {"coordination": str(coord)},
@@ -326,7 +327,7 @@ def status_command(args: argparse.Namespace) -> CommandResult:
         )
     )
     if planning["mode"] == "dynamic":
-        for line in planning_lock_lines(planning):
+        for line in planning_lock_lines(planning) + planner_evidence_lines(planning):
             human_print(line)
     human_print(f"Coordination: {coord}")
     result = tmux(

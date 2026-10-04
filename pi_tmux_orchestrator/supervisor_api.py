@@ -56,6 +56,14 @@ def supervisor_capabilities() -> dict[str, Any]:
         "api_version": SUPERVISOR_API_VERSION,
         "envelope_schema_version": "1",
         "state_plane": "metadata-only-sqlite",
+        "planning_evidence": {
+            "version": 1,
+            "planning_version": 5,
+            "top_alternatives": 3,
+            "snapshots": "exact",
+            "collections": "summary",
+            "legacy": "unavailable",
+        },
         "worker_transport": "tui-or-rpc-with-shared-bridge",
         "coordination_protocol": {
             "name": "broker-v1",
@@ -164,7 +172,9 @@ def bounded_children(path: Path, maximum: int | None = None) -> tuple[list[Path]
     return children, truncated
 
 
-def public_supervisor_run(coord: Path, manifest: dict[str, Any]) -> dict[str, Any]:
+def public_supervisor_run(
+    coord: Path, manifest: dict[str, Any], *, summary: bool = False
+) -> dict[str, Any]:
     transport = manifest_transport(manifest)
     return {
         "session": manifest["session"],
@@ -175,7 +185,7 @@ def public_supervisor_run(coord: Path, manifest: dict[str, Any]) -> dict[str, An
         "execution_profile": retained_execution_profile(manifest),
         "project_config": retained_project_config(manifest),
         "orchestration_config": retained_orchestration_config(manifest),
-        "planning": retained_planning(manifest),
+        "planning": retained_planning(manifest, summary=summary),
         "task_intent": retained_task_intent(manifest),
         "durable_workers": manifest.get("version", 0) >= 3
         or transport == RPC_TRANSPORT,
@@ -296,7 +306,7 @@ def retained_sessions() -> dict[str, Any]:
         if len(sessions) >= MAX_JSON_ITEMS:
             more_valid = True
             break
-        value = public_supervisor_run(coord, manifest)
+        value = public_supervisor_run(coord, manifest, summary=True)
         value["runs_truncated"] = runs_truncated
         value["run_issue_count"] = len(run_issues)
         sessions.append(value)

@@ -985,7 +985,8 @@ def main() -> int:
             or status.data["files"]
             or status.data["paths"].get("observer_socket")
             != str(ORCHESTRATOR.broker_paths(coord)["socket"])
-            or status.data["planning"] != rpc_planning
+            or status.data["planning"]
+            != {**rpc_planning, "evidence": {"version": 1, "status": "unavailable"}}
         ):
             raise AssertionError("status did not expose broker-only metadata")
         supervisor = ORCHESTRATOR.supervisor_snapshot(session, coord.name)
@@ -999,7 +1000,8 @@ def main() -> int:
         if (
             supervisor["host_adapter"]["runtime_status"] != "not_observed"
             or supervisor["coordination"] != "broker-v1"
-            or supervisor["planning"] != rpc_planning
+            or supervisor["planning"]
+            != {**rpc_planning, "evidence": {"version": 1, "status": "unavailable"}}
             or len(batch["roles"]) != 2
         ):
             raise AssertionError("Supervisor API v2 broker reads failed")

@@ -125,6 +125,31 @@ retains one writer and mandatory review; phased inspect/plan is still a precurso
 to implementation, not an investigation-only workflow. Only bounded intent
 metadata is retained, never task, rationale, or provider bodies.
 
+### Auditable accepted-plan evidence (Unreleased)
+
+Dynamic planning remains opt-in. Accepted planning v5 records retain evidence v1:
+selected Choice confidence and probability, plus up to three alternatives for
+roster, independent per-role model/thinking axes, task-intent recommendation, and
+locked-plan suitability when that question exists. Options bind exact canonical
+identities to the same supplied non-secret capabilities and declared catalog cost
+hints. These are planner signals, **not hidden reasoning, joint confidence,
+measured spend, quality, reliability, or cost-savings evidence**.
+
+Fixed/locked or single-option axes have deterministic fixed authority and no
+probabilities. Pi fallback choices explicitly have unavailable probabilities;
+static and planning v1–v4 reads explicitly report unavailable evidence. Homogeneous
+and mixed provider plans expose `rationale_unavailable`, never invented Jev
+reasoning. Immutable launch assignments remain authoritative.
+
+Exact preview/confirmation, reopened planning, JSON/human status, Supervisor
+snapshots, dashboard summaries, and parent final evidence expose this bounded
+projection. Collection reads use digest-bound summaries; exact status/snapshot
+reads contain the catalog and alternatives. Strict validation rejects malformed,
+non-normalized, duplicate, oversized, stale, and fact-mismatched evidence before
+launch. No task/context/guidance, credentials, endpoints, response/error bodies,
+or hidden reasoning are retained. See [the evidence contract](references/protocol-v1.md#accepted-planner-evidence-unreleased).
+Version remains 0.11.1; no default rollout or live-provider acceptance is implied.
+
 ### Approved worker pools for dynamic planning
 
 Dynamic planning axes are independently selectable with model-tool
@@ -158,8 +183,9 @@ it never silently falls back to the catalog. Both TypeSafe Jev and Pi fallback
 use the same approved scope and canonical capabilities. Confirmation and the
 immediate start acknowledgement show pool source/count and exact selected
 assignments, not configuration bodies. Ordinary static starts and configuration
-versions 1–4 remain supported. Old retained planning records remain readable but
-cannot launch a new run: create a fresh preview. See
+versions 1–4 remain supported. Planning v1 is read-only; existing v2–v4
+admission remains compatible, while fresh dynamic previews use v5. All older
+records remain readable with decision evidence unavailable. See
 [approved-pool configuration and migration](references/usage.md#approved-exact-worker-model-pools)
 and [provider-free acceptance](references/prerelease-testing.md#automated-provider-free-planning-gate).
 
