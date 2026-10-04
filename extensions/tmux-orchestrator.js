@@ -61,6 +61,8 @@ import {
   workerContextParameters,
 } from "./orchestrator-context-policy.js";
 
+import { TASK_INTENTS, taskIntentMetadata, validateTaskIntent, taskIntentConfirmation, redirectTaskIntent } from "./orchestrator-intent.js";
+
 const CLI_PATH = fileURLToPath(new URL("../bin/pi-tmux-agents", import.meta.url));
 const MAX_VISIBLE_CHARS = 12_000;
 const DIGEST_PATTERN = /^[a-f0-9]{64}$/;
@@ -94,6 +96,10 @@ const parameters = {
     run: { type: "string", maxLength: 160, pattern: "^[A-Za-z0-9_.-]+$", description: "Optional exact retained run ID for controls; must match the live session. Stop/restart bind the confirmed run automatically" },
     commandId: { type: "string", pattern: "^[a-f0-9]{32}$", description: "Optional idempotency key for send/abort/restart/stop; reuse it and the exact run to resolve unknown delivery. Duplicate restart never respawns: inspect state, then use a new ID and separate confirmation for fresh recovery. Interrupted stop retries reconcile only the original run" },
     role: controlRoleParameters,
+    taskIntent: {
+      type: "string", enum: TASK_INTENTS,
+      description: "Explicit operator-supplied intent for start. change preserves coding orchestration; investigation/review/advisory offer direct-parent redirection or cancellation without workers. Omission preserves change compatibility unless the one authorized dynamic call recommends otherwise. Never infer an explicit operator selection.",
+    },
     task: { type: "string", maxLength: 65536, description: "Self-contained start objective; transferred through a private file" },
     contextCapsule: contextCapsuleParameters,
     workspaceCapsule: {
@@ -351,6 +357,7 @@ function appendStartIdentityArgs(args, input, paths) {
     if (input.session.startsWith("-")) args.push(`--session=${input.session}`);
     else args.push("--session", input.session);
   }
+  if (input.taskIntent !== undefined) args.push("--task-intent", validateTaskIntent(input.taskIntent));
   if (paths.contextCapsule) args.push("--context-capsule-file", paths.contextCapsule);
   if (paths.planning) args.push("--planning-record-file", paths.planning);
 }
@@ -436,6 +443,7 @@ function startConfirmation(preview, plannerPlan) {
   const configPath = orchestrationConfigPath(data.orchestration_config);
   const projectMapping = projectMappingLabel(data.project_config);
   return [
+    taskIntentConfirmation(data.task_intent ?? taskIntentMetadata(undefined)),
     `Project: ${data.project}`,
     `Session: ${data.session}`,
     `Worker transport: ${data.transport || "tui"}`,
@@ -537,9 +545,18 @@ function startContextFailure(allowRpc) {
     : "start_requires_interactive_tui_confirmation";
 }
 
+function controllerStartNeedsProject(input) {
+  return isControllerMode() && taskIntentMetadata(input.taskIntent).effective === "change";
+}
+
+function validateStartIdentity(input) {
+  if (input.taskIntent !== undefined) validateTaskIntent(input.taskIntent);
+  if (input.session !== undefined) validateExactSession(input.session);
+}
+
 function validateStartRequest(input, ctx, allowRpc = false) {
   if (!validStartContext(ctx, allowRpc)) throw new Error(startContextFailure(allowRpc));
-  if (input.session !== undefined) validateExactSession(input.session);
+  validateStartIdentity(input);
   if (!input.task || !String(input.task).trim()) throw new Error("start_requires_task");
   if (input.probeTask && input.withProbe === false) throw new Error("probe_task_requires_role");
   if (input.playwrightTask && input.withPlaywright === false) throw new Error("playwright_task_requires_role");
@@ -548,7 +565,7 @@ function validateStartRequest(input, ctx, allowRpc = false) {
   validateWorkspaceCapsuleSelection(input);
   validateRepairLimit(input.maxRepairRounds);
   validateWorkerContext(input.workerContext);
-  if (isControllerMode() && !String(input.project || "").trim()) {
+  if (controllerStartNeedsProject(input) && !String(input.project || "").trim()) {
     throw new Error("controller_start_requires_explicit_project");
   }
   if (input.decisionModel !== undefined && input.dynamicPlan !== true) {
@@ -794,8 +811,12 @@ async function preparedStartPreview(pi, input, project, paths, plannerPlan, sign
   );
   if (plannerPlan?.usage) preview.planner_usage = plannerPlan.usage;
   if (!preview.success) return { preview, boundPlanning: undefined };
-  validateWorkerContextPreview(preview.data, input.workerContext);
   validatePlannerPreview(preview.data, plannerPlan);
+  const expectedIntent = taskIntentMetadata(input.taskIntent, plannerPlan?.taskIntentRecommendation ?? null);
+  if (!metadataRecord(preview.data?.task_intent) || metadataDigest(preview.data.task_intent) !== metadataDigest(expectedIntent)) {
+    throw new Error("task_intent_preview_mismatch");
+  }
+  validateWorkerContextPreview(preview.data, input.workerContext);
   return { preview, boundPlanning: validatedBoundPlanning(preview.data, plannerPlan) };
 }
 
@@ -814,6 +835,10 @@ async function launchAfterPreview(pi, ctx, start, prepared) {
     startConfirmation(prepared.preview, start.plannerPlan),
   );
   if (!confirmed) throw new Error("start_confirmation_declined");
+  const intent = taskIntentMetadata(start.input.taskIntent, start.plannerPlan?.taskIntentRecommendation ?? null);
+  if (metadataDigest(intent) !== metadataDigest(prepared.preview.data.task_intent)) {
+    throw new Error("stale_task_intent_preview");
+  }
   await revalidateDynamicBindings(pi, ctx, start.project, start.plannerPlan, start.signal);
   await persistBoundPlanning(start.paths.planning, prepared.boundPlanning);
   const skipModelCheck = previewModelsAreAvailable(ctx, prepared.preview.data?.roles);
@@ -840,18 +865,24 @@ async function launchConfirmedStart(pi, ctx, start) {
 
 async function runStart(pi, input, signal, ctx, options = {}) {
   validateStartRequest(input, ctx, options.allowRpc === true);
+  if (signal?.aborted) throw new Error("start_cancelled");
+  const previewOnly = options.previewOnly === true;
+  const explicitIntent = taskIntentMetadata(input.taskIntent);
+  if (explicitIntent.effective !== "change") return redirectTaskIntent(ctx, explicitIntent, previewOnly);
   const initialInput = startInputWithParentModel(input, ctx);
   const project = await canonicalProject(initialInput.project, ctx.cwd, {
     requireCanonical: Boolean(initialInput.workspaceCapsule),
   });
   const planned = await applyDynamicPlan(pi, ctx, initialInput, project, signal);
+  const intent = taskIntentMetadata(input.taskIntent, planned.plan?.taskIntentRecommendation ?? null);
+  if (intent.effective !== "change") return redirectTaskIntent(ctx, intent, previewOnly);
   await confirmChildApproval(ctx, planned.input);
   return launchConfirmedStart(pi, ctx, {
     input: planned.input,
     project,
     plannerPlan: planned.plan,
     signal,
-    previewOnly: options.previewOnly === true,
+    previewOnly,
   });
 }
 
@@ -1060,6 +1091,7 @@ const successSummaries = {
     return `Switched to ${data.session}. ${data.return_hint || "Use tmux session navigation to return."}`;
   },
   start(data) {
+    if (data.launched === false) return `${data.disposition === "cancelled" ? "Cancelled" : "Redirected to parent"}: intent=${data.task_intent.effective}. ${data.message}`;
     const summary = data.dry_run
       ? `Validated ${data.session} with ${data.implementation_flow || "single"} implementation flow`
       : `Started detached ${data.session} with ${data.transport === "rpc" ? "headless RPC" : "native Pi TUI"} workers and ${data.implementation_flow || "single"} implementation flow. This invoking Pi remains the parent; use /or-dashboard and Enter to attach.`;
@@ -1134,7 +1166,7 @@ async function watchAction(pi, input, signal, superviseStart) {
 
 async function startAction(pi, input, signal, ctx, superviseStart) {
   const envelope = await runStart(pi, input, signal, ctx);
-  if (envelope.success && !envelope.data?.dry_run) {
+  if (envelope.success && !envelope.data?.dry_run && envelope.data?.launched !== false) {
     void Promise.resolve(superviseStart(envelope)).catch(() => {});
   }
   return envelope;
@@ -1278,6 +1310,16 @@ async function commandChildApproval(ctx) {
   );
 }
 
+async function interactiveChangeOptions(ctx, dynamicPlan) {
+  const project = await commandTargetProject(ctx);
+  if (project === null) return undefined;
+  const runOverrides = dynamicPlan ? {} : await selectRunOverrides(ctx);
+  const approveProject = await commandChildApproval(ctx);
+  const startControls = await selectStartControls(ctx);
+  if (startControls === null) return undefined;
+  return { project, ...runOverrides, ...startControls, rpcWorkers: false, approveProject };
+}
+
 async function interactiveStartRequest(args, ctx) {
   if (!requireInteractiveTui(ctx, "or-start")) return undefined;
   const supplied = String(args || "").trim();
@@ -1293,22 +1335,12 @@ async function interactiveStartRequest(args, ctx) {
   const suppliedTask = dynamicPlan ? supplied.slice(selector.length).trim() : supplied;
   const task = suppliedTask || await ctx.ui.editor("Orchestration task", "");
   if (!task?.trim()) return undefined;
-  const project = await commandTargetProject(ctx);
-  if (project === null) return undefined;
-  const runOverrides = dynamicPlan ? {} : await selectRunOverrides(ctx);
-  const approveProject = await commandChildApproval(ctx);
-  const startControls = await selectStartControls(ctx);
-  if (startControls === null) return undefined;
-  return {
-    task,
-    project,
-    dynamicPlan,
-    ...(scopes ? { planningScopes: scopes } : {}),
-    ...runOverrides,
-    ...startControls,
-    rpcWorkers: false,
-    approveProject,
-  };
+  const taskIntent = await ctx.ui.select("Task intent (non-change work can stay in the parent)", TASK_INTENTS);
+  if (!TASK_INTENTS.includes(taskIntent)) return undefined;
+  if (taskIntent !== "change") return { task, taskIntent, dynamicPlan };
+  const options = await interactiveChangeOptions(ctx, dynamicPlan);
+  if (!options) return undefined;
+  return { task, taskIntent, dynamicPlan, ...(scopes ? { planningScopes: scopes } : {}), ...options };
 }
 
 function createCommandHandlers(pi, superviseStart = () => {}) {
@@ -1349,7 +1381,7 @@ function createCommandHandlers(pi, superviseStart = () => {}) {
       const request = await interactiveStartRequest(args, ctx);
       if (!request) return;
       const envelope = await runStart(pi, request, ctx.signal, ctx);
-      if (envelope.success && !envelope.data?.dry_run) {
+      if (envelope.success && !envelope.data?.dry_run && envelope.data?.launched !== false) {
         void Promise.resolve(superviseStart(envelope)).catch(() => {});
       }
       notifyEnvelope(ctx, envelope);
@@ -1547,6 +1579,7 @@ export default function tmuxOrchestratorExtension(pi) {
     promptSnippet: "Inspect or operate local Pi tmux orchestrations through the authoritative Python CLI",
     promptGuidelines: [
       "Use tmux_orchestrator instead of rebuilding tmux orchestration state; before a start, synthesize a bounded contextCapsule from the current conversation when prior decisions or work matter; include only task-relevant state, constraints, acceptance criteria, paths, evidence, and open questions, never the full transcript. Prefer dynamicPlan=true when the user asks the orchestrator to decide worker count, roles, models, or thinking before launch, and select planningScopes only for the authorized axes. Omission preserves the legacy all-axis request and static defaults do not change. Fixed axes are resolved operator/project/global/profile locks, not fake planner choices; that mode requires separate approval for one preflight provider call and another confirmation for launch. TypeSafe authentication configured through /login typesafe or TYPESAFE_API_KEY selects the bundled direct jev-latest adapter before every Pi decision model. Without TypeSafe authentication, use an exact Pi decisionModel only when the user supplied it; it wins over the strict user-global exact Pi preferred identity and ordered cross-provider fallbacks, then the explicit cancel/static policy. Dynamic planning may select only fixed built-ins and freshly validated exact-project custom read-only specialists; projectCustomRoles=false omits custom candidates. Enable workspaceCapsule only for an explicit cold-assignment experiment and supply only bounded existing project-relative workspaceRelevantPaths, never a repository tree; it supplements discovery and never replaces reading governing instructions. Do not claim workspace-capsule savings or correctness without authoritative provider and review evidence. Do not claim dynamic-planning savings or correctness without separately reviewed provider and outcome evidence. Dynamic planning uses only operator-approved exact workerCandidates pools from external version-5 configuration, validated against Pi's available/scoped catalog, plus higher-precedence exact run/project/global role locks and custom fixed bindings. Per-role pools replace the all-role pool. Without a pool, every planner-eligible role including optional roles must have an authoritative exact provider/model lock; otherwise stop before the provider call and guide the operator to configure pools or exact overrides. Never invent or expand approval, silently offer the full catalog, infer quality or recency from names, or treat declared catalog cost hints as observed spend. Jev and Pi fallback enforce identical approved worker scope; decision-model lookup remains independent. Use bounded pool source/count and exact selected assignments from confirmation and immediate start acknowledgement as authoritative launch metadata, never configuration bodies. Use implementationFlow=phased for complex work that benefits from read-only discovery before editing; use single for simple work or compatibility. Configured specialists use conservative deterministic activation gates after launch; pass forceSpecialists only when the user explicitly requires that enabled role to run regardless of a skip predicate. Exact-project customRoles from validated user-global configuration are included unless projectCustomRoles is false; never invent custom role identifiers, providers, models, tools, or contracts. After starting or explicitly watching a run, ensure the invoking Pi is watching it for lifecycle and final reports. Once watching, end the turn and rely on broker updates: never run sleep commands or repeatedly poll status/tmux while waiting for a watched orchestration. Attaching to an existing run watches future transitions but does not replay an already-actionable initial outcome into the current Pi; returning with tmux prefix then L does not change the current Pi's project context. Honor an explicit economy, balanced, thorough, or user-configured profile request through profile. Honor explicit user model/provider/thinking requests through useParentModel or modelOverrides; those overrides win over profile values. Use the models action to resolve available exact identifiers when needed; never invent a Pi provider/model identifier or inspect provider credentials. Omitted overrides use the exact canonical project mapping, then the user's global orchestrator model configuration, selected/default profile, and packaged defaults. Honor explicit per-run budget requests through budgetOverrides; omitted values use the strict user-global budget policy and packaged warn-only defaults, and never infer hard thresholds. Honor explicit repair-round cap requests through maxRepairRounds; omission disables the cap and 0 pauses before the first repair. This is separate from observational budgets and does not cap active-assignment tokens. Continuation approval remains operator-only through the confirmed terminal CLI; never approve your own continuation. Honor explicit retain/prune requests through workerContext for enabled roles; omitted roles keep prune. Retention may increase cost, reuse hints are advisory metadata observations, and historical checks or approval never replace required verification and review. Do not infer retention, switch live policies, or request unsupported compact/fresh modes. Worker skill discovery is disabled; pass workerSkills only for exact Markdown paths the user explicitly reviewed, never infer skills. When the user asks to enter, navigate, or directly steer the live workers, use attach rather than watch; attach requires the invoking Pi to be inside tmux. Prefer native Pi TUI workers and use rpcWorkers only after an explicit request for headless panes. The invoking Pi remains responsible for interpreting reports and deciding follow-up. When a workflow needs attention, send only to a waiting role that owns the active assignment; never trigger an idle role or reviewer without a broker assignment. Never create file handoffs, poll coordination state, claim parent project trust applies to child Pi sessions, or equate command acknowledgement with task completion.",
+      "For start, honor explicit operator taskIntent (change, investigation, review, advisory); never infer an explicit selection. Non-change intent offers direct-parent redirection or cancellation without coding workers or implementation/change reports. Static starts never classify. The one authorized dynamic call recommends bounded intent, previewed and subordinate to the operator. An omitted-intent non-change recommendation also redirects/cancels. A conflicting recommendation cannot override explicit change, which still requires final coding confirmation. Only change launches the one-writer plus mandatory-review workflow. Redirection never injects a new parent turn; the parent decides how to answer. Phased inspect/plan automatically advances to implementation and is not an advisory workflow.",
     ],
     parameters,
     execute(_toolCallId, input, signal, _onUpdate, ctx) {

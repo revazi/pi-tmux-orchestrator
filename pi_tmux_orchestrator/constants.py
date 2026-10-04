@@ -107,6 +107,8 @@ MANIFEST_V6_FIELDS = MANIFEST_V5_FIELDS | {"custom_role_registry"}
 MANIFEST_V7_FIELDS = MANIFEST_V6_FIELDS
 MANIFEST_V8_FIELDS = MANIFEST_V5_FIELDS | {"planning"}
 MANIFEST_V9_FIELDS = MANIFEST_V7_FIELDS | {"planning"}
+MANIFEST_V10_FIELDS = MANIFEST_V8_FIELDS | {"task_intent"}
+MANIFEST_V11_FIELDS = MANIFEST_V9_FIELDS | {"task_intent"}
 ROLE_FIELDS = frozenset(
     {"provider", "model", "thinking", "tools", "pane_id", "prompt_path", "session_dir"}
 )

@@ -134,7 +134,7 @@ class CustomStartTests(CustomRoleResourceFixture):
         wait.assert_called_once()
         coord = Path(envelope["data"]["paths"]["coordination"])
         self.assertEqual((coord / "startup-state").read_text(), "RUNNING\n")
-        self.assertEqual(wait.call_args.args[3]["version"], 7)
+        self.assertEqual(wait.call_args.args[3]["version"], 11)
         self.assertEqual(
             envelope["data"]["custom_role_selection"],
             {
@@ -432,7 +432,7 @@ class CustomStartTests(CustomRoleResourceFixture):
             manifest["roles"][role]["pane_id"] = f"%{index}"
         self.assertEqual(validate_manifest(manifest, self.coord), manifest)
         self.assertEqual(configs, before)
-        self.assertEqual(manifest["version"], 7)
+        self.assertEqual(manifest["version"], 11)
         self.assertEqual(manifest["custom_role_registry"], str(self.registry))
         self.assertEqual(list(manifest["roles"]), roles)
         self.assertEqual(manifest["roles"][self.name]["custom_role"], self.definition)
@@ -914,7 +914,7 @@ class CustomStartTests(CustomRoleResourceFixture):
         self.assertEqual(code, 2, raw)
         self.assertEqual(envelope["error"]["code"], "invalid_arguments")
 
-    def test_bound_custom_planning_launch_uses_manifest_v9(self):
+    def test_bound_custom_planning_launch_uses_manifest_v11(self):
         code, envelope, raw, _ = self.run_start()
         self.assertEqual(code, 0, raw)
         roles = [
@@ -996,5 +996,5 @@ class CustomStartTests(CustomRoleResourceFixture):
             )
         self.assertEqual(code, 0, raw)
         manifest = self.grid.call_args.args[4]
-        self.assertEqual(manifest["version"], 9)
+        self.assertEqual(manifest["version"], 11)
         self.assertEqual(manifest["planning"], preview["data"]["planning"])

@@ -17,7 +17,7 @@ Keep these results distinct:
    reconnection, restart, revocation, retained provenance, and cleanup without
    sending a prompt. It does not exercise planner inference or claim generated
    reports.
-3. **Local tmux acceptance** exercises fixed accepted v8/v9 plans across TUI/RPC
+3. **Local tmux acceptance** exercises fixed accepted v10/v11 manifests across TUI/RPC
    broker panes, routing, rollback, restart, cleanup, and retained metadata;
    model-free peers cover report paths.
 4. **Provider-backed acceptance** measures real model behavior and usage. It can
@@ -92,6 +92,22 @@ sentinel receives traffic. It covers actual-Pi custom TUI/RPC startup and recove
 not inference or a complete report round. If Pi is unavailable, that layer is
 reported as skipped rather than replaced by synthetic evidence.
 
+### Automated provider-free task-intent gate
+
+Stage 1 accepts exactly `change|investigation|review|advisory` on model-tool,
+slash, and terminal starts. Verify explicit non-change redirection/cancellation
+before planner calls, trust bypass, private launch files, tmux, broker, workers,
+and manifests in both TUI/RPC presentations. `--yes` cannot convert non-change
+into coding. Check intent-selection and final-confirmation cancellation; ordinary
+static change starts must have no classifier call and retain one writer plus
+mandatory review. The existing dynamic call's bounded recommendation must be
+shown, subordinate to explicit intent, and bound in planning-v4/v10–v11 manifest
+metadata. Check every enum, omitted-versus-explicit precedence, malformed values,
+stale/tampered preview rejection, retained reads, and body redaction. Legacy
+intent remains unavailable, not inferred from report kind. These are synthetic
+admission/control-plane checks, not live-provider inference or production-wire
+acceptance. No advisory assignment/report workflow is added.
+
 ### Automated provider-free planning gate
 
 Approved-pool migration is a new fail-closed dynamic-start gate: upgrade the
@@ -126,7 +142,7 @@ and planner/RPC timeout failures. Fake completion fixtures exercise strict parsi
 and shared start admission but are not production inference evidence.
 
 The real-tmux layer injects a fixed accepted decision, binds it through dry-run
-and launch, and exercises manifest v8/v9 TUI/RPC startup, custom startup rollback,
+and launch, and exercises manifest v10/v11 TUI/RPC startup, custom startup rollback,
 broker and worker restart, exact cleanup, and retained status/Supervisor reads.
 The staged actual-Pi layer repeats custom TUI/RPC lifecycle acceptance with a
 local no-inference catalog and a network request sentinel. Security assertions
@@ -499,8 +515,11 @@ and Pi fallback synthetic transports, asserting identical authorized questions,
 fixed-axis locks, exact pool membership, one call, body-free provenance,
 cancellation, malformed choices, stale policy/locks/preview, dry-run, and no-launch
 failures. Python tests cover effective policy precedence, CLI/terminal forwarding,
-v3 record validation/admission, and stale scope bindings. This is synthetic
-evidence, not production TypeSafe/Pi wire acceptance.
+current v4 record validation/admission, legacy v3 compatibility, and stale
+scope/intent bindings. Assert every Jev/Pi Choice question uses the established
+`type`, `instructions`, and `criteria` shape (including `task_intent`), with no
+new top-level guidance field. This is synthetic contract evidence, not
+production TypeSafe/Pi wire acceptance.
 
 For separately authorized manual acceptance, compare topology-only and
 topology-plus-thinking against the deterministic preview for every eligible

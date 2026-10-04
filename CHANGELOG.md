@@ -6,6 +6,9 @@ All notable changes to this project are documented here.
 
 ### Added
 
+- Added Stage 1 explicit `change|investigation|review|advisory` task-intent admission across model-tool, slash, and terminal starts. Non-change work offers direct-parent redirection/cancellation without tmux, broker, worker, manifest, or implementation/change claims; static starts make no classifier call. Coding work keeps one writer and mandatory review; no advisory assignment/report workflow was added.
+- Added a bounded intent recommendation within the existing authorized dynamic call, explicit-operator precedence, visible confirmation, planning-v4 intent bindings, and body-free manifest-v10/v11/Supervisor intent metadata. Added provider-free Python/Node/CLI/TUI/RPC coverage for intents, conflicts, malformed/redacted inputs, cancellation, retained provenance, and stale/tampered previews. Version remains 0.11.1; legacy manifests/planning reads remain supported.
+
 - Added bounded model-tool exact-session stop, exact-role restart/abort, optional validated start session naming, exact run binding, and separately confirmed TUI/RPC stop/restart without expanding the five slash commands. Collisions now return bounded metadata-only workflow/role state and valid recovery actions; nothing automatically stops, replaces, renames, or reuses a session.
 - Added restart command-ID deduplication without repeated respawn, private retained exact-run stop receipts, explicit acknowledgement/respawn/completion/uncertain projections, and post-connection timeout uncertainty. Added provider-free Python/Node/real-tmux TUI/RPC regressions for declined confirmation, exact identities, retained retries, stale generation, unavailable brokers, idempotency, and redaction. Package version remains 0.11.1.
 
@@ -15,6 +18,7 @@ All notable changes to this project are documented here.
 
 ### Fixed
 
+- Kept the dynamic task-intent question inside the established Jev/Pi Choice `instructions` contract, with provider-free shape regressions across intents, planning scopes, and locked plans. Updated current preview/manifest guidance to planning v4 and manifests v10/v11 while preserving legacy compatibility; clarified which retained read surfaces expose intent and the two questions included in fully locked dynamic requests.
 - Kept fresh exact-role restart/abort available during uncertain handover: a new confirmed restart can recover after the old worker disconnects, without repeating a duplicate respawn or bypassing baseline/resource/generation checks. Confirmed same-ID stop retries now serialize and reconcile interrupted receipts using the original run's immutable tmux identity or verified absence, never a replacement or unavailable server. Recovery errors preserve validated duplicate/completion/retry metadata with fixed redacted guidance.
 
 ## 0.11.1 - 2026-10-02

@@ -91,6 +91,7 @@ def _terminal_input(args: Any, project: Path) -> dict[str, Any]:
     context_capsule = _optional_text(args, "context_capsule", "context-capsule")
     input_value: dict[str, Any] = {
         "action": "start",
+        "taskIntent": getattr(args, "task_intent", None),
         "project": str(project),
         "task": task,
         "dynamicPlan": True,
@@ -315,9 +316,18 @@ def terminal_dynamic_start(args: Any) -> CommandResult:
     ):
         raise OrchestrationError("Dynamic planning start envelope is invalid")
     data = envelope["data"]
+    from .output import human_print
+
+    if data.get("launched") is False:
+        from .task_intent import NON_CHANGE_NOTICE, validate_intent_metadata
+
+        intent = validate_intent_metadata(data.get("task_intent"))
+        human_print(
+            f"Task intent: {intent['effective']} (source={intent['source']}); {data.get('disposition')}."
+        )
+        human_print(NON_CHANGE_NOTICE)
     planning = data.get("planning")
     if isinstance(planning, dict):
-        from .output import human_print
         from .planning import planning_lock_lines, planning_scopes_label
 
         human_print(

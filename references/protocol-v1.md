@@ -60,6 +60,44 @@ provenance fields as unavailable. Profile/project configuration therefore
 changes deterministic startup resolution and bounded manifest metadata, but not
 frame shape, authentication, report ACLs, or delivery/recovery semantics.
 
+## Task-intent admission and compatibility (Unreleased)
+
+Admission is outside broker protocol v1; wire authentication, assignments,
+read-only role ACLs, report kinds, and mandatory reviewer routing are unchanged.
+Model-tool `taskIntent`, CLI `--task-intent`, and slash selection accept exactly
+`change|investigation|review|advisory`. Only effective `change` can launch. Stage 1
+non-change requests redirect to the parent or cancel before creating any tmux,
+broker, workers, manifest, or worker provider request. They do not fabricate
+implementation evidence or define an advisory report/assignment schema. Static
+starts make no classifier call. The existing authorized dynamic request includes
+one bounded intent recommendation question; no second request is added. Explicit
+operator intent wins over that recommendation. Non-change recommendations with
+omitted intent also redirect/cancel; explicit change plus conflicting
+recommendation requires the normal final coding confirmation, displaying both.
+
+New built-in manifests are v10; custom-role manifests are v11. Both require
+`task_intent` v1 and `planning` (null for static, a validated record for dynamic).
+Intent has exact fields `version` (integer 1), `operator` (enum or null for
+omission), `recommendation` (enum or null), `effective` (enum), and `source`
+(`operator|planner|default`). Source/effective must match precedence. A retained
+launched manifest must have effective change; manifest and planning intent must
+agree. No private task, rationale, provider body, or additional authority is
+retained. Supervisor reads expose this metadata as `task_intent`; v1–v9 manifests
+remain readable and project intent as null/unavailable, never inferred from
+implementation reports.
+
+Planning v4 extends v3 scopes/locks/pool metadata with the exact intent object.
+Its decision digest covers roles, scopes, locks, and intent; the accepted start
+binding also covers intent, and launch checks the operator field against the
+fresh CLI input. Node verifies CLI preview metadata and the bound record before
+confirmation, revalidates policy/catalog bindings, and refuses intent changes
+after confirmation. Legacy planning v1 remains read-only; v2/v3 admission stays
+compatible for omitted intent only, with no intent recommendation evidence.
+Explicit intent requires a fresh v4 dynamic preview, not attaching an enum to a
+legacy decision. Older package readers fail closed on new manifest versions;
+use the matching installed package for controls. There is no hot upgrade of a
+live broker and no broker wire-version bump.
+
 ## Worker lifecycle
 
 Workers authenticate with `hello`, then report one of:

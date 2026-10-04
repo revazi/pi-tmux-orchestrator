@@ -100,6 +100,31 @@ package. Choose a migration below, then update with
 before confirming a new dynamic run. Existing retained runs remain readable;
 never resume an in-flight run across versions.
 
+### Task intent: orchestration or a direct parent answer?
+
+Supply operator intent through model-tool `taskIntent`, terminal `--task-intent`,
+or the `/or-start` intent selector: `change`, `investigation`, `review`, or
+`advisory` (exact lowercase values). Use `change` when repository implementation
+needs a writer and independent review. For explanations, investigation, or a
+review without edits, the parent can usually answer directly.
+
+This is Stage 1 admission, **not a new advisory workflow or chat router**.
+Explicit non-change intent offers direct-parent redirection or cancellation in
+Pi; the CLI returns a clear `direct-parent` notice. Neither option creates tmux,
+broker, worker, manifest, or worker provider calls. Even `--dynamic-plan --yes`
+cannot convert non-change work into implementation; a fresh explicit `change`
+request is required. No task is automatically sent back as a new parent turn.
+
+Omitting intent preserves ordinary static change starts without classification.
+The one authorized dynamic-planning call also recommends a bounded intent;
+that recommendation is previewed, digest-bound, and subordinate to explicit
+operator intent. With omitted intent, a non-change recommendation redirects or
+cancels rather than launching. With explicit `change`, a conflicting
+recommendation remains visible in the final launch confirmation. Launched work
+retains one writer and mandatory review; phased inspect/plan is still a precursor
+to implementation, not an investigation-only workflow. Only bounded intent
+metadata is retained, never task, rationale, or provider bodies.
+
 ### Approved worker pools for dynamic planning
 
 Dynamic planning axes are independently selectable with model-tool

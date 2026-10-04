@@ -27,6 +27,7 @@ from .models import OrchestrationError
 from .role_contracts import valid_role_identity
 from .output import bounded_message, public_role
 from .planning import retained_planning
+from .task_intent import retained_task_intent
 from .profiles import retained_execution_profile
 from .rpc_store import (
     load_rpc_events,
@@ -175,6 +176,7 @@ def public_supervisor_run(coord: Path, manifest: dict[str, Any]) -> dict[str, An
         "project_config": retained_project_config(manifest),
         "orchestration_config": retained_orchestration_config(manifest),
         "planning": retained_planning(manifest),
+        "task_intent": retained_task_intent(manifest),
         "durable_workers": manifest.get("version", 0) >= 3
         or transport == RPC_TRANSPORT,
         "roles": [
@@ -389,6 +391,7 @@ def supervisor_snapshot(session: str, run_id: str | None) -> dict[str, Any]:
                 "project_config": retained_project_config(manifest),
                 "orchestration_config": retained_orchestration_config(manifest),
                 "planning": retained_planning(manifest),
+                "task_intent": retained_task_intent(manifest),
                 "coordination": manifest["coordination"],
                 "durable_workers": True,
                 "host_adapter": {"name": "tmux", "runtime_status": "not_observed"},
@@ -422,6 +425,7 @@ def supervisor_snapshot(session: str, run_id: str | None) -> dict[str, Any]:
             "project_config": retained_project_config(manifest),
             "orchestration_config": retained_orchestration_config(manifest),
             "planning": retained_planning(manifest),
+            "task_intent": retained_task_intent(manifest),
             "coordination": manifest["coordination"],
             "durable_workers": True,
             "host_adapter": {"name": "tmux", "runtime_status": "not_observed"},
@@ -466,6 +470,7 @@ def supervisor_snapshot(session: str, run_id: str | None) -> dict[str, Any]:
         "project_config": retained_project_config(manifest),
         "orchestration_config": retained_orchestration_config(manifest),
         "planning": retained_planning(manifest),
+        "task_intent": retained_task_intent(manifest),
         "durable_workers": transport == RPC_TRANSPORT,
         "host_adapter": {
             "name": "tmux",

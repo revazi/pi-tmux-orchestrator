@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { taskIntentMetadata } from "./orchestrator-intent.js";
 import { projectModelCapabilities } from "./orchestrator-models.js";
 
 const DIGEST_PATTERN = /^[a-f0-9]{64}$/;
@@ -82,11 +83,13 @@ function validPlanningBindings(bindings) {
 
 export function planningRecordForPreview(plan) {
   const roles = planningRoles(plan.roles);
-  const decision = metadataDigest({ version: 1, roles, scopes: plan.scopes, locks: plan.locks });
+  const intent = plan.taskIntent ?? taskIntentMetadata(undefined, plan.taskIntentRecommendation ?? null);
+  const decision = metadataDigest({ version: 1, roles, scopes: plan.scopes, locks: plan.locks, task_intent: intent });
   const bindings = plan.bindings;
   if (!validPlanningBindings(bindings)) throw new Error("invalid_planning_bindings");
   return {
-    version: 3,
+    version: 4,
+    task_intent: intent,
     mode: "dynamic",
     scopes: plan.scopes,
     locks: plan.locks,

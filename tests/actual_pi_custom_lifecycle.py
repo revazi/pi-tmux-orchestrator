@@ -475,7 +475,7 @@ def run_transport(
         retained_manifest = load_manifest(coord, expected_session=session)
         retained = public_supervisor_run(coord, retained_manifest)
         if (
-            retained_manifest["version"] != 9
+            retained_manifest["version"] != 11
             or retained_manifest["planning"] != planning
             or retained["planning"] != planning
         ):

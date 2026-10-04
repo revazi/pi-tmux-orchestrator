@@ -33,6 +33,8 @@ from .constants import (
     MANIFEST_V7_FIELDS,
     MANIFEST_V8_FIELDS,
     MANIFEST_V9_FIELDS,
+    MANIFEST_V10_FIELDS,
+    MANIFEST_V11_FIELDS,
     MAX_CONTROLLER_STATE_BYTES,
     MAX_MANIFEST_BYTES,
     PANE_ID_PATTERN,
@@ -308,7 +310,7 @@ def validate_manifest(
     if not isinstance(value, dict):
         raise OrchestrationError("Orchestration manifest must be a JSON object")
     version = value.get("version")
-    if type(version) is not int or version not in {1, 2, 3, 4, 5, 6, 7, 8, 9}:
+    if type(version) is not int or version not in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11}:
         raise OrchestrationError("Unsupported orchestration manifest version")
     expected_fields = {
         1: MANIFEST_V1_FIELDS,
@@ -320,6 +322,8 @@ def validate_manifest(
         7: MANIFEST_V7_FIELDS,
         8: MANIFEST_V8_FIELDS,
         9: MANIFEST_V9_FIELDS,
+        10: MANIFEST_V10_FIELDS,
+        11: MANIFEST_V11_FIELDS,
     }[version]
     if set(value) != expected_fields:
         raise OrchestrationError(
@@ -375,10 +379,20 @@ def validate_manifest(
                 "Manifest project configuration does not match the project"
             )
         validate_manifest_orchestration_config(value["orchestration_config"])
-    if version in {8, 9}:
+    if version in {10, 11}:
+        from .task_intent import validate_intent_metadata
+
+        validate_intent_metadata(value["task_intent"], launched=True)
+    if version in {8, 9} or (version in {10, 11} and value["planning"] is not None):
         from .planning import validate_planning_record
 
-        validate_planning_record(value["planning"])
+        planning = validate_planning_record(value["planning"])
+        if (
+            version in {10, 11}
+            and planning.get("task_intent", value["task_intent"])
+            != value["task_intent"]
+        ):
+            raise OrchestrationError("Manifest intent differs from planning admission")
 
     project_value = value["project"]
     if not isinstance(project_value, str):

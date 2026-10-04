@@ -23,6 +23,53 @@ The natural-language path uses the `tmux_orchestrator` model tool and preserves
 the same preview, trust, and confirmation boundaries. The standalone CLI and
 model tool retain their full command/action surfaces.
 
+### Explicit task intent (Unreleased)
+
+Start accepts exactly `change`, `investigation`, `review`, or `advisory` through
+model-tool `taskIntent`, terminal `--task-intent`, and the `/or-start` selector.
+Select operator intent, not a model-inferred label. For example:
+
+```sh
+pi-tmux-agents start --task-intent investigation --task 'Synthetic read-only question.'
+pi-tmux-agents start --project "$PWD" --task-intent change --task-file /tmp/task.md --dry-run
+```
+
+`change` uses the existing one-implementer writer and mandatory reviewer. The
+other values describe work without repository edits. Stage 1 does not launch a
+separate read-only workflow: Pi shows why coding orchestration may be unnecessary
+and asks **Answer directly in parent?** Yes returns `disposition=direct-parent`;
+No returns `disposition=cancelled`. Both return `launched=false`, create no
+orchestration resources, and submit no implementation/change claims. Slash
+intent-selection cancellation stops before preview. CLI non-change starts print
+the same warning and return `direct-parent` immediately, even with `--yes`,
+`--approve-project`, `--dynamic-plan`, or `--rpc-workers`. They do not resolve
+launch configuration or call a planner. A new explicit `change` request is
+required for coding; there is no proceed-anyway override and no automatic parent
+prompt injection. The normal model-tool start still requires TUI confirmation;
+the internal terminal dynamic adapter uses confirmed RPC, and both worker
+presentation modes share unchanged coding authority.
+
+Intent omission preserves ordinary static change tasks. Static starts make no
+classification provider call. The existing separately authorized dynamic call
+includes one bounded `task_intent` choice alongside topology/model/thinking
+questions, even for topology-only planning; this is a recommendation, not an
+additional planning axis or authority. Explicit intent wins. With omitted intent,
+a non-change recommendation offers direct-parent/cancel before CLI launch preview,
+trust bypass, or worker creation. Terminal dynamic redirection declines the
+parent-answer confirmation by default and returns `cancelled` with a notice;
+`--yes` confirms coding launch only. Dynamic `--dry-run` shows the non-change
+redirection without creating a run. Explicit `change` retains a conflicting
+recommendation in final confirmation and proceeds only with launch approval.
+Malformed choices fail closed, and the decision/preview/config bindings cover
+intent metadata and explicit-versus-omitted selection. A changed or tampered
+accepted preview cannot launch. Only `{version, operator, recommendation,
+effective, source}` metadata is retained; no task, rationale, or provider bodies.
+
+Use the parent directly for explanations or focused read-only work where multiple
+agents add little value. Phased inspect/plan is still a coding precursor that
+automatically advances to implementation, not an investigation/advisory escape
+hatch. No role, tool ACL, report schema, or mandatory-review rule is weakened.
+
 ### Model-tool recovery controls
 
 `tmux_orchestrator` has `stop`, `restart`, and `abort` actions (Unreleased), with no
@@ -301,20 +348,24 @@ TUI: `/or-start --plan=topology,thinking TASK`, or `/or-start --plan-scopes TASK
 for the seven-choice form. Cancelling the form starts nothing. Existing
 `/or-start --plan TASK` remains the all-axis compatibility path.
 
-Direct TypeSafe Jev and Pi fallback receive equivalent bounded questions only
-for authorized, unlocked axes. Fully locked assignments generate no model or
-thinking questions; a fully locked roster still gets one suitability question.
-There is exactly one separately authorized provider call, no retry/failover call,
-and the unchanged final launch confirmation. Preflight authorization, immediate
-acknowledgement, preview, final confirmation, terminal output, and retained reads
+Direct TypeSafe Jev and Pi fallback receive equivalent bounded axis-selection
+questions only for authorized, unlocked axes. Fully locked assignments generate
+no model or thinking questions; a fully locked roster gets one `locked_plan`
+suitability question plus the `task_intent` recommendation question included in
+every dynamic request. Both questions share the same single separately authorized
+provider call with no retry/failover call; final launch confirmation remains a
+separate step. Preflight authorization, immediate acknowledgement, preview, final
+confirmation, terminal output, and retained reads
 identify scopes, authoritative operator/policy locks, and decision source.
-Planning v3 retains only scope/lock metadata, exact assignments, bounded pool
-counts, usage, and binding digests, never task/context/config/provider bodies.
-Its decision and start bindings include scopes and locks; stale policy, catalog,
-preview, or scope/lock changes reject launch. Planning v1/v2 remains readable;
-retained reads label their absent scopes and locks as unavailable (legacy record),
-never inferred planner authority. This display does not change v2 admission's
-historical all-axis meaning. Fresh previews emit v3.
+Planning v4 retains only bounded task-intent and scope/lock metadata, exact
+assignments, bounded pool counts, usage, and binding digests, never
+task/context/config/provider bodies. Its decision and start bindings include
+intent, scopes, and locks; stale policy, catalog, preview, or intent/scope/lock
+changes reject launch. Planning v1/v2 remain readable; retained reads label their
+absent scopes and locks as unavailable (legacy record), never inferred planner
+authority. This display does not change v2 admission's historical all-axis meaning.
+Planning v3 remains readable and admissible with unavailable intent in that
+record; fresh previews emit v4.
 
 Decision-service precedence is:
 
@@ -334,7 +385,8 @@ The planner policy is stored in the `planner` member of the same authoritative
 user-global `~/.pi/agent/tmux-orchestrator.json` model/profile configuration.
 The planner member remains optional in version-4 and version-5 files.
 Version 5 adds the separate strict `workerCandidates` policy described below;
-manifest v8/v9 and broker-v1 are unchanged. Existing versions 1–4 remain valid
+broker-v1 is unchanged; new starts retain intent in manifest v10/v11 (legacy
+v8/v9 remain readable). Existing configuration versions 1–4 remain valid
 for ordinary starts and fully locked dynamic starts. A
 separate legacy `~/.pi/agent/tmux-orchestrator-planner.json` file (or a configured
 `PI_TMUX_ORCHESTRATOR_PLANNER_CONFIG` path) is no longer read as active policy:
@@ -422,17 +474,18 @@ the resolved worker union. No recency, quality, or orchestration reliability is
 inferred from names. Natural-language guidance cannot create or expand approval.
 Planning-call confirmation shows bounded pool source/count per eligible role;
 final confirmation and the immediate start acknowledgement show exact selected
-provider/model/thinking assignments. Retained planning v3 contains only selected scopes, authoritative locks, bounded
-pool source/count metadata, exact assignments, and digests, not pool/configuration
-bodies. The private topology v3 projection supplies the exact policy to preflight;
-do not copy that configuration projection into status or handoffs.
+provider/model/thinking assignments. Retained planning v4 adds bounded intent
+metadata to selected scopes, authoritative locks, bounded pool source/count
+metadata, exact assignments, and digests, not pool/configuration bodies. The
+private topology v3 projection supplies the exact policy to preflight; do not
+copy that configuration projection into status or handoffs.
 
 **Migration:** retain existing fields, change the root version to 5, and add
 reviewed exact pools using `/or-models` identities. Existing version-4 custom
 bindings remain supported. Alternatively, keep versions 1–4 and supply exact
 locks for every eligible role. Static/manual starts require no pool and retain
 their existing precedence. Retained planning v1 in manifests v8/v9 stays readable;
-it is not accepted as input for a new launch. Generate a fresh v3 preview.
+it is not accepted as input for a new launch. Generate a fresh v4 preview.
 Revalidation uses the original operator inputs, never planner-generated overrides
 as approval, and rejects changes to pool policy/source, role membership, approved
 availability, canonical capabilities, or resolved configuration after preview.
@@ -610,15 +663,20 @@ After final admission, the existing partial-start rollback kills only the exact
 new tmux session, marks the retained startup failed, and does not rewrite the
 accepted planning record.
 
-Manifest schemas v8/v9 retain only body-free planning provenance: dynamic mode,
-accepted status, decision model identity/thinking/source, selected exact
-role/model/thinking tuples and fixed custom contracts, timestamps, request ID,
-and binding digests. `list`, `status`, the dashboard, and Supervisor run/session
-reads project that same bounded metadata. They never retain or return the task,
-context capsule, planner prompt/reasoning, provider response body, credentials,
-endpoints, or custom resource paths/bodies. Legacy/static manifests are reported
-as static/manual provenance. Dry-run previews return accepted metadata but write
-no coordination state.
+New manifest schemas v10/v11 retain bounded task-intent metadata for admitted
+change work and only body-free planning provenance: dynamic mode, accepted
+status, decision model identity/thinking/source, selected exact role/model/thinking
+tuples and fixed custom contracts, timestamps, request ID, and binding digests.
+Legacy v8/v9 manifests remain readable with unavailable intent, not inferred
+intent evidence. Supervisor run/session reads expose top-level `task_intent`
+for new manifests in both static and dynamic modes; legacy intent is null/unavailable.
+`list` and `status` JSON expose intent only within accepted planning-v4 metadata
+for dynamic runs, not for static/manual or legacy planning records. Human
+`list`/`status` output and the dashboard do not display task intent. These read
+surfaces never retain or return the task, context capsule, planner prompt/reasoning,
+provider response body, credentials, endpoints, or custom resource paths/bodies.
+Legacy/static manifests are reported as static/manual planning provenance.
+Dry-run previews return accepted metadata but write no coordination state.
 
 Deterministic specialist activation remains authoritative after launch; the
 planner cannot force it. The model tool reports nested planner usage to Pi's

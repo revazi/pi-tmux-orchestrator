@@ -632,7 +632,7 @@ def main() -> int:
         )
         roles = {"implementer", "reviewer", "probe", "playwright", "django"}
         if (
-            manifest["version"] != 8
+            manifest["version"] != 10
             or manifest["coordination"] != "broker-v1"
             or manifest["planning"] != rpc_planning
         ):
@@ -1192,7 +1192,7 @@ def main() -> int:
         if (
             tui_manifest["transport"] != "tui"
             or tui_manifest["coordination"] != "broker-v1"
-            or tui_manifest["version"] != 8
+            or tui_manifest["version"] != 10
             or tui_manifest["planning"] != tui_planning
         ):
             raise AssertionError(
@@ -1254,7 +1254,7 @@ def main() -> int:
         print("OK detach returns the exact client without stopping worker panes")
         print("OK controller lifecycle")
         print(
-            "OK TUI and RPC presentations share manifest-v8 broker-v1 with "
+            "OK TUI and RPC presentations share manifest-v10 broker-v1 with "
             "fixed accepted planning provenance"
         )
         print("OK RPC panes render assistant progress plus tool inputs and outputs")
