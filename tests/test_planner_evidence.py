@@ -101,6 +101,37 @@ class PlannerEvidenceTests(JsonCliFixture):
                         self.assertEqual(item["confidence"], 0.77)
                         self.assertEqual(item["selected_probability"], 0.4)
                         self.assertLessEqual(len(item["alternatives"]), 3)
+                axis = record["evidence"]["decisions"][-1]
+                bound = copy.deepcopy(record)
+                bound["bindings"].update(input="a" * 64, start_config="b" * 64)
+                summary = retained_planning(
+                    {"version": 11, "planning": bound}, summary=True
+                )["evidence"]["provider_composition"]
+                options = {option["id"]: option for option in axis["options"]}
+                self.assertEqual(
+                    summary["selected"],
+                    options[axis["selected"]]["identity"]["provider_composition"],
+                )
+                self.assertEqual(summary["confidence"], axis["confidence"])
+                self.assertEqual(
+                    summary["selected_probability"], axis["selected_probability"]
+                )
+                self.assertEqual(
+                    summary["alternatives"],
+                    [
+                        {
+                            "composition": options[identity]["identity"][
+                                "provider_composition"
+                            ],
+                            "probability": options[identity]["probability"],
+                        }
+                        for identity in axis["alternatives"]
+                    ],
+                )
+                self.assertEqual(
+                    summary["feasible"],
+                    record["evidence"]["provider_composition"]["feasible"],
+                )
                 self.assertIn(
                     "not joint confidence or reasoning",
                     planner_evidence_lines(record)[0],
@@ -112,7 +143,7 @@ class PlannerEvidenceTests(JsonCliFixture):
             self.fixtures[8]["evidence"]["provider_comparison"]["state"], "mixed"
         )
         self.assertEqual(
-            self.fixtures[9]["evidence"]["decisions"][-1]["axis"], "composition"
+            self.fixtures[9]["evidence"]["decisions"][-2]["axis"], "composition"
         )
 
     def test_rejects_malformed_duplicate_non_normalized_inconsistent_and_fact_mismatched(
@@ -172,6 +203,113 @@ class PlannerEvidenceTests(JsonCliFixture):
         rebind(changed)
         with self.assertRaises(OrchestrationError):
             validate_planning_record(changed, allow_unbound=True)
+
+    def test_composition_facts_and_joint_choice_tampering_fail_before_cli_preview(self):
+        base = next(
+            record
+            for record in self.fixtures
+            if record["evidence"]["decisions"][-1]["authority"] == "planner"
+            and len({role["provider"] for role in record["roles"]}) == 1
+        )
+
+        def axis(evidence):
+            return evidence["decisions"][-1]
+
+        def inconsistent(evidence):
+            item = axis(evidence)
+            selected = next(
+                option
+                for option in item["options"]
+                if option["identity"]["provider_composition"] == "mixed_provider"
+            )
+            item.update(
+                selected=selected["id"], selected_probability=selected["probability"]
+            )
+            alternatives = sorted(
+                (option for option in item["options"] if option != selected),
+                key=lambda option: (
+                    -option["probability"],
+                    option["identity"]["provider_composition"],
+                ),
+            )
+            item["alternatives"] = [option["id"] for option in alternatives]
+
+        mutations = [
+            lambda e: e.pop("provider_composition"),
+            lambda e: e["decisions"].pop(),
+            lambda e: axis(e).update(axis="composition"),
+            lambda e: axis(e).update(authority="fixed"),
+            lambda e: axis(e).update(confidence=True),
+            lambda e: axis(e).update(selected="f" * 64),
+            lambda e: axis(e)["options"][0]["identity"].update(facts="f" * 64),
+            lambda e: axis(e)["options"][0].update(probability=0.9),
+            lambda e: axis(e)["options"].pop(),
+            lambda e: axis(e)["alternatives"].reverse(),
+            lambda e: e["provider_composition"]["feasible"].reverse(),
+            lambda e: e["provider_composition"]["roles"][0].update(inclusion=None),
+            lambda e: e["provider_composition"]["roles"][0]["candidates"][0].update(
+                thinking_levels=["off"]
+            ),
+            lambda e: e["provider_composition"].update(support="PRIVATE_SUPPORT_BODY"),
+            inconsistent,
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "planning.json"
+            for index, mutate in enumerate(mutations):
+                record = copy.deepcopy(base)
+                mutate(record["evidence"])
+                rebind(record)
+                with (
+                    self.subTest(mutation=index),
+                    self.assertRaises(OrchestrationError),
+                ):
+                    validate_planning_record(record, allow_unbound=True)
+                path.write_text(json.dumps(record), encoding="utf-8")
+                with mock.patch.object(ORCHESTRATOR, "create_tmux_grid") as launch:
+                    code, rejected, raw, _ = self.start(path, record, "--dry-run")
+                self.assertEqual(code, 2, raw[:300])
+                self.assertFalse(rejected["success"])
+                self.assertNotIn("PRIVATE_SUPPORT_BODY", raw)
+                launch.assert_not_called()
+        # Version pairs discriminate old evidence rather than treating missing new
+        # authority as neutral or fabricating planner confidence.
+        for version, evidence_version in [(6, 1), (5, 2)]:
+            changed = copy.deepcopy(base)
+            changed.update(version=version)
+            changed["evidence"]["version"] = evidence_version
+            rebind(changed)
+            with self.assertRaises(OrchestrationError):
+                validate_planning_record(changed, allow_unbound=True)
+
+    def test_legacy_v5_reads_keep_suitability_and_unavailable_provider_decision(self):
+        for fixture in self.fixtures[:11]:
+            record = copy.deepcopy(fixture)
+            record["version"] = 5
+            evidence = record["evidence"]
+            evidence["version"] = 1
+            evidence.pop("provider_composition")
+            evidence["decisions"].pop()
+            rebind(record)
+            record["bindings"].update(input="a" * 64, start_config="b" * 64)
+            validate_planning_record(record)
+            for summary in [False, True]:
+                retained = retained_planning(
+                    {"version": 10, "planning": record}, summary=summary
+                )
+                lines = "\n".join(planner_evidence_lines(retained))
+                self.assertIn(
+                    "Provider composition decision: unavailable (legacy record)", lines
+                )
+                self.assertIn("Planner evidence v1", lines)
+                if summary:
+                    self.assertEqual(
+                        retained["evidence"]["provider_composition"],
+                        {"state": "unavailable"},
+                    )
+                if fixture == self.fixtures[9] and not summary:
+                    self.assertEqual(
+                        retained["evidence"]["decisions"][-1]["axis"], "composition"
+                    )
 
     def test_strict_file_duplicate_and_oversize_reads(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -267,7 +405,7 @@ class PlannerEvidenceTests(JsonCliFixture):
                 )
                 self.assertEqual(bound["evidence"], record["evidence"])
                 tampered = copy.deepcopy(bound)
-                tampered["evidence"]["decisions"][-1]["confidence"] = 0.5
+                tampered["evidence"]["decisions"][-2]["confidence"] = 0.5
                 rebind(tampered)
                 path.write_text(json.dumps(tampered), encoding="utf-8")
                 with mock.patch.object(ORCHESTRATOR, "create_tmux_grid") as launch:
@@ -350,6 +488,12 @@ class PlannerEvidenceTests(JsonCliFixture):
                 )
                 summary = retained_planning(manifest, summary=True)["evidence"]
                 self.assertEqual(summary["projection"], "summary")
+                self.assertEqual(summary["version"], 2)
+                self.assertEqual(
+                    summary["provider_composition"]["selected"], "single_provider"
+                )
+                self.assertEqual(summary["provider_composition"]["state"], "fixed")
+                self.assertIsNone(summary["provider_composition"]["confidence"])
                 self.assertNotIn("catalog", summary)
                 self.assertEqual(
                     summary["decision_binding"], bound["bindings"]["decision"]
@@ -365,7 +509,7 @@ class PlannerEvidenceTests(JsonCliFixture):
                 rendered = render_dashboard(
                     manifest, {}, [], width=160, height=40, color=False
                 )
-                self.assertIn("Planner evidence v1 typesafe_choice", rendered)
+                self.assertIn("Planner evidence v2 typesafe_choice", rendered)
                 self.assertIn("rationale_unavailable", rendered)
 
     def test_legacy_v4_and_static_explicit_unavailable(self):

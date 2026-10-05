@@ -883,7 +883,17 @@ def _full_layout(
         evidence = planning.get("evidence")
         text = "Planner evidence unavailable (legacy)"
         if evidence and evidence.get("source"):
-            text = f"Planner evidence v1 {evidence['source']}; {evidence['provider_comparison']['state']}; rationale_unavailable; status for axis alternatives"
+            from .planner_evidence import provider_composition_summary
+
+            composition = provider_composition_summary(evidence)
+            selected = composition.get("selected", "unavailable")
+            authority = composition.get("state", "unavailable")
+            probability = (
+                "probabilities unavailable"
+                if composition.get("confidence") is None
+                else f"confidence={composition['confidence']}"
+            )
+            text = f"Planner evidence v{evidence['version']} {evidence['source']}; {evidence['provider_comparison']['state']}; rationale_unavailable; provider composition {selected} ({authority}; {probability}); status for axis alternatives"
         lines.append(_line(text, "muted"))
     now = _now_flow_line(
         snapshot, unicode=unicode, presentation_frame=presentation_frame

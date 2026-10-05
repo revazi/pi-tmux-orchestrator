@@ -1,4 +1,5 @@
 import { basename } from "node:path";
+import { providerCompositionSummary } from "./orchestrator-planner-evidence.js";
 
 const MAX_DOCTOR_LINES = 6;
 const MAX_VISIBLE_SESSIONS = 12;
@@ -486,8 +487,10 @@ function sessionPlanning(session) {
   if (session.planning?.mode !== "dynamic") return "plan static";
   const scopes = session.planning.scopes?.join("+");
   const evidence = session.planning.evidence;
-  const audit = evidence?.source ? `evidence v1 ${evidence.source} ${evidence.provider_comparison?.state} rationale_unavailable` : "evidence unavailable";
-  return `${scopes ? `plan dynamic (${scopes})` : "plan dynamic"}; ${audit}`;
+  const audit = evidence?.source ? `evidence v${evidence.version} ${evidence.source} ${evidence.provider_comparison?.state} rationale_unavailable` : "evidence unavailable";
+  const composition = evidence?.projection === "summary" ? evidence.provider_composition : providerCompositionSummary(evidence);
+  const selected = composition?.selected ? `${composition.selected} (${composition.state}; ${composition.confidence === null ? "probabilities unavailable" : `confidence=${composition.confidence}`})` : "unavailable";
+  return `${scopes ? `plan dynamic (${scopes})` : "plan dynamic"}; ${audit}; provider composition ${selected}`;
 }
 
 function sessionUsage(session) {

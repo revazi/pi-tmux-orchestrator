@@ -101,7 +101,7 @@ and manifests in both TUI/RPC presentations. `--yes` cannot convert non-change
 into coding. Check intent-selection and final-confirmation cancellation; ordinary
 static change starts must have no classifier call and retain one writer plus
 mandatory review. The existing dynamic call's bounded recommendation must be
-shown, subordinate to explicit intent, and bound in accepted planning-v4/v5
+shown, subordinate to explicit intent, and bound in accepted planning-v4/v5/v6
 records retained in manifest v10/v11. Check every enum, omitted-versus-explicit precedence, malformed values,
 stale/tampered preview rejection, retained reads, and body redaction. Legacy
 intent remains unavailable, not inferred from report kind. These are synthetic
@@ -110,14 +110,14 @@ acceptance. No advisory assignment/report workflow is added.
 
 ### Accepted decision-evidence gate (Unreleased)
 
-Issue #193 uses **model-free synthetic fixtures only**; do not repeat the stopped
+Issues #193/#194 use **model-free synthetic fixtures only**; do not repeat the stopped
 #174 direct-Jev attempt or infer its missing provider response. Run focused
 `PYTHONPATH=tests python3 -m unittest test_planning test_planner_evidence` and
 `node --test tests/extension.test.mjs`, then the pinned full `scripts/test.sh`
 (Ruff 0.11.11), exact package verification/smoke, measured Node coverage and
 Fallow 3.22.0 identity-baseline/changed-file gates, and `git diff --check`.
 
-Check planning-v5/evidence-v1 preview, final TUI/RPC confirmation, persisted
+Check planning-v6/evidence-v2 preview, final TUI/RPC confirmation, persisted
 manifest v10/v11 reopen, human/JSON status, list/Supervisor summaries versus exact
 snapshots, dashboard, and parent final evidence. Confirm exact supplied facts,
 binary64 digest agreement (including tiny declared rates), selected confidence
@@ -125,7 +125,17 @@ versus probability, independent model/thinking axes, canonical top-three ties,
 fixed/singleton authority, Pi probability unavailability, all seven scope
 combinations/locks, trusted custom specialists, omitted roles, existing suitability
 questions, homogeneous/mixed provider `rationale_unavailable`, and immutable
-launch assignments. Malformed/duplicate/non-normalized/oversized/fact-mismatched
+launch assignments. Check single/mixed/neutral composition, exact final-roster
+consistency (omitted specialists do not count), unique locked/fixed composition
+without confidence, optional/custom feasibility, approved role pools and thinking
+locks, all seven scopes, and TypeSafe/Pi one-call parity. Confirm canonical
+composition option facts, selected confidence/top alternatives, summary projections,
+and pre-preview refusal of missing/extra/malformed/inconsistent answers. Tampered
+facts, version downgrades, and stale preview/capability evidence must not launch.
+Read historical planning-v5/evidence-v1 with its suitability axis intact and
+provider-composition decision authority explicitly unavailable. No diversity
+benefit, name-based quality/latency/billing inference, or #195 support gate is
+claimed or implemented. Malformed/duplicate/non-normalized/oversized/fact-mismatched
 and stale/tampered evidence must cause no launch. Static/planning-v1–v4 evidence
 is unavailable, not reconstructed. Test sentinels for every private body surface;
 no model/provider traffic, credentials, raw errors, or endpoint retention is

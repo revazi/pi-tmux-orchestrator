@@ -127,7 +127,7 @@ metadata is retained, never task, rationale, or provider bodies.
 
 ### Auditable accepted-plan evidence (Unreleased)
 
-Dynamic planning remains opt-in. Accepted planning v5 records retain evidence v1:
+Dynamic planning remains opt-in. Fresh accepted planning v6 records retain evidence v2:
 selected Choice confidence and probability, plus up to three alternatives for
 roster, independent per-role model/thinking axes, task-intent recommendation, and
 locked-plan suitability when that question exists. Options bind exact canonical
@@ -139,7 +139,24 @@ Fixed/locked or single-option axes have deterministic fixed authority and no
 probabilities. Pi fallback choices explicitly have unavailable probabilities;
 static and planning v1–v4 reads explicitly report unavailable evidence. Homogeneous
 and mixed provider plans expose `rationale_unavailable`, never invented Jev
-reasoning. Immutable launch assignments remain authoritative.
+reasoning. Planning v5/evidence v1 remains readable with its existing axes but
+provider-composition decision authority unavailable. Immutable launch assignments
+remain authoritative.
+
+The same **one authorized call** asks one run-wide `provider_composition` Choice:
+`single_provider`, `mixed_provider`, or `no_material_preference`, only when both
+single and mixed assignments are feasible after role-specific eligibility,
+thinking/model locks, mandatory roles, and optional/trusted custom inclusion.
+A unique composition is fixed by those constraints, with no planner confidence.
+Single requires exactly one assigned provider; mixed requires at least two;
+neutral permits either. Both TypeSafe and Pi fallback enforce this jointly with
+the final included roster/tuples before preview. Wording is provider/model-name
+neutral and permits only supplied canonical capabilities, declared catalog cost
+hints, task/context constraints, role contracts, and locks—not inferred quality,
+reliability, recency, latency, billing, or a claim that diversity improves outcomes.
+Canonical feasible-option facts and selected composition are digest-bound and
+visible in exact evidence and bounded summaries. No extra call, composition knob,
+default change, or #195 material-support gate is introduced.
 
 Exact preview/confirmation, reopened planning, JSON/human status, Supervisor
 snapshots, dashboard summaries, and parent final evidence expose this bounded
@@ -183,9 +200,10 @@ it never silently falls back to the catalog. Both TypeSafe Jev and Pi fallback
 use the same approved scope and canonical capabilities. Confirmation and the
 immediate start acknowledgement show pool source/count and exact selected
 assignments, not configuration bodies. Ordinary static starts and configuration
-versions 1–4 remain supported. Planning v1 is read-only; existing v2–v4
-admission remains compatible, while fresh dynamic previews use v5. All older
-records remain readable with decision evidence unavailable. See
+versions 1–4 remain supported. Planning v1 is read-only; existing v2–v5
+admission remains compatible, while fresh dynamic previews use v6. Older
+records remain readable: v1–v4 evidence is unavailable; v5 evidence lacks explicit
+provider-composition decision authority. See
 [approved-pool configuration and migration](references/usage.md#approved-exact-worker-model-pools)
 and [provider-free acceptance](references/prerelease-testing.md#automated-provider-free-planning-gate).
 

@@ -14,7 +14,8 @@ from .models import OrchestrationError
 from .role_registry import valid_custom_role_id
 from .task_intent import validate_intent_metadata
 
-PLANNING_VERSION = 5
+PLANNING_VERSION = 6
+EVIDENCE_PLANNING_VERSION = 5
 INTENT_PLANNING_VERSION = 4
 SCOPED_PLANNING_VERSION = 3
 POOL_PLANNING_VERSION = 2
@@ -165,15 +166,25 @@ def validate_planning_record(
             POOL_PLANNING_VERSION,
             SCOPED_PLANNING_VERSION,
             INTENT_PLANNING_VERSION,
+            EVIDENCE_PLANNING_VERSION,
             PLANNING_VERSION,
         }
         else set()
     )
-    if version in {SCOPED_PLANNING_VERSION, INTENT_PLANNING_VERSION, PLANNING_VERSION}:
+    if version in {
+        SCOPED_PLANNING_VERSION,
+        INTENT_PLANNING_VERSION,
+        EVIDENCE_PLANNING_VERSION,
+        PLANNING_VERSION,
+    }:
         fields |= {"scopes", "locks"}
-    if version in {INTENT_PLANNING_VERSION, PLANNING_VERSION}:
+    if version in {
+        INTENT_PLANNING_VERSION,
+        EVIDENCE_PLANNING_VERSION,
+        PLANNING_VERSION,
+    }:
         fields |= {"task_intent"}
-    if version == PLANNING_VERSION:
+    if version in {EVIDENCE_PLANNING_VERSION, PLANNING_VERSION}:
         fields |= {"evidence"}
     if set(value) != fields:
         raise OrchestrationError("Planning record has missing or unknown fields")
@@ -185,6 +196,7 @@ def validate_planning_record(
             POOL_PLANNING_VERSION,
             SCOPED_PLANNING_VERSION,
             INTENT_PLANNING_VERSION,
+            EVIDENCE_PLANNING_VERSION,
             PLANNING_VERSION,
         }
         or value.get("mode") != "dynamic"
@@ -250,9 +262,18 @@ def validate_planning_record(
         for field in PLANNING_BINDING_FIELDS
     }
     decision_metadata = {"version": PLANNING_DECISION_VERSION, "roles": roles}
-    if version in {SCOPED_PLANNING_VERSION, INTENT_PLANNING_VERSION, PLANNING_VERSION}:
+    if version in {
+        SCOPED_PLANNING_VERSION,
+        INTENT_PLANNING_VERSION,
+        EVIDENCE_PLANNING_VERSION,
+        PLANNING_VERSION,
+    }:
         decision_metadata.update(validate_scope_metadata(value, roles))
-    if version in {INTENT_PLANNING_VERSION, PLANNING_VERSION}:
+    if version in {
+        INTENT_PLANNING_VERSION,
+        EVIDENCE_PLANNING_VERSION,
+        PLANNING_VERSION,
+    }:
         decision_metadata["task_intent"] = validate_intent_metadata(
             value["task_intent"], launched=True
         )
@@ -269,20 +290,30 @@ def validate_planning_record(
         "bindings": bindings,
         "usage": _planning_usage(value.get("usage")),
     }
-    if version in {SCOPED_PLANNING_VERSION, INTENT_PLANNING_VERSION, PLANNING_VERSION}:
+    if version in {
+        SCOPED_PLANNING_VERSION,
+        INTENT_PLANNING_VERSION,
+        EVIDENCE_PLANNING_VERSION,
+        PLANNING_VERSION,
+    }:
         result.update(validate_scope_metadata(value, roles))
-    if version in {INTENT_PLANNING_VERSION, PLANNING_VERSION}:
+    if version in {
+        INTENT_PLANNING_VERSION,
+        EVIDENCE_PLANNING_VERSION,
+        PLANNING_VERSION,
+    }:
         result["task_intent"] = decision_metadata["task_intent"]
     if version in {
         POOL_PLANNING_VERSION,
         SCOPED_PLANNING_VERSION,
         INTENT_PLANNING_VERSION,
+        EVIDENCE_PLANNING_VERSION,
         PLANNING_VERSION,
     }:
         result["worker_candidates"] = validate_candidate_metadata(
             value["worker_candidates"], identities
         )
-    if version == PLANNING_VERSION:
+    if version in {EVIDENCE_PLANNING_VERSION, PLANNING_VERSION}:
         from .planner_evidence import validate_planner_evidence
 
         result["evidence"] = validate_planner_evidence(value["evidence"], result)
@@ -472,6 +503,7 @@ def load_planning_record(
         POOL_PLANNING_VERSION,
         SCOPED_PLANNING_VERSION,
         INTENT_PLANNING_VERSION,
+        EVIDENCE_PLANNING_VERSION,
         PLANNING_VERSION,
     }:
         raise OrchestrationError(
@@ -539,7 +571,11 @@ def bind_planning_record(
 ) -> dict[str, Any]:
     from .planner_evidence import evidence_digest
 
-    if record["version"] in {INTENT_PLANNING_VERSION, PLANNING_VERSION}:
+    if record["version"] in {
+        INTENT_PLANNING_VERSION,
+        EVIDENCE_PLANNING_VERSION,
+        PLANNING_VERSION,
+    }:
         if record["task_intent"]["operator"] != operator_intent:
             raise OrchestrationError(
                 "Operator intent changed after planning", "stale_planning_binding"
@@ -553,6 +589,7 @@ def bind_planning_record(
         POOL_PLANNING_VERSION,
         SCOPED_PLANNING_VERSION,
         INTENT_PLANNING_VERSION,
+        EVIDENCE_PLANNING_VERSION,
         PLANNING_VERSION,
     }:
         metadata = record["worker_candidates"]
@@ -577,7 +614,10 @@ def bind_planning_record(
                     "Planning selected an unapproved worker model",
                     "stale_planning_binding",
                 )
-        if record["version"] == PLANNING_VERSION and candidate_policy is not None:
+        if (
+            record["version"] in {EVIDENCE_PLANNING_VERSION, PLANNING_VERSION}
+            and candidate_policy is not None
+        ):
             locks = {lock["role"]: lock for lock in record["locks"]}
             for item in record["evidence"]["eligibility"]:
                 role = item["role"]
@@ -609,18 +649,25 @@ def bind_planning_record(
                     in {
                         SCOPED_PLANNING_VERSION,
                         INTENT_PLANNING_VERSION,
+                        EVIDENCE_PLANNING_VERSION,
                         PLANNING_VERSION,
                     }
                     else {}
                 ),
                 **(
                     {"task_intent": record["task_intent"]}
-                    if record["version"] in {INTENT_PLANNING_VERSION, PLANNING_VERSION}
+                    if record["version"]
+                    in {
+                        INTENT_PLANNING_VERSION,
+                        EVIDENCE_PLANNING_VERSION,
+                        PLANNING_VERSION,
+                    }
                     else {}
                 ),
                 **(
                     {"evidence": evidence_digest(record["evidence"])}
-                    if record["version"] == PLANNING_VERSION
+                    if record["version"]
+                    in {EVIDENCE_PLANNING_VERSION, PLANNING_VERSION}
                     else {}
                 ),
                 "worker_candidates": metadata,
@@ -689,17 +736,20 @@ def retained_planning(
             "evidence": {"version": 1, "status": "unavailable"},
         }
     record = validate_planning_record(manifest["planning"])
+    from .planner_evidence import provider_composition_summary
+
     if summary and record.get("evidence"):
         evidence = record["evidence"]
         return {
             **record,
             "evidence": {
-                "version": 1,
+                "version": evidence["version"],
                 "projection": "summary",
                 "source": evidence["source"],
                 "decision_binding": record["bindings"]["decision"],
                 "decision_count": len(evidence["decisions"]),
                 "provider_comparison": evidence["provider_comparison"],
+                "provider_composition": provider_composition_summary(evidence),
             },
         }
     return {

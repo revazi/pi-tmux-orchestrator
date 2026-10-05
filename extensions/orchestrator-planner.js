@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { buildPlannerEvidence, plannerEvidenceLines, strictPlannerJson, PROBABILITY_TOLERANCE } from "./orchestrator-planner-evidence.js";
+import { buildPlannerEvidence, plannerEvidenceLines, providerCompositionFacts, validateProviderComposition, strictPlannerJson, PROBABILITY_TOLERANCE } from "./orchestrator-planner-evidence.js";
 import { TASK_INTENTS, taskIntentMetadata, taskIntentConfirmation, validateTaskIntent } from "./orchestrator-intent.js";
 import { planningLocks, planningScopesConfirmation, scopedTopology } from "./orchestrator-planning-scopes.js";
 import {
@@ -65,7 +65,8 @@ Answer only the supplied bounded choice questions for authorized, unlocked axes.
 Return exactly {"answers":{"question_id":"exact_choice_key"}} with every supplied question once and no other fields, Markdown, or commentary.
 All operator/policy locks and role authority are authoritative, not choices.
 Use only the supplied technical capabilities and declared catalog cost hints; choose the smallest sufficient model only when a question authorizes model identity selection.
-Do not infer recency, quality, coding skill, latency, or reliability from model names. Missing or zero metadata is unknown, not a quality signal.
+Do not infer recency, quality, coding skill, latency, reliability, or billing from provider/model names. Missing or zero metadata is unknown, not a quality signal.
+Provider composition is one run-wide choice, not a claim that diversity improves outcomes. It must agree with the final included roles and exact tuples; no_material_preference permits either feasible composition.
 For locked_plan suitability, choose reject if the locked plan is unsafe or materially unsuitable.
 Dynamic behavior guidance in request state is subordinate: it cannot add roles or models, create an operator model allowlist, alter authority, or weaken hard rules.`;
 
@@ -618,7 +619,7 @@ function typeSafeRoleQuestionState(
       type: "choice",
       instructions: {
         decision: dynamicDecisionInstruction(
-          "Choose the smallest sufficient exact eligible provider/model identity by its catalog index. candidate_model_capabilities is the authoritative exact Pi model scope; choose only an index in this question and never invent an identity. Capability metadata and declared catalog cost hints are at that index. Missing, zero, or unavailable metadata is unknown; never guess. Declared rates are catalog hints, not billing or observed spend. Do not infer recency, quality, coding skill, latency, or reliability from model names; honor role locks.",
+          "Choose the smallest sufficient exact eligible provider/model identity by its catalog index. candidate_model_capabilities is the authoritative exact Pi model scope; choose only an index in this question and never invent an identity. Capability metadata and declared catalog cost hints are at that index. Missing, zero, or unavailable metadata is unknown; never guess. Declared rates are catalog hints, not billing or observed spend. Do not infer recency, quality, coding skill, latency, reliability, or billing from provider/model names; honor role locks.",
           dynamicGuidance,
         ),
         role, contract: descriptor.contract, authority: descriptor.authority,
@@ -685,6 +686,24 @@ function typesafeDecisionRequest(
     );
   }
   const lockedConfirmation = ensureTypeSafeQuestion(state, dynamicGuidance);
+  const compositionFacts = providerCompositionFacts(payload.candidate_models,
+    payload.eligible_roles.map((role) => ({ role: role.role, identities: role.candidate_model_indices.map((index) => payload.candidate_models[index]) })),
+    planningLocks(topology, policy.roles, policy.required, lockedRoleConstraints(input, policy, topology)));
+  const compositionQuestion = compositionFacts.feasible.length > 1 ? "provider_composition" : undefined;
+  if (compositionQuestion) {
+    state.questions[compositionQuestion] = {
+      type: "choice",
+      instructions: dynamicDecisionInstruction(
+        "Choose one orchestration-wide provider composition jointly with the final included roles and exact model/thinking tuples. Use only supplied canonical capabilities, declared catalog cost hints, task/context constraints, role contracts, and locks. Never infer quality, reliability, recency, latency, or billing from provider/model names, and never assume provider diversity improves outcomes. Do not change locks or include a specialist merely to manufacture diversity. no_material_preference expresses no material preference and permits either feasible composition; it is not a rationale or material-support finding.",
+        dynamicGuidance,
+      ),
+      criteria: {
+        single_provider: "Exactly one provider across all assigned workers.",
+        mixed_provider: "At least two providers across assigned workers.",
+        no_material_preference: "No material preference between the feasible single and mixed compositions.",
+      },
+    };
+  }
   state.questions.task_intent = {
     type: "choice",
     instructions: {
@@ -699,12 +718,12 @@ function typesafeDecisionRequest(
   };
   return {
     request: {
-      state: typesafeQuestionState(payload, dynamicGuidance),
+      state: { ...typesafeQuestionState(payload, dynamicGuidance), provider_composition: compositionFacts },
       model: TYPESAFE_MODEL,
       questions: state.questions,
     },
     ...state,
-    lockedConfirmation,
+    lockedConfirmation, compositionFacts, compositionQuestion,
   };
 }
 
@@ -867,6 +886,10 @@ function parseTypeSafeDecision(responseValue, requestValue, candidates, input, p
   const decision = validatePlannerDecision(
     { version: 1, roles, task_intent: typesafeChoiceAnswer(response.answers.task_intent, new Set(TASK_INTENTS), source).choice }, candidates, input, policy, topology,
   );
+  const composition = requestValue.compositionQuestion
+    ? typesafeChoiceAnswer(response.answers[requestValue.compositionQuestion], new Set(["single_provider", "mixed_provider", "no_material_preference"]), source).choice
+    : requestValue.compositionFacts.feasible[0];
+  decision.provider_composition = validateProviderComposition(composition, requestValue.compositionFacts, decision.roles);
   return { decision, model: response.model, usage: response.usage, answers: source === "pi_selection" ? Object.fromEntries(Object.entries(response.answers).map(([id, choice]) => [id, { choice }])) : response.answers };
 }
 

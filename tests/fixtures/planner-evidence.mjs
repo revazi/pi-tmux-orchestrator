@@ -2,9 +2,9 @@
 import { fileURLToPath } from "node:url";
 import { runPreflightPlanner, selectDecisionModel, validatePlannerTopology, planningRecordForPreview } from "../../extensions/orchestrator-planner.js";
 
-export async function syntheticEvidenceFixture({ source = "typesafe_choice", scopes, mixed = false, fixed = false, custom = false, mutateAnswer, modelCount = 5 } = {}) {
+export async function syntheticEvidenceFixture({ source = "typesafe_choice", scopes, mixed = false, fixed = false, custom = false, mutateAnswer, modelCount = 5, multiProvider = false, assignMixed = false, composition, customMixed = false, includeSpecialists = false, lockMandatory = false, inputOverrides = {}, candidatePools = {} } = {}) {
   const models = Array.from({ length: modelCount }, (_, index) => ({
-    provider: mixed && index === modelCount - 1 ? "q" : "p", id: `candidate-${index}`,
+    provider: (mixed || multiProvider || customMixed) && index === modelCount - 1 ? "q" : "p", id: `candidate-${index}`,
     reasoning: true, input: ["text", "image"], contextWindow: 32000, maxTokens: 4000,
     thinkingLevelMap: { off: null, minimal: null, low: "low", medium: "medium", high: "high" },
     cost: { input: index === 0 ? 1e-7 : index === 1 ? 1e-6 : index, output: index + 1, cacheRead: 0, cacheWrite: 0, tiers: [{ inputTokensAbove: 10000, input: 2, output: 3, cacheRead: 0, cacheWrite: 0 }] },
@@ -16,19 +16,23 @@ export async function syntheticEvidenceFixture({ source = "typesafe_choice", sco
     builtins: Object.fromEntries(["implementer", "reviewer", "probe", "playwright", "django"].map((role) => {
       const model = mixed && role === "reviewer" ? models.at(-1) : models[0];
       const effective = { provider: model.provider, model: model.id, thinking: "low" };
-      return [role, { effective, constraint: fixed || mixed && role === "reviewer" ? effective : {} }];
+      return [role, { effective, constraint: fixed || lockMandatory && ["implementer", "reviewer"].includes(role) || mixed && role === "reviewer" ? effective : {} }];
     })),
     static_roles: [], optional_roles: fixed ? [] : ["probe"],
-    custom_roles: custom ? [{ role: "custom-security", contract: "probe", provider: "p", model: models[0].id, thinking: "low" }] : [],
-    worker_candidates: { version: 1, all: models.map((item) => ({ provider: item.provider, model: item.id })), roles: {} },
+    custom_roles: custom || customMixed ? [{ role: "custom-security", contract: "probe", provider: customMixed ? "q" : "p", model: customMixed ? models.at(-1).id : models[0].id, thinking: "low" }] : [],
+    worker_candidates: { version: 1, all: models.map((item) => ({ provider: item.provider, model: item.id })), roles: candidatePools },
   };
   const topology = validatePlannerTopology(raw);
   let captured;
+  let calls = 0;
   const answer = (request) => {
+    calls += 1;
     captured = request;
     const answers = Object.fromEntries(Object.entries(request.questions).map(([id, question]) => {
       const labels = Object.keys(question.criteria);
-      const choice = id.startsWith("include_") ? "omit" : id === "task_intent" ? "change" : labels[0];
+      const choice = id === "provider_composition" ? composition ?? (mixed || assignMixed || customMixed && includeSpecialists ? "mixed_provider" : "single_provider")
+        : id === "model_01" && assignMixed ? `m${(modelCount - 1).toString(36)}`
+        : id.startsWith("include_") ? includeSpecialists ? "include" : "omit" : id === "task_intent" ? "change" : labels[0];
       const probabilities = Object.fromEntries(labels.map((label) => [label, labels.length === 1 ? 1 : label === choice ? 0.4 : 0.6 / (labels.length - 1)]));
       const item = { type: "choice", choice, confidence: 0.77, probabilities };
       if (mutateAnswer) mutateAnswer(id, item);
@@ -42,14 +46,14 @@ export async function syntheticEvidenceFixture({ source = "typesafe_choice", sco
   const selection = selectDecisionModel(ctx, { provider: "p", model: models[0].id }, { version: 1, preferred: null, fallbacks: [], no_eligible: "cancel" }, [], source === "typesafe_choice" ? { typesafeApiKey: "SYNTHETIC_KEY" } : {});
   const result = await runPreflightPlanner(ctx, {
     dynamicPlan: true, ...(scopes ? { planningScopes: scopes } : {}), task: "PRIVATE_TASK_BODY", taskIntent: "change",
-    contextCapsule: { currentState: ["PRIVATE_CONTEXT_BODY"] },
+    contextCapsule: { currentState: ["PRIVATE_CONTEXT_BODY"] }, ...inputOverrides,
   }, "/synthetic", selection, topology, undefined, undefined, {
     typesafeApiKey: "SYNTHETIC_KEY", dynamicGuidance: { text: "PRIVATE_GUIDANCE_BODY" },
     typesafeFetch: async (_endpoint, options) => new Response(JSON.stringify({
       model: "jev-1.13.0", answers: answer(JSON.parse(options.body)), usage: { input_tokens: 10, output_tokens: 5 },
     }), { status: 200 }),
   });
-  return { ...result, record: planningRecordForPreview(result.plan), request: captured };
+  return { ...result, record: planningRecordForPreview(result.plan), request: captured, calls };
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
@@ -60,6 +64,13 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const options = [
     ...scopes.map((value) => ({ scopes: value })), { source: "pi_selection" },
     { mixed: true }, { fixed: true }, { custom: true },
+    ...["typesafe_choice", "pi_selection"].flatMap((source) => [
+      ...scopes.map((scopes) => ({ source, scopes, multiProvider: true, composition: scopes.includes("models") ? "no_material_preference" : undefined })),
+      { source, multiProvider: true, assignMixed: true },
+      { source, customMixed: true, lockMandatory: true, includeSpecialists: true },
+      { source, customMixed: true, fixed: true, inputOverrides: { projectCustomRoles: true } },
+      { source, mixed: true, inputOverrides: { modelOverrides: { implementer: { provider: "p", model: "candidate-0", thinking: "low" } }, withProbe: false } },
+    ]),
   ];
   console.log(JSON.stringify(await Promise.all(options.map(async (option) => (await syntheticEvidenceFixture(option)).record))));
 }
