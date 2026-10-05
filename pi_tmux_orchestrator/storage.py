@@ -513,7 +513,7 @@ def validate_manifest(
                 raise OrchestrationError(
                     f"Manifest role {role_name} session path is not canonical"
                 )
-    if (value.get("planning") or {}).get("version") == 5:
+    if (value.get("planning") or {}).get("version") in {5, 6}:
         planned = value["planning"]["roles"]
         if any(
             item["contract"]
@@ -538,7 +538,7 @@ def validate_manifest(
             )
     maximum = (
         MAX_EVIDENCE_MANIFEST_BYTES
-        if (value.get("planning") or {}).get("version") == 5
+        if (value.get("planning") or {}).get("version") in {5, 6}
         else MAX_MANIFEST_BYTES
     )
     if (

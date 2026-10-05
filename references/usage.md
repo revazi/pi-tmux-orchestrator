@@ -670,7 +670,7 @@ tuples and fixed custom contracts, timestamps, request ID, and binding digests.
 Legacy v8/v9 manifests remain readable with unavailable intent, not inferred
 intent evidence. Supervisor run/session reads expose top-level `task_intent`
 for new manifests in both static and dynamic modes; legacy intent is null/unavailable.
-`list` and `status` JSON expose intent only within accepted planning-v4/v5 metadata
+`list` and `status` JSON expose intent only within accepted planning-v4/v5/v6 metadata
 for dynamic runs, not for static/manual or legacy planning records. Human
 `list`/`status` output and the dashboard do not display task intent. These read
 surfaces never retain or return the task, context capsule, planner prompt/reasoning,
@@ -678,15 +678,16 @@ provider response body, credentials, endpoints, or custom resource paths/bodies.
 Static manifests report static/manual planning provenance; legacy dynamic
 records remain dynamic with missing authority/evidence explicitly unavailable.
 
-### Accepted-plan evidence v1 (Unreleased)
+### Accepted-plan evidence (Unreleased)
 
-Fresh accepted previews use planning v5, compatible with manifest v10/v11. The
+Fresh accepted previews use planning v6/evidence v2, compatible with manifest v10/v11. The
 versioned evidence projection retains only canonical supplied metadata. Exact
 preview/launch confirmation, persisted/reopened records, CLI JSON/human `status`,
 Supervisor snapshots, and parent final updates expose selected confidence,
 selected probability, and up to **three nonselected alternatives** for every
 existing question. Dashboard rows and JSON `list` / Supervisor collection reads
-use small digest-bound availability/source/provider-comparison summaries; use
+use small digest-bound availability/source/provider-comparison and selected
+provider-composition/confidence/alternative summaries; use
 exact `status` or a Supervisor snapshot for full options and facts.
 
 Direct TypeSafe Choice confidence is retained separately from the selected
@@ -711,7 +712,38 @@ the value was locked or deterministic singleton. `source: pi_selection` retains
 Pi fallback choices but no confidence, probabilities, or fabricated one-hot
 alternatives. Task intent records the recommendation separately from effective
 operator authority. Fully locked requests retain the actual `composition`
-suitability question when present, not a new provider request.
+suitability question when present. This legacy `composition` axis is distinct
+from `provider_composition`.
+
+The **same one authorized planning call** asks a strict orchestration-wide
+`provider_composition` Choice only when both physical compositions are feasible:
+
+- `single_provider`: exactly one provider across all finally assigned workers.
+- `mixed_provider`: at least two providers across finally assigned workers.
+- `no_material_preference`: no material preference between feasible single/mixed;
+  either final composition is valid, not a support or reasoning assertion.
+
+Feasibility uses per-role eligible model/thinking tuples **after locks**, mandatory
+implementer/reviewer, optional built-in inclusion, and trusted fixed custom
+bindings. A single-provider plan needs a common provider across required roles;
+optional roles can be omitted. An eligible optional/custom specialist may make
+mixed possible even when mandatory models are locked. When only one composition
+is possible, no composition question is asked: evidence records that deterministic
+fixed/locked selection with null probabilities, not fabricated planner confidence.
+Catalog provider count alone is not authority. Questions/answers for omitted
+roles never count as assigned providers. Mixed cannot be manufactured by including
+an otherwise unnecessary specialist or by overriding a lock. Final roster and
+exact tuples are validated jointly with composition **before preview** and launch.
+
+Both TypeSafe Choice and Pi fallback use the same field, facts, and semantics.
+Pi selections have unavailable probabilities. The provider/model-name-neutral
+question permits only canonical supplied capabilities, declared catalog cost
+hints, task/context constraints, role contracts, and locks. It never infers quality,
+reliability, recency, latency, or billing from names or assumes diversity improves
+outcomes. Strict canonical feasible-option facts, capability digests, selected
+composition, confidence, and alternatives are retained and stale-bound. These
+are compatible evidence for a later #195 material-support validator; **that gate
+is not implemented**, and no support finding or private rationale is fabricated.
 
 `provider_comparison` identifies `homogeneous` or `mixed`, with explicit
 `rationale: rationale_unavailable` in both cases. This is **not Jev reasoning**
@@ -719,9 +751,9 @@ and does not claim causal preference, coding quality, reliability, latency,
 measured cost, or savings. Capability/cost facts are the exact bounded non-secret
 projection supplied to the planner, not billing or observed runtime evidence.
 
-Evidence is capped at 224 KiB, 100 catalog candidates, 13 eligible roles, 41
+Evidence is capped at 224 KiB, 100 catalog candidates, 13 eligible roles, 42
 decisions, and three displayed alternatives per probabilistic decision. Planning
-files are capped at 256 KiB; only manifests containing planning v5 use the bounded
+files are capped at 256 KiB; only manifests containing planning v5/v6 use the bounded
 1 MiB serialized-manifest ceiling (older/static manifest limits are unchanged).
 Canonical fact digests use a domain-separated binary64 numeric encoding so
 JavaScript/Python formatting differences do not change declared cost bindings.
@@ -733,7 +765,11 @@ non-normalized maps, oversized records, mismatched facts, or stale evidence fail
 closed before tmux/worker launch.
 
 Planning v1–v4 and older manifests remain readable with evidence explicitly
-unavailable; existing admission compatibility is preserved. Static runs never
+unavailable. Planning v5/evidence v1 remains readable with its existing suitability
+axis but provider-composition decision authority unavailable, not reconstructed
+from launch providers. Existing admission compatibility is preserved. New v6
+records require evidence v2 and the composition decision/facts; mismatched version
+pairs or omitted composition evidence are invalid. Static runs never
 fabricate planner evidence. No task, prompt, context, guidance, endpoint,
 credential, raw response, provider error body, or hidden reasoning is retained.
 The stopped #174 attempt yielded no accepted plan: this feature cannot recover or

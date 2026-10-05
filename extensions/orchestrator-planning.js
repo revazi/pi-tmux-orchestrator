@@ -103,7 +103,7 @@ export function planningRecordForPreview(plan) {
   const bindings = plan.bindings;
   if (!validPlanningBindings(bindings)) throw new Error("invalid_planning_bindings");
   return {
-    version: 5,
+    version: 6,
     evidence: plan.evidence,
     task_intent: intent,
     mode: "dynamic",

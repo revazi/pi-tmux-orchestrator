@@ -57,8 +57,8 @@ def supervisor_capabilities() -> dict[str, Any]:
         "envelope_schema_version": "1",
         "state_plane": "metadata-only-sqlite",
         "planning_evidence": {
-            "version": 1,
-            "planning_version": 5,
+            "version": 2,
+            "planning_version": 6,
             "top_alternatives": 3,
             "snapshots": "exact",
             "collections": "summary",

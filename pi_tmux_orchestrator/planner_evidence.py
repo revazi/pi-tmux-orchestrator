@@ -280,6 +280,8 @@ def _thinking_identity(role: str, thinking: str, candidates: list[dict]) -> dict
 
 
 def _identity_key(value: dict) -> str:
+    if "provider_composition" in value:
+        return value["provider_composition"]
     if "intent" in value:
         return value["intent"]
     if "decision" in value:
@@ -454,6 +456,117 @@ def _role_decisions(record: dict, eligible: dict, decisions: list, source: str) 
     return cursor
 
 
+def _provider_composition_facts(eligible: dict, locks: list[dict]) -> dict:
+    roles = []
+    for lock in locks:
+        if lock["inclusion"] is False:
+            continue
+        candidates = []
+        for item in eligible[lock["role"]]:
+            if lock["provider"] is not None and (
+                item["provider"] != lock["provider"] or item["model"] != lock["model"]
+            ):
+                continue
+            levels = [
+                level
+                for level in item["thinking_levels"]
+                if lock["thinking"] is None or level == lock["thinking"]
+            ]
+            if levels:
+                candidates.append(
+                    {
+                        "provider": item["provider"],
+                        "model": item["model"],
+                        "thinking_levels": levels,
+                        "facts": evidence_digest(item),
+                    }
+                )
+        if not candidates:
+            _fail()
+        roles.append(
+            {
+                "role": lock["role"],
+                "inclusion": lock["inclusion"],
+                "candidates": candidates,
+            }
+        )
+    providers = [{item["provider"] for item in role["candidates"]} for role in roles]
+    required = [
+        items
+        for role, items in zip(roles, providers, strict=True)
+        if role["inclusion"] is True
+    ]
+    if len(required) < 2:
+        _fail()
+    single = bool(set.intersection(*required))
+    mixed = len(set.union(*providers)) > 1
+    return {
+        "feasible": (["single_provider"] if single else [])
+        + (["mixed_provider"] if mixed else []),
+        "roles": roles,
+    }
+
+
+def _provider_composition_decision(
+    evidence: dict, record: dict, eligible: dict, cursor: int
+) -> None:
+    facts = _provider_composition_facts(eligible, record["locks"])
+    if _canonical(evidence["provider_composition"]) != _canonical(facts):
+        _fail()
+    choices = facts["feasible"]
+    planner = len(choices) > 1
+    if planner:
+        choices = [*choices, "no_material_preference"]
+    selected = _decision(
+        evidence["decisions"][cursor],
+        "provider_composition",
+        None,
+        [
+            {"provider_composition": choice, "facts": evidence_digest(facts)}
+            for choice in choices
+        ],
+        "planner" if planner else "fixed",
+        evidence["source"],
+        None,
+    )
+    actual = (
+        "single_provider"
+        if len({role["provider"] for role in record["roles"]}) == 1
+        else "mixed_provider"
+    )
+    if selected["provider_composition"] not in {actual, "no_material_preference"}:
+        _fail()
+
+
+def provider_composition_summary(evidence: dict) -> dict:
+    item = next(
+        (
+            item
+            for item in evidence.get("decisions", [])
+            if item["axis"] == "provider_composition"
+        ),
+        None,
+    )
+    if item is None:
+        return {"state": "unavailable"}
+    options = {option["id"]: option for option in item["options"]}
+    return {
+        "state": "fixed" if item["authority"] == "fixed" else "choice",
+        "selected": options[item["selected"]]["identity"]["provider_composition"],
+        "authority": item["authority"],
+        "confidence": item["confidence"],
+        "selected_probability": item["selected_probability"],
+        "feasible": evidence["provider_composition"]["feasible"],
+        "alternatives": [
+            {
+                "composition": options[identity]["identity"]["provider_composition"],
+                "probability": options[identity]["probability"],
+            }
+            for identity in item["alternatives"]
+        ],
+    }
+
+
 def validate_planner_evidence(value: object, record: dict[str, Any]) -> dict:
     try:
         evidence = _fields(
@@ -465,12 +578,13 @@ def validate_planner_evidence(value: object, record: dict[str, Any]) -> dict:
                 "eligibility",
                 "decisions",
                 "provider_comparison",
-            },
+            }
+            | ({"provider_composition"} if record["version"] == 6 else set()),
         )
         if (
             len(_canonical(evidence).encode("utf-8")) > MAX_EVIDENCE_BYTES
             or type(evidence["version"]) is not int
-            or evidence["version"] != 1
+            or evidence["version"] != (2 if record["version"] == 6 else 1)
             or evidence["source"] not in {"typesafe_choice", "pi_selection"}
         ):
             _fail()
@@ -482,7 +596,7 @@ def validate_planner_evidence(value: object, record: dict[str, Any]) -> dict:
         catalog = _catalog(evidence["catalog"])
         eligible = _eligibility(evidence["eligibility"], catalog, record)
         decisions = evidence["decisions"]
-        if not isinstance(decisions, list) or not 7 <= len(decisions) <= 41:
+        if not isinstance(decisions, list) or not 7 <= len(decisions) <= 42:
             _fail()
         cursor = _role_decisions(record, eligible, decisions, source)
         _decision(
@@ -510,6 +624,9 @@ def validate_planner_evidence(value: object, record: dict[str, Any]) -> dict:
                 {"decision": "accept"},
             )
             cursor += 1
+        if evidence["version"] == 2:
+            _provider_composition_decision(evidence, record, eligible, cursor)
+            cursor += 1
         if len(decisions) != cursor:
             _fail()
         comparison = _fields(evidence["provider_comparison"], {"state", "rationale"})
@@ -535,6 +652,8 @@ def validate_planner_evidence(value: object, record: dict[str, Any]) -> dict:
 
 def _option_label(option: dict) -> str:
     identity = option["identity"]
+    if "provider_composition" in identity:
+        return identity["provider_composition"]
     if "intent" in identity:
         return identity["intent"]
     if "decision" in identity:
@@ -554,13 +673,32 @@ def planner_evidence_lines(record: dict) -> list[str]:
     if (
         not evidence
         or evidence.get("status") == "unavailable"
-        or evidence.get("version") != 1
+        or evidence.get("version") not in {1, 2}
     ):
-        return ["Planner evidence: unavailable (static or legacy record)."]
+        return [
+            "Planner evidence: unavailable (static or legacy record).",
+            "Provider composition decision: unavailable.",
+        ]
+    composition = (
+        evidence.get("provider_composition")
+        if evidence.get("projection") == "summary"
+        else provider_composition_summary(evidence)
+    )
     lines = [
-        f"Planner evidence v1: {evidence['source']}; independent axes, not joint confidence or reasoning.",
+        f"Planner evidence v{evidence['version']}: {evidence['source']}; independent axes, not joint confidence or reasoning.",
         f"Provider comparison: {evidence['provider_comparison']['state']}; rationale_unavailable (not Jev reasoning).",
     ]
+    if composition and composition.get("selected"):
+        probability = (
+            "probabilities unavailable"
+            if composition["confidence"] is None
+            else f"confidence={composition['confidence']}; probability={composition['selected_probability']}"
+        )
+        lines.append(
+            f"Provider composition decision: {composition['selected']}; {composition['state']} authority={composition['authority']}; {probability}."
+        )
+    else:
+        lines.append("Provider composition decision: unavailable (legacy record).")
     if evidence.get("projection") == "summary":
         return [
             *lines,

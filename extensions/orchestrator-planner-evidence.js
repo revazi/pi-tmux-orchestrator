@@ -7,6 +7,7 @@ export const PROBABILITY_TOLERANCE = 1e-6;
 const compare = (a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b));
 const key = (item) => `${item.provider}\0${item.model}`;
 function identityKey(value) {
+  if (value.provider_composition) return value.provider_composition;
   if (value.intent) return value.intent;
   if (value.decision) return value.decision;
   if (Object.hasOwn(value, "inclusion")) return `${value.role}\0${value.inclusion ? "include" : "omit"}`;
@@ -46,6 +47,55 @@ function decisionEvidence(axis, role, choices, selected, answer, source) {
     confidence: probabilistic ? answer.confidence : null,
     selected_probability: probabilistic ? options.find((item) => item.id === selectedId).probability : null,
     options, alternatives,
+  };
+}
+
+function compositionRoleFacts(catalog, eligibility, lock) {
+  const identities = new Set(eligibility.find((entry) => entry.role === lock.role).identities.map(key));
+  const candidates = [];
+  for (const item of catalog) {
+    if (!identities.has(key(item))) continue;
+    if (lock.provider !== null && (item.provider !== lock.provider || item.model !== lock.model)) continue;
+    const levels = item.thinking_levels.filter((level) => lock.thinking === null || level === lock.thinking);
+    if (!levels.length) continue;
+    candidates.push({ provider: item.provider, model: item.model, thinking_levels: levels, facts: plannerEvidenceDigest(item) });
+  }
+  return { role: lock.role, inclusion: lock.inclusion, candidates };
+}
+
+// Bounded per-role catalog scan, never an assignment-product search. Optional
+// roles may be omitted for single, but can make mixed possible.
+export function providerCompositionFacts(catalog, eligibility, locks) {
+  catalog = sorted(catalog);
+  const roles = locks.filter((lock) => lock.inclusion !== false).map((lock) => compositionRoleFacts(catalog, eligibility, lock));
+  if (roles.some((role) => !role.candidates.length)) throw new Error("provider_composition_unavailable");
+  const providers = roles.map((role) => new Set(role.candidates.map((item) => item.provider)));
+  const required = roles.flatMap((role, index) => role.inclusion === true ? [providers[index]] : []);
+  if (required.length < 2) throw new Error("provider_composition_unavailable");
+  const single = [...required[0]].some((provider) => required.every((items) => items.has(provider)));
+  const mixed = new Set(providers.flatMap((items) => [...items])).size > 1;
+  return { feasible: [...(single ? ["single_provider"] : []), ...(mixed ? ["mixed_provider"] : [])], roles };
+}
+
+export function validateProviderComposition(value, facts, roles) {
+  const choices = facts.feasible.length > 1 ? [...facts.feasible, "no_material_preference"] : facts.feasible;
+  const actual = new Set(roles.map((item) => item.provider)).size === 1 ? "single_provider" : "mixed_provider";
+  if (!choices.includes(value) || value !== "no_material_preference" && value !== actual) {
+    throw new Error("provider_composition_inconsistent");
+  }
+  return value;
+}
+
+export function providerCompositionSummary(evidence) {
+  const item = evidence?.decisions?.find((decision) => decision.axis === "provider_composition");
+  if (!item) return { state: "unavailable" };
+  const option = (id) => item.options.find((entry) => entry.id === id);
+  return {
+    state: item.authority === "fixed" ? "fixed" : "choice",
+    selected: option(item.selected).identity.provider_composition,
+    authority: item.authority, confidence: item.confidence, selected_probability: item.selected_probability,
+    feasible: evidence.provider_composition.feasible,
+    alternatives: item.alternatives.map((id) => ({ composition: option(id).identity.provider_composition, probability: option(id).probability })),
   };
 }
 
@@ -89,8 +139,12 @@ export function buildPlannerEvidence(request, candidates, decision, selection, a
   }
   add("task_intent", null, ["change", "investigation", "review", "advisory"].map((intent) => [intent, { intent }]), decision.task_intent, "task_intent");
   if (request.lockedConfirmation) add("composition", null, ["accept", "reject"].map((value) => [value, { decision: value }]), "accept", request.lockedConfirmation);
+  const facts = request.compositionFacts;
+  const choices = facts.feasible.length > 1 ? [...facts.feasible, "no_material_preference"] : facts.feasible;
+  add("provider_composition", null, choices.map((value) => [value, { provider_composition: value, facts: plannerEvidenceDigest(facts) }]), decision.provider_composition, request.compositionQuestion);
   const evidence = {
-    version: 1, source, catalog, eligibility, decisions,
+    version: 2, source, catalog, eligibility, decisions,
+    provider_composition: facts,
     provider_comparison: {
       state: new Set(decision.roles.map((item) => item.provider)).size === 1 ? "homogeneous" : "mixed",
       rationale: "rationale_unavailable",
@@ -102,6 +156,7 @@ export function buildPlannerEvidence(request, candidates, decision, selection, a
 
 function optionLabel(item) {
   const value = item.identity;
+  if (value.provider_composition) return value.provider_composition;
   if (value.intent) return value.intent;
   if (value.decision) return value.decision;
   if (Object.hasOwn(value, "inclusion")) return value.inclusion ? "include" : "omit";
@@ -110,9 +165,11 @@ function optionLabel(item) {
 }
 
 export function plannerEvidenceLines(evidence) {
-  if (!evidence || evidence.status === "unavailable" || evidence.version !== 1) return ["Planner evidence: unavailable (static or legacy record)."];
-  const lines = [`Planner evidence v1: ${evidence.source}; independent axes, not joint confidence or reasoning.`,
-    `Provider comparison: ${evidence.provider_comparison.state}; rationale_unavailable (not Jev reasoning).`];
+  if (!evidence || evidence.status === "unavailable" || ![1, 2].includes(evidence.version)) return ["Planner evidence: unavailable (static or legacy record).", "Provider composition decision: unavailable."];
+  const composition = evidence.projection === "summary" ? evidence.provider_composition : providerCompositionSummary(evidence);
+  const lines = [`Planner evidence v${evidence.version}: ${evidence.source}; independent axes, not joint confidence or reasoning.`,
+    `Provider comparison: ${evidence.provider_comparison.state}; rationale_unavailable (not Jev reasoning).`,
+    composition?.selected ? `Provider composition decision: ${composition.selected}; ${composition.state} authority=${composition.authority}; ${composition.confidence === null ? "probabilities unavailable" : `confidence=${composition.confidence}; probability=${composition.selected_probability}`}.` : "Provider composition decision: unavailable (legacy record)."];
   if (evidence.projection === "summary") return [...lines, "Summary projection; exact status/snapshot provides axis alternatives and facts."];
   for (const item of evidence.decisions) {
     const selected = item.options.find((option) => option.id === item.selected);

@@ -62,17 +62,19 @@ frame shape, authentication, report ACLs, or delivery/recovery semantics.
 
 ## Accepted planner evidence (Unreleased)
 
-Planning **v5** extends v4 with required `evidence` **v1**, without changing manifest
-v10/v11 or launch-assignment authority. Planning v1–v4 validation/read contracts
-remain intact. Retained static/legacy reads project `{version: 1, status:
+Planning **v6** extends v5 with required `evidence` **v2** and an explicit
+orchestration-wide provider-composition decision, without changing manifest
+v10/v11 or launch-assignment authority. Planning v1–v5 validation/read contracts
+remain intact. Planning v5 requires evidence v1 and reads with provider-composition
+decision authority unavailable; v6 requires evidence v2 (no omitted/downgraded axis). Retained static/legacy reads project `{version: 1, status:
 "unavailable"}` as evidence; this read projection is not written into old records.
-Supervisor capabilities advertise evidence v1, exact snapshots, and summary
+Supervisor capabilities advertise evidence v2/planning v6, exact snapshots, and summary
 collections. Protocol observer frames are unchanged: the parent attaches evidence
 from the validated start/status envelope and includes it in final actionable
 content alongside (never instead of) immutable worker assignments.
 
-Evidence has exactly `version`, `source`, `catalog`, `eligibility`, `decisions`, and
-`provider_comparison`. Source is `typesafe_choice` or `pi_selection`. The catalog
+Evidence v2 has exactly `version`, `source`, `catalog`, `eligibility`, `decisions`,
+`provider_comparison`, and `provider_composition` (v1 lacks the last field). Source is `typesafe_choice` or `pi_selection`. The catalog
 is the exact sorted public provider/model/thinking-level/capability projection
 supplied to the planner, with strict capability/status/declared-cost schemas and
 no arbitrary fields. Eligibility follows retained candidate-role order, with
@@ -82,7 +84,9 @@ facts and scope digest must reconstruct the retained candidate-set binding.
 Each ordered decision has exactly `axis`, `role`, `authority`, `selected`,
 `confidence`, `selected_probability`, `options`, `alternatives`. Axes are roster,
 model, thinking (in lock-role order), then task_intent, then composition only when
-the fully fixed worker plan actually had a suitability question. Model/thinking
+the fully fixed worker plan actually had a suitability question, then the required
+v2 `provider_composition` axis. The existing `composition` suitability axis is
+not renamed or reinterpreted. Model/thinking
 questions for omitted eligible roles are evidence of questions, not assignments.
 Authority is fixed or planner. Each option has exactly `id` (identity SHA-256),
 `identity`, `probability`; selected/alternatives reference those exact IDs.
@@ -91,7 +95,10 @@ Identity forms are `{role,inclusion}` for roster;
 `{role,provider,model,thinking:null,facts}` for the independent model axis;
 `{role,thinking,models:[{provider,model,facts}]}` for the independent thinking axis
 with all exact supporting eligible models; `{intent}` for the recommendation;
-and `{decision:accept|reject}` for suitability. Fact digests reference exact
+`{decision:accept|reject}` for suitability; and
+`{provider_composition:single_provider|mixed_provider|no_material_preference,facts}`
+for the run-wide composition decision (facts hashes the canonical option facts
+below). Fact digests reference exact
 catalog entries. Final role/model/thinking tuples must separately match immutable
 accepted assignments and locks. There is no joint probability or synthesized
 conditional probability.
@@ -110,14 +117,49 @@ Pi selections must never masquerade as Jev one-hot distributions.
 `provider_comparison` is exactly `{state:homogeneous|mixed,
 rationale:rationale_unavailable}` derived from selected launch providers. It is
 explicitly unavailable rationale, never Jev reasoning or a measured/causal
-cost/quality/reliability claim. No additional provider question is introduced.
+cost/quality/reliability claim.
+
+Evidence-v2 `provider_composition` contains exactly `{feasible,roles}`. `feasible`
+is the canonical nonempty subset of `[single_provider,mixed_provider]`. Each
+role fact is exactly `{role,inclusion,candidates}` in eligible lock-role order
+(excluded roles are absent); inclusion is `true` for mandatory/locked inclusion
+or `null` for optional inclusion. Each candidate is exactly
+`{provider,model,thinking_levels,facts}`, sorted by exact provider/model identity,
+with supported levels filtered by thinking locks and `facts` the exact canonical
+catalog-entry digest. Eligibility and model locks restrict candidate identities.
+All facts are reconstructed from the validated catalog/eligibility/locks, not
+trusted as a planner assertion. No assignment-product enumeration is needed:
+single requires a common provider across required roles; with at least two
+required workers, mixed is feasible when the union of includable role providers
+has more than one member. Optional/custom omission can permit single, while
+inclusion can make mixed possible. Questioned but omitted roles do not count
+in the final assignment.
+
+When both are feasible the existing one authorized TypeSafe request includes one
+`provider_composition` Choice with the three strict keys above. Pi fallback uses
+the identical bounded `answers.provider_composition` string, never probabilities.
+When composition is unique, there is no composition question; its evidence axis
+has one feasible option and fixed authority with all probabilities null. Explicit
+locks cannot be overridden. Final single requires exactly one assigned provider,
+final mixed at least two; neutral permits either feasible assignment. Malformed,
+omitted, extra, or inconsistent answers fail before preview, not only launch.
+The provider/model-name-neutral instruction permits only supplied canonical
+capabilities, declared catalog cost hints, task/context constraints, role contracts,
+and locks; it forbids name-based quality/reliability/recency/latency/billing
+inference and any presumption that diversity improves outcomes. No #195
+material-support gate, support assertion, rationale body, or extra call is added.
 
 Evidence is at most 224 KiB compact UTF-8 JSON, 100 catalog entries, 13 candidate
-roles, 41 decisions, and three top alternatives. Planning-file reads are at most
-256 KiB; only planning-v5 manifests admit up to 1 MiB serialized JSON, while
+roles, 42 decisions, and three top alternatives. Planning-file reads are at most
+256 KiB; only planning-v5/v6 manifests admit up to 1 MiB serialized JSON, while
 static/legacy manifest limits remain 64 KiB. Full exact status/snapshot evidence
 is bounded; collections replace it with `{version,projection:"summary",source,
-decision_binding,decision_count,provider_comparison}`. Dashboard shows this audit
+decision_binding,decision_count,provider_comparison,provider_composition}`.
+The summary's `provider_composition` is `{state:"unavailable"}` for v1 evidence;
+v2 uses exactly `{state:choice|fixed,selected,authority,confidence,
+selected_probability,feasible,alternatives:[{composition,probability}]}`. Confidence
+and top alternatives follow the same independent-axis/fixed/Pi rules; these are
+not joint confidence or calibrated outcome probabilities. Dashboard shows this audit
 summary; exact snapshots/status provide the full evidence.
 
 Fact/catalog and evidence digests use `SHA256(canonical_json({encoding:
@@ -126,7 +168,8 @@ Fact/catalog and evidence digests use `SHA256(canonical_json({encoding:
 normalizes negative zero); arrays retain order, object keys sort, booleans/strings/
 null remain unchanged. This is domain-separated from existing metadata digests
 and avoids cross-runtime decimal formatting differences. Option IDs continue to
-use existing canonical identity metadata digests. Planning-v5 decision metadata
+use existing canonical identity metadata digests (composition ties sort by exact
+composition key). Planning-v5/v6 decision metadata
 binds the **evidence digest**, roles, scopes, locks, and intent; the accepted start
 binding also binds that digest and the candidate-set/policy/input/config bindings.
 Malformed, duplicate, oversize, inconsistent, fact-mismatched, non-normalized, or
@@ -168,7 +211,7 @@ fresh CLI input. Node verifies CLI preview metadata and the bound record before
 confirmation, revalidates policy/catalog bindings, and refuses intent changes
 after confirmation. Legacy planning v1 remains read-only; v2/v3 admission stays
 compatible for omitted intent only, with no intent recommendation evidence.
-Explicit intent requires a fresh v4/v5 dynamic preview, not attaching an enum to a
+Explicit intent requires a fresh v4/v5/v6 dynamic preview, not attaching an enum to a
 legacy decision. Older package readers fail closed on new manifest versions;
 use the matching installed package for controls. There is no hot upgrade of a
 live broker and no broker wire-version bump.
