@@ -721,8 +721,11 @@ snapshots expose the bounded references; list/Supervisor/dashboard/parent
 projections distinguish derived support from selected Choice/confidence.
 Unsupported support fails before preview/launch with an actionable bounded
 reason: revise constraints, use exact overrides, explicitly choose static/manual
-planning, or cancel. There is no second call, retry, implicit fallback, or plan
-substitution. Legacy planning v1–v6 stays readable under its original contract;
+planning, or cancel. Model-tool, slash/TUI, and terminal/RPC starts preserve this
+same safe guidance; tool and terminal errors identify `unsupported_provider_support`.
+Only exact internal admission reasons receive this projection, never raw provider
+errors or private support bodies. There is no second call, retry, implicit fallback,
+or plan substitution. Legacy planning v1–v6 stays readable under its original contract;
 legacy support is unavailable, not invented. No live call is authorized by these
 model-free contract tests.
 

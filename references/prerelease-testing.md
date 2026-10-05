@@ -139,7 +139,11 @@ homogeneous capability and declared-cost selectors versus unavailable, ambiguous
 weak, name-based, neutral, or cross-role-inapplicable claims. Require same-call
 TypeSafe/Pi parity, every selected optional/custom role coverage, fixed/locked
 exemptions, derived versus Choice/confidence labels, exact support references,
-legacy v6 support-unavailable reads, cancellation and no-preview/no-launch/no-retry. Malformed/duplicate/non-normalized/oversized/fact-mismatched
+legacy v6 support-unavailable reads, cancellation and no-preview/no-launch/no-retry.
+Confirm model-tool, slash/TUI, and terminal/RPC failures preserve the same bounded
+revised-constraints/exact-overrides/static-manual/cancel guidance (tool/terminal
+code `unsupported_provider_support`), without copying raw errors containing a
+support-reason substring. Malformed/duplicate/non-normalized/oversized/fact-mismatched
 and stale/tampered evidence must cause no launch. Static/planning-v1–v4 evidence
 is unavailable, not reconstructed. Test sentinels for every private body surface;
 no model/provider traffic, credentials, raw errors, or endpoint retention is

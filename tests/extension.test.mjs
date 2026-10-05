@@ -1,6 +1,7 @@
 import { syntheticEvidenceFixture } from "./fixtures/planner-evidence.mjs";
 import { plannerEvidenceLines, strictPlannerJson, MAX_EVIDENCE_BYTES, buildPlannerEvidence, providerCompositionFacts, providerCompositionSummary } from "../extensions/orchestrator-planner-evidence.js";
 import { plannerEvidenceDigest } from "../extensions/orchestrator-planning.js";
+import { providerSupportFailure, SUPPORT_ERROR } from "../extensions/orchestrator-provider-support.js";
 import assert from "node:assert/strict";
 import { TASK_INTENTS, taskIntentMetadata, validateTaskIntent } from "../extensions/orchestrator-intent.js";
 import { access, chmod, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
@@ -5828,6 +5829,106 @@ test("missing approved pools preserve safe guidance across tool, slash, and term
     }
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("unsupported support preserves bounded recovery guidance across tool, slash/TUI and terminal/RPC starts", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-support-guidance-"));
+  const requestPath = join(root, "request.json");
+  const outputPath = join(root, "result.json");
+  const names = ["PI_TMUX_ORCHESTRATOR_TERMINAL_REQUEST", "PI_TMUX_ORCHESTRATOR_TERMINAL_OUTPUT", "TYPESAFE_API_KEY"];
+  const saved = Object.fromEntries(names.map((name) => [name, process.env[name]]));
+  const savedFetch = globalThis.fetch;
+  const privateTask = "PRIVATE_SUPPORT_TASK";
+  const input = { action: "start", dynamicPlan: true, task: privateTask, taskIntent: "change" };
+  try {
+    delete process.env.TYPESAFE_API_KEY;
+    process.env.PI_TMUX_ORCHESTRATOR_TERMINAL_REQUEST = requestPath;
+    process.env.PI_TMUX_ORCHESTRATOR_TERMINAL_OUTPUT = outputPath;
+    await writeFile(requestPath, JSON.stringify({ version: 1, previewOnly: false, input }), { mode: 0o600 });
+    for (const source of ["pi_selection", "typesafe_choice"]) {
+      for (const outcome of ["unsupported", "no-advantage", "neutral", "inconsistent", "missing", "malformed"]) {
+        for (const surface of ["tool", "slash", "terminal"]) {
+          let calls = 0;
+          let starts = 0;
+          const models = [{ provider: "p", id: "a", reasoning: false, contextWindow: 32000 }, { provider: "q", id: "b", reasoning: false, contextWindow: 32000 }];
+          const { tool, commands } = harness(async (_command, args) => {
+            if (args[2] === "planner-policy") return { code: 0, stdout: JSON.stringify(plannerPolicyEnvelope(plannerPolicy({ preferred: { provider: "p", model: "a", thinking: "off" } }))) };
+            if (args[2] === "planner-topology") {
+              const policy = scopedPolicy({ workerCandidates: approvedPool(models) });
+              for (const builtin of Object.values(policy.builtins)) builtin.effective.thinking = "off";
+              return { code: 0, stdout: JSON.stringify(plannerTopologyEnvelope(policy)) };
+            }
+            starts += 1;
+            assert.fail("unsupported plan must not preview or launch");
+          });
+          const answer = (request) => {
+            calls += 1;
+            const answers = questionAnswers(request, (id, choices) => id === "provider_composition" ? outcome === "neutral" ? "no_material_preference" : outcome === "inconsistent" ? "mixed_provider" : "single_provider"
+              : id === "provider_support" ? outcome === "no-advantage" ? "context_window" : "none" : choices[0]);
+            if (outcome === "missing") delete answers.provider_support;
+            if (outcome === "malformed") answers.provider_support = { reference: "context_window", rationale: "PRIVATE_SUPPORT_BODY" };
+            return answers;
+          };
+          globalThis.fetch = async (_url, options) => {
+            const request = JSON.parse(options.body);
+            return choiceResponse(request, answer(request));
+          };
+          const modelRegistry = {
+            getAvailable: () => models,
+            complete: async (_model, request) => ({ stopReason: "stop", content: [{ type: "text", text: JSON.stringify({ answers: answer(JSON.parse(request.messages[0].content[0].text)) }) }] }),
+            ...(source === "typesafe_choice" ? { getProviderAuth: async () => ({ auth: { apiKey: "SYNTHETIC_SUPPORT_KEY" } }) } : {}),
+          };
+          const ctx = context({ inputs: ["", ""], confirmations: [true, true], context: { mode: surface === "terminal" ? "rpc" : "tui", modelRegistry } });
+          if (surface === "tool") {
+            await assert.rejects(tool.execute("unsupported-support", input, undefined, undefined, ctx), (error) => {
+              assert.equal(error.message, `unsupported_provider_support: ${SUPPORT_ERROR}`);
+              return true;
+            });
+          } else if (surface === "slash") {
+            await commands.get("or-start").handler(`--plan ${privateTask}`, ctx);
+            assert.deepEqual(ctx.calls.notifications.at(-1), { message: SUPPORT_ERROR, level: "error" });
+          } else {
+            await commands.get("or-terminal-start").handler("", ctx);
+            const failure = JSON.parse(await readFile(outputPath, "utf8"));
+            assert.deepEqual(failure, { version: 1, success: false, envelope: null, error: { code: "unsupported_provider_support", message: SUPPORT_ERROR } });
+            assert.doesNotMatch(JSON.stringify(failure), /PRIVATE_SUPPORT|SYNTHETIC_SUPPORT_KEY/);
+          }
+          assert.equal(calls, 1, `${source}/${outcome}/${surface}: no hidden retry`);
+          assert.equal(starts, 0);
+          assert.deepEqual(ctx.calls.confirmations.map((item) => item.title), ["Authorize preflight decision call?"]);
+        }
+      }
+    }
+    // Raw errors that only contain a support reason must remain redacted.
+    const { commands } = harness(async () => { throw new Error(`${SUPPORT_ERROR} PRIVATE_PROVIDER_BODY`); });
+    const slashCtx = context({ inputs: ["", ""] });
+    await commands.get("or-start").handler(`--plan ${privateTask}`, slashCtx);
+    assert.equal(slashCtx.calls.notifications.at(-1).message, "Unable to start orchestration");
+    await commands.get("or-terminal-start").handler("", context({ context: { mode: "rpc" } }));
+    const failure = JSON.parse(await readFile(outputPath, "utf8"));
+    assert.equal(failure.error.code, "dynamic_planning_failed");
+    assert.doesNotMatch(JSON.stringify(failure), /PRIVATE_PROVIDER_BODY|Unsupported single-provider/);
+  } finally {
+    globalThis.fetch = savedFetch;
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("support failure projection recognizes exact internal reasons only and parent guidance describes v7", () => {
+  for (const prefix of ["", "typesafe_answers_incomplete. ", "typesafe_answer_invalid. ", "provider_composition_inconsistent. "]) {
+    assert.deepEqual(providerSupportFailure(new Error(`${prefix}${SUPPORT_ERROR}`)), { code: "unsupported_provider_support", message: SUPPORT_ERROR });
+  }
+  for (const error of [null, SUPPORT_ERROR, new Error("PRIVATE_PROVIDER_BODY"), new Error(`${SUPPORT_ERROR} PRIVATE_PROVIDER_BODY`), new Error(`PRIVATE_PROVIDER_BODY ${SUPPORT_ERROR}`)]) {
+    assert.equal(providerSupportFailure(error), undefined);
+  }
+  const { tool } = harness();
+  const guidance = tool.promptGuidelines.join("\n");
+  assert.match(guidance, /Planning v7\/evidence v3 binds composition, support references, exact canonical facts, assignments and digests/);
+  assert.doesNotMatch(guidance, /This is not a material-support finding/);
 });
 
 test("slash --plan uses the same preflight decision and two-gate start path", async () => {

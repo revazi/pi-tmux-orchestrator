@@ -189,7 +189,12 @@ summary projections explicitly label derived comparisons separately from Choice
 confidence. Bindings cover all evidence and immutable assignments/contracts;
 current catalog revalidation follows preview. Invalid/missing/oversized/duplicate,
 unsupported, cross-role-inapplicable, stale or tampered support fails before
-launch. No retry/substitution/provider call occurs. Planning v1–v6 retains its
+launch. Tool and terminal admission errors use `unsupported_provider_support`
+with the same bounded recovery guidance shown in slash/TUI starts: revised
+constraints, exact overrides, explicit static/manual planning, or cancellation.
+Only exact internal support/composition admission reasons receive that projection;
+private provider errors are not support evidence. No retry/substitution/provider
+call occurs. Planning v1–v6 retains its
 original read/admission compatibility; new v7 records cannot omit support or
 silently interpret a v2 record as supported.
 

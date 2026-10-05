@@ -5,6 +5,17 @@ export const SUPPORT_CHOICES = ["none", "reasoning", "image", "context_window", 
 const LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 export const SUPPORT_ERROR = "Unsupported single-provider plan: choose revised constraints, exact overrides, explicit static/manual planning, or cancel; no retry or substitute plan.";
 
+// Match only bounded internal reasons, never a substring of a raw provider error.
+export function providerSupportFailure(error) {
+  if (!(error instanceof Error) || ![
+    SUPPORT_ERROR,
+    `typesafe_answers_incomplete. ${SUPPORT_ERROR}`,
+    `typesafe_answer_invalid. ${SUPPORT_ERROR}`,
+    `provider_composition_inconsistent. ${SUPPORT_ERROR}`,
+  ].includes(error.message)) return undefined;
+  return { code: "unsupported_provider_support", message: SUPPORT_ERROR };
+}
+
 function costAdvantage(left, right) {
   // Comparable declared hints only, never billing. Require >=20% improvement in
   // both positive base input/output rates, no tier ambiguity or cache tradeoff.

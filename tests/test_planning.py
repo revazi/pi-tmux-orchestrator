@@ -783,47 +783,52 @@ class PlanningAdmissionTests(JsonCliFixture):
         self.assertIn("PRIVATE_TERMINAL_TASK", request["input"]["task"])
         self.assertNotIn("PRIVATE_TERMINAL_TASK", raw)
 
-    def test_terminal_missing_pool_preserves_actionable_policy_error(self):
-        message = (
-            "Dynamic planning requires approved worker models. Configure version 5 "
-            "workerCandidates in the external tmux-orchestrator.json, or supply exact "
-            "provider/model overrides for every planner-eligible role (including "
-            "optional roles)."
-        )
-        with (
-            mock.patch.object(
-                terminal_planning,
-                "_run_terminal_planner",
-                return_value={
-                    "version": 1,
-                    "success": False,
-                    "envelope": None,
-                    "error": {
-                        "code": "approved_worker_pool_required",
-                        "message": message,
-                    },
-                },
+    def test_terminal_preserves_actionable_pool_and_support_policy_errors(self):
+        from pi_tmux_orchestrator.provider_support import SUPPORT_ERROR
+
+        failures = {
+            "approved_worker_pool_required": (
+                "Dynamic planning requires approved worker models. Configure version 5 "
+                "workerCandidates in the external tmux-orchestrator.json, or supply exact "
+                "provider/model overrides for every planner-eligible role (including "
+                "optional roles)."
             ),
-            mock.patch.object(ORCHESTRATOR, "create_tmux_grid") as create_grid,
-        ):
-            code, envelope, raw, stderr = self.run_main(
-                [
-                    "--json",
-                    "start",
-                    "--project",
-                    str(ROOT),
-                    "--task",
-                    "PRIVATE_TERMINAL_POOL_TASK",
-                    "--dynamic-plan",
-                    "--authorize-planning",
-                    "--yes",
-                ]
-            )
-        self.assertEqual((code, stderr), (2, ""), raw)
-        self.assertEqual(envelope["error"]["code"], "approved_worker_pool_required")
-        self.assertEqual(envelope["error"]["message"], message)
-        self.assertNotIn("PRIVATE_TERMINAL_POOL_TASK", raw)
-        create_grid.assert_not_called()
+            "unsupported_provider_support": SUPPORT_ERROR,
+        }
+        for reason, message in failures.items():
+            with (
+                self.subTest(reason=reason),
+                mock.patch.object(
+                    terminal_planning,
+                    "_run_terminal_planner",
+                    return_value={
+                        "version": 1,
+                        "success": False,
+                        "envelope": None,
+                        "error": {"code": reason, "message": message},
+                    },
+                ) as planner,
+                mock.patch.object(ORCHESTRATOR, "create_tmux_grid") as create_grid,
+            ):
+                code, envelope, raw, stderr = self.run_main(
+                    [
+                        "--json",
+                        "start",
+                        "--project",
+                        str(ROOT),
+                        "--task",
+                        "PRIVATE_TERMINAL_POLICY_TASK",
+                        "--dynamic-plan",
+                        "--authorize-planning",
+                        "--yes",
+                    ]
+                )
+                self.assertEqual((code, stderr), (2, ""), raw)
+                self.assertEqual(envelope["error"]["code"], reason)
+                self.assertEqual(envelope["error"]["message"], message)
+                self.assertNotIn("PRIVATE_TERMINAL_POLICY_TASK", raw)
+                planner.assert_called_once()
+                create_grid.assert_not_called()
 
     def test_terminal_rpc_timeout_fails_before_start_delivery(self):
         process = mock.MagicMock()

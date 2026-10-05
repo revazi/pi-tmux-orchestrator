@@ -170,14 +170,17 @@ single and mixed assignments are feasible after role-specific eligibility,
 thinking/model locks, mandatory roles, and optional/trusted custom inclusion.
 A unique composition is fixed by those constraints, with no planner confidence.
 Single requires exactly one assigned provider; mixed requires at least two;
-neutral permits mixed only when both compositions remain feasible. Both TypeSafe and Pi fallback enforce this jointly with
-the final included roster/tuples before preview. Wording is provider/model-name
+neutral permits mixed only when both compositions remain feasible. Both TypeSafe
+and Pi fallback enforce this jointly with the final included roster/tuples before
+preview. Wording is provider/model-name
 neutral and permits only supplied canonical capabilities, declared catalog cost
 hints, task/context constraints, role contracts, and locks—not inferred quality,
 reliability, recency, latency, billing, or a claim that diversity improves outcomes.
 Canonical feasible-option facts and selected composition are digest-bound and
-visible in exact evidence and bounded summaries. No extra call, composition knob,
-default change, or #195 material-support gate is introduced.
+visible in exact evidence and bounded summaries. The single-provider support
+gate above adds bounded same-call applicability and derived comparisons without
+an extra call, composition knob, or default change. Unsupported plans return
+bounded recovery guidance across model-tool, slash/TUI, and terminal/RPC starts.
 
 Exact preview/confirmation, reopened planning, JSON/human status, Supervisor
 snapshots, dashboard summaries, and parent final evidence expose this bounded
