@@ -14,7 +14,8 @@ from .models import OrchestrationError
 from .role_registry import valid_custom_role_id
 from .task_intent import validate_intent_metadata
 
-PLANNING_VERSION = 6
+PLANNING_VERSION = 7
+COMPOSITION_PLANNING_VERSION = 6
 EVIDENCE_PLANNING_VERSION = 5
 INTENT_PLANNING_VERSION = 4
 SCOPED_PLANNING_VERSION = 3
@@ -167,6 +168,7 @@ def validate_planning_record(
             SCOPED_PLANNING_VERSION,
             INTENT_PLANNING_VERSION,
             EVIDENCE_PLANNING_VERSION,
+            COMPOSITION_PLANNING_VERSION,
             PLANNING_VERSION,
         }
         else set()
@@ -175,16 +177,22 @@ def validate_planning_record(
         SCOPED_PLANNING_VERSION,
         INTENT_PLANNING_VERSION,
         EVIDENCE_PLANNING_VERSION,
+        COMPOSITION_PLANNING_VERSION,
         PLANNING_VERSION,
     }:
         fields |= {"scopes", "locks"}
     if version in {
         INTENT_PLANNING_VERSION,
         EVIDENCE_PLANNING_VERSION,
+        COMPOSITION_PLANNING_VERSION,
         PLANNING_VERSION,
     }:
         fields |= {"task_intent"}
-    if version in {EVIDENCE_PLANNING_VERSION, PLANNING_VERSION}:
+    if version in {
+        EVIDENCE_PLANNING_VERSION,
+        COMPOSITION_PLANNING_VERSION,
+        PLANNING_VERSION,
+    }:
         fields |= {"evidence"}
     if set(value) != fields:
         raise OrchestrationError("Planning record has missing or unknown fields")
@@ -197,6 +205,7 @@ def validate_planning_record(
             SCOPED_PLANNING_VERSION,
             INTENT_PLANNING_VERSION,
             EVIDENCE_PLANNING_VERSION,
+            COMPOSITION_PLANNING_VERSION,
             PLANNING_VERSION,
         }
         or value.get("mode") != "dynamic"
@@ -266,12 +275,14 @@ def validate_planning_record(
         SCOPED_PLANNING_VERSION,
         INTENT_PLANNING_VERSION,
         EVIDENCE_PLANNING_VERSION,
+        COMPOSITION_PLANNING_VERSION,
         PLANNING_VERSION,
     }:
         decision_metadata.update(validate_scope_metadata(value, roles))
     if version in {
         INTENT_PLANNING_VERSION,
         EVIDENCE_PLANNING_VERSION,
+        COMPOSITION_PLANNING_VERSION,
         PLANNING_VERSION,
     }:
         decision_metadata["task_intent"] = validate_intent_metadata(
@@ -294,12 +305,14 @@ def validate_planning_record(
         SCOPED_PLANNING_VERSION,
         INTENT_PLANNING_VERSION,
         EVIDENCE_PLANNING_VERSION,
+        COMPOSITION_PLANNING_VERSION,
         PLANNING_VERSION,
     }:
         result.update(validate_scope_metadata(value, roles))
     if version in {
         INTENT_PLANNING_VERSION,
         EVIDENCE_PLANNING_VERSION,
+        COMPOSITION_PLANNING_VERSION,
         PLANNING_VERSION,
     }:
         result["task_intent"] = decision_metadata["task_intent"]
@@ -308,12 +321,17 @@ def validate_planning_record(
         SCOPED_PLANNING_VERSION,
         INTENT_PLANNING_VERSION,
         EVIDENCE_PLANNING_VERSION,
+        COMPOSITION_PLANNING_VERSION,
         PLANNING_VERSION,
     }:
         result["worker_candidates"] = validate_candidate_metadata(
             value["worker_candidates"], identities
         )
-    if version in {EVIDENCE_PLANNING_VERSION, PLANNING_VERSION}:
+    if version in {
+        EVIDENCE_PLANNING_VERSION,
+        COMPOSITION_PLANNING_VERSION,
+        PLANNING_VERSION,
+    }:
         from .planner_evidence import validate_planner_evidence
 
         result["evidence"] = validate_planner_evidence(value["evidence"], result)
@@ -504,6 +522,7 @@ def load_planning_record(
         SCOPED_PLANNING_VERSION,
         INTENT_PLANNING_VERSION,
         EVIDENCE_PLANNING_VERSION,
+        COMPOSITION_PLANNING_VERSION,
         PLANNING_VERSION,
     }:
         raise OrchestrationError(
@@ -574,6 +593,7 @@ def bind_planning_record(
     if record["version"] in {
         INTENT_PLANNING_VERSION,
         EVIDENCE_PLANNING_VERSION,
+        COMPOSITION_PLANNING_VERSION,
         PLANNING_VERSION,
     }:
         if record["task_intent"]["operator"] != operator_intent:
@@ -590,6 +610,7 @@ def bind_planning_record(
         SCOPED_PLANNING_VERSION,
         INTENT_PLANNING_VERSION,
         EVIDENCE_PLANNING_VERSION,
+        COMPOSITION_PLANNING_VERSION,
         PLANNING_VERSION,
     }:
         metadata = record["worker_candidates"]
@@ -615,7 +636,12 @@ def bind_planning_record(
                     "stale_planning_binding",
                 )
         if (
-            record["version"] in {EVIDENCE_PLANNING_VERSION, PLANNING_VERSION}
+            record["version"]
+            in {
+                EVIDENCE_PLANNING_VERSION,
+                COMPOSITION_PLANNING_VERSION,
+                PLANNING_VERSION,
+            }
             and candidate_policy is not None
         ):
             locks = {lock["role"]: lock for lock in record["locks"]}
@@ -650,6 +676,7 @@ def bind_planning_record(
                         SCOPED_PLANNING_VERSION,
                         INTENT_PLANNING_VERSION,
                         EVIDENCE_PLANNING_VERSION,
+                        COMPOSITION_PLANNING_VERSION,
                         PLANNING_VERSION,
                     }
                     else {}
@@ -660,6 +687,7 @@ def bind_planning_record(
                     in {
                         INTENT_PLANNING_VERSION,
                         EVIDENCE_PLANNING_VERSION,
+                        COMPOSITION_PLANNING_VERSION,
                         PLANNING_VERSION,
                     }
                     else {}
@@ -667,7 +695,11 @@ def bind_planning_record(
                 **(
                     {"evidence": evidence_digest(record["evidence"])}
                     if record["version"]
-                    in {EVIDENCE_PLANNING_VERSION, PLANNING_VERSION}
+                    in {
+                        EVIDENCE_PLANNING_VERSION,
+                        COMPOSITION_PLANNING_VERSION,
+                        PLANNING_VERSION,
+                    }
                     else {}
                 ),
                 "worker_candidates": metadata,
@@ -737,6 +769,7 @@ def retained_planning(
         }
     record = validate_planning_record(manifest["planning"])
     from .planner_evidence import provider_composition_summary
+    from .provider_support import provider_support_summary
 
     if summary and record.get("evidence"):
         evidence = record["evidence"]
@@ -750,6 +783,7 @@ def retained_planning(
                 "decision_count": len(evidence["decisions"]),
                 "provider_comparison": evidence["provider_comparison"],
                 "provider_composition": provider_composition_summary(evidence),
+                "provider_support": provider_support_summary(evidence),
             },
         }
     return {

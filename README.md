@@ -125,9 +125,30 @@ retains one writer and mandatory review; phased inspect/plan is still a precurso
 to implementation, not an investigation-only workflow. Only bounded intent
 metadata is retained, never task, rationale, or provider bodies.
 
+### Single-provider support admission (Unreleased)
+
+When the final eligible roster admits both compositions, a homogeneous dynamic
+assignment requires `single_provider` **and** one bounded `provider_support`
+Choice claiming a material task-specific canonical capability or declared-cost
+advantage across **every selected role**. The same confirmed TypeSafe request
+(or equivalent Pi JSON) carries this selector, not free-form rationale. A
+model-free gate derives and binds exact selected/alternative facts; neutral,
+missing, unsupported, ambiguous, name-based, or cross-role-inapplicable support
+fails before preview or tmux/broker/worker launch. Mixed assignments must agree
+with composition (mixed or neutral); no mixed-is-better claim is made.
+
+Exact locks or genuinely single-provider eligibility that leave only one final
+composition are **derived locked/fixed**, not planner-justified. No support call,
+retry, fallback, or plan substitution occurs. Revise constraints, use exact
+overrides, explicitly choose static/manual planning, or cancel. See the
+[bounded support contract](references/usage.md#single-provider-support-gate) for
+conservative materiality rules. Historical v1–v6 reads/authority remain intact;
+new v7/evidence-v3 records require support metadata and revalidate catalog facts
+at final confirmation. Version 0.11.1 and static defaults remain unchanged.
+
 ### Auditable accepted-plan evidence (Unreleased)
 
-Dynamic planning remains opt-in. Fresh accepted planning v6 records retain evidence v2:
+Dynamic planning remains opt-in. Fresh accepted planning v7 records retain evidence v3:
 selected Choice confidence and probability, plus up to three alternatives for
 roster, independent per-role model/thinking axes, task-intent recommendation, and
 locked-plan suitability when that question exists. Options bind exact canonical
@@ -149,7 +170,7 @@ single and mixed assignments are feasible after role-specific eligibility,
 thinking/model locks, mandatory roles, and optional/trusted custom inclusion.
 A unique composition is fixed by those constraints, with no planner confidence.
 Single requires exactly one assigned provider; mixed requires at least two;
-neutral permits either. Both TypeSafe and Pi fallback enforce this jointly with
+neutral permits mixed only when both compositions remain feasible. Both TypeSafe and Pi fallback enforce this jointly with
 the final included roster/tuples before preview. Wording is provider/model-name
 neutral and permits only supplied canonical capabilities, declared catalog cost
 hints, task/context constraints, role contracts, and locks—not inferred quality,
@@ -200,8 +221,8 @@ it never silently falls back to the catalog. Both TypeSafe Jev and Pi fallback
 use the same approved scope and canonical capabilities. Confirmation and the
 immediate start acknowledgement show pool source/count and exact selected
 assignments, not configuration bodies. Ordinary static starts and configuration
-versions 1–4 remain supported. Planning v1 is read-only; existing v2–v5
-admission remains compatible, while fresh dynamic previews use v6. Older
+versions 1–4 remain supported. Planning v1 is read-only; existing v2–v6
+admission remains compatible, while fresh dynamic previews use v7. Older
 records remain readable: v1–v4 evidence is unavailable; v5 evidence lacks explicit
 provider-composition decision authority. See
 [approved-pool configuration and migration](references/usage.md#approved-exact-worker-model-pools)

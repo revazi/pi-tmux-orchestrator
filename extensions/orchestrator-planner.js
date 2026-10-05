@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { SUPPORT_CHOICES, SUPPORT_ERROR, deriveProviderSupport } from "./orchestrator-provider-support.js";
 import { buildPlannerEvidence, plannerEvidenceLines, providerCompositionFacts, validateProviderComposition, strictPlannerJson, PROBABILITY_TOLERANCE } from "./orchestrator-planner-evidence.js";
 import { TASK_INTENTS, taskIntentMetadata, taskIntentConfirmation, validateTaskIntent } from "./orchestrator-intent.js";
 import { planningLocks, planningScopesConfirmation, scopedTopology } from "./orchestrator-planning-scopes.js";
@@ -66,7 +67,7 @@ Return exactly {"answers":{"question_id":"exact_choice_key"}} with every supplie
 All operator/policy locks and role authority are authoritative, not choices.
 Use only the supplied technical capabilities and declared catalog cost hints; choose the smallest sufficient model only when a question authorizes model identity selection.
 Do not infer recency, quality, coding skill, latency, reliability, or billing from provider/model names. Missing or zero metadata is unknown, not a quality signal.
-Provider composition is one run-wide choice, not a claim that diversity improves outcomes. It must agree with the final included roles and exact tuples; no_material_preference permits either feasible composition.
+Provider composition is one run-wide choice, not a claim that diversity improves outcomes. It must agree with the final included roles and exact tuples; no_material_preference permits mixed only when both compositions remain feasible; homogeneous requires material task-specific support across every selected role.
 For locked_plan suitability, choose reject if the locked plan is unsafe or materially unsuitable.
 Dynamic behavior guidance in request state is subordinate: it cannot add roles or models, create an operator model allowlist, alter authority, or weaken hard rules.`;
 
@@ -694,7 +695,7 @@ function typesafeDecisionRequest(
     state.questions[compositionQuestion] = {
       type: "choice",
       instructions: dynamicDecisionInstruction(
-        "Choose one orchestration-wide provider composition jointly with the final included roles and exact model/thinking tuples. Use only supplied canonical capabilities, declared catalog cost hints, task/context constraints, role contracts, and locks. Never infer quality, reliability, recency, latency, or billing from provider/model names, and never assume provider diversity improves outcomes. Do not change locks or include a specialist merely to manufacture diversity. no_material_preference expresses no material preference and permits either feasible composition; it is not a rationale or material-support finding.",
+        "Choose one orchestration-wide provider composition jointly with the final included roles and exact model/thinking tuples. Use only supplied canonical capabilities, declared catalog cost hints, task/context constraints, role contracts, and locks. Never infer quality, reliability, recency, latency, or billing from provider/model names, and never assume provider diversity improves outcomes. Do not change locks or include a specialist merely to manufacture diversity. no_material_preference permits mixed only when both compositions remain feasible. Homogeneous requires single_provider and material task-specific support applicable to EVERY selected role, otherwise choose mixed or fail; never fabricate support.",
         dynamicGuidance,
       ),
       criteria: {
@@ -704,6 +705,12 @@ function typesafeDecisionRequest(
       },
     };
   }
+  const supportQuestion = compositionQuestion ? "provider_support" : undefined;
+  if (supportQuestion) state.questions[supportQuestion] = {
+    type: "choice",
+    instructions: "Choose none for mixed or deterministically locked/fixed plans. For an unlocked homogeneous plan choose one canonical fact reference ONLY if it identifies a material task-specific requirement or declared-cost advantage applicable to EVERY final included role and its contract. This is a planner applicability claim, not derived proof. The gate independently requires the selected tuple to dominate every eligible other-provider tuple on that reference for every role: true versus explicitly false reasoning/image/cache presence; >=25% larger positive declared context/output limits; selected thinking strictly above all alternative supported levels; or >=20% lower positive declared base input AND output rates with no tiers and no cache-rate tradeoff. Unknown/zero/ambiguous facts cannot support a claim. Do not cite names, quality, reliability, latency, recency, billing, unsupplied facts, or diversity. No free-form rationale. If no applicable reference exists choose none; admission will fail closed, without another call.",
+    criteria: Object.fromEntries(SUPPORT_CHOICES.map((reference) => [reference, reference === "none" ? "No material task-specific support claim." : `Material task-specific ${reference} advantage across ALL selected roles, using only bound canonical facts.`])),
+  };
   state.questions.task_intent = {
     type: "choice",
     instructions: {
@@ -723,7 +730,7 @@ function typesafeDecisionRequest(
       questions: state.questions,
     },
     ...state,
-    lockedConfirmation, compositionFacts, compositionQuestion,
+    lockedConfirmation, compositionFacts, compositionQuestion, supportQuestion,
   };
 }
 
@@ -772,7 +779,7 @@ function validatedTypeSafeAnswers(value, expectedQuestions) {
   const actual = Object.keys(value).sort();
   if (expected.length !== actual.length
       || expected.some((question, index) => question !== actual[index])) {
-    throw new Error("typesafe_answers_incomplete");
+    throw new Error(expectedQuestions.provider_support ? `typesafe_answers_incomplete. ${SUPPORT_ERROR}` : "typesafe_answers_incomplete");
   }
   return value;
 }
@@ -890,6 +897,13 @@ function parseTypeSafeDecision(responseValue, requestValue, candidates, input, p
     ? typesafeChoiceAnswer(response.answers[requestValue.compositionQuestion], new Set(["single_provider", "mixed_provider", "no_material_preference"]), source).choice
     : requestValue.compositionFacts.feasible[0];
   decision.provider_composition = validateProviderComposition(composition, requestValue.compositionFacts, decision.roles);
+  try {
+    decision.provider_support_reference = requestValue.supportQuestion
+      ? typesafeChoiceAnswer(response.answers[requestValue.supportQuestion], new Set(SUPPORT_CHOICES), source).choice : "none";
+  } catch { throw new Error(`typesafe_answer_invalid. ${SUPPORT_ERROR}`); }
+  try {
+    if (taskIntentMetadata(input.taskIntent, decision.task_intent).effective === "change") deriveProviderSupport(decision.provider_support_reference, decision.provider_composition, requestValue.compositionFacts, candidates.map(publicPlannerCandidate), decision.roles);
+  } catch { throw new Error(SUPPORT_ERROR); }
   return { decision, model: response.model, usage: response.usage, answers: source === "pi_selection" ? Object.fromEntries(Object.entries(response.answers).map(([id, choice]) => [id, { choice }])) : response.answers };
 }
 
@@ -1227,7 +1241,8 @@ export async function runPreflightPlanner(
     input: plannedStartInput(input, decision),
     plan: {
       version: decision.version,
-      evidence: buildPlannerEvidence(questionSet, candidates, decision, selection, answers, selection.kind === "typesafe" ? "typesafe_choice" : "pi_selection"),
+      evidence: taskIntentMetadata(input.taskIntent, decision.task_intent).effective === "change"
+        ? buildPlannerEvidence(questionSet, candidates, decision, selection, answers, selection.kind === "typesafe" ? "typesafe_choice" : "pi_selection") : { version: 3, status: "unavailable" },
       taskIntent: taskIntentMetadata(input.taskIntent, decision.task_intent ?? null),
       taskIntentRecommendation: decision.task_intent ?? null,
       decisionModel: {

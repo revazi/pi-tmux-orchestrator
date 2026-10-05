@@ -143,8 +143,161 @@ class PlannerEvidenceTests(JsonCliFixture):
             self.fixtures[8]["evidence"]["provider_comparison"]["state"], "mixed"
         )
         self.assertEqual(
-            self.fixtures[9]["evidence"]["decisions"][-2]["axis"], "composition"
+            self.fixtures[9]["evidence"]["decisions"][-3]["axis"], "composition"
         )
+
+    def test_support_exact_binding_tamper_and_legacy_v6_reads(self):
+        base = next(
+            record
+            for record in self.fixtures
+            if record["evidence"]["provider_support"]["state"] == "supported"
+        )
+        mutations = [
+            lambda e: e.pop("provider_support"),
+            lambda e: e["provider_support"].update(source="planner"),
+            lambda e: e["provider_support"].update(state="locked_fixed"),
+            lambda e: e["provider_support"].update(reference="billing"),
+            lambda e: e["provider_support"].update(rationale="PRIVATE_BODY"),
+            lambda e: e["provider_support"]["roles"].pop(),
+            lambda e: e["provider_support"]["roles"].append(
+                copy.deepcopy(e["provider_support"]["roles"][0])
+            ),
+            lambda e: e["provider_support"]["roles"][0]["selected"].update(
+                facts="a" * 64
+            ),
+            lambda e: e["provider_support"]["roles"][0]["alternatives"].pop(),
+            lambda e: e["provider_support"]["roles"].reverse(),
+            lambda e: e["decisions"][-2]["options"][0]["identity"].update(
+                applicability="implementer_only"
+            ),
+            lambda e: e["decisions"][-2]["options"][0]["identity"].update(
+                facts="b" * 64
+            ),
+            lambda e: e["decisions"][-2]["options"].append(
+                copy.deepcopy(e["decisions"][-2]["options"][0])
+            ),
+            lambda e: e["decisions"][-2].update(authority="fixed"),
+            lambda e: e["provider_support"].update(roles=[{}] * MAX_EVIDENCE_BYTES),
+        ]
+        for index, mutate in enumerate(mutations):
+            changed = copy.deepcopy(base)
+            mutate(changed["evidence"])
+            rebind(changed)
+            with self.subTest(index=index), self.assertRaises(OrchestrationError):
+                validate_planning_record(changed, allow_unbound=True)
+        for fixture in self.fixtures:
+            legacy = copy.deepcopy(fixture)
+            legacy["version"] = 6
+            legacy["evidence"]["version"] = 2
+            legacy["evidence"].pop("provider_support")
+            legacy["evidence"]["decisions"].pop(-2)
+            rebind(legacy)
+            validate_planning_record(legacy, allow_unbound=True)
+            self.assertIn(
+                "Single-provider support: unavailable",
+                "\n".join(planner_evidence_lines(legacy)),
+            )
+
+    def test_unsupported_support_choice_fails_before_cli_launch_with_actionable_reason(
+        self,
+    ):
+        base = next(
+            record
+            for record in self.fixtures
+            if record["evidence"]["provider_support"]["state"] == "supported"
+        )
+        record = copy.deepcopy(base)
+        axis = record["evidence"]["decisions"][-2]
+        selected = next(
+            option
+            for option in axis["options"]
+            if option["identity"]["support"] == "none"
+        )
+        axis.update(
+            selected=selected["id"], selected_probability=selected["probability"]
+        )
+        alternatives = sorted(
+            (option for option in axis["options"] if option != selected),
+            key=lambda option: (-option["probability"], option["identity"]["support"]),
+        )
+        axis["alternatives"] = [option["id"] for option in alternatives[:3]]
+        record["bindings"].update(input="a" * 64, start_config="b" * 64)
+        rebind(record)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "planning.json"
+            path.write_text(json.dumps(record), encoding="utf-8")
+            for flags in [[], ["--dry-run"]]:
+                with mock.patch.object(ORCHESTRATOR, "create_tmux_grid") as launch:
+                    code, rejected, raw, _ = self.start(path, record, *flags)
+                self.assertEqual(code, 2)
+                self.assertEqual(
+                    rejected["error"]["code"], "unsupported_provider_support"
+                )
+                self.assertIn("revised constraints", raw)
+                self.assertIn("static/manual", raw)
+                self.assertIn("cancel", raw)
+                launch.assert_not_called()
+
+    def test_model_free_support_rejects_unavailable_and_cross_role_claims(self):
+        from pi_tmux_orchestrator.provider_support import derive_provider_support
+
+        base = next(
+            record
+            for record in self.fixtures
+            if record["evidence"]["provider_support"]["state"] == "supported"
+        )
+        evidence = base["evidence"]
+
+        def derive(
+            reference="context_window",
+            composition="single_provider",
+            catalog=None,
+            facts=None,
+        ):
+            return derive_provider_support(
+                reference,
+                composition,
+                facts or evidence["provider_composition"],
+                catalog or evidence["catalog"],
+                base["roles"],
+            )
+
+        self.assertEqual(derive(), evidence["provider_support"])
+        for reference in [
+            "none",
+            "reasoning",
+            "image",
+            "thinking",
+            "declared_cost",
+            "quality",
+            "latency",
+            "names",
+        ]:
+            with (
+                self.subTest(reference=reference),
+                self.assertRaises(OrchestrationError),
+            ):
+                derive(reference)
+        with self.assertRaises(OrchestrationError):
+            derive(composition="no_material_preference")
+        facts = copy.deepcopy(evidence["provider_composition"])
+        facts["roles"][1]["candidates"] = [
+            item for item in facts["roles"][1]["candidates"] if item["provider"] == "p"
+        ]
+        with self.assertRaises(OrchestrationError):
+            derive(facts=facts)
+        for tokens in [0, 64000, None]:
+            catalog = copy.deepcopy(evidence["catalog"])
+            catalog[-1]["capabilities"]["context_window"] = {
+                "status": "unavailable"
+                if tokens is None
+                else "zero"
+                if tokens == 0
+                else "declared",
+                "tokens": tokens,
+            }
+            with self.subTest(tokens=tokens), self.assertRaises(OrchestrationError):
+                derive(catalog=catalog)
 
     def test_rejects_malformed_duplicate_non_normalized_inconsistent_and_fact_mismatched(
         self,
@@ -288,6 +441,8 @@ class PlannerEvidenceTests(JsonCliFixture):
             evidence = record["evidence"]
             evidence["version"] = 1
             evidence.pop("provider_composition")
+            evidence.pop("provider_support")
+            evidence["decisions"].pop()
             evidence["decisions"].pop()
             rebind(record)
             record["bindings"].update(input="a" * 64, start_config="b" * 64)
@@ -405,7 +560,7 @@ class PlannerEvidenceTests(JsonCliFixture):
                 )
                 self.assertEqual(bound["evidence"], record["evidence"])
                 tampered = copy.deepcopy(bound)
-                tampered["evidence"]["decisions"][-2]["confidence"] = 0.5
+                tampered["evidence"]["decisions"][-3]["confidence"] = 0.5
                 rebind(tampered)
                 path.write_text(json.dumps(tampered), encoding="utf-8")
                 with mock.patch.object(ORCHESTRATOR, "create_tmux_grid") as launch:
@@ -488,7 +643,7 @@ class PlannerEvidenceTests(JsonCliFixture):
                 )
                 summary = retained_planning(manifest, summary=True)["evidence"]
                 self.assertEqual(summary["projection"], "summary")
-                self.assertEqual(summary["version"], 2)
+                self.assertEqual(summary["version"], 3)
                 self.assertEqual(
                     summary["provider_composition"]["selected"], "single_provider"
                 )
@@ -509,7 +664,7 @@ class PlannerEvidenceTests(JsonCliFixture):
                 rendered = render_dashboard(
                     manifest, {}, [], width=160, height=40, color=False
                 )
-                self.assertIn("Planner evidence v2 typesafe_choice", rendered)
+                self.assertIn("Planner evidence v3 typesafe_choice", rendered)
                 self.assertIn("rationale_unavailable", rendered)
 
     def test_legacy_v4_and_static_explicit_unavailable(self):

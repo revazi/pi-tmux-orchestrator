@@ -1,4 +1,5 @@
 // Accepted-plan metadata only. No prompts, response bodies, or inferred reasoning.
+import { SUPPORT_CHOICES, SUPPORT_ERROR, supportIdentity, deriveProviderSupport, providerSupportLine } from "./orchestrator-provider-support.js";
 import { metadataDigest, plannerEvidenceDigest, publicPlannerCandidate } from "./orchestrator-planning.js";
 
 export const MAX_EVIDENCE_BYTES = 224 * 1024;
@@ -6,10 +7,12 @@ export const TOP_ALTERNATIVES = 3;
 export const PROBABILITY_TOLERANCE = 1e-6;
 const compare = (a, b) => Buffer.compare(Buffer.from(a), Buffer.from(b));
 const key = (item) => `${item.provider}\0${item.model}`;
+function scalarIdentity(value) {
+  return value.support ?? value.provider_composition ?? value.intent ?? value.decision;
+}
 function identityKey(value) {
-  if (value.provider_composition) return value.provider_composition;
-  if (value.intent) return value.intent;
-  if (value.decision) return value.decision;
+  const scalar = scalarIdentity(value);
+  if (scalar) return scalar;
   if (Object.hasOwn(value, "inclusion")) return `${value.role}\0${value.inclusion ? "include" : "omit"}`;
   if (value.model) return `${value.role}\0${value.provider}\0${value.model}`;
   return `${value.role}\0${value.thinking}`;
@@ -81,7 +84,7 @@ export function validateProviderComposition(value, facts, roles) {
   const choices = facts.feasible.length > 1 ? [...facts.feasible, "no_material_preference"] : facts.feasible;
   const actual = new Set(roles.map((item) => item.provider)).size === 1 ? "single_provider" : "mixed_provider";
   if (!choices.includes(value) || value !== "no_material_preference" && value !== actual) {
-    throw new Error("provider_composition_inconsistent");
+    throw new Error(`provider_composition_inconsistent. ${SUPPORT_ERROR}`);
   }
   return value;
 }
@@ -141,9 +144,12 @@ export function buildPlannerEvidence(request, candidates, decision, selection, a
   if (request.lockedConfirmation) add("composition", null, ["accept", "reject"].map((value) => [value, { decision: value }]), "accept", request.lockedConfirmation);
   const facts = request.compositionFacts;
   const choices = facts.feasible.length > 1 ? [...facts.feasible, "no_material_preference"] : facts.feasible;
+  const references = request.supportQuestion ? SUPPORT_CHOICES : ["none"];
+  add("provider_support", null, references.map((reference) => [reference, supportIdentity(reference, facts, catalog)]), decision.provider_support_reference, request.supportQuestion);
   add("provider_composition", null, choices.map((value) => [value, { provider_composition: value, facts: plannerEvidenceDigest(facts) }]), decision.provider_composition, request.compositionQuestion);
   const evidence = {
-    version: 2, source, catalog, eligibility, decisions,
+    version: 3, source, catalog, eligibility, decisions,
+    provider_support: deriveProviderSupport(decision.provider_support_reference, decision.provider_composition, facts, catalog, decision.roles),
     provider_composition: facts,
     provider_comparison: {
       state: new Set(decision.roles.map((item) => item.provider)).size === 1 ? "homogeneous" : "mixed",
@@ -156,20 +162,20 @@ export function buildPlannerEvidence(request, candidates, decision, selection, a
 
 function optionLabel(item) {
   const value = item.identity;
-  if (value.provider_composition) return value.provider_composition;
-  if (value.intent) return value.intent;
-  if (value.decision) return value.decision;
+  const scalar = scalarIdentity(value);
+  if (scalar) return scalar;
   if (Object.hasOwn(value, "inclusion")) return value.inclusion ? "include" : "omit";
   if (value.model) return `${value.provider}/${value.model}`;
   return `${value.thinking} [${value.models.map((model) => `${model.provider}/${model.model}`).join(",")}]`;
 }
 
 export function plannerEvidenceLines(evidence) {
-  if (!evidence || evidence.status === "unavailable" || ![1, 2].includes(evidence.version)) return ["Planner evidence: unavailable (static or legacy record).", "Provider composition decision: unavailable."];
+  if (!evidence || evidence.status === "unavailable" || ![1, 2, 3].includes(evidence.version)) return ["Planner evidence: unavailable (static or legacy record).", "Provider composition decision: unavailable."];
   const composition = evidence.projection === "summary" ? evidence.provider_composition : providerCompositionSummary(evidence);
   const lines = [`Planner evidence v${evidence.version}: ${evidence.source}; independent axes, not joint confidence or reasoning.`,
     `Provider comparison: ${evidence.provider_comparison.state}; rationale_unavailable (not Jev reasoning).`,
     composition?.selected ? `Provider composition decision: ${composition.selected}; ${composition.state} authority=${composition.authority}; ${composition.confidence === null ? "probabilities unavailable" : `confidence=${composition.confidence}; probability=${composition.selected_probability}`}.` : "Provider composition decision: unavailable (legacy record)."];
+  lines.push(providerSupportLine(evidence));
   if (evidence.projection === "summary") return [...lines, "Summary projection; exact status/snapshot provides axis alternatives and facts."];
   for (const item of evidence.decisions) {
     const selected = item.options.find((option) => option.id === item.selected);

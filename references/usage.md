@@ -678,9 +678,57 @@ provider response body, credentials, endpoints, or custom resource paths/bodies.
 Static manifests report static/manual planning provenance; legacy dynamic
 records remain dynamic with missing authority/evidence explicitly unavailable.
 
+### Single-provider support gate
+
+The same one separately confirmed dynamic call adds one `provider_support`
+Choice (Pi fallback: the identical strict answer string), only if request-wide
+single and mixed are feasible. Choose `none` for mixed or final locked/fixed
+assignments. Otherwise choose exactly one canonical selector: `reasoning`,
+`image`, `context_window`, `max_output_tokens`, `thinking`, `cache_short`,
+`cache_long`, or `declared_cost`. This is a **planner applicability claim** that
+the task and EVERY final role contract materially benefit, not reasoning or
+model-free proof of task intent. No free text, name-based inference, unsupplied
+facts, provider reputation, latency, recency, billing, or diversity benefit is
+allowed. Operator intent still wins; non-change work redirects to the parent.
+
+The deterministic gate requires a homogeneous assignment to select
+`single_provider`, and derives the following conservative comparison against
+**every eligible other-provider tuple for each selected role**, after all locks:
+
+- Reasoning/image/cache presence: selected explicitly true versus alternative
+  explicitly false. Cache missing means absent; unavailable means unknown.
+- Positive declared context/output limit: selected at least **25% larger**.
+- Thinking: selected level strictly above all alternative supported levels.
+- Declared cost hints: positive declared input **and** output base rates at least
+  **20% lower**, with no tiers on either side and no cache-rate tradeoff. Zero,
+  unavailable, tier-dependent, or ambiguous cost comparisons do not qualify;
+  no billing or observed-savings claim is made.
+
+These are conservative admission thresholds, not empirical quality benchmarks.
+A generic difference without the typed task-specific applicability claim is
+insufficient. One common selector must cover all roles; no vacuous coverage of a
+locked/custom role, omitted-role support, or role-local claim is accepted.
+Mixed accepts `mixed_provider` or neutral and requires `none`; homogeneous
+neutral fails closed. If only one composition remains possible for the final
+roster due to exact locks/eligibility, support is `none`, **derived locked/fixed**,
+not a planner justification (optional roster choices remain recorded as choices).
+
+Planning v7/evidence v3 binds the support selector/applicability, exact
+selected/alternative facts and thinking, composition, eligibility, catalog,
+scopes/locks, assignments/contracts, and digests. Current catalog revalidation
+happens after preview and before immutable launch validation. Full status and
+snapshots expose the bounded references; list/Supervisor/dashboard/parent
+projections distinguish derived support from selected Choice/confidence.
+Unsupported support fails before preview/launch with an actionable bounded
+reason: revise constraints, use exact overrides, explicitly choose static/manual
+planning, or cancel. There is no second call, retry, implicit fallback, or plan
+substitution. Legacy planning v1–v6 stays readable under its original contract;
+legacy support is unavailable, not invented. No live call is authorized by these
+model-free contract tests.
+
 ### Accepted-plan evidence (Unreleased)
 
-Fresh accepted previews use planning v6/evidence v2, compatible with manifest v10/v11. The
+Fresh accepted previews use planning v7/evidence v3, compatible with manifest v10/v11. The
 versioned evidence projection retains only canonical supplied metadata. Exact
 preview/launch confirmation, persisted/reopened records, CLI JSON/human `status`,
 Supervisor snapshots, and parent final updates expose selected confidence,
@@ -721,7 +769,7 @@ The **same one authorized planning call** asks a strict orchestration-wide
 - `single_provider`: exactly one provider across all finally assigned workers.
 - `mixed_provider`: at least two providers across finally assigned workers.
 - `no_material_preference`: no material preference between feasible single/mixed;
-  either final composition is valid, not a support or reasoning assertion.
+  permits mixed when both final compositions are feasible, not homogeneous support.
 
 Feasibility uses per-role eligible model/thinking tuples **after locks**, mandatory
 implementer/reviewer, optional built-in inclusion, and trusted fixed custom
@@ -742,8 +790,8 @@ hints, task/context constraints, role contracts, and locks. It never infers qual
 reliability, recency, latency, or billing from names or assumes diversity improves
 outcomes. Strict canonical feasible-option facts, capability digests, selected
 composition, confidence, and alternatives are retained and stale-bound. These
-are compatible evidence for a later #195 material-support validator; **that gate
-is not implemented**, and no support finding or private rationale is fabricated.
+are bound with the required same-call support Choice and independently derived
+comparisons below; no private rationale is retained.
 
 `provider_comparison` identifies `homogeneous` or `mixed`, with explicit
 `rationale: rationale_unavailable` in both cases. This is **not Jev reasoning**
@@ -751,9 +799,9 @@ and does not claim causal preference, coding quality, reliability, latency,
 measured cost, or savings. Capability/cost facts are the exact bounded non-secret
 projection supplied to the planner, not billing or observed runtime evidence.
 
-Evidence is capped at 224 KiB, 100 catalog candidates, 13 eligible roles, 42
+Evidence is capped at 224 KiB, 100 catalog candidates, 13 eligible roles, 43
 decisions, and three displayed alternatives per probabilistic decision. Planning
-files are capped at 256 KiB; only manifests containing planning v5/v6 use the bounded
+files are capped at 256 KiB; only manifests containing planning v5/v6/v7 use the bounded
 1 MiB serialized-manifest ceiling (older/static manifest limits are unchanged).
 Canonical fact digests use a domain-separated binary64 numeric encoding so
 JavaScript/Python formatting differences do not change declared cost bindings.
@@ -767,8 +815,8 @@ closed before tmux/worker launch.
 Planning v1–v4 and older manifests remain readable with evidence explicitly
 unavailable. Planning v5/evidence v1 remains readable with its existing suitability
 axis but provider-composition decision authority unavailable, not reconstructed
-from launch providers. Existing admission compatibility is preserved. New v6
-records require evidence v2 and the composition decision/facts; mismatched version
+from launch providers. Existing admission compatibility is preserved. Planning v6/evidence v2 remains readable with support unavailable. New v7
+records require evidence v3, composition decision/facts and support metadata; mismatched version
 pairs or omitted composition evidence are invalid. Static runs never
 fabricate planner evidence. No task, prompt, context, guidance, endpoint,
 credential, raw response, provider error body, or hidden reasoning is retained.

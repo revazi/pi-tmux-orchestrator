@@ -68,7 +68,7 @@ v10/v11 or launch-assignment authority. Planning v1–v5 validation/read contrac
 remain intact. Planning v5 requires evidence v1 and reads with provider-composition
 decision authority unavailable; v6 requires evidence v2 (no omitted/downgraded axis). Retained static/legacy reads project `{version: 1, status:
 "unavailable"}` as evidence; this read projection is not written into old records.
-Supervisor capabilities advertise evidence v2/planning v6, exact snapshots, and summary
+Supervisor capabilities advertise evidence v3/planning v7, exact snapshots, and summary
 collections. Protocol observer frames are unchanged: the parent attaches evidence
 from the validated start/status envelope and includes it in final actionable
 content alongside (never instead of) immutable worker assignments.
@@ -146,12 +146,56 @@ omitted, extra, or inconsistent answers fail before preview, not only launch.
 The provider/model-name-neutral instruction permits only supplied canonical
 capabilities, declared catalog cost hints, task/context constraints, role contracts,
 and locks; it forbids name-based quality/reliability/recency/latency/billing
-inference and any presumption that diversity improves outcomes. No #195
-material-support gate, support assertion, rationale body, or extra call is added.
+inference and any presumption that diversity improves outcomes. This describes the historical v2 contract. Fresh v3 admission adds the strict
+support selector and model-free gate below, never a rationale body or extra call.
+
+Planning **v7** requires evidence **v3**, adding exactly `provider_support`
+to evidence v2 fields and a `provider_support` decision immediately before the
+final `provider_composition` axis. No frame or manifest version changes. Its
+identity is exactly `{support,applicability,facts}`: support is one of `none`,
+`reasoning`, `image`, `context_window`, `max_output_tokens`, `thinking`,
+`cache_short`, `cache_long`, `declared_cost`; applicability is `unavailable` for
+none or `material_task_advantage_all_selected_roles` otherwise. `facts` hashes
+`{catalog,composition:provider_composition}` with the canonical evidence digest.
+Options sort by support selector. Same-call TypeSafe Choice probabilities and Pi
+unavailable probabilities obey the existing rules. No support question is sent
+when request-wide composition is unique; a fixed singleton none is retained.
+
+`provider_support` is exactly `{source:"derived",state,feasible,reference,roles}`.
+State is `locked_fixed`, `mixed`, or `supported`; feasibility is recomputed for
+the **final selected roster**, not optional unanswered/omitted assignments.
+Locked/fixed and mixed require `reference:"none"` and empty roles. Supported
+requires homogeneous, composition `single_provider`, and one non-none selector
+applicable to every selected role. Each ordered role is exactly
+`{role,selected:{provider,model,thinking,facts},alternatives}`; alternatives are
+all eligible other-provider `{provider,model,thinking_levels,facts}` tuples,
+nonempty for every role, copied from reconstructed composition facts. Every fact
+must match the accepted candidate/catalog binding, never an external reference.
+
+Derived comparisons require explicit true versus false reasoning/image/cache
+presence; >=25% larger positive declared context/output tokens; selected thinking
+strictly above every alternative supported level; or >=20% lower positive
+base input AND output declared cost hints with no tiers and no cache-rate
+tradeoff. Unknown/zero/ambiguous facts cannot support a claim. Applicability is
+a typed planner claim tied to task constraints/contracts, not a derived intent
+classification or retained rationale. Names are identifiers only. Mixed requires
+mixed or neutral composition; homogeneous neutral is rejected when both final
+compositions remain feasible. Only one possible final composition is derived
+locked/fixed, never planner-justified; roster/model choices are not relabeled.
+
+Collection evidence adds `provider_support:{source,state,reference,feasible,
+role_count}` (or `{state:"unavailable"}` for historical evidence). Exact and
+summary projections explicitly label derived comparisons separately from Choice
+confidence. Bindings cover all evidence and immutable assignments/contracts;
+current catalog revalidation follows preview. Invalid/missing/oversized/duplicate,
+unsupported, cross-role-inapplicable, stale or tampered support fails before
+launch. No retry/substitution/provider call occurs. Planning v1–v6 retains its
+original read/admission compatibility; new v7 records cannot omit support or
+silently interpret a v2 record as supported.
 
 Evidence is at most 224 KiB compact UTF-8 JSON, 100 catalog entries, 13 candidate
-roles, 42 decisions, and three top alternatives. Planning-file reads are at most
-256 KiB; only planning-v5/v6 manifests admit up to 1 MiB serialized JSON, while
+roles, 43 decisions, and three top alternatives. Planning-file reads are at most
+256 KiB; only planning-v5/v6/v7 manifests admit up to 1 MiB serialized JSON, while
 static/legacy manifest limits remain 64 KiB. Full exact status/snapshot evidence
 is bounded; collections replace it with `{version,projection:"summary",source,
 decision_binding,decision_count,provider_comparison,provider_composition}`.
