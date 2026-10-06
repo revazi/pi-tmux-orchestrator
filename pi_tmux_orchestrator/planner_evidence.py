@@ -280,6 +280,8 @@ def _thinking_identity(role: str, thinking: str, candidates: list[dict]) -> dict
 
 
 def _identity_key(value: dict) -> str:
+    if "support" in value:
+        return value["support"]
     if "provider_composition" in value:
         return value["provider_composition"]
     if "intent" in value:
@@ -509,7 +511,7 @@ def _provider_composition_facts(eligible: dict, locks: list[dict]) -> dict:
 
 def _provider_composition_decision(
     evidence: dict, record: dict, eligible: dict, cursor: int
-) -> None:
+) -> dict:
     facts = _provider_composition_facts(eligible, record["locks"])
     if _canonical(evidence["provider_composition"]) != _canonical(facts):
         _fail()
@@ -536,6 +538,7 @@ def _provider_composition_decision(
     )
     if selected["provider_composition"] not in {actual, "no_material_preference"}:
         _fail()
+    return selected
 
 
 def provider_composition_summary(evidence: dict) -> dict:
@@ -579,12 +582,13 @@ def validate_planner_evidence(value: object, record: dict[str, Any]) -> dict:
                 "decisions",
                 "provider_comparison",
             }
-            | ({"provider_composition"} if record["version"] == 6 else set()),
+            | ({"provider_composition"} if record["version"] >= 6 else set())
+            | ({"provider_support"} if record["version"] >= 7 else set()),
         )
         if (
             len(_canonical(evidence).encode("utf-8")) > MAX_EVIDENCE_BYTES
             or type(evidence["version"]) is not int
-            or evidence["version"] != (2 if record["version"] == 6 else 1)
+            or evidence["version"] != record["version"] - 4
             or evidence["source"] not in {"typesafe_choice", "pi_selection"}
         ):
             _fail()
@@ -596,7 +600,7 @@ def validate_planner_evidence(value: object, record: dict[str, Any]) -> dict:
         catalog = _catalog(evidence["catalog"])
         eligible = _eligibility(evidence["eligibility"], catalog, record)
         decisions = evidence["decisions"]
-        if not isinstance(decisions, list) or not 7 <= len(decisions) <= 42:
+        if not isinstance(decisions, list) or not 7 <= len(decisions) <= 43:
             _fail()
         cursor = _role_decisions(record, eligible, decisions, source)
         _decision(
@@ -624,9 +628,46 @@ def validate_planner_evidence(value: object, record: dict[str, Any]) -> dict:
                 {"decision": "accept"},
             )
             cursor += 1
-        if evidence["version"] == 2:
-            _provider_composition_decision(evidence, record, eligible, cursor)
-            cursor += 1
+        if evidence["version"] >= 2:
+            composition = _provider_composition_decision(
+                evidence,
+                record,
+                eligible,
+                cursor + (1 if evidence["version"] >= 3 else 0),
+            )
+            if evidence["version"] == 2:
+                cursor += 1
+        if evidence["version"] >= 3:
+            from .provider_support import (
+                SUPPORT_CHOICES,
+                support_identity,
+                derive_provider_support,
+            )
+
+            facts = evidence["provider_composition"]
+            planner = len(facts["feasible"]) > 1
+            claim = _decision(
+                decisions[cursor],
+                "provider_support",
+                None,
+                [
+                    support_identity(reference, facts, catalog)
+                    for reference in (SUPPORT_CHOICES if planner else ["none"])
+                ],
+                "planner" if planner else "fixed",
+                source,
+                None,
+            )
+            derived = derive_provider_support(
+                claim["support"],
+                composition["provider_composition"],
+                facts,
+                catalog,
+                record["roles"],
+            )
+            if _canonical(evidence["provider_support"]) != _canonical(derived):
+                _fail()
+            cursor += 2
         if len(decisions) != cursor:
             _fail()
         comparison = _fields(evidence["provider_comparison"], {"state", "rationale"})
@@ -652,6 +693,8 @@ def validate_planner_evidence(value: object, record: dict[str, Any]) -> dict:
 
 def _option_label(option: dict) -> str:
     identity = option["identity"]
+    if "support" in identity:
+        return identity["support"]
     if "provider_composition" in identity:
         return identity["provider_composition"]
     if "intent" in identity:
@@ -673,7 +716,7 @@ def planner_evidence_lines(record: dict) -> list[str]:
     if (
         not evidence
         or evidence.get("status") == "unavailable"
-        or evidence.get("version") not in {1, 2}
+        or evidence.get("version") not in {1, 2, 3}
     ):
         return [
             "Planner evidence: unavailable (static or legacy record).",
@@ -699,6 +742,9 @@ def planner_evidence_lines(record: dict) -> list[str]:
         )
     else:
         lines.append("Provider composition decision: unavailable (legacy record).")
+    from .provider_support import provider_support_line
+
+    lines.append(provider_support_line(evidence))
     if evidence.get("projection") == "summary":
         return [
             *lines,

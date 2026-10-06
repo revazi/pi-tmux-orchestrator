@@ -110,14 +110,14 @@ acceptance. No advisory assignment/report workflow is added.
 
 ### Accepted decision-evidence gate (Unreleased)
 
-Issues #193/#194 use **model-free synthetic fixtures only**; do not repeat the stopped
+Issues #193/#194/#195 use **model-free synthetic fixtures only**; do not repeat the stopped
 #174 direct-Jev attempt or infer its missing provider response. Run focused
 `PYTHONPATH=tests python3 -m unittest test_planning test_planner_evidence` and
 `node --test tests/extension.test.mjs`, then the pinned full `scripts/test.sh`
 (Ruff 0.11.11), exact package verification/smoke, measured Node coverage and
 Fallow 3.22.0 identity-baseline/changed-file gates, and `git diff --check`.
 
-Check planning-v6/evidence-v2 preview, final TUI/RPC confirmation, persisted
+Check planning-v7/evidence-v3 preview, final TUI/RPC confirmation, persisted
 manifest v10/v11 reopen, human/JSON status, list/Supervisor summaries versus exact
 snapshots, dashboard, and parent final evidence. Confirm exact supplied facts,
 binary64 digest agreement (including tiny declared rates), selected confidence
@@ -134,8 +134,16 @@ and pre-preview refusal of missing/extra/malformed/inconsistent answers. Tampere
 facts, version downgrades, and stale preview/capability evidence must not launch.
 Read historical planning-v5/evidence-v1 with its suitability axis intact and
 provider-composition decision authority explicitly unavailable. No diversity
-benefit, name-based quality/latency/billing inference, or #195 support gate is
-claimed or implemented. Malformed/duplicate/non-normalized/oversized/fact-mismatched
+benefit or name-based quality/latency/billing inference is claimed. Check supported
+homogeneous capability and declared-cost selectors versus unavailable, ambiguous,
+weak, name-based, neutral, or cross-role-inapplicable claims. Require same-call
+TypeSafe/Pi parity, every selected optional/custom role coverage, fixed/locked
+exemptions, derived versus Choice/confidence labels, exact support references,
+legacy v6 support-unavailable reads, cancellation and no-preview/no-launch/no-retry.
+Confirm model-tool, slash/TUI, and terminal/RPC failures preserve the same bounded
+revised-constraints/exact-overrides/static-manual/cancel guidance (tool/terminal
+code `unsupported_provider_support`), without copying raw errors containing a
+support-reason substring. Malformed/duplicate/non-normalized/oversized/fact-mismatched
 and stale/tampered evidence must cause no launch. Static/planning-v1–v4 evidence
 is unavailable, not reconstructed. Test sentinels for every private body surface;
 no model/provider traffic, credentials, raw errors, or endpoint retention is

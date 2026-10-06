@@ -895,6 +895,10 @@ def _full_layout(
             )
             text = f"Planner evidence v{evidence['version']} {evidence['source']}; {evidence['provider_comparison']['state']}; rationale_unavailable; provider composition {selected} ({authority}; {probability}); status for axis alternatives"
         lines.append(_line(text, "muted"))
+        if evidence:
+            from .provider_support import provider_support_line
+
+            lines.append(_line(provider_support_line(evidence), "muted"))
     now = _now_flow_line(
         snapshot, unicode=unicode, presentation_frame=presentation_frame
     )

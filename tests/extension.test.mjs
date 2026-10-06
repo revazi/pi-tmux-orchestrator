@@ -1,6 +1,7 @@
 import { syntheticEvidenceFixture } from "./fixtures/planner-evidence.mjs";
 import { plannerEvidenceLines, strictPlannerJson, MAX_EVIDENCE_BYTES, buildPlannerEvidence, providerCompositionFacts, providerCompositionSummary } from "../extensions/orchestrator-planner-evidence.js";
 import { plannerEvidenceDigest } from "../extensions/orchestrator-planning.js";
+import { providerSupportFailure, SUPPORT_ERROR } from "../extensions/orchestrator-provider-support.js";
 import assert from "node:assert/strict";
 import { TASK_INTENTS, taskIntentMetadata, validateTaskIntent } from "../extensions/orchestrator-intent.js";
 import { access, chmod, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
@@ -3912,6 +3913,9 @@ test("TypeSafe Jev precedes explicit Pi decision models and configured fallback"
             const answers = {};
             for (const [questionId, question] of Object.entries(request.questions)) {
               let choice = questionId === "provider_composition" ? "no_material_preference" : Object.keys(question.criteria)[0];
+              const otherIndex = capabilities.findIndex((candidate) => candidate.provider !== provider);
+              if (questionId.startsWith("model_") && questionId !== `model_${String(roleIndex).padStart(2, "0")}`) choice = `m${otherIndex.toString(36)}`;
+              if (questionId.startsWith("thinking_") && questionId !== `thinking_${String(roleIndex).padStart(2, "0")}`) choice = capabilities[otherIndex].thinking_levels[0];
               if (questionId === `model_${String(roleIndex).padStart(2, "0")}`) choice = modelChoice;
               if (questionId === `thinking_${String(roleIndex).padStart(2, "0")}`) choice = thinking;
               answers[questionId] = chooseAnswer(question, choice);
@@ -3954,7 +3958,8 @@ test("TypeSafe Jev precedes explicit Pi decision models and configured fallback"
         const answers = {};
         for (const [questionId, question] of Object.entries(request.questions)) {
           const choices = Object.keys(question.criteria);
-          const choice = questionId.startsWith("model_") ? "m0" : choices[0];
+          const secondIndex = capabilities.findIndex((candidate) => candidate.provider !== capabilities[0].provider);
+          const choice = questionId === "provider_composition" ? "mixed_provider" : questionId === "model_01" ? `m${secondIndex.toString(36)}` : questionId === "thinking_01" ? capabilities[secondIndex].thinking_levels[0] : questionId.startsWith("model_") ? "m0" : choices[0];
           answers[questionId] = chooseAnswer(question, choice);
         }
         return new Response(JSON.stringify({
@@ -5826,6 +5831,106 @@ test("missing approved pools preserve safe guidance across tool, slash, and term
   }
 });
 
+test("unsupported support preserves bounded recovery guidance across tool, slash/TUI and terminal/RPC starts", async () => {
+  const root = await mkdtemp(join(tmpdir(), "pi-support-guidance-"));
+  const requestPath = join(root, "request.json");
+  const outputPath = join(root, "result.json");
+  const names = ["PI_TMUX_ORCHESTRATOR_TERMINAL_REQUEST", "PI_TMUX_ORCHESTRATOR_TERMINAL_OUTPUT", "TYPESAFE_API_KEY"];
+  const saved = Object.fromEntries(names.map((name) => [name, process.env[name]]));
+  const savedFetch = globalThis.fetch;
+  const privateTask = "PRIVATE_SUPPORT_TASK";
+  const input = { action: "start", dynamicPlan: true, task: privateTask, taskIntent: "change" };
+  try {
+    delete process.env.TYPESAFE_API_KEY;
+    process.env.PI_TMUX_ORCHESTRATOR_TERMINAL_REQUEST = requestPath;
+    process.env.PI_TMUX_ORCHESTRATOR_TERMINAL_OUTPUT = outputPath;
+    await writeFile(requestPath, JSON.stringify({ version: 1, previewOnly: false, input }), { mode: 0o600 });
+    for (const source of ["pi_selection", "typesafe_choice"]) {
+      for (const outcome of ["unsupported", "no-advantage", "neutral", "inconsistent", "missing", "malformed"]) {
+        for (const surface of ["tool", "slash", "terminal"]) {
+          let calls = 0;
+          let starts = 0;
+          const models = [{ provider: "p", id: "a", reasoning: false, contextWindow: 32000 }, { provider: "q", id: "b", reasoning: false, contextWindow: 32000 }];
+          const { tool, commands } = harness(async (_command, args) => {
+            if (args[2] === "planner-policy") return { code: 0, stdout: JSON.stringify(plannerPolicyEnvelope(plannerPolicy({ preferred: { provider: "p", model: "a", thinking: "off" } }))) };
+            if (args[2] === "planner-topology") {
+              const policy = scopedPolicy({ workerCandidates: approvedPool(models) });
+              for (const builtin of Object.values(policy.builtins)) builtin.effective.thinking = "off";
+              return { code: 0, stdout: JSON.stringify(plannerTopologyEnvelope(policy)) };
+            }
+            starts += 1;
+            assert.fail("unsupported plan must not preview or launch");
+          });
+          const answer = (request) => {
+            calls += 1;
+            const answers = questionAnswers(request, (id, choices) => id === "provider_composition" ? outcome === "neutral" ? "no_material_preference" : outcome === "inconsistent" ? "mixed_provider" : "single_provider"
+              : id === "provider_support" ? outcome === "no-advantage" ? "context_window" : "none" : choices[0]);
+            if (outcome === "missing") delete answers.provider_support;
+            if (outcome === "malformed") answers.provider_support = { reference: "context_window", rationale: "PRIVATE_SUPPORT_BODY" };
+            return answers;
+          };
+          globalThis.fetch = async (_url, options) => {
+            const request = JSON.parse(options.body);
+            return choiceResponse(request, answer(request));
+          };
+          const modelRegistry = {
+            getAvailable: () => models,
+            complete: async (_model, request) => ({ stopReason: "stop", content: [{ type: "text", text: JSON.stringify({ answers: answer(JSON.parse(request.messages[0].content[0].text)) }) }] }),
+            ...(source === "typesafe_choice" ? { getProviderAuth: async () => ({ auth: { apiKey: "SYNTHETIC_SUPPORT_KEY" } }) } : {}),
+          };
+          const ctx = context({ inputs: ["", ""], confirmations: [true, true], context: { mode: surface === "terminal" ? "rpc" : "tui", modelRegistry } });
+          if (surface === "tool") {
+            await assert.rejects(tool.execute("unsupported-support", input, undefined, undefined, ctx), (error) => {
+              assert.equal(error.message, `unsupported_provider_support: ${SUPPORT_ERROR}`);
+              return true;
+            });
+          } else if (surface === "slash") {
+            await commands.get("or-start").handler(`--plan ${privateTask}`, ctx);
+            assert.deepEqual(ctx.calls.notifications.at(-1), { message: SUPPORT_ERROR, level: "error" });
+          } else {
+            await commands.get("or-terminal-start").handler("", ctx);
+            const failure = JSON.parse(await readFile(outputPath, "utf8"));
+            assert.deepEqual(failure, { version: 1, success: false, envelope: null, error: { code: "unsupported_provider_support", message: SUPPORT_ERROR } });
+            assert.doesNotMatch(JSON.stringify(failure), /PRIVATE_SUPPORT|SYNTHETIC_SUPPORT_KEY/);
+          }
+          assert.equal(calls, 1, `${source}/${outcome}/${surface}: no hidden retry`);
+          assert.equal(starts, 0);
+          assert.deepEqual(ctx.calls.confirmations.map((item) => item.title), ["Authorize preflight decision call?"]);
+        }
+      }
+    }
+    // Raw errors that only contain a support reason must remain redacted.
+    const { commands } = harness(async () => { throw new Error(`${SUPPORT_ERROR} PRIVATE_PROVIDER_BODY`); });
+    const slashCtx = context({ inputs: ["", ""] });
+    await commands.get("or-start").handler(`--plan ${privateTask}`, slashCtx);
+    assert.equal(slashCtx.calls.notifications.at(-1).message, "Unable to start orchestration");
+    await commands.get("or-terminal-start").handler("", context({ context: { mode: "rpc" } }));
+    const failure = JSON.parse(await readFile(outputPath, "utf8"));
+    assert.equal(failure.error.code, "dynamic_planning_failed");
+    assert.doesNotMatch(JSON.stringify(failure), /PRIVATE_PROVIDER_BODY|Unsupported single-provider/);
+  } finally {
+    globalThis.fetch = savedFetch;
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("support failure projection recognizes exact internal reasons only and parent guidance describes v7", () => {
+  for (const prefix of ["", "typesafe_answers_incomplete. ", "typesafe_answer_invalid. ", "provider_composition_inconsistent. "]) {
+    assert.deepEqual(providerSupportFailure(new Error(`${prefix}${SUPPORT_ERROR}`)), { code: "unsupported_provider_support", message: SUPPORT_ERROR });
+  }
+  for (const error of [null, SUPPORT_ERROR, new Error("PRIVATE_PROVIDER_BODY"), new Error(`${SUPPORT_ERROR} PRIVATE_PROVIDER_BODY`), new Error(`PRIVATE_PROVIDER_BODY ${SUPPORT_ERROR}`)]) {
+    assert.equal(providerSupportFailure(error), undefined);
+  }
+  const { tool } = harness();
+  const guidance = tool.promptGuidelines.join("\n");
+  assert.match(guidance, /Planning v7\/evidence v3 binds composition, support references, exact canonical facts, assignments and digests/);
+  assert.doesNotMatch(guidance, /This is not a material-support finding/);
+});
+
 test("slash --plan uses the same preflight decision and two-gate start path", async () => {
   const model = { provider: "provider", id: "decision", reasoning: true };
   let completions = 0;
@@ -6437,7 +6542,7 @@ for (const selector of [undefined, ...SCOPE_COMBINATIONS]) test(`planning scopes
     assert.ok(["a", "b"].includes(role.model));
   }
   const retained = planningRecordForPreview(result.plan);
-  assert.equal(retained.version, 6);
+  assert.equal(retained.version, 7);
   assert.deepEqual(retained.scopes, scopes);
   assert.equal(JSON.stringify(retained).includes(input.task), false);
 });
@@ -7014,7 +7119,7 @@ for (const recommendation of TASK_INTENTS) {
           assert.match(ctx.calls.confirmations[1].message, new RegExp(`dynamic recommendation=${recommendation}`));
           assert.match(ctx.calls.confirmations[1].message, /Explicit operator intent wins/);
           const record = result.data.planning;
-          assert.equal(record.version, 6);
+          assert.equal(record.version, 7);
           assert.deepEqual(record.task_intent, result.data.task_intent);
           assert.equal(record.bindings.decision, metadataDigest({ version: 1, roles: record.roles, scopes: record.scopes, locks: record.locks, task_intent: record.task_intent, evidence: plannerEvidenceDigest(record.evidence) }));
         }
@@ -7105,7 +7210,7 @@ test("Jev validates every bounded intent recommendation in its existing one-call
 
 test("accepted Choice evidence retains independent confidence, exact facts and canonical top-three ties", async () => {
   const { record, request, plan } = await syntheticEvidenceFixture();
-  assert.equal(record.version, 6);
+  assert.equal(record.version, 7);
   const evidence = record.evidence;
   assert.deepEqual(evidence.catalog, request.state.candidate_model_capabilities);
   const axis = evidence.decisions.find((item) => item.axis === "model" && item.role === "implementer");
@@ -7128,13 +7233,13 @@ test("accepted Choice evidence retains independent confidence, exact facts and c
   assert.match(rendered, /confidence=0.77; probability=0.4; alternatives: p\/candidate-1/);
   assert.match(rendered, /not Jev reasoning/);
   const parent = testHooks.parentUpdateContent("pi-evidence", "ready", 1, [], [], [], evidence);
-  assert.match(parent.content, /Planner evidence v2: typesafe_choice/);
+  assert.match(parent.content, /Planner evidence v3: typesafe_choice/);
   assert.match(parent.content, /alternatives: p\/candidate-1/);
   for (const value of [JSON.stringify(record), rendered, parent.content]) assert.doesNotMatch(value, /PRIVATE_|SYNTHETIC_KEY|endpoint|instructions|hidden_reasoning/);
   assert.ok(plan.roles.every((role) => !role.reason.includes("assignment confidence")));
   const dashboard = dashboardSnapshot();
   dashboard.list.data.sessions[0].planning = record;
-  assert.match(dashboardHooks.dashboardPlainLines(dashboard).join("\n"), /evidence v2 typesafe_choice homogeneous rationale_unavailable/);
+  assert.match(dashboardHooks.dashboardPlainLines(dashboard).join("\n"), /evidence v3 typesafe_choice homogeneous rationale_unavailable/);
   assert.match(plannerEvidenceLines({ version: 1, projection: "summary", source: evidence.source, provider_comparison: evidence.provider_comparison }).join("\n"), /exact status\/snapshot/);
 });
 
@@ -7143,7 +7248,7 @@ test("Pi and fixed authority evidence never fabricate probabilities; existing co
     const { record } = await syntheticEvidenceFixture({ source, fixed: true });
     const evidence = record.evidence;
     assert.equal(evidence.source, source);
-    assert.equal(evidence.decisions.at(-2).axis, "composition");
+    assert.equal(evidence.decisions.at(-3).axis, "composition");
     for (const item of evidence.decisions.filter((item) => item.authority === "fixed" || source === "pi_selection")) {
       assert.equal(item.confidence, null);
       assert.equal(item.selected_probability, null);
@@ -7169,7 +7274,7 @@ test("Choice distributions fail closed on normalization, bounds and unknown opti
   ]) await assert.rejects(syntheticEvidenceFixture({ mutateAnswer }), /typesafe_answer_invalid/);
   // Tolerance is an admission tolerance, not renormalization or synthesized evidence.
   const tolerated = await syntheticEvidenceFixture({ mutateAnswer: (_id, answer) => { answer.probabilities[answer.choice] += 1e-8; } });
-  assert.equal(tolerated.record.evidence.decisions.at(-2).selected_probability, 0.40000001);
+  assert.equal(tolerated.record.evidence.decisions.at(-3).selected_probability, 0.40000001);
 });
 
 test("strict planner JSON rejects duplicate escaped keys and excessive nesting without retaining bodies", async () => {
@@ -7177,6 +7282,7 @@ test("strict planner JSON rejects duplicate escaped keys and excessive nesting w
   for (const text of [
     '{"answers":{},"answers":{}}',
     '{"answers":{"model_00":"m0","model_00":"m1"}}',
+    '{"answers":{"provider_support":"context_window","provider_support":"none"}}',
     '{"answers":{"a":1,"\\u0061":2}}',
     '['.repeat(65) + '0' + ']'.repeat(65),
   ]) assert.throws(() => strictPlannerJson(text), /invalid_planner_json/);
@@ -7190,10 +7296,10 @@ test("evidence size admission is bounded and numeric fact digests are cross-runt
   assert.equal(plannerEvidenceDigest({ rate: -0 }), plannerEvidenceDigest({ rate: 0 }));
   const { record } = await syntheticEvidenceFixture();
   const candidate = { provider: "p", modelId: "bounded", thinkingLevels: ["off"], capabilities: { oversized: "x".repeat(MAX_EVIDENCE_BYTES) } };
-  const request = { inclusions: new Map(), assignments: new Map(), fixedAssignments: new Map([["implementer", { provider: "p", model: "bounded", thinking: "off" }]]), compositionFacts: { feasible: ["single_provider"], roles: [] }, request: { state: {} } };
+  const request = { inclusions: new Map(), assignments: new Map(), fixedAssignments: new Map([["implementer", { provider: "p", model: "bounded", thinking: "off" }]]), compositionFacts: { feasible: ["single_provider"], roles: [{ role: "implementer", candidates: [{ provider: "p", model: "bounded", thinking_levels: ["off"] }] }] }, request: { state: {} } };
   const role = { role: "implementer", provider: "p", model: "bounded", thinking: "off" };
   const selection = { locks: [{ role: "implementer", inclusion: true, provider: "p", model: "bounded", thinking: "off" }], workerScope: { candidatesByRole: new Map([["implementer", new Set(["p\0bounded"])]]) } };
-  assert.throws(() => buildPlannerEvidence(request, [candidate], { roles: [role], task_intent: "change", provider_composition: "single_provider" }, selection, { task_intent: { confidence: 1, probabilities: { change: 1, investigation: 0, review: 0, advisory: 0 } } }, "typesafe_choice"), /planner_evidence_too_large/);
+  assert.throws(() => buildPlannerEvidence(request, [candidate], { roles: [role], task_intent: "change", provider_composition: "single_provider", provider_support_reference: "none" }, selection, { task_intent: { confidence: 1, probabilities: { change: 1, investigation: 0, review: 0, advisory: 0 } } }, "typesafe_choice"), /planner_evidence_too_large/);
   assert.ok(Buffer.byteLength(JSON.stringify(record.evidence)) < MAX_EVIDENCE_BYTES);
 });
 
@@ -7222,7 +7328,7 @@ test("authenticated parent attachment carries accepted evidence to final content
     });
     assert.match(message.content, /immutable launch metadata/);
     assert.match(message.content, /implementer: provider=p model=candidate-0 thinking=low/);
-    assert.match(message.content, /Planner evidence v2: typesafe_choice/);
+    assert.match(message.content, /Planner evidence v3: typesafe_choice/);
     assert.match(message.content, /confidence=0.77; probability=0.4; alternatives/);
     assert.doesNotMatch(message.content, /PRIVATE_|SYNTHETIC_KEY|endpoint|instructions/);
   } finally {
@@ -7256,12 +7362,12 @@ test("TypeSafe accepted evidence survives exact preview and TUI/RPC launch confi
       const result = await testHooks.runStart(harness.pi, { task: "PRIVATE_TYPED_TASK", taskIntent: "change", dynamicPlan: true, planningScopes: ["topology"], withProbe: false, withPlaywright: false, withDjangoExpert: false }, undefined, ctx, { allowRpc: true });
       const evidence = result.data.planning.evidence;
       assert.equal(evidence.source, "typesafe_choice");
-      assert.equal(evidence.decisions.at(-2).axis, "composition");
-      assert.equal(evidence.decisions.at(-2).confidence, 0.83);
-      assert.equal(evidence.decisions.at(-2).selected_probability, 0.65);
+      assert.equal(evidence.decisions.at(-3).axis, "composition");
+      assert.equal(evidence.decisions.at(-3).confidence, 0.83);
+      assert.equal(evidence.decisions.at(-3).selected_probability, 0.65);
       assert.equal(calls, 1);
       assert.equal(harness.providerCalls(), 0);
-      assert.match(ctx.calls.confirmations[1].message, /Planner evidence v2: typesafe_choice/);
+      assert.match(ctx.calls.confirmations[1].message, /Planner evidence v3: typesafe_choice/);
       assert.match(ctx.calls.confirmations[1].message, /confidence=0.83; probability=0.65/);
       assert.doesNotMatch(JSON.stringify(result), /PRIVATE_TYPED_TASK|SYNTHETIC_KEY|hidden_reasoning/);
     }
@@ -7278,6 +7384,10 @@ for (const source of ["typesafe_choice", "pi_selection"]) {
       const run = () => syntheticEvidenceFixture({ source, multiProvider: true, assignMixed, composition });
       if (composition !== "no_material_preference" && (composition === "mixed_provider") !== assignMixed) {
         await assert.rejects(run(), /provider_composition_inconsistent/);
+        continue;
+      }
+      if (!assignMixed && composition === "no_material_preference") {
+        await assert.rejects(run(), /Unsupported single-provider plan/);
         continue;
       }
       const { record, request, calls } = await run();
@@ -7357,7 +7467,7 @@ test("composition feasibility honors thinking locks and exact role eligibility, 
 });
 
 for (const scopes of SCOPE_COMBINATIONS) test(`composition across ${scopes.join("+")} preserves TypeSafe/Pi authority parity`, async () => {
-  const results = await Promise.all(["typesafe_choice", "pi_selection"].map((source) => syntheticEvidenceFixture({ source, scopes, multiProvider: true, composition: scopes.includes("models") ? "no_material_preference" : undefined })));
+  const results = await Promise.all(["typesafe_choice", "pi_selection"].map((source) => syntheticEvidenceFixture({ source, scopes, multiProvider: true, composition: undefined })));
   assert.deepEqual(results[0].request, results[1].request);
   assert.deepEqual(results[0].record.evidence.provider_composition, results[1].record.evidence.provider_composition);
   assert.deepEqual(results[0].plan.locks, results[1].plan.locks);
@@ -7372,11 +7482,11 @@ for (const source of ["pi_selection", "typesafe_choice"]) for (const mode of ["t
     const previousKey = process.env.TYPESAFE_API_KEY;
     delete process.env.TYPESAFE_API_KEY;
     try {
-      for (const outcome of ["single", "mixed", "neutral", "missing", "inconsistent", "malformed", "extra", "stale-evidence", "stale-capabilities", "cancel-launch"]) {
+      for (const outcome of ["single", "mixed", "neutral", "missing", "inconsistent", "malformed", "extra", "stale-evidence", "stale-capabilities", "cancel-launch", "unsupported", "neutral-homogeneous", "name-support", "missing-support", "malformed-support", "stale-support"]) {
         let plannerCalls = 0;
         let previews = 0;
         let launches = 0;
-        const models = [{ provider: "p", id: "a", reasoning: false }, { provider: "q", id: "b", reasoning: false }];
+        const models = [{ provider: "p", id: "a", reasoning: false, contextWindow: 64000 }, { provider: "q", id: "b", reasoning: false, contextWindow: 32000 }];
         const { pi } = harness(async (_command, args) => {
           if (args[2] === "planner-policy") return { code: 0, stdout: JSON.stringify(plannerPolicyEnvelope(plannerPolicy({ preferred: { provider: "p", model: "a", thinking: "off" } }))) };
           if (args[2] === "planner-topology") {
@@ -7389,15 +7499,18 @@ for (const source of ["pi_selection", "typesafe_choice"]) for (const mode of ["t
           else launches += 1;
           const planning = await boundPlanningFromArgs(args);
           if (outcome === "stale-evidence") planning.evidence.decisions.at(-1).confidence = 0.3;
+          if (outcome === "stale-support") planning.evidence.provider_support.reference = "reasoning";
           return { code: 0, stdout: JSON.stringify(success("start", { session: "pi-composition", dry_run: args.includes("--dry-run"), planning,
             task_intent: planning.task_intent, roles: planning.roles.map(({ id, ...role }) => ({ name: id, ...role })), paths: {} })) };
         });
         const answer = (request) => {
           plannerCalls += 1;
           assertChoiceRequestContract(request);
-          const answers = questionAnswers(request, (id, choices) => id === "provider_composition" ? outcome === "mixed" || outcome === "inconsistent" ? "mixed_provider" : outcome === "neutral" ? "no_material_preference" : "single_provider"
-            : id === "model_01" && outcome === "mixed" ? "m1" : choices[0]);
+          const answers = questionAnswers(request, (id, choices) => id === "provider_composition" ? outcome === "mixed" || outcome === "inconsistent" ? "mixed_provider" : ["neutral", "neutral-homogeneous"].includes(outcome) ? "no_material_preference" : "single_provider"
+            : id === "provider_support" ? outcome === "name-support" ? "provider-p-is-better" : ["mixed", "neutral", "unsupported", "neutral-homogeneous"].includes(outcome) ? "none" : "context_window" : id === "model_01" && ["mixed", "neutral"].includes(outcome) ? "m1" : choices[0]);
           if (outcome === "missing") delete answers.provider_composition;
+          if (outcome === "missing-support") delete answers.provider_support;
+          if (outcome === "malformed-support") answers.provider_support = { reference: "context_window", rationale: "PRIVATE_SUPPORT" };
           if (outcome === "malformed") answers.provider_composition = { choice: "single_provider" };
           if (outcome === "extra") answers.unknown_composition = "single_provider";
           return answers;
@@ -7432,9 +7545,9 @@ for (const source of ["pi_selection", "typesafe_choice"]) for (const mode of ["t
           assert.equal(launches, 1);
           assert.doesNotMatch(JSON.stringify(result), /PRIVATE_COMPOSITION_TASK|SYNTHETIC_KEY/);
         } else {
-          await assert.rejects(run(), /answers_incomplete|answer_invalid|composition_inconsistent|binding_mismatch|stale_dynamic|confirmation_declined/);
+          await assert.rejects(run(), /answers_incomplete|answer_invalid|composition_inconsistent|binding_mismatch|stale_dynamic|confirmation_declined|Unsupported single-provider plan/);
           assert.equal(launches, 0);
-          if (["missing", "malformed", "inconsistent", "extra"].includes(outcome)) assert.equal(previews, 0);
+          if (["missing", "malformed", "inconsistent", "extra", "unsupported", "neutral-homogeneous", "name-support", "missing-support", "malformed-support"].includes(outcome)) assert.equal(previews, 0);
         }
         assert.equal(plannerCalls, 1);
       }
@@ -7469,6 +7582,8 @@ test("historical evidence suitability is not reinterpreted as provider compositi
   record.version = 5;
   record.evidence.version = 1;
   record.evidence.decisions.pop();
+  record.evidence.decisions.pop();
+  delete record.evidence.provider_support;
   delete record.evidence.provider_composition;
   assert.deepEqual(providerCompositionSummary(record.evidence), { state: "unavailable" });
   const parent = testHooks.parentUpdateContent("pi-legacy", "ready", 1, [], [], [], record.evidence);
@@ -7477,4 +7592,90 @@ test("historical evidence suitability is not reinterpreted as provider compositi
   const dashboard = dashboardSnapshot();
   dashboard.list.data.sessions[0].planning = record;
   assert.match(dashboardHooks.dashboardPlainLines(dashboard).join("\n"), /provider composition unavailable/);
+});
+
+for (const source of ["typesafe_choice", "pi_selection"]) {
+  test(`bounded support ${source} canonical references are task-applicability Choice, comparisons derived`, async () => {
+    const changes = {
+      reasoning: (models) => { models.at(-1).reasoning = false; },
+      image: (models) => { models.at(-1).input = ["text"]; },
+      context_window: () => {},
+      max_output_tokens: (models) => { models.at(-1).maxTokens = 2000; },
+      thinking: (models) => { models.at(-1).reasoning = false; },
+      cache_short: (models) => { delete models.at(-1).promptCache; },
+      cache_long: (models) => { delete models.at(-1).promptCache; },
+      declared_cost: (models) => { models.forEach((model, index) => { model.cost = { input: index === models.length - 1 ? 2 : 1, output: index === models.length - 1 ? 2 : 1, cacheRead: 0, cacheWrite: 0 }; }); },
+    };
+    for (const [support, mutateModels] of Object.entries(changes)) {
+      const result = await syntheticEvidenceFixture({ source, multiProvider: true, support, mutateModels,
+      });
+      assert.equal(result.calls, 1);
+      const evidence = result.record.evidence;
+      assert.equal(evidence.version, 3);
+      assert.equal(evidence.provider_support.state, "supported");
+      assert.equal(evidence.provider_support.source, "derived");
+      assert.equal(evidence.provider_support.reference, support);
+      assert.deepEqual(evidence.provider_support.roles.map((role) => role.role), ["implementer", "reviewer"]);
+      for (const role of evidence.provider_support.roles) {
+        assert.equal(role.selected.facts, plannerEvidenceDigest(evidence.catalog.find((model) => model.provider === role.selected.provider && model.model === role.selected.model)));
+        assert.ok(role.alternatives.every((model) => model.provider !== role.selected.provider));
+      }
+      const axis = evidence.decisions.find((item) => item.axis === "provider_support");
+      assert.equal(axis.authority, "planner");
+      assert.equal(axis.confidence, source === "pi_selection" ? null : 0.77);
+      assert.equal(axis.options.length, 9);
+      assert.ok(axis.options.every((option) => option.identity.facts === plannerEvidenceDigest({ catalog: evidence.catalog, composition: evidence.provider_composition })));
+      assert.match(plannerEvidenceLines(evidence).join("\n"), /Single-provider support: supported; derived/);
+      assert.doesNotMatch(JSON.stringify(evidence), /PRIVATE_|SYNTHETIC_KEY|rationale.*advantage/);
+    }
+  });
+
+  test(`bounded support ${source} rejects unknown, weak, ambiguous and cross-role-inapplicable facts in one call`, async () => {
+    const cases = [
+      { support: "none" },
+      { support: "context_window", composition: "no_material_preference" },
+      { support: "reasoning" }, { support: "image" }, { support: "thinking" },
+      { support: "cache_short" }, { support: "cache_long" }, { support: "declared_cost" },
+      { support: "max_output_tokens" },
+      { support: "context_window", mutateModels: (models) => { models[0].contextWindow = 39999; } },
+      { support: "context_window", mutateModels: (models) => { delete models.at(-1).contextWindow; } },
+      { support: "context_window", mutateModels: (models) => { models.at(-1).contextWindow = 0; } },
+      { support: "context_window", mutateModels: (models) => { models[0].contextWindow = "unknown"; } },
+      { support: "context_window", custom: true, includeSpecialists: true },
+      { support: "context_window", inputOverrides: { modelOverrides: { reviewer: { provider: "p", model: "candidate-1" } } } },
+      { support: "context_window", inputOverrides: { modelOverrides: { reviewer: { thinking: "high" } } }, mutateModels: (models) => { models.at(-1).thinkingLevelMap.high = null; } },
+      { support: "context_window", assignMixed: true },
+    ];
+    for (const options of cases) {
+      let calls = 0;
+      await assert.rejects(syntheticEvidenceFixture({ source, multiProvider: true, ...options, onCall: () => { calls += 1; } }), /Unsupported single-provider plan/);
+      assert.equal(calls, 1);
+    }
+    for (const support of [true, {}, [], "names", "quality", "billing", "provider-p", "latency", "x".repeat(13000)]) {
+      let calls = 0;
+      await assert.rejects(syntheticEvidenceFixture({ source, multiProvider: true, support, onCall: () => { calls += 1; } }), /typesafe_answer_invalid|response_too_large|planner_response_invalid_size/);
+      assert.equal(calls, 1);
+    }
+  });
+}
+
+test("fixed composition is derived authority and cannot be passed off as planner support", async () => {
+  for (const source of ["typesafe_choice", "pi_selection"]) {
+    const result = await syntheticEvidenceFixture({ source, multiProvider: true, lockMandatory: true, inputOverrides: { withProbe: false } });
+    assert.equal(result.record.evidence.provider_support.state, "locked_fixed");
+    assert.equal(result.record.evidence.provider_support.reference, "none");
+    assert.deepEqual(result.record.evidence.provider_support.roles, []);
+    await assert.rejects(syntheticEvidenceFixture({ source, multiProvider: true, lockMandatory: true, support: "context_window" }), /Unsupported single-provider plan/);
+    const only = await syntheticEvidenceFixture({ source });
+    assert.equal(only.record.evidence.provider_support.state, "locked_fixed");
+    assert.equal(only.request.questions.provider_support, undefined);
+  }
+});
+
+test("explicit non-change intent precedes support admission; explicit change cannot bypass support", async () => {
+  const redirected = await syntheticEvidenceFixture({ multiProvider: true, support: "none", inputOverrides: { taskIntent: "review" } });
+  assert.equal(redirected.calls, 1);
+  assert.equal(redirected.plan.taskIntent.effective, "review");
+  assert.equal(redirected.plan.evidence.status, "unavailable");
+  await assert.rejects(syntheticEvidenceFixture({ multiProvider: true, support: "none", mutateAnswer: (id, item) => { if (id === "task_intent") item.choice = "review"; } }), /Unsupported single-provider plan/);
 });

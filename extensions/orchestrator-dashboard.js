@@ -1,3 +1,4 @@
+import { providerSupportLine } from "./orchestrator-provider-support.js";
 import { basename } from "node:path";
 import { providerCompositionSummary } from "./orchestrator-planner-evidence.js";
 
@@ -490,7 +491,7 @@ function sessionPlanning(session) {
   const audit = evidence?.source ? `evidence v${evidence.version} ${evidence.source} ${evidence.provider_comparison?.state} rationale_unavailable` : "evidence unavailable";
   const composition = evidence?.projection === "summary" ? evidence.provider_composition : providerCompositionSummary(evidence);
   const selected = composition?.selected ? `${composition.selected} (${composition.state}; ${composition.confidence === null ? "probabilities unavailable" : `confidence=${composition.confidence}`})` : "unavailable";
-  return `${scopes ? `plan dynamic (${scopes})` : "plan dynamic"}; ${audit}; provider composition ${selected}`;
+  return `${scopes ? `plan dynamic (${scopes})` : "plan dynamic"}; ${audit}; provider composition ${selected}; ${providerSupportLine(evidence)}`;
 }
 
 function sessionUsage(session) {
