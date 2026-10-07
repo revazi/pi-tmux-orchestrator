@@ -148,7 +148,38 @@ at final confirmation. Version 0.11.1 and static defaults remain unchanged.
 
 ### Auditable accepted-plan evidence (Unreleased)
 
-Dynamic planning remains opt-in. Fresh accepted planning v7 records retain evidence v3:
+Dynamic planning remains opt-in. Rectangular unlocked catalogs keep planning v7 /
+evidence v3 and independent `model_` / `thinking_` Choices. When both model and
+thinking are unlocked and support is not a rectangle, the same one call asks one
+`tuple_` Choice over exactly the eligible pairs. That accepted record is planning
+v8 / evidence v4: the tuple axis is the joint Choice, not a synthesized conditional
+probability and not a calibrated outcome probability. Rectangular roles in the same
+record keep independent axes. v7 records are not reinterpreted as joint confidence.
+
+Direct TypeSafe and Pi share that request. Each Choice has at most 255 options and
+each request at most 255 questions. 255 is the generic TypeSafe Choice cap. The
+currently reachable approved-pool ceiling is 224 eligible pairs: 32 identities times
+the seven current thinking levels. That full product is rectangular, so it stays
+independent `model_` / `thinking_` Choices. Joint `tuple_` is only a non-rectangle,
+so the largest approved-pool tuple Choice is 223 options, not 224. The wrapped
+request is at most 96 KiB. Retained evidence is at most 224 KiB; that byte cap is
+not the pair ceiling. Approved pools remain 1–32 identities per pool and 100
+distinct identities overall; current worker thinking policy is unchanged. Capability
+objects stay one canonical, redacted, digest-bound copy. If the canonical JSON
+exceeds 96 KiB, planning rebuilds it once locally as `compact-v1` (composition
+candidates become catalog indexes; fact digests are not repeated) and sends that
+only if it still fits. `compact-v1` is a local encoding, not production wire
+acceptance. If the request cannot fit, or the measured upper bound of reachable retained
+evidence cannot fit in 224 KiB, planning fails before HTTP. That bound covers
+maximum-width Choice probabilities and the largest derived support object across
+common providers, references, and optional-role omissions. It is not a flat pad
+and does not drop tuples. That evidence failure is legitimate for some five-role
+joint pools and some legal multi-provider pools even when every Choice is within
+255 options and a one-hot answer would fit. There is no
+retry, silent tuple omission, or provider-backed cost or quality claim. Planning
+v5–v8 manifests use the 1 MiB ceiling; older manifest limits are unchanged.
+
+Fresh rectangular planning v7 records retain evidence v3:
 selected Choice confidence and probability, plus up to three alternatives for
 roster, independent per-role model/thinking axes, task-intent recommendation, and
 locked-plan suitability when that question exists. Options bind exact canonical

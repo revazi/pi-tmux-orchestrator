@@ -291,7 +291,8 @@ def _identity_key(value: dict) -> str:
     if "inclusion" in value:
         return value["role"] + "\0" + ("include" if value["inclusion"] else "omit")
     if "model" in value:
-        return value["role"] + "\0" + _key(value)
+        base = value["role"] + "\0" + _key(value)
+        return base if not value.get("thinking") else base + "\0" + value["thinking"]
     return value["role"] + "\0" + value["thinking"]
 
 
@@ -371,7 +372,30 @@ def _decision(
     return selected_option["identity"]
 
 
-def _role_decisions(record: dict, eligible: dict, decisions: list, source: str) -> int:
+def _joint_tuple_required(models: list[dict], lock: dict) -> bool:
+    if lock["provider"] is not None or lock["thinking"] is not None or len(models) <= 1:
+        return False
+    union = [
+        level
+        for level in LEVELS
+        if any(level in item["thinking_levels"] for item in models)
+    ]
+    return len(union) > 1 and any(item["thinking_levels"] != union for item in models)
+
+
+def _tuple_identity(role: str, candidate: dict, thinking: str) -> dict:
+    return {
+        "role": role,
+        "provider": candidate["provider"],
+        "model": candidate["model"],
+        "thinking": thinking,
+        "facts": evidence_digest(candidate),
+    }
+
+
+def _role_decisions(
+    record: dict, eligible: dict, decisions: list, source: str, evidence_version: int
+) -> int:
     selected = {role["id"]: role for role in record["roles"]}
     cursor = 0
     for lock in record["locks"]:
@@ -411,6 +435,31 @@ def _role_decisions(record: dict, eligible: dict, decisions: list, source: str) 
         ]
         if not models:
             _fail()
+        if evidence_version >= 4 and _joint_tuple_required(models, lock):
+            identities = [
+                _tuple_identity(role, item, level)
+                for item in models
+                for level in item["thinking_levels"]
+                if lock["thinking"] is None or level == lock["thinking"]
+            ]
+            if len(identities) > 255:
+                _fail()
+            chosen = _decision(
+                decisions[cursor],
+                "tuple",
+                role,
+                identities,
+                "planner",
+                source,
+                None,
+            )
+            cursor += 1
+            if included and any(
+                selected[role][field] != chosen[field]
+                for field in ("provider", "model", "thinking")
+            ):
+                _fail()
+            continue
         model = _decision(
             decisions[cursor],
             "model",
@@ -602,7 +651,9 @@ def validate_planner_evidence(value: object, record: dict[str, Any]) -> dict:
         decisions = evidence["decisions"]
         if not isinstance(decisions, list) or not 7 <= len(decisions) <= 43:
             _fail()
-        cursor = _role_decisions(record, eligible, decisions, source)
+        cursor = _role_decisions(
+            record, eligible, decisions, source, evidence["version"]
+        )
         _decision(
             decisions[cursor],
             "task_intent",
@@ -704,6 +755,11 @@ def _option_label(option: dict) -> str:
     if "inclusion" in identity:
         return "include" if identity["inclusion"] else "omit"
     if "model" in identity:
+        if identity.get("thinking"):
+            return (
+                f"{identity['provider']}/{identity['model']} "
+                f"thinking={identity['thinking']}"
+            )
         return f"{identity['provider']}/{identity['model']}"
     models = ",".join(
         f"{item['provider']}/{item['model']}" for item in identity["models"]
@@ -716,7 +772,7 @@ def planner_evidence_lines(record: dict) -> list[str]:
     if (
         not evidence
         or evidence.get("status") == "unavailable"
-        or evidence.get("version") not in {1, 2, 3}
+        or evidence.get("version") not in {1, 2, 3, 4}
     ):
         return [
             "Planner evidence: unavailable (static or legacy record).",
@@ -727,8 +783,13 @@ def planner_evidence_lines(record: dict) -> list[str]:
         if evidence.get("projection") == "summary"
         else provider_composition_summary(evidence)
     )
+    axes = (
+        "tuple axes are joint over exact eligible pairs, not synthesized conditional probability or reasoning."
+        if evidence.get("version") == 4
+        else "independent axes, not joint confidence or reasoning."
+    )
     lines = [
-        f"Planner evidence v{evidence['version']}: {evidence['source']}; independent axes, not joint confidence or reasoning.",
+        f"Planner evidence v{evidence['version']}: {evidence['source']}; {axes}",
         f"Provider comparison: {evidence['provider_comparison']['state']}; rationale_unavailable (not Jev reasoning).",
     ]
     if composition and composition.get("selected"):

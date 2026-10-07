@@ -2,7 +2,7 @@
 import { fileURLToPath } from "node:url";
 import { runPreflightPlanner, selectDecisionModel, validatePlannerTopology, planningRecordForPreview } from "../../extensions/orchestrator-planner.js";
 
-export async function syntheticEvidenceFixture({ source = "typesafe_choice", scopes, mixed = false, fixed = false, custom = false, mutateAnswer, modelCount = 5, multiProvider = false, assignMixed = false, composition, customMixed = false, includeSpecialists = false, lockMandatory = false, inputOverrides = {}, candidatePools = {}, support, mutateModels, onCall, customCount = 1 } = {}) {
+export async function syntheticEvidenceFixture({ source = "typesafe_choice", scopes, mixed = false, fixed = false, custom = false, mutateAnswer, modelCount = 5, multiProvider = false, assignMixed = false, composition, customMixed = false, includeSpecialists = false, lockMandatory = false, inputOverrides = {}, candidatePools = {}, support, mutateModels, onCall, customCount = 1, heterogeneous = false } = {}) {
   const models = Array.from({ length: modelCount }, (_, index) => ({
     provider: (mixed || multiProvider || customMixed) && index === modelCount - 1 ? "q" : "p", id: `candidate-${index}`,
     reasoning: true, input: ["text", "image"], contextWindow: index === modelCount - 1 ? 32000 : 64000, maxTokens: 4000,
@@ -11,6 +11,13 @@ export async function syntheticEvidenceFixture({ source = "typesafe_choice", sco
     promptCache: { short: 300, long: 3600 },
     baseUrl: "PRIVATE_CATALOG_ENDPOINT", headers: { key: "PRIVATE_CREDENTIAL" }, description: "PRIVATE_CATALOG_BODY",
   }));
+  if (heterogeneous) {
+    models.forEach((model, index) => {
+      model.thinkingLevelMap = index % 2 === 0
+        ? { off: null, minimal: null, low: "low", medium: "medium", high: "high" }
+        : { off: null, minimal: null, low: "low", medium: null, high: null };
+    });
+  }
   if (mutateModels) mutateModels(models);
   const raw = {
     version: 3,
@@ -79,6 +86,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   for (const source of ["typesafe_choice", "pi_selection"]) {
     options.push({ source, fixed: true, custom: true, customCount: 8, inputOverrides: { projectCustomRoles: true, withProbe: true, withPlaywright: true, withDjangoExpert: true } });
     options.push({ source, multiProvider: true, includeSpecialists: true });
+    options.push({ source, heterogeneous: true });
     options.push({ source, multiProvider: true, support: "image", mutateModels: (models) => { models.at(-1).input = ["text"]; } });
     options.push({ source, multiProvider: true, support: "declared_cost", mutateModels: (models) => { models.forEach((model, index) => { model.cost = { input: index === models.length - 1 ? 2 : 1, output: index === models.length - 1 ? 2 : 1, cacheRead: 0, cacheWrite: 0 }; }); } });
   }

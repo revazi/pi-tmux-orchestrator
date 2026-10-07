@@ -15,6 +15,7 @@ from .role_registry import valid_custom_role_id
 from .task_intent import validate_intent_metadata
 
 PLANNING_VERSION = 7
+TUPLE_PLANNING_VERSION = 8
 COMPOSITION_PLANNING_VERSION = 6
 EVIDENCE_PLANNING_VERSION = 5
 INTENT_PLANNING_VERSION = 4
@@ -170,6 +171,7 @@ def validate_planning_record(
             EVIDENCE_PLANNING_VERSION,
             COMPOSITION_PLANNING_VERSION,
             PLANNING_VERSION,
+            TUPLE_PLANNING_VERSION,
         }
         else set()
     )
@@ -179,6 +181,7 @@ def validate_planning_record(
         EVIDENCE_PLANNING_VERSION,
         COMPOSITION_PLANNING_VERSION,
         PLANNING_VERSION,
+        TUPLE_PLANNING_VERSION,
     }:
         fields |= {"scopes", "locks"}
     if version in {
@@ -186,12 +189,14 @@ def validate_planning_record(
         EVIDENCE_PLANNING_VERSION,
         COMPOSITION_PLANNING_VERSION,
         PLANNING_VERSION,
+        TUPLE_PLANNING_VERSION,
     }:
         fields |= {"task_intent"}
     if version in {
         EVIDENCE_PLANNING_VERSION,
         COMPOSITION_PLANNING_VERSION,
         PLANNING_VERSION,
+        TUPLE_PLANNING_VERSION,
     }:
         fields |= {"evidence"}
     if set(value) != fields:
@@ -207,6 +212,7 @@ def validate_planning_record(
             EVIDENCE_PLANNING_VERSION,
             COMPOSITION_PLANNING_VERSION,
             PLANNING_VERSION,
+            TUPLE_PLANNING_VERSION,
         }
         or value.get("mode") != "dynamic"
     ):
@@ -277,6 +283,7 @@ def validate_planning_record(
         EVIDENCE_PLANNING_VERSION,
         COMPOSITION_PLANNING_VERSION,
         PLANNING_VERSION,
+        TUPLE_PLANNING_VERSION,
     }:
         decision_metadata.update(validate_scope_metadata(value, roles))
     if version in {
@@ -284,6 +291,7 @@ def validate_planning_record(
         EVIDENCE_PLANNING_VERSION,
         COMPOSITION_PLANNING_VERSION,
         PLANNING_VERSION,
+        TUPLE_PLANNING_VERSION,
     }:
         decision_metadata["task_intent"] = validate_intent_metadata(
             value["task_intent"], launched=True
@@ -307,6 +315,7 @@ def validate_planning_record(
         EVIDENCE_PLANNING_VERSION,
         COMPOSITION_PLANNING_VERSION,
         PLANNING_VERSION,
+        TUPLE_PLANNING_VERSION,
     }:
         result.update(validate_scope_metadata(value, roles))
     if version in {
@@ -314,6 +323,7 @@ def validate_planning_record(
         EVIDENCE_PLANNING_VERSION,
         COMPOSITION_PLANNING_VERSION,
         PLANNING_VERSION,
+        TUPLE_PLANNING_VERSION,
     }:
         result["task_intent"] = decision_metadata["task_intent"]
     if version in {
@@ -323,6 +333,7 @@ def validate_planning_record(
         EVIDENCE_PLANNING_VERSION,
         COMPOSITION_PLANNING_VERSION,
         PLANNING_VERSION,
+        TUPLE_PLANNING_VERSION,
     }:
         result["worker_candidates"] = validate_candidate_metadata(
             value["worker_candidates"], identities
@@ -331,6 +342,7 @@ def validate_planning_record(
         EVIDENCE_PLANNING_VERSION,
         COMPOSITION_PLANNING_VERSION,
         PLANNING_VERSION,
+        TUPLE_PLANNING_VERSION,
     }:
         from .planner_evidence import validate_planner_evidence
 
@@ -524,6 +536,7 @@ def load_planning_record(
         EVIDENCE_PLANNING_VERSION,
         COMPOSITION_PLANNING_VERSION,
         PLANNING_VERSION,
+        TUPLE_PLANNING_VERSION,
     }:
         raise OrchestrationError(
             "Legacy planning records are read-only; create a fresh approved-pool preview"
@@ -595,6 +608,7 @@ def bind_planning_record(
         EVIDENCE_PLANNING_VERSION,
         COMPOSITION_PLANNING_VERSION,
         PLANNING_VERSION,
+        TUPLE_PLANNING_VERSION,
     }:
         if record["task_intent"]["operator"] != operator_intent:
             raise OrchestrationError(
@@ -612,6 +626,7 @@ def bind_planning_record(
         EVIDENCE_PLANNING_VERSION,
         COMPOSITION_PLANNING_VERSION,
         PLANNING_VERSION,
+        TUPLE_PLANNING_VERSION,
     }:
         metadata = record["worker_candidates"]
         if (metadata["source"] == "configured") != (candidate_policy is not None):
@@ -641,6 +656,7 @@ def bind_planning_record(
                 EVIDENCE_PLANNING_VERSION,
                 COMPOSITION_PLANNING_VERSION,
                 PLANNING_VERSION,
+                TUPLE_PLANNING_VERSION,
             }
             and candidate_policy is not None
         ):
@@ -678,6 +694,7 @@ def bind_planning_record(
                         EVIDENCE_PLANNING_VERSION,
                         COMPOSITION_PLANNING_VERSION,
                         PLANNING_VERSION,
+                        TUPLE_PLANNING_VERSION,
                     }
                     else {}
                 ),
@@ -689,6 +706,7 @@ def bind_planning_record(
                         EVIDENCE_PLANNING_VERSION,
                         COMPOSITION_PLANNING_VERSION,
                         PLANNING_VERSION,
+                        TUPLE_PLANNING_VERSION,
                     }
                     else {}
                 ),
@@ -699,6 +717,7 @@ def bind_planning_record(
                         EVIDENCE_PLANNING_VERSION,
                         COMPOSITION_PLANNING_VERSION,
                         PLANNING_VERSION,
+                        TUPLE_PLANNING_VERSION,
                     }
                     else {}
                 ),

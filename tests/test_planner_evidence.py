@@ -132,10 +132,21 @@ class PlannerEvidenceTests(JsonCliFixture):
                     summary["feasible"],
                     record["evidence"]["provider_composition"]["feasible"],
                 )
-                self.assertIn(
-                    "not joint confidence or reasoning",
-                    planner_evidence_lines(record)[0],
-                )
+                if record["version"] == 8:
+                    self.assertEqual(record["evidence"]["version"], 4)
+                    self.assertIn(
+                        "exact eligible pairs",
+                        planner_evidence_lines(record)[0],
+                    )
+                    self.assertNotIn(
+                        "not joint confidence or reasoning",
+                        planner_evidence_lines(record)[0],
+                    )
+                else:
+                    self.assertIn(
+                        "not joint confidence or reasoning",
+                        planner_evidence_lines(record)[0],
+                    )
                 self.assertIn(
                     "rationale_unavailable", "\n".join(planner_evidence_lines(record))
                 )
@@ -145,6 +156,73 @@ class PlannerEvidenceTests(JsonCliFixture):
         self.assertEqual(
             self.fixtures[9]["evidence"]["decisions"][-3]["axis"], "composition"
         )
+
+    def test_joint_tuple_evidence_rejects_synthesized_axes_and_stale_facts(self):
+        records = [record for record in self.fixtures if record["version"] == 8]
+        self.assertGreaterEqual(len(records), 2)
+        for record in records:
+            evidence = record["evidence"]
+            self.assertEqual(evidence["version"], 4)
+            tuple_axes = [
+                item for item in evidence["decisions"] if item["axis"] == "tuple"
+            ]
+            self.assertTrue(tuple_axes)
+            for item in tuple_axes:
+                self.assertFalse(
+                    any(
+                        other["role"] == item["role"]
+                        and other["axis"] in {"model", "thinking"}
+                        for other in evidence["decisions"]
+                    )
+                )
+                selected = next(
+                    option
+                    for option in item["options"]
+                    if option["id"] == item["selected"]
+                )
+                self.assertIsInstance(selected["identity"]["thinking"], str)
+                catalog = next(
+                    entry
+                    for entry in evidence["catalog"]
+                    if entry["provider"] == selected["identity"]["provider"]
+                    and entry["model"] == selected["identity"]["model"]
+                )
+                self.assertEqual(
+                    selected["identity"]["facts"], evidence_digest(catalog)
+                )
+                self.assertIn(
+                    selected["identity"]["thinking"], catalog["thinking_levels"]
+                )
+                self.assertLessEqual(len(item["options"]), 255)
+            serialized = json.dumps(record)
+            for body in (
+                "PRIVATE_TASK_BODY",
+                "PRIVATE_CONTEXT_BODY",
+                "PRIVATE_GUIDANCE_BODY",
+                "PRIVATE_CATALOG_BODY",
+                "PRIVATE_CATALOG_ENDPOINT",
+                "PRIVATE_CREDENTIAL",
+                "SYNTHETIC_KEY",
+                "instructions",
+                "hidden_reasoning",
+            ):
+                self.assertNotIn(body, serialized)
+            stale = copy.deepcopy(record)
+            axis = next(
+                item
+                for item in stale["evidence"]["decisions"]
+                if item["axis"] == "tuple"
+            )
+            axis["options"][0]["identity"]["facts"] = "a" * 64
+            rebind(stale)
+            with self.assertRaises(OrchestrationError):
+                validate_planning_record(stale, allow_unbound=True)
+            split = copy.deepcopy(record)
+            split["version"] = 7
+            split["evidence"]["version"] = 3
+            rebind(split)
+            with self.assertRaises(OrchestrationError):
+                validate_planning_record(split, allow_unbound=True)
 
     def test_support_exact_binding_tamper_and_legacy_v6_reads(self):
         base = next(
@@ -186,6 +264,8 @@ class PlannerEvidenceTests(JsonCliFixture):
             with self.subTest(index=index), self.assertRaises(OrchestrationError):
                 validate_planning_record(changed, allow_unbound=True)
         for fixture in self.fixtures:
+            if fixture["version"] != 7:
+                continue
             legacy = copy.deepcopy(fixture)
             legacy["version"] = 6
             legacy["evidence"]["version"] = 2

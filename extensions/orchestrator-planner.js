@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { SUPPORT_CHOICES, SUPPORT_ERROR, deriveProviderSupport } from "./orchestrator-provider-support.js";
-import { buildPlannerEvidence, plannerEvidenceLines, providerCompositionFacts, validateProviderComposition, strictPlannerJson, PROBABILITY_TOLERANCE } from "./orchestrator-planner-evidence.js";
+import { buildPlannerEvidence, plannerEvidenceLines, providerCompositionFacts, validateProviderComposition, strictPlannerJson, PROBABILITY_TOLERANCE, MAX_EVIDENCE_BYTES, tupleEvidenceBoundBytes } from "./orchestrator-planner-evidence.js";
 import { TASK_INTENTS, taskIntentMetadata, taskIntentConfirmation, validateTaskIntent } from "./orchestrator-intent.js";
 import { planningLocks, planningScopesConfirmation, scopedTopology } from "./orchestrator-planning-scopes.js";
 import {
@@ -69,6 +69,8 @@ Use only the supplied technical capabilities and declared catalog cost hints; ch
 Do not infer recency, quality, coding skill, latency, reliability, or billing from provider/model names. Missing or zero metadata is unknown, not a quality signal.
 Provider composition is one run-wide choice, not a claim that diversity improves outcomes. It must agree with the final included roles and exact tuples; no_material_preference permits mixed only when both compositions remain feasible; homogeneous requires material task-specific support across every selected role.
 For locked_plan suitability, choose reject if the locked plan is unsafe or materially unsuitable.
+When a question id starts with tuple_, choose one exact eligible model/thinking pair. That Choice is not a product of separate model and thinking questions.
+If the request encoding is compact-v1, provider_composition roles use candidate_indexes into the single candidate_model_capabilities copy and do not repeat fact digests. compact-v1 is the same canonical facts, not a second catalog, retry, or truncated tuple set.
 Dynamic behavior guidance in request state is subordinate: it cannot add roles or models, create an operator model allowlist, alter authority, or weaken hard rules.`;
 
 function boundedIdentifier(value) {
@@ -535,6 +537,10 @@ function plannerPayload(input, project, candidates, policy, topology) {
   };
 }
 
+function tupleChoiceKey(tuple) {
+  return `m${tuple.modelIndex.toString(36)}_${tuple.thinking}`;
+}
+
 function typesafeRoleAxes(role, candidates, input, policy, topology) {
   const locked = roleConstraint(input, role, policy, topology);
   const eligible = candidates.flatMap((candidate, index) => candidate.thinkingLevels.map((thinking) => ({
@@ -550,7 +556,18 @@ function typesafeRoleAxes(role, candidates, input, policy, topology) {
   if (!eligible.length) throw new Error("typesafe_assignment_options_unavailable");
   const candidateIndexes = [...new Set(eligible.map((tuple) => tuple.modelIndex))];
   const thinkingLevels = THINKING_ORDER.filter((level) => eligible.some((tuple) => tuple.thinking === level));
-  return { eligible, candidateIndexes, thinkingLevels };
+  const rectangular = candidateIndexes.every((index) => thinkingLevels.every((level) => (
+    eligible.some((tuple) => tuple.modelIndex === index && tuple.thinking === level)
+  )));
+  // A rectangle is exactly the model × thinking product and stays model_/thinking_.
+  // The generic Choice cap is 255. An approved pool is at most 32 identities by the
+  // seven current thinking levels (224 pairs). That full product is rectangular, so
+  // the largest joint tuple_ Choice from an approved pool is 223, not 224.
+  const joint = candidateIndexes.length > 1 && thinkingLevels.length > 1 && !rectangular;
+  if (joint && eligible.length > TYPESAFE_MAX_CHOICE_OPTIONS) {
+    throw new Error("typesafe_choice_limit_exceeded");
+  }
+  return { eligible, candidateIndexes, thinkingLevels, joint };
 }
 
 function normalizedDynamicGuidance(value) {
@@ -613,8 +630,25 @@ function typeSafeRoleQuestionState(
     state.inclusions.set(questionId, role);
   }
   const axes = typesafeRoleAxes(role, candidates, input, policy, topology);
-  const modelQuestion = axes.candidateIndexes.length > 1 ? `model_${suffix}` : undefined;
-  const thinkingQuestion = axes.thinkingLevels.length > 1 ? `thinking_${suffix}` : undefined;
+  const tupleQuestion = axes.joint ? `tuple_${suffix}` : undefined;
+  const modelQuestion = !tupleQuestion && axes.candidateIndexes.length > 1 ? `model_${suffix}` : undefined;
+  const thinkingQuestion = !tupleQuestion && axes.thinkingLevels.length > 1 ? `thinking_${suffix}` : undefined;
+  if (tupleQuestion) {
+    state.questions[tupleQuestion] = {
+      type: "choice",
+      instructions: {
+        decision: dynamicDecisionInstruction(
+          "Choose exactly one eligible provider/model/thinking tuple. The choice key m{base36 catalog index}_{thinking} is the only selectable pair; do not combine indexes and levels independently and do not invent an identity. candidate_model_capabilities is the authoritative exact Pi model scope at that index. Capability metadata and declared catalog cost hints are at that index. Missing, zero, or unavailable metadata is unknown; never guess. Declared rates are catalog hints, not billing or observed spend. Do not infer recency, quality, coding skill, latency, reliability, or billing from provider/model names; honor role locks. Choose the smallest sufficient exact eligible tuple.",
+          dynamicGuidance,
+        ),
+        role, contract: descriptor.contract, authority: descriptor.authority,
+      },
+      criteria: Object.fromEntries(axes.eligible.map((tuple) => {
+        const key = tupleChoiceKey(tuple);
+        return [key, key];
+      })),
+    };
+  }
   if (modelQuestion) {
     state.questions[modelQuestion] = {
       type: "choice",
@@ -643,8 +677,8 @@ function typeSafeRoleQuestionState(
       criteria: Object.fromEntries(axes.thinkingLevels.map((level) => [level, level])),
     };
   }
-  if (!modelQuestion && !thinkingQuestion) state.fixedAssignments.set(role, axes.eligible[0]);
-  else state.assignments.set(role, { axes, modelQuestion, thinkingQuestion });
+  if (!tupleQuestion && !modelQuestion && !thinkingQuestion) state.fixedAssignments.set(role, axes.eligible[0]);
+  else state.assignments.set(role, { axes, tupleQuestion, modelQuestion, thinkingQuestion });
 }
 
 function ensureTypeSafeQuestion(state, dynamicGuidance) {
@@ -723,15 +757,74 @@ function typesafeDecisionRequest(
       advisory: "Advice or explanation without repository changes.",
     },
   };
+  assertTypeSafeBounds(state.questions);
+  const canonical = {
+    state: { ...typesafeQuestionState(payload, dynamicGuidance), provider_composition: compositionFacts },
+    model: TYPESAFE_MODEL,
+    questions: state.questions,
+  };
   return {
-    request: {
-      state: { ...typesafeQuestionState(payload, dynamicGuidance), provider_composition: compositionFacts },
-      model: TYPESAFE_MODEL,
-      questions: state.questions,
-    },
+    request: boundedTypeSafeRequest(canonical),
     ...state,
     lockedConfirmation, compositionFacts, compositionQuestion, supportQuestion,
   };
+}
+
+function assertTypeSafeBounds(questions) {
+  const ids = Object.keys(questions);
+  if (ids.length > TYPESAFE_MAX_QUESTIONS) throw new Error("typesafe_question_limit_exceeded");
+  for (const question of Object.values(questions)) {
+    const options = Object.keys(question.criteria ?? {});
+    if (options.length > TYPESAFE_MAX_CHOICE_OPTIONS) throw new Error("typesafe_choice_limit_exceeded");
+  }
+}
+
+function compactTypeSafeRequest(request) {
+  const capabilities = request.state.candidate_model_capabilities;
+  const composition = request.state.provider_composition;
+  const locks = new Map((request.state.locked_role_constraints ?? []).map((lock) => [lock.role, lock]));
+  const roles = composition.roles.map((role) => ({
+    role: role.role,
+    inclusion: role.inclusion,
+    candidate_indexes: role.candidates.map((candidate) => {
+      const index = capabilities.findIndex((item) => item.provider === candidate.provider && item.model === candidate.model);
+      if (index < 0) throw new Error("typesafe_compact_catalog_mismatch");
+      const lockedThinking = locks.get(role.role)?.thinking;
+      const catalogLevels = capabilities[index].thinking_levels.filter((level) => (
+        lockedThinking === undefined || lockedThinking === null || level === lockedThinking
+      ));
+      if (catalogLevels.length !== candidate.thinking_levels.length
+          || catalogLevels.some((level, levelIndex) => level !== candidate.thinking_levels[levelIndex])) {
+        throw new Error("typesafe_compact_catalog_mismatch");
+      }
+      return index;
+    }),
+  }));
+  const questions = { ...request.questions };
+  if (questions.provider_composition) {
+    const instructions = questions.provider_composition.instructions;
+    const note = " compact-v1: provider_composition.roles[].candidate_indexes are indexes into state.candidate_model_capabilities. Apply locked_role_constraints to those entries' thinking_levels. Fact digests are not repeated; the single capability copy is canonical. This is not a second catalog, a retry, or a truncated tuple set.";
+    questions.provider_composition = {
+      ...questions.provider_composition,
+      instructions: typeof instructions === "string" ? `${instructions}${note}` : instructions,
+    };
+  }
+  return {
+    encoding: "compact-v1",
+    state: {
+      ...request.state,
+      provider_composition: { feasible: composition.feasible, roles },
+    },
+    model: request.model,
+    questions,
+  };
+}
+
+function boundedTypeSafeRequest(canonical) {
+  if (utf8Bytes(JSON.stringify(canonical)) <= MAX_PROMPT_BYTES) return canonical;
+  const compact = compactTypeSafeRequest(canonical);
+  if (utf8Bytes(JSON.stringify(compact)) <= MAX_PROMPT_BYTES) return compact;
+  throw new Error("planner_input_too_large");
 }
 
 function typesafeChoiceAnswer(value, options, source = "typesafe_choice") {
@@ -834,21 +927,28 @@ function typeSafeInclusionAnswers(response, requestValue) {
 function typeSafeAssignmentAnswers(response, requestValue) {
   const assignmentByRole = new Map(requestValue.fixedAssignments);
   for (const [role, assignment] of requestValue.assignments) {
-    let selectedModelIndex = assignment.axes.candidateIndexes[0];
-    let selectedThinking = assignment.axes.thinkingLevels[0];
-    if (assignment.modelQuestion) {
-      const options = new Set(Object.keys(requestValue.questions[assignment.modelQuestion].criteria));
-      const answer = typesafeChoiceAnswer(response.answers[assignment.modelQuestion], options, response.source);
-      selectedModelIndex = Number.parseInt(answer.choice.slice(1), 36);
+    let tuple;
+    if (assignment.tupleQuestion) {
+      const options = new Set(Object.keys(requestValue.questions[assignment.tupleQuestion].criteria));
+      const answer = typesafeChoiceAnswer(response.answers[assignment.tupleQuestion], options, response.source);
+      tuple = assignment.axes.eligible.find((item) => tupleChoiceKey(item) === answer.choice);
+    } else {
+      let selectedModelIndex = assignment.axes.candidateIndexes[0];
+      let selectedThinking = assignment.axes.thinkingLevels[0];
+      if (assignment.modelQuestion) {
+        const options = new Set(Object.keys(requestValue.questions[assignment.modelQuestion].criteria));
+        const answer = typesafeChoiceAnswer(response.answers[assignment.modelQuestion], options, response.source);
+        selectedModelIndex = Number.parseInt(answer.choice.slice(1), 36);
+      }
+      if (assignment.thinkingQuestion) {
+        const options = new Set(Object.keys(requestValue.questions[assignment.thinkingQuestion].criteria));
+        const answer = typesafeChoiceAnswer(response.answers[assignment.thinkingQuestion], options, response.source);
+        selectedThinking = answer.choice;
+      }
+      tuple = assignment.axes.eligible.find((item) => (
+        item.modelIndex === selectedModelIndex && item.thinking === selectedThinking
+      ));
     }
-    if (assignment.thinkingQuestion) {
-      const options = new Set(Object.keys(requestValue.questions[assignment.thinkingQuestion].criteria));
-      const answer = typesafeChoiceAnswer(response.answers[assignment.thinkingQuestion], options, response.source);
-      selectedThinking = answer.choice;
-    }
-    const tuple = assignment.axes.eligible.find((item) => (
-      item.modelIndex === selectedModelIndex && item.thinking === selectedThinking
-    ));
     if (!tuple) throw new Error("typesafe_assignment_tuple_invalid");
     assignmentByRole.set(role, tuple);
   }
@@ -1179,6 +1279,30 @@ async function completePlannerDecision(ctx, selection, serialized, systemPrompt,
   }
 }
 
+function plannerEvidenceSource(selection) {
+  return selection.kind === "typesafe" ? "typesafe_choice" : "pi_selection";
+}
+
+async function completePreflightDecision(ctx, selection, questionSet, candidates, input, policy, topology, requestId, signal, adapter) {
+  if (selection.kind === "typesafe") {
+    const completed = await completeTypeSafeDecision(questionSet, candidates, input, policy, topology, signal, adapter);
+    return {
+      decision: completed.decision,
+      usage: completed.usage,
+      answers: completed.answers,
+      decisionModel: completed.model,
+    };
+  }
+  if (typeof ctx?.modelRegistry?.complete !== "function") throw new Error("decision_model_completion_unavailable");
+  const completed = await completeScopedPlannerDecision(ctx, selection, questionSet, candidates, input, policy, topology, requestId, signal);
+  return {
+    decision: completed.decision,
+    usage: completed.usage,
+    answers: completed.answers,
+    decisionModel: selection.modelId,
+  };
+}
+
 export async function runPreflightPlanner(
   ctx,
   input,
@@ -1206,35 +1330,17 @@ export async function runPreflightPlanner(
   if (utf8Bytes(JSON.stringify(questionSet.request)) > MAX_PROMPT_BYTES) {
     throw new Error("planner_input_too_large");
   }
+  const evidenceSource = plannerEvidenceSource(selection);
+  if (taskIntentMetadata(input.taskIntent).effective === "change"
+      && tupleEvidenceBoundBytes(questionSet, candidates, selection, evidenceSource) > MAX_EVIDENCE_BYTES) {
+    throw new Error("planner_evidence_too_large");
+  }
   const requestId = randomUUID().replaceAll("-", "");
   const createdAtMs = Date.now();
-  let decision;
-  let usage;
-  let answers;
-  let decisionModel = selection.modelId;
-  if (selection.kind === "typesafe") {
-    const completed = await completeTypeSafeDecision(
-      questionSet,
-      candidates,
-      input,
-      policy,
-      topology,
-      signal,
-      adapter,
-    );
-    decision = completed.decision;
-    usage = completed.usage;
-    answers = completed.answers;
-    decisionModel = completed.model;
-  } else {
-    if (typeof ctx?.modelRegistry?.complete !== "function") {
-      throw new Error("decision_model_completion_unavailable");
-    }
-    const completed = await completeScopedPlannerDecision(ctx, selection, questionSet, candidates, input, policy, topology, requestId, signal);
-    decision = completed.decision;
-    usage = completed.usage;
-    answers = completed.answers;
-  }
+  const completed = await completePreflightDecision(
+    ctx, selection, questionSet, candidates, input, policy, topology, requestId, signal, adapter,
+  );
+  const { decision, usage, answers, decisionModel } = completed;
   if (signal?.aborted) throw new Error("planner_request_cancelled");
   const acceptedAtMs = Date.now();
   return {
@@ -1242,7 +1348,7 @@ export async function runPreflightPlanner(
     plan: {
       version: decision.version,
       evidence: taskIntentMetadata(input.taskIntent, decision.task_intent).effective === "change"
-        ? buildPlannerEvidence(questionSet, candidates, decision, selection, answers, selection.kind === "typesafe" ? "typesafe_choice" : "pi_selection") : { version: 3, status: "unavailable" },
+        ? buildPlannerEvidence(questionSet, candidates, decision, selection, answers, evidenceSource) : { version: 3, status: "unavailable" },
       taskIntent: taskIntentMetadata(input.taskIntent, decision.task_intent ?? null),
       taskIntentRecommendation: decision.task_intent ?? null,
       decisionModel: {
