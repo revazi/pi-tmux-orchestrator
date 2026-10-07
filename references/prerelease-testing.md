@@ -117,6 +117,24 @@ Issues #193/#194/#195 use **model-free synthetic fixtures only**; do not repeat 
 (Ruff 0.11.11), exact package verification/smoke, measured Node coverage and
 Fallow 3.22.0 identity-baseline/changed-file gates, and `git diff --check`.
 
+Check planning-v7/evidence-v3 rectangular plans and planning-v8/evidence-v4 joint
+tuple plans. Limits are 255 generic Choice options, 255 questions, 96 KiB request JSON, and
+224 KiB retained evidence. The reachable approved-pool ceiling is 224 eligible pairs
+(32 identities × 7 thinking levels). That full product is rectangular and stays
+`model_`/`thinking_`, not a 224-option `tuple_` Choice. A heterogeneous approved pool must expose every
+eligible pair as a `tuple_` option, at most 223 and therefore under 255. A shared 20-model five-role
+heterogeneous pool with 139 pairs per role must remain selectable when its retained
+evidence fits under 224 KiB. An unscoped catalog above 255 tuples, a request that
+cannot fit in 96 KiB even as local `compact-v1`, or retained evidence that cannot
+fit in 224 KiB must fail before HTTP with no fetch. A legal multi-provider pool
+must also fail before fetch when the largest reachable derived support object and
+maximum-width probabilities cannot fit, even if a one-hot answer would. That
+evidence failure is legitimate; do not truncate pairs. `compact-v1` is not production wire acceptance.
+Planning v5–v8 manifests use the 1 MiB ceiling. Confirm malformed tuple answers,
+cancellation, stale capability digests, locks, optional/custom roles, and redaction
+of private bodies, credentials, endpoints, headers, compatibility internals,
+configuration bodies, and provider responses. Rectangular small catalogs stay v7/v3.
+
 Check planning-v7/evidence-v3 preview, final TUI/RPC confirmation, persisted
 manifest v10/v11 reopen, human/JSON status, list/Supervisor summaries versus exact
 snapshots, dashboard, and parent final evidence. Confirm exact supplied facts,

@@ -1,5 +1,5 @@
 import { syntheticEvidenceFixture } from "./fixtures/planner-evidence.mjs";
-import { plannerEvidenceLines, strictPlannerJson, MAX_EVIDENCE_BYTES, buildPlannerEvidence, providerCompositionFacts, providerCompositionSummary } from "../extensions/orchestrator-planner-evidence.js";
+import { plannerEvidenceLines, strictPlannerJson, MAX_EVIDENCE_BYTES, buildPlannerEvidence, providerCompositionFacts, providerCompositionSummary, tupleEvidenceBoundBytes } from "../extensions/orchestrator-planner-evidence.js";
 import { plannerEvidenceDigest } from "../extensions/orchestrator-planning.js";
 import { providerSupportFailure, SUPPORT_ERROR } from "../extensions/orchestrator-provider-support.js";
 import assert from "node:assert/strict";
@@ -3869,34 +3869,39 @@ test("TypeSafe Jev precedes explicit Pi decision models and configured fallback"
       typesafeFetch: async (_url, options) => {
         const request = JSON.parse(options.body);
         const requestValue = capturedTypeSafeRequest;
-        const modelQuestions = Object.entries(request.questions).filter(([id]) => id.startsWith("model_"));
-        const thinkingQuestions = Object.entries(request.questions).filter(([id]) => id.startsWith("thinking_"));
-        assert.equal(modelQuestions.length, 2);
-        assert.equal(thinkingQuestions.length, 2);
+        const tupleQuestions = Object.entries(request.questions).filter(([id]) => id.startsWith("tuple_"));
+        assert.equal(tupleQuestions.length, 2);
+        assert.equal(Object.keys(request.questions).some((id) => id.startsWith("model_") || id.startsWith("thinking_")), false);
         assert.equal(Object.keys(request.state).filter((key) => key === "candidate_model_capabilities").length, 1);
+        assert.equal(Object.hasOwn(request.state, "worker_assignment_tuple_catalog"), false);
         assert.ok(Buffer.byteLength(options.body, "utf8") <= typesafeTestHooks.MAX_TYPESAFE_REQUEST_BYTES);
-        for (const question of [...modelQuestions.map(([, value]) => value), ...thinkingQuestions.map(([, value]) => value)]) {
-          assert.ok(Object.keys(question.criteria).length <= plannerTestHooks.TYPESAFE_MAX_CHOICE_OPTIONS);
-        }
         const capabilities = request.state.candidate_model_capabilities;
         assert.equal(capabilities.length, maximumCatalog.length);
         assert.deepEqual(capabilities.map(({ provider, model }) => ({ provider, model })),
           maximumCatalog.map(({ provider, id }) => ({ provider, model: id })).sort((a, b) => `${a.provider}/${a.model}`.localeCompare(`${b.provider}/${b.model}`)));
-        for (const [questionId, question] of modelQuestions) {
-          assert.equal(Object.keys(question.criteria).length, 32);
-          for (const choice of Object.keys(question.criteria)) {
-            const index = Number.parseInt(choice.slice(1), 36);
-            const candidate = maximumCatalog.find((item) => item.id === capabilities[index].model);
-            assert.equal(capabilities[index].provider, candidate.provider);
-            assert.equal(capabilities[index].model, candidate.id);
+        const eligibleKeys = new Set();
+        for (const [, question] of tupleQuestions) {
+          const keys = Object.keys(question.criteria);
+          assert.ok(keys.length <= plannerTestHooks.TYPESAFE_MAX_CHOICE_OPTIONS);
+          assert.ok(keys.length < 32 * 7);
+          for (const choice of keys) {
+            assert.equal(question.criteria[choice], choice);
+            const match = /^m([0-9a-z]+)_(off|minimal|low|medium|high|xhigh|max)$/.exec(choice);
+            assert.ok(match);
+            const index = Number.parseInt(match[1], 36);
+            const level = match[2];
+            assert.equal(capabilities[index].thinking_levels.includes(level), true);
+            eligibleKeys.add(`${capabilities[index].provider}/${capabilities[index].model}/${level}`);
           }
         }
-        for (const [, question] of thinkingQuestions) {
-          assert.ok(Object.keys(question.criteria).length <= 7);
+        const validPairs = capabilities.flatMap((candidate) => candidate.thinking_levels
+          .map((thinking) => [`${candidate.provider}/${candidate.model}`, thinking]));
+        assert.equal(eligibleKeys.size, validPairs.length);
+        for (const [model, thinking] of validPairs) {
+          assert.equal(eligibleKeys.has(`${model}/${thinking}`), true);
         }
-        const validPairs = maximumCatalog.flatMap((candidate) => Object.keys(candidate.thinkingLevelMap)
-          .map((thinking) => [`${candidate.provider}/${candidate.id}`, thinking]));
-        assert.equal(validPairs.length, maximumCatalog.reduce((count, candidate) => count + Object.keys(candidate.thinkingLevelMap).length, 0));
+        const unsupported = capabilities.findIndex((candidate) => !candidate.thinking_levels.includes("max"));
+        if (unsupported >= 0) assert.equal(Object.hasOwn(request.questions.tuple_00.criteria, `m${unsupported.toString(36)}_max`), false);
         const chooseAnswer = (question, choice) => ({
           type: "choice", choice, confidence: 1,
           probabilities: Object.fromEntries(Object.keys(question.criteria).map((key) => [key, key === choice ? 1 : 0])),
@@ -3904,34 +3909,23 @@ test("TypeSafe Jev precedes explicit Pi decision models and configured fallback"
         let tupleProofCount = 0;
         for (const [model, thinking] of validPairs) {
           const [provider, modelId] = model.split("/");
-          assert.ok(capabilities.some((item) => item.provider === provider && item.model === modelId));
-          assert.ok(maximumCatalog.some((candidate) => candidate.provider === provider
-            && candidate.id === modelId && candidate.thinkingLevelMap[thinking] === thinking));
           const modelIndex = capabilities.findIndex((item) => item.provider === provider && item.model === modelId);
-          const modelChoice = `m${modelIndex.toString(36)}`;
+          const tupleChoice = `m${modelIndex.toString(36)}_${thinking}`;
           for (const [roleIndex, role] of ["implementer", "reviewer"].entries()) {
             const answers = {};
             for (const [questionId, question] of Object.entries(request.questions)) {
               let choice = questionId === "provider_composition" ? "no_material_preference" : Object.keys(question.criteria)[0];
-              const otherIndex = capabilities.findIndex((candidate) => candidate.provider !== provider);
-              if (questionId.startsWith("model_") && questionId !== `model_${String(roleIndex).padStart(2, "0")}`) choice = `m${otherIndex.toString(36)}`;
-              if (questionId.startsWith("thinking_") && questionId !== `thinking_${String(roleIndex).padStart(2, "0")}`) choice = capabilities[otherIndex].thinking_levels[0];
-              if (questionId === `model_${String(roleIndex).padStart(2, "0")}`) choice = modelChoice;
-              if (questionId === `thinking_${String(roleIndex).padStart(2, "0")}`) choice = thinking;
+              if (questionId === `tuple_${String(roleIndex).padStart(2, "0")}`) choice = tupleChoice;
+              else if (questionId.startsWith("tuple_")) {
+                const other = capabilities.findIndex((candidate) => candidate.provider !== provider);
+                choice = `m${other.toString(36)}_${capabilities[other].thinking_levels[0]}`;
+              }
               answers[questionId] = chooseAnswer(question, choice);
             }
             const result = plannerTestHooks.parseTypeSafeDecisionForTest(
               { model: "jev-1.13.0", answers, usage: { input_tokens: 1, output_tokens: 1 } },
               requestValue, maximumSelection.candidates, maximumContext, maximumSelection,
-              maximumTopology, maximumPolicy, {
-                acceptedAtMs: 1, createdAtMs: 1, requestId: "test",
-                bindings: {
-                  plannerPolicy: metadataDigest({ version: 1 }),
-                  topologyPolicy: metadataDigest(maximumTopology),
-                  candidateSet: plannerCandidateDigest(maximumSelection.candidates),
-                },
-                operatorOverrides: [],
-              },
+              maximumTopology, maximumPolicy,
             );
             assert.ok(result.decision.roles.some((assignment) => assignment.role === role
               && assignment.provider === provider && assignment.model === modelId
@@ -3940,26 +3934,28 @@ test("TypeSafe Jev precedes explicit Pi decision models and configured fallback"
           }
         }
         assert.equal(tupleProofCount, validPairs.length * 2);
-        const invalidAnswers = {};
-        for (const [questionId, question] of Object.entries(request.questions)) {
-          const choices = Object.keys(question.criteria);
-          const choice = questionId.startsWith("model_") ? "m0" : choices[0];
-          invalidAnswers[questionId] = chooseAnswer(question, choice);
-        }
-        const invalidModelQuestion = requestValue.assignments.get("implementer").modelQuestion;
-        const invalidThinkingQuestion = requestValue.assignments.get("implementer").thinkingQuestion;
-        invalidAnswers[invalidModelQuestion] = chooseAnswer(request.questions[invalidModelQuestion], "m0");
-        invalidAnswers[invalidThinkingQuestion] = chooseAnswer(request.questions[invalidThinkingQuestion], "max");
+        const illegal = "m0_off";
+        assert.equal(Object.hasOwn(request.questions.tuple_00.criteria, illegal) || capabilities[0].thinking_levels.includes("off"), capabilities[0].thinking_levels.includes("off"));
+        const missing = Object.keys(request.questions.tuple_00.criteria).includes("m0_notalevel") === false;
+        assert.equal(missing, true);
+        const invalidAnswers = Object.fromEntries(Object.entries(request.questions).map(([questionId, question]) => [
+          questionId,
+          chooseAnswer(question, questionId === "tuple_00" ? "m0_notalevel" : Object.keys(question.criteria)[0]),
+        ]));
         assert.throws(() => plannerTestHooks.parseTypeSafeDecisionForTest(
           { model: "jev-1.13.0", answers: invalidAnswers, usage: { input_tokens: 1, output_tokens: 1 } },
           requestValue, maximumSelection.candidates, maximumContext, maximumSelection, maximumTopology,
           maximumPolicy,
-        ), /typesafe_assignment_tuple_invalid/);
+        ), /typesafe_answer_invalid/);
         const answers = {};
         for (const [questionId, question] of Object.entries(request.questions)) {
           const choices = Object.keys(question.criteria);
-          const secondIndex = capabilities.findIndex((candidate) => candidate.provider !== capabilities[0].provider);
-          const choice = questionId === "provider_composition" ? "mixed_provider" : questionId === "model_01" ? `m${secondIndex.toString(36)}` : questionId === "thinking_01" ? capabilities[secondIndex].thinking_levels[0] : questionId.startsWith("model_") ? "m0" : choices[0];
+          const other = capabilities.findIndex((candidate) => candidate.provider !== capabilities[0].provider);
+          const choice = questionId === "provider_composition"
+            ? "mixed_provider"
+            : questionId === "tuple_01"
+              ? `m${other.toString(36)}_${capabilities[other].thinking_levels[0]}`
+              : choices[0];
           answers[questionId] = chooseAnswer(question, choice);
         }
         return new Response(JSON.stringify({
@@ -4091,10 +4087,8 @@ test("TypeSafe Jev is confined to Pi scopedModels and cannot invent an identity"
       typesafeFetch: async (_url, options) => {
         capturedRequest = JSON.parse(options.body);
         const selected = {
-          model_00: "m1",
-          thinking_00: "max",
-          model_01: "m0",
-          thinking_01: "low",
+          tuple_00: "m1_max",
+          tuple_01: "m0_low",
         };
         const answers = Object.fromEntries(Object.entries(capturedRequest.questions).map(
           ([questionId, question]) => [
@@ -4138,7 +4132,7 @@ test("TypeSafe Jev is confined to Pi scopedModels and cannot invent an identity"
           const request = JSON.parse(options.body);
           const answers = Object.fromEntries(Object.entries(request.questions).map(
             ([questionId, question]) => {
-              const choice = questionId === "model_00" ? "m2" : Object.keys(question.criteria)[0];
+              const choice = questionId === "tuple_00" ? "m2_max" : Object.keys(question.criteria)[0];
               return [questionId, answerFor(question, choice)];
             },
           ));
@@ -4703,7 +4697,7 @@ test("capability-informed planner projection is bounded, redacted, and identical
   assert.match(assignment.instructions.decision, /dynamic_behavior_guidance in request state/);
   assert.equal(assignment.instructions.decision.includes("Prefer a compact roster"), false);
   for (const [choice, text] of Object.entries(assignment.criteria)) {
-    assert.match(choice, /^(m[0-9a-z]+|off|minimal|low|medium|high|xhigh|max)$/);
+    assert.match(choice, /^(m[0-9a-z]+(?:_(?:off|minimal|low|medium|high|xhigh|max))?|off|minimal|low|medium|high|xhigh|max)$/);
     assert.ok(typeof text === "string");
   }
   assert.equal(Object.hasOwn(typesafeRequest.state, "worker_assignment_tuple_catalog"), false);
@@ -6460,6 +6454,10 @@ function piDecisionText(value, decision) {
     if (id === "provider_composition") return decision.provider_composition ?? (new Set(decision.roles.map((role) => role.provider)).size === 1 ? "single_provider" : "mixed_provider");
     const role = selected.get(request.questions[id].instructions?.role);
     if (id.startsWith("include_")) return role ? "include" : "omit";
+    if (id.startsWith("tuple_") && role) {
+      const index = request.state.candidate_model_capabilities.findIndex((candidate) => candidate.provider === role.provider && candidate.model === role.model);
+      return `m${index.toString(36)}_${role.thinking}`;
+    }
     if (id.startsWith("model_") && role) {
       const index = request.state.candidate_model_capabilities.findIndex((candidate) => candidate.provider === role.provider && candidate.model === role.model);
       return `m${index.toString(36)}`;
@@ -7208,6 +7206,516 @@ test("Jev validates every bounded intent recommendation in its existing one-call
   }
 });
 
+test("heterogeneous tuples stay lossless within Choice, question, and byte limits", async () => {
+  const levels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+  const secret = {
+    baseUrl: "https://secret.example/v1", headers: { Authorization: "Bearer catalog-secret" },
+    apiKey: "catalog-secret", compat: { supportsStore: true }, customConfig: { body: "private-custom-body" },
+  };
+  const model = (index, thinkingLevelMap, fat = false) => ({
+    provider: `p${index % 2}`, id: `model-${String(index).padStart(3, "0")}`, reasoning: true, thinkingLevelMap,
+    ...(fat ? {
+      input: ["text", "image"], contextWindow: 200000, maxTokens: 8192,
+      cost: { input: 1, output: 2, cacheRead: 0.1, cacheWrite: 0.2, tiers: Array.from({ length: 16 }, (_, tier) => ({
+        inputTokensAbove: 1000 * (tier + 1), input: 1, output: 2, cacheRead: 0.1, cacheWrite: 0.2,
+      })) }, promptCache: { short: 300, long: 3600 }, ...secret,
+    } : {}),
+  });
+  const explicitLevels = (supported) => Object.fromEntries(levels.map((level) => [level, supported.includes(level) ? level : null]));
+  const rectangular = Array.from({ length: 4 }, (_, index) => ({
+    ...model(index, explicitLevels(levels)), provider: "p0",
+  }));
+  const heterogeneous = [
+    { ...model(0, explicitLevels(levels)), provider: "p0" },
+    { ...model(1, explicitLevels(["low"])), provider: "p0" },
+  ];
+  const locked = model(0, explicitLevels(["low", "medium"]));
+  const custom = model(1, explicitLevels(["off"]));
+  const choose = (question, choice = Object.keys(question.criteria)[0]) => ({
+    type: "choice", choice, confidence: 1,
+    probabilities: Object.fromEntries(Object.keys(question.criteria).map((key) => [key, key === choice ? 1 : 0])),
+  });
+  const topologyFor = (catalog, extra = {}) => validatePlannerTopology(plannerTopology({
+    optionalRoles: extra.optionalRoles ?? [],
+    customRoles: extra.customRoles ?? [],
+    workerCandidates: extra.workerCandidates ?? approvedPool(catalog),
+    constraints: extra.constraints ?? {},
+  }));
+  const run = async (catalog, input, topology, { fetchImpl, signal, guidance } = {}) => {
+    let calls = 0;
+    const ctx = { modelRegistry: { getAvailable: () => catalog } };
+    const selection = selectDecisionModel(ctx, undefined, plannerPolicy(), [], { typesafeApiKey: "synthetic-key" });
+    const result = await runPreflightPlanner(ctx, input, "/synthetic", selection, topology, undefined, signal, {
+      typesafeApiKey: "synthetic-key",
+      dynamicGuidance: guidance,
+      typesafeFetch: async (_url, options) => {
+        calls += 1;
+        if (fetchImpl) return fetchImpl(options, calls);
+        const request = JSON.parse(options.body);
+        const answers = Object.fromEntries(Object.entries(request.questions).map(([id, question]) => {
+          const choice = id === "provider_support" ? "none" : id === "provider_composition" ? (request.state.provider_composition.feasible.length === 1 ? request.state.provider_composition.feasible[0] : "single_provider") : Object.keys(question.criteria)[0];
+          return [id, choose(question, choice)];
+        }));
+        return new Response(JSON.stringify({ model: "jev-1.13.0", answers, usage: { input_tokens: 1, output_tokens: 1 } }), { status: 200 });
+      },
+    });
+    return { ...result, calls };
+  };
+
+  const rectangle = await run(rectangular, { task: "Rectangular catalog.", taskIntent: "change", withProbe: false, withPlaywright: false, withDjangoExpert: false }, topologyFor(rectangular));
+  assert.equal(rectangle.calls, 1);
+  assert.equal(rectangle.record?.version, undefined);
+  const rectangleRecord = planningRecordForPreview(rectangle.plan);
+  assert.equal(rectangleRecord.version, 7);
+  assert.equal(rectangleRecord.evidence.version, 3);
+  assert.equal(rectangleRecord.evidence.decisions.some((item) => item.axis === "tuple"), false);
+  assert.match(plannerEvidenceLines(rectangleRecord.evidence).join("\n"), /independent axes, not joint confidence/);
+
+  const customTopology = topologyFor([locked, custom], {
+    customRoles: [{ role: "custom-security", contract: "probe", provider: "p1", model: "model-001", thinking: "off" }],
+  });
+  let lockedRequest;
+  const lockedPlan = await run([locked, custom], {
+    task: "PRIVATE_TUPLE_TASK", taskIntent: "change", projectCustomRoles: true,
+    withProbe: false, withPlaywright: false, withDjangoExpert: false,
+    modelOverrides: { reviewer: { provider: "p0", model: "model-000", thinking: "low" } },
+  }, customTopology, {
+    fetchImpl: async (options) => {
+      lockedRequest = JSON.parse(options.body);
+      assert.equal(Object.keys(lockedRequest.questions).some((id) => id.startsWith("tuple_")), true);
+      assert.equal(lockedRequest.questions.tuple_00.instructions.role, "implementer");
+      assert.equal(Object.values(lockedRequest.questions).some((question) => question.instructions?.role === "custom-security" && Object.keys(question.criteria).some((key) => key.startsWith("m"))), false);
+      assert.equal(Object.values(lockedRequest.questions).some((question) => question.instructions?.role === "reviewer"), false);
+      const answers = Object.fromEntries(Object.entries(lockedRequest.questions).map(([id, question]) => [
+        id, choose(question, id === "provider_support" ? "none" : Object.keys(question.criteria)[0]),
+      ]));
+      return new Response(JSON.stringify({ model: "jev-1.13.0", answers, usage: { input_tokens: 2, output_tokens: 1 } }), { status: 200 });
+    },
+  });
+  assert.equal(lockedPlan.calls, 1);
+  assert.equal(lockedPlan.plan.roles.find((role) => role.role === "reviewer").thinking, "low");
+  assert.equal(lockedPlan.plan.roles.find((role) => role.role === "custom-security").model, "model-001");
+  const lockedRecord = planningRecordForPreview(lockedPlan.plan);
+  assert.equal(lockedRecord.version, 8);
+  assert.equal(lockedRecord.evidence.version, 4);
+  assert.equal(lockedRecord.evidence.decisions.find((item) => item.role === "implementer" && item.axis === "tuple").authority, "planner");
+  assert.equal(lockedRecord.evidence.decisions.some((item) => item.role === "implementer" && item.axis === "model"), false);
+  assert.equal(lockedRecord.evidence.decisions.find((item) => item.role === "custom-security" && item.axis === "model").authority, "fixed");
+  assert.match(plannerEvidenceLines(lockedRecord.evidence)[0], /exact eligible pairs/);
+  assert.doesNotMatch(JSON.stringify(lockedRecord), /PRIVATE_TUPLE_TASK|catalog-secret|secret\.example|private-custom-body|Bearer|supportsStore/);
+  assert.equal(JSON.stringify(lockedRequest).includes("catalog-secret"), false);
+
+  const optionalCatalog = heterogeneous;
+  let optionalCalls = 0;
+  const omitted = await run(optionalCatalog, {
+    task: "Optional specialist.", taskIntent: "change", withPlaywright: false, withDjangoExpert: false,
+  }, topologyFor(optionalCatalog, { optionalRoles: ["probe"] }), {
+    fetchImpl: async (options) => {
+      optionalCalls += 1;
+      const request = JSON.parse(options.body);
+      const answers = Object.fromEntries(Object.entries(request.questions).map(([id, question]) => [
+        id,
+        choose(question, id.startsWith("include_") ? "omit" : id === "provider_support" ? "none" : id === "provider_composition" ? "single_provider" : Object.keys(question.criteria)[0]),
+      ]));
+      return new Response(JSON.stringify({ model: "jev-1.13.0", answers, usage: { input_tokens: 1, output_tokens: 1 } }), { status: 200 });
+    },
+  });
+  assert.equal(optionalCalls, 1);
+  assert.equal(omitted.plan.roles.some((role) => role.role === "probe"), false);
+  const omittedRecord = planningRecordForPreview(omitted.plan);
+  const omittedRoster = omittedRecord.evidence.decisions.find((item) => item.role === "probe" && item.axis === "roster");
+  assert.equal(omittedRoster.options.find((option) => option.id === omittedRoster.selected).identity.inclusion, false);
+  assert.equal(omittedRecord.evidence.decisions.some((item) => item.role === "probe" && item.axis === "tuple"), true);
+
+  const broad = Array.from({ length: 40 }, (_, index) => model(index, explicitLevels(index === 0 ? levels.filter((level) => level !== "max") : levels)));
+  const broadCandidates = broad.map((item, index) => ({
+    provider: item.provider, modelId: item.id,
+    thinkingLevels: index === 0 ? levels.filter((level) => level !== "max") : levels,
+    capabilities: { reasoning: true },
+  }));
+  const broadTopology = topologyFor(broad.slice(0, 2));
+  const broadPayload = plannerTestHooks.plannerPayloadForTest({
+    task: "Too many tuples.", withProbe: false, withPlaywright: false, withDjangoExpert: false,
+  }, "/synthetic", broadCandidates, null, broadTopology);
+  assert.throws(() => plannerTestHooks.typeSafeDecisionRequestForTest(
+    broadPayload, broadCandidates,
+    { task: "Too many tuples.", withProbe: false, withPlaywright: false, withDjangoExpert: false },
+    null, broadTopology,
+  ), /typesafe_choice_limit_exceeded/);
+
+  const fat = Array.from({ length: 100 }, (_, index) => model(index, Object.fromEntries(levels.map((level) => [level, level])), true));
+  const fatPools = {
+    version: 1,
+    all: fat.slice(0, 32).map((item) => ({ provider: item.provider, model: item.id })),
+    roles: {
+      implementer: fat.slice(0, 32).map((item) => ({ provider: item.provider, model: item.id })),
+      reviewer: fat.slice(32, 64).map((item) => ({ provider: item.provider, model: item.id })),
+      probe: fat.slice(64, 96).map((item) => ({ provider: item.provider, model: item.id })),
+      playwright: fat.slice(68, 100).map((item) => ({ provider: item.provider, model: item.id })),
+      django: fat.slice(4, 36).map((item) => ({ provider: item.provider, model: item.id })),
+    },
+  };
+  let fatCalls = 0;
+  await assert.rejects(run(fat, {
+    task: "Fat capabilities.", withProbe: true, withPlaywright: true, withDjangoExpert: true,
+  }, topologyFor(fat, { optionalRoles: ["probe", "playwright", "django"], workerCandidates: fatPools }), {
+    fetchImpl: async () => { fatCalls += 1; return new Response("{}", { status: 200 }); },
+  }), /planner_input_too_large/);
+  assert.equal(fatCalls, 0);
+
+  const thin = Array.from({ length: 100 }, (_, index) => model(index, explicitLevels(levels.filter((_, levelIndex) => (index + levelIndex) % 3 !== 0))));
+  const thinPools = {
+    version: 1,
+    all: thin.slice(0, 32).map((item) => ({ provider: item.provider, model: item.id })),
+    roles: {
+      implementer: thin.slice(0, 32).map((item) => ({ provider: item.provider, model: item.id })),
+      reviewer: thin.slice(32, 64).map((item) => ({ provider: item.provider, model: item.id })),
+      probe: thin.slice(64, 96).map((item) => ({ provider: item.provider, model: item.id })),
+      playwright: thin.slice(68, 100).map((item) => ({ provider: item.provider, model: item.id })),
+      django: thin.slice(4, 36).map((item) => ({ provider: item.provider, model: item.id })),
+    },
+  };
+  let evidenceCalls = 0;
+  await assert.rejects(run(thin, {
+    task: "Evidence cannot retain every joint tuple.", withProbe: true, withPlaywright: true, withDjangoExpert: true,
+  }, topologyFor(thin, { optionalRoles: ["probe", "playwright", "django"], workerCandidates: thinPools }), {
+    fetchImpl: async () => { evidenceCalls += 1; return new Response("{}", { status: 200 }); },
+  }), /planner_evidence_too_large/);
+  assert.equal(evidenceCalls, 0);
+
+  const sharedFat = fat.slice(0, 32).map((item) => ({ ...item, provider: "p0" }));
+  let compactRequest;
+  const compact = await run(sharedFat, {
+    task: "T".repeat(12000), taskIntent: "change", withProbe: true, withPlaywright: true, withDjangoExpert: true,
+    modelOverrides: { all: { thinking: "low" } },
+  }, topologyFor(sharedFat, { optionalRoles: ["probe", "playwright", "django"] }), {
+    guidance: dynamicGuidance("Prefer the smallest sufficient exact tuple."),
+    fetchImpl: async (options) => {
+      compactRequest = JSON.parse(options.body);
+      assert.equal(compactRequest.encoding, "compact-v1");
+      assert.equal(Object.hasOwn(compactRequest.state, "candidate_models"), false);
+      assert.equal(compactRequest.state.candidate_model_capabilities.length, 32);
+      assert.equal(JSON.stringify(compactRequest.state.provider_composition).includes("\"facts\""), false);
+      for (const role of compactRequest.state.provider_composition.roles) {
+        assert.ok(role.candidate_indexes.length <= 32);
+        for (const index of role.candidate_indexes) {
+          assert.equal(compactRequest.state.candidate_model_capabilities[index].provider, "p0");
+        }
+      }
+      assert.ok(Object.keys(compactRequest.questions).length <= plannerTestHooks.TYPESAFE_MAX_QUESTIONS);
+      for (const question of Object.values(compactRequest.questions)) {
+        assert.ok(Object.keys(question.criteria).length <= plannerTestHooks.TYPESAFE_MAX_CHOICE_OPTIONS);
+      }
+      assert.ok(Buffer.byteLength(options.body, "utf8") <= typesafeTestHooks.MAX_TYPESAFE_REQUEST_BYTES);
+      assert.equal(options.headers.authorization, "Bearer synthetic-key");
+      const answers = Object.fromEntries(Object.entries(compactRequest.questions).map(([id, question]) => [
+        id, choose(question, id === "provider_support" ? "none" : Object.keys(question.criteria)[0]),
+      ]));
+      return new Response(JSON.stringify({ model: "jev-1.13.0", answers, usage: { input_tokens: 3, output_tokens: 1 } }), { status: 200 });
+    },
+  });
+  assert.equal(compact.calls, 1);
+  const compactRecord = planningRecordForPreview(compact.plan);
+  assert.equal(compactRecord.version, 7);
+  assert.equal(compactRecord.evidence.version, 3);
+  assert.doesNotMatch(JSON.stringify(compactRecord), /synthetic-key|PRIVATE_REASONING|secret\.example|catalog-secret|compact-v1|candidate_indexes|T{100}/);
+  assert.equal(JSON.stringify(compactRequest).includes("https://secret.example"), false);
+
+  const cancelled = new AbortController();
+  cancelled.abort();
+  let cancelCalls = 0;
+  await assert.rejects(run(heterogeneous, { task: "Cancel.", withProbe: false, withPlaywright: false, withDjangoExpert: false }, topologyFor(heterogeneous), {
+    signal: cancelled.signal,
+    fetchImpl: async () => { cancelCalls += 1; return new Response("{}", { status: 200 }); },
+  }), /planner_request_cancelled/);
+  assert.equal(cancelCalls, 0);
+
+  const malformed = await assert.rejects(run(heterogeneous, { task: "Malformed.", withProbe: false, withPlaywright: false, withDjangoExpert: false }, topologyFor(heterogeneous), {
+    fetchImpl: async (options) => {
+      const request = JSON.parse(options.body);
+      const answers = Object.fromEntries(Object.entries(request.questions).map(([id, question]) => [
+        id, { type: "choice", choice: id.startsWith("tuple_") ? "m0_notalevel" : Object.keys(question.criteria)[0], confidence: 1, probabilities: { leftover: 1 } },
+      ]));
+      return new Response(JSON.stringify({ model: "jev-1.13.0", answers, usage: { input_tokens: 1, output_tokens: 1 } }), { status: 200 });
+    },
+  }), /typesafe_answer_invalid/);
+  assert.equal(malformed, undefined);
+});
+
+test("near-cap joint evidence is admitted and true evidence overflow fails before fetch", async () => {
+  const levels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+  const explicitLevels = (supported) => Object.fromEntries(levels.map((level) => [level, supported.includes(level) ? level : null]));
+  const shared = (count) => Array.from({ length: count }, (_, index) => ({
+    provider: "p0",
+    id: `model-${String(index).padStart(3, "0")}`,
+    reasoning: true,
+    thinkingLevelMap: explicitLevels(levels.filter((level) => !(index === 0 && level === "max"))),
+  }));
+  const inputFor = (catalog) => ({
+    task: "PRIVATE_NEAR_CAP_TUPLE",
+    taskIntent: "change",
+    withProbe: true,
+    withPlaywright: true,
+    withDjangoExpert: true,
+  });
+  const topologyFor = (catalog) => validatePlannerTopology(plannerTopology({
+    optionalRoles: ["probe", "playwright", "django"],
+    workerCandidates: approvedPool(catalog),
+  }));
+  const run = async (catalog) => {
+    let calls = 0;
+    const ctx = { modelRegistry: { getAvailable: () => catalog } };
+    const selection = selectDecisionModel(ctx, undefined, plannerPolicy(), [], { typesafeApiKey: "synthetic-key" });
+    const result = await runPreflightPlanner(ctx, inputFor(catalog), "/synthetic", selection, topologyFor(catalog), undefined, undefined, {
+      typesafeApiKey: "synthetic-key",
+      typesafeFetch: async (url, options) => {
+        calls += 1;
+        const request = JSON.parse(options.body);
+        assert.equal(options.headers.authorization, "Bearer synthetic-key");
+        assert.equal(String(url).includes("secret"), false);
+        const answers = Object.fromEntries(Object.entries(request.questions).map(([id, question]) => {
+          const keys = Object.keys(question.criteria);
+          const choice = id === "task_intent" ? "change" : keys[0];
+          return [id, {
+            type: "choice",
+            choice,
+            confidence: 1,
+            probabilities: Object.fromEntries(keys.map((key) => [key, key === choice ? 1 : 0])),
+          }];
+        }));
+        return new Response(JSON.stringify({ model: "jev-1.13.0", answers, usage: { input_tokens: 1, output_tokens: 1 } }), { status: 200 });
+      },
+    });
+    return { ...result, calls };
+  };
+  const fitting = shared(20);
+  const fittingTopology = topologyFor(fitting);
+  const fittingCtx = { modelRegistry: { getAvailable: () => fitting } };
+  const fittingSelection = approvedWorkerSelection(
+    fittingCtx,
+    inputFor(fitting),
+    fittingTopology,
+    selectDecisionModel(fittingCtx, undefined, plannerPolicy(), [], { typesafeApiKey: "synthetic-key" }),
+  );
+  const fittingPayload = plannerTestHooks.plannerPayloadForTest(inputFor(fitting), "/synthetic", fittingSelection.candidates, null, fittingTopology);
+  const fittingRequest = plannerTestHooks.typeSafeDecisionRequestForTest(
+    fittingPayload, fittingSelection.candidates, inputFor(fitting), null, fittingTopology,
+  );
+  const tupleCounts = [...fittingRequest.assignments.values()].map((item) => item.axes.eligible.length);
+  assert.deepEqual(tupleCounts, [139, 139, 139, 139, 139]);
+  const bound = tupleEvidenceBoundBytes(fittingRequest, fittingSelection.candidates, fittingSelection, "typesafe_choice");
+  const admitted = await run(fitting);
+  assert.equal(admitted.calls, 1);
+  const record = planningRecordForPreview(admitted.plan);
+  const evidenceBytes = Buffer.byteLength(JSON.stringify(record.evidence));
+  assert.equal(record.version, 8);
+  assert.equal(record.evidence.version, 4);
+  assert.ok(evidenceBytes <= MAX_EVIDENCE_BYTES);
+  assert.ok(evidenceBytes > 200 * 1024);
+  assert.ok(bound <= MAX_EVIDENCE_BYTES);
+  assert.ok(bound >= evidenceBytes);
+  assert.ok(bound - evidenceBytes < 24 * 1024);
+  assert.equal(record.evidence.decisions.filter((item) => item.axis === "tuple").length, 5);
+  assert.ok(record.evidence.decisions.filter((item) => item.axis === "tuple").every((item) => item.options.length === 139));
+  assert.doesNotMatch(JSON.stringify(record), /PRIVATE_NEAR_CAP_TUPLE|synthetic-key|Bearer/);
+
+  let overflowCalls = 0;
+  const overflow = shared(22);
+  await assert.rejects(runPreflightPlanner(
+    { modelRegistry: { getAvailable: () => overflow } },
+    inputFor(overflow),
+    "/synthetic",
+    selectDecisionModel({ modelRegistry: { getAvailable: () => overflow } }, undefined, plannerPolicy(), [], { typesafeApiKey: "synthetic-key" }),
+    topologyFor(overflow),
+    undefined,
+    undefined,
+    {
+      typesafeApiKey: "synthetic-key",
+      typesafeFetch: async () => {
+        overflowCalls += 1;
+        return new Response("{}", { status: 200 });
+      },
+    },
+  ), /planner_evidence_too_large/);
+  assert.equal(overflowCalls, 0);
+});
+
+test("evidence bound covers every common provider and duplicated selected probability", async () => {
+  const levels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+  const explicitLevels = (supported) => Object.fromEntries(levels.map((level) => [level, supported.includes(level) ? level : null]));
+  const longProbability = 0.0000010010719171047012;
+  const approved = (catalog) => ({ version: 1, all: catalog.map((item) => ({ provider: item.provider, model: item.id })), roles: {} });
+  const inputFor = (task) => ({
+    task, taskIntent: "change", withProbe: true, withPlaywright: true, withDjangoExpert: true,
+  });
+  const topologyFor = (catalog) => validatePlannerTopology({
+    version: 2,
+    builtins: Object.fromEntries(["implementer", "reviewer", "probe", "playwright", "django"].map((role) => [role, { constraint: {} }])),
+    optional_roles: ["probe", "playwright", "django"],
+    custom_roles: [],
+    worker_candidates: approved(catalog),
+  });
+  const wideChoice = (id, keys, body, preferred) => {
+    if (id === "task_intent") return "change";
+    if (id === "provider_support") return preferred.support;
+    if (id === "provider_composition") return "single_provider";
+    if (id.startsWith("tuple_")) {
+      return keys.find((key) => {
+        const item = body.state.candidate_model_capabilities[Number.parseInt(key.slice(1), 36)];
+        return item?.provider === preferred.provider && item?.model === preferred.model && key.endsWith(`_${preferred.thinking}`);
+      }) ?? keys[0];
+    }
+    return keys[0];
+  };
+  const run = async (catalog, task, preferred) => {
+    let calls = 0;
+    let requestBytes = 0;
+    const ctx = { modelRegistry: { getAvailable: () => catalog } };
+    const topology = topologyFor(catalog);
+    const selection = selectDecisionModel(ctx, undefined, plannerPolicy(), [], { typesafeApiKey: "synthetic-key" });
+    const result = await runPreflightPlanner(ctx, inputFor(task), "/synthetic", selection, topology, undefined, undefined, {
+      typesafeApiKey: "synthetic-key",
+      typesafeFetch: async (_url, options) => {
+        calls += 1;
+        requestBytes = Buffer.byteLength(options.body, "utf8");
+        const body = JSON.parse(options.body);
+        const answers = Object.fromEntries(Object.entries(body.questions).map(([id, question]) => {
+          const keys = Object.keys(question.criteria);
+          const choice = wideChoice(id, keys, body, preferred);
+          const others = keys.filter((key) => key !== choice);
+          const probabilities = {};
+          if (!others.length) probabilities[choice] = 1;
+          else {
+            let consumed = 0;
+            for (const key of others.slice(1)) {
+              probabilities[key] = longProbability;
+              consumed += longProbability;
+            }
+            probabilities[choice] = longProbability;
+            consumed += longProbability;
+            probabilities[others[0]] = 1 - consumed;
+          }
+          return [id, { type: "choice", choice, confidence: longProbability, probabilities }];
+        }));
+        return new Response(JSON.stringify({ model: "jev-1.13.0", answers, usage: { input_tokens: 1, output_tokens: 1 } }), { status: 200 });
+      },
+    });
+    return { ...result, calls, requestBytes };
+  };
+  const boundFor = (catalog) => {
+    const ctx = { modelRegistry: { getAvailable: () => catalog } };
+    const topology = topologyFor(catalog);
+    const selection = approvedWorkerSelection(ctx, inputFor("bound"), topology, selectDecisionModel(ctx, undefined, plannerPolicy(), [], { typesafeApiKey: "synthetic-key" }));
+    const payload = plannerTestHooks.plannerPayloadForTest(inputFor("bound"), "/synthetic", selection.candidates, null, topology);
+    const request = plannerTestHooks.typeSafeDecisionRequestForTest(payload, selection.candidates, inputFor("bound"), null, topology);
+    return {
+      bound: tupleEvidenceBoundBytes(request, selection.candidates, selection, "typesafe_choice"),
+      tuples: [...request.assignments.values()].map((item) => item.axes.eligible.length),
+      requestBytes: Buffer.byteLength(JSON.stringify(request.request)),
+    };
+  };
+
+  const shared = Array.from({ length: 20 }, (_, index) => ({
+    provider: "p0",
+    id: `model-${String(index).padStart(3, "0")}`,
+    reasoning: true,
+    thinkingLevelMap: explicitLevels(levels.filter((level) => !(index === 0 && level === "max"))),
+  }));
+  const sharedBound = boundFor(shared);
+  const sharedPlan = await run(shared, "PRIVATE_WIDE_BOUND", { support: "none", provider: "p0", model: shared[0].id, thinking: "off" });
+  const sharedEvidence = planningRecordForPreview(sharedPlan.plan).evidence;
+  const sharedBytes = Buffer.byteLength(JSON.stringify(sharedEvidence));
+  assert.equal(sharedPlan.calls, 1);
+  assert.equal(sharedBound.tuples.every((count) => count === 139), true);
+  assert.equal(sharedBytes, sharedBound.bound);
+  assert.ok(sharedBound.bound <= MAX_EVIDENCE_BYTES);
+  const sharedTuple = sharedEvidence.decisions.find((item) => item.axis === "tuple");
+  assert.equal(JSON.stringify(sharedTuple.selected_probability).length, JSON.stringify(longProbability).length);
+  assert.ok(sharedTuple.options.some((item) => JSON.stringify(item.probability).length < JSON.stringify(longProbability).length));
+  assert.doesNotMatch(JSON.stringify(planningRecordForPreview(sharedPlan.plan)), /PRIVATE_WIDE_BOUND|synthetic-key|Bearer/);
+
+  const fitting = [
+    ...Array.from({ length: 2 }, (_, index) => ({
+      provider: "a0",
+      id: `a${index}short`,
+      reasoning: true,
+      contextWindow: 8000,
+      maxTokens: 1000,
+      thinkingLevelMap: explicitLevels(index === 0 ? levels.filter((level) => level !== "max") : levels),
+    })),
+    {
+      provider: "z9",
+      id: "w",
+      reasoning: true,
+      contextWindow: 200000,
+      maxTokens: 16000,
+      input: ["text", "image"],
+      thinkingLevelMap: explicitLevels(levels.filter((level) => level !== "max" && level !== "minimal")),
+    },
+  ];
+  const fittingBound = boundFor(fitting);
+  const fittingPlan = await run(fitting, "PRIVATE_SUPPORT_FIT", { support: "max_output_tokens", provider: "z9", model: "w", thinking: "medium" });
+  const fittingRecord = planningRecordForPreview(fittingPlan.plan);
+  const fittingBytes = Buffer.byteLength(JSON.stringify(fittingRecord.evidence));
+  assert.equal(fittingPlan.calls, 1);
+  assert.equal(fittingRecord.evidence.provider_support.state, "supported");
+  assert.equal(fittingRecord.evidence.provider_support.reference, "max_output_tokens");
+  assert.equal(fittingRecord.evidence.provider_support.roles[0].selected.model, "w");
+  assert.equal(fittingBytes, fittingBound.bound);
+  assert.ok(fittingBound.bound <= MAX_EVIDENCE_BYTES);
+  assert.doesNotMatch(JSON.stringify(fittingRecord), /PRIVATE_SUPPORT_FIT|synthetic-key|Bearer/);
+
+  const overflow = [
+    ...Array.from({ length: 18 }, (_, index) => ({
+      provider: "a0",
+      id: `a${String(index).padStart(2, "0")}${"n".repeat(8)}`,
+      reasoning: true,
+      contextWindow: 8000,
+      maxTokens: 1000,
+      thinkingLevelMap: explicitLevels(index === 0 ? levels.filter((level) => level !== "max") : levels),
+    })),
+    {
+      provider: "z9",
+      id: `z${"Z".repeat(12)}`,
+      reasoning: true,
+      contextWindow: 1000,
+      maxTokens: 100,
+      thinkingLevelMap: explicitLevels(levels.filter((level) => level !== "max")),
+    },
+    {
+      provider: "z9",
+      id: "w",
+      reasoning: true,
+      contextWindow: 200000,
+      maxTokens: 16000,
+      input: ["text", "image"],
+      thinkingLevelMap: explicitLevels(levels.filter((level) => level !== "max")),
+    },
+  ];
+  const overflowBound = boundFor(overflow);
+  assert.ok(overflowBound.tuples.every((count) => count <= 255));
+  assert.ok(overflowBound.requestBytes <= typesafeTestHooks.MAX_TYPESAFE_REQUEST_BYTES);
+  assert.ok(overflowBound.bound > MAX_EVIDENCE_BYTES);
+  let overflowCalls = 0;
+  await assert.rejects(runPreflightPlanner(
+    { modelRegistry: { getAvailable: () => overflow } },
+    inputFor("PRIVATE_SUPPORT_OVERFLOW"),
+    "/synthetic",
+    selectDecisionModel({ modelRegistry: { getAvailable: () => overflow } }, undefined, plannerPolicy(), [], { typesafeApiKey: "synthetic-key" }),
+    topologyFor(overflow),
+    undefined,
+    undefined,
+    {
+      typesafeApiKey: "synthetic-key",
+      typesafeFetch: async () => {
+        overflowCalls += 1;
+        return new Response("{}", { status: 200 });
+      },
+    },
+  ), /planner_evidence_too_large/);
+  assert.equal(overflowCalls, 0);
+});
+
 test("accepted Choice evidence retains independent confidence, exact facts and canonical top-three ties", async () => {
   const { record, request, plan } = await syntheticEvidenceFixture();
   assert.equal(record.version, 7);
@@ -7301,6 +7809,100 @@ test("evidence size admission is bounded and numeric fact digests are cross-runt
   const selection = { locks: [{ role: "implementer", inclusion: true, provider: "p", model: "bounded", thinking: "off" }], workerScope: { candidatesByRole: new Map([["implementer", new Set(["p\0bounded"])]]) } };
   assert.throws(() => buildPlannerEvidence(request, [candidate], { roles: [role], task_intent: "change", provider_composition: "single_provider", provider_support_reference: "none" }, selection, { task_intent: { confidence: 1, probabilities: { change: 1, investigation: 0, review: 0, advisory: 0 } } }, "typesafe_choice"), /planner_evidence_too_large/);
   assert.ok(Buffer.byteLength(JSON.stringify(record.evidence)) < MAX_EVIDENCE_BYTES);
+});
+
+test("omitted optional roles retain answered tuple and rectangular choices", () => {
+  const choiceAnswer = (choice, keys) => ({
+    choice,
+    confidence: 1,
+    probabilities: Object.fromEntries(keys.map((key) => [key, key === choice ? 1 : 0])),
+  });
+  const candidate = (modelId, thinkingLevels) => ({
+    provider: "p", modelId, thinkingLevels, capabilities: { reasoning: true },
+  });
+  const evidenceFor = (catalog, assignment, answers) => {
+    const locks = [
+      { role: "implementer", inclusion: true, provider: null, model: null, thinking: null },
+      { role: "probe", inclusion: null, provider: null, model: null, thinking: null },
+    ];
+    const selection = {
+      locks,
+      workerScope: {
+        candidatesByRole: new Map(locks.map((lock) => [lock.role, new Set(catalog.map((item) => `p\0${item.modelId}`))])),
+      },
+    };
+    const roleFacts = (role) => ({
+      role,
+      inclusion: role === "implementer" ? true : null,
+      candidates: catalog.map((item) => ({ provider: "p", model: item.modelId, thinking_levels: item.thinkingLevels })),
+    });
+    const request = {
+      inclusions: new Map([["include_01", "probe"]]),
+      assignments: new Map([["probe", assignment]]),
+      fixedAssignments: new Map(),
+      compositionFacts: { feasible: ["single_provider"], roles: [roleFacts("implementer"), roleFacts("probe")] },
+    };
+    return buildPlannerEvidence(request, catalog, {
+      roles: [{ role: "implementer", provider: "p", model: catalog[0].modelId, thinking: "off" }],
+      task_intent: "change",
+      provider_composition: "single_provider",
+      provider_support_reference: "none",
+    }, selection, {
+      include_01: choiceAnswer("omit", ["include", "omit"]),
+      task_intent: choiceAnswer("change", ["change", "investigation", "review", "advisory"]),
+      ...answers,
+    }, "typesafe_choice");
+  };
+  const selected = (evidence, role, axis) => {
+    const item = evidence.decisions.find((decision) => decision.role === role && decision.axis === axis);
+    return item.options.find((option) => option.id === item.selected).identity;
+  };
+  const tupleCatalog = [candidate("wide", ["off", "low"]), candidate("narrow", ["low"])];
+  const tupleEvidence = evidenceFor(tupleCatalog, {
+    tupleQuestion: "tuple_01",
+    axes: {
+      eligible: [
+        { provider: "p", model: "wide", thinking: "off", modelIndex: 0 },
+        { provider: "p", model: "wide", thinking: "low", modelIndex: 0 },
+        { provider: "p", model: "narrow", thinking: "low", modelIndex: 1 },
+      ],
+      candidateIndexes: [0, 1],
+      thinkingLevels: ["off", "low"],
+    },
+  }, {
+    tuple_01: choiceAnswer("m1_low", ["m0_off", "m0_low", "m1_low"]),
+  });
+  assert.equal(tupleEvidence.version, 4);
+  assert.equal(tupleEvidence.decisions.some((item) => item.role === "probe" && item.axis === "model"), false);
+  assert.equal(selected(tupleEvidence, "probe", "roster").inclusion, false);
+  assert.equal(selected(tupleEvidence, "probe", "tuple").model, "narrow");
+  assert.equal(selected(tupleEvidence, "probe", "tuple").thinking, "low");
+  assert.equal(tupleEvidence.decisions.find((item) => item.role === "probe" && item.axis === "tuple").options.length, 3);
+
+  const rectangularCatalog = [candidate("wide", ["off", "low"]), candidate("other", ["off", "low"])];
+  const rectangularEvidence = evidenceFor(rectangularCatalog, {
+    modelQuestion: "model_01",
+    thinkingQuestion: "thinking_01",
+    axes: {
+      eligible: [
+        { provider: "p", model: "wide", thinking: "off", modelIndex: 0 },
+        { provider: "p", model: "wide", thinking: "low", modelIndex: 0 },
+        { provider: "p", model: "other", thinking: "off", modelIndex: 1 },
+        { provider: "p", model: "other", thinking: "low", modelIndex: 1 },
+      ],
+      candidateIndexes: [0, 1],
+      thinkingLevels: ["off", "low"],
+    },
+  }, {
+    model_01: choiceAnswer("m1", ["m0", "m1"]),
+    thinking_01: choiceAnswer("low", ["off", "low"]),
+  });
+  assert.equal(rectangularEvidence.version, 3);
+  assert.equal(rectangularEvidence.decisions.some((item) => item.role === "probe" && item.axis === "tuple"), false);
+  assert.equal(selected(rectangularEvidence, "probe", "roster").inclusion, false);
+  assert.equal(selected(rectangularEvidence, "probe", "model").model, "other");
+  assert.equal(selected(rectangularEvidence, "probe", "thinking").thinking, "low");
+  assert.equal(rectangularEvidence.decisions.find((item) => item.role === "probe" && item.axis === "model").options.length, 2);
 });
 
 test("authenticated parent attachment carries accepted evidence to final content without new wire fields", async () => {
@@ -7611,7 +8213,8 @@ for (const source of ["typesafe_choice", "pi_selection"]) {
       });
       assert.equal(result.calls, 1);
       const evidence = result.record.evidence;
-      assert.equal(evidence.version, 3);
+      assert.equal(evidence.version, support === "reasoning" || support === "thinking" ? 4 : 3);
+      assert.equal(result.record.version, evidence.version === 4 ? 8 : 7);
       assert.equal(evidence.provider_support.state, "supported");
       assert.equal(evidence.provider_support.source, "derived");
       assert.equal(evidence.provider_support.reference, support);

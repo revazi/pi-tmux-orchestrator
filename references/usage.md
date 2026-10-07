@@ -562,21 +562,32 @@ use Pi's native credential flow, while the bundled dependency-free adapter posts
 one request directly to the fixed `https://api.typesafe.ai/v1/systemone`
 endpoint with model alias `jev-latest`.
 It expresses optional-role inclusion and exact worker model/thinking assignments
-as bounded TypeSafe Choice questions. Each role uses factorized model-identity
-and thinking-level choices, each with at most 100 and seven options respectively.
-The catalog admits up to 100 models × seven supported thinking levels (700 exact
-tuples per role); selected axes are recombined only when the exact tuple exists.
-Capability metadata is included once, canonicalized, and digest-bound. There are
-at most 255 questions, and the complete request is limited to 96 KiB serialized
-UTF-8 bytes. If it cannot fit, planning fails before HTTP without omitting
-selectable tuples. Canonical capability objects and declared catalog cost hints
-are sent once as `state.candidate_model_capabilities`. Instructions tell Jev to
-use that state, choose the smallest sufficient listed combination, and never
-infer recency, quality, coding skill, latency, or reliability from model names. The
-adapter validates every returned answer and constructs the ordinary version-1
-planner decision deterministically. Direct TypeSafe Jev and the Pi fallback
-receive the same operator-approved per-role candidate scope and canonical bounded
-capability projection; neither transport can expand it.
+as bounded TypeSafe Choice questions. Rectangular unlocked roles keep independent
+`model_` and `thinking_` Choices. Heterogeneous unlocked support uses one `tuple_`
+Choice over exactly the eligible pairs; illegal pairs are not options and are not
+recombined after the call. There is no 100×7 or 700-tuple product. Each Choice has
+at most 255 options. That 255 is the generic TypeSafe Choice cap, not the approved-pool
+pair ceiling. An approved pool has at most 32 identities, and current worker thinking
+has seven levels, so the reachable eligible-pair ceiling is 224. The full 32×7 product
+is rectangular and stays `model_` / `thinking_`; joint `tuple_` is only a non-rectangle,
+at most 223 options. Each request has at most 255 questions, and the complete
+request is at most 96 KiB serialized UTF-8 bytes. Approved pools remain 1–32
+identities per pool and at most 100 distinct identities. Retained evidence is at
+most 224 KiB, a byte cap distinct from the 224-pair ceiling. Planning measures an upper bound of that retained encoding and fails before HTTP,
+without a provider call, retry, or omitted tuple, when the request cannot fit or
+the reachable evidence cannot fit. The bound includes maximum-width Choice
+probabilities and the largest derived support object across common providers,
+references, and optional-role omissions. A five-role joint pool or a legal
+multi-provider pool can therefore be unselectable even though every Choice is
+within 255 options, the request fits in 96 KiB, and a one-hot answer would fit. Capability metadata is included once, canonicalized, and digest-bound.
+Canonical capability objects and declared catalog cost hints are sent once as
+`state.candidate_model_capabilities`. Instructions tell Jev to use that state,
+choose the smallest sufficient listed combination, and never infer recency,
+quality, coding skill, latency, or reliability from model names. The adapter
+validates every returned answer and constructs the ordinary version-1 planner
+decision deterministically. Direct TypeSafe Jev and the Pi fallback receive the
+same operator-approved per-role candidate scope and canonical bounded capability
+projection; neither transport can expand it.
 The versioned Jev model returned by TypeSafe is retained as provenance;
 `thinking: "off"` is the compatibility value because System One has no Pi
 thinking level.
@@ -751,11 +762,35 @@ axes). The sum must be within `1e-6` of one; values are finite and in `[0,1]`, a
 are not renormalized. The chosen option need not be the highest-probability option.
 
 Model and thinking questions are **independent marginal axes**, not a joint model/
-thinking score. Model options have `thinking: null`; thinking options identify
-every exact eligible supporting provider/model and its fact digest, not an
-invented conditional score for the selected model. The final selected tuple is
-validated separately. Decisions for an omitted eligible specialist document
-questions answered, not an assignment or authority to launch that role.
+thinking score, when the eligible set is a rectangle (every eligible model supports
+the same unlocked thinking levels) or either axis is locked or singular. Model
+options have `thinking: null`; thinking options identify every exact eligible
+supporting provider/model and its fact digest, not an invented conditional score
+for the selected model. The final selected tuple is validated separately.
+
+When both axes are unlocked and thinking support is not a rectangle, that role
+instead gets one `tuple_` Choice. Each option key is `m{base36 catalog index}_{thinking}`
+and is exactly one eligible pair. Illegal pairs are not options. There is no second
+call and no truncation: more than 255 eligible pairs, more than 255 questions, a
+request that cannot fit in 96 KiB UTF-8 JSON, or retained evidence that cannot fit
+in 224 KiB all fail before HTTP. The 255 Choice cap is generic. The reachable approved-pool
+ceiling is 224 eligible pairs (32 identities × 7 thinking levels); that rectangle is not a
+`tuple_` Choice, and the largest approved-pool joint Choice is 223 options. The 224 KiB
+figure is the evidence byte cap, not a tuple count. The evidence measurement is an upper bound over
+reachable maximum-width probabilities and derived support objects, not a flat pad.
+That failure is legitimate even for a legal Choice set, including a multi-provider
+pool whose one-hot answer would fit; planning does not drop pairs to squeeze under the cap. Approved pools remain
+1–32 identities and at most 100 distinct identities; worker thinking policy is
+unchanged. Capability objects are sent once. `compact-v1` replaces duplicated
+composition candidate bodies with `candidate_indexes` into that copy only when the
+canonical request exceeds 96 KiB and the projection still fits. It is a local wire
+encoding, not a retry, a second digest, a provider call, or production wire
+acceptance. Joint `tuple_` answers are planning v8 /
+evidence v4. Rectangular and single-axis plans stay planning v7 / evidence v3.
+A v7 record is never treated as joint confidence. v4 tuple probabilities are the
+Choice distribution over eligible pairs, not a synthesized conditional probability
+or a calibrated outcome probability. Decisions for an omitted eligible specialist
+document questions answered, not an assignment or authority to launch that role.
 
 Operator/policy locks and sole eligible options have `authority: fixed`, null
 confidence/probability, and no alternatives; original scopes/locks show whether
@@ -803,8 +838,10 @@ measured cost, or savings. Capability/cost facts are the exact bounded non-secre
 projection supplied to the planner, not billing or observed runtime evidence.
 
 Evidence is capped at 224 KiB, 100 catalog candidates, 13 eligible roles, 43
-decisions, and three displayed alternatives per probabilistic decision. Planning
-files are capped at 256 KiB; only manifests containing planning v5/v6/v7 use the bounded
+decisions, and three displayed alternatives per probabilistic decision. A joint or multi-provider
+plan whose measured reachable evidence exceeds 224 KiB fails before HTTP and is
+not selectable, even when a one-hot answer would fit; there is no truncation or second call. Planning
+files are capped at 256 KiB; manifests containing planning v5/v6/v7/v8 use the bounded
 1 MiB serialized-manifest ceiling (older/static manifest limits are unchanged).
 Canonical fact digests use a domain-separated binary64 numeric encoding so
 JavaScript/Python formatting differences do not change declared cost bindings.
@@ -820,7 +857,14 @@ unavailable. Planning v5/evidence v1 remains readable with its existing suitabil
 axis but provider-composition decision authority unavailable, not reconstructed
 from launch providers. Existing admission compatibility is preserved. Planning v6/evidence v2 remains readable with support unavailable. New v7
 records require evidence v3, composition decision/facts and support metadata; mismatched version
-pairs or omitted composition evidence are invalid. Static runs never
+pairs or omitted composition evidence are invalid. New v8 records require evidence v4 and are
+used only when a joint tuple axis is present; v7/v3 remains valid and is not a joint-confidence
+record. Limits: 100 catalog candidates, 32 identities per approved pool, 255 generic Choice options,
+255 questions, 96 KiB request JSON, 224 KiB evidence, and 256 KiB planning records.
+The reachable approved-pool pair ceiling is 224 (32 × 7 thinking levels) and is rectangular;
+joint `tuple_` from that pool is at most 223 options. 224 pairs and 224 KiB are different caps.
+Choice, question, request, and evidence overflows all fail before HTTP. Planning v8
+manifests use the same 1 MiB ceiling as v5/v6/v7. Static runs never
 fabricate planner evidence. No task, prompt, context, guidance, endpoint,
 credential, raw response, provider error body, or hidden reasoning is retained.
 The stopped #174 attempt yielded no accepted plan: this feature cannot recover or

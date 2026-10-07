@@ -68,8 +68,8 @@ v10/v11 or launch-assignment authority. Planning v1–v5 validation/read contrac
 remain intact. Planning v5 requires evidence v1 and reads with provider-composition
 decision authority unavailable; v6 requires evidence v2 (no omitted/downgraded axis). Retained static/legacy reads project `{version: 1, status:
 "unavailable"}` as evidence; this read projection is not written into old records.
-Supervisor capabilities advertise evidence v3/planning v7, exact snapshots, and summary
-collections. Protocol observer frames are unchanged: the parent attaches evidence
+Supervisor capabilities advertise evidence v4/planning v8, with v3/v7 still valid for
+rectangular plans, exact snapshots, and summary collections. Protocol observer frames are unchanged: the parent attaches evidence
 from the validated start/status envelope and includes it in final actionable
 content alongside (never instead of) immutable worker assignments.
 
@@ -149,6 +149,35 @@ and locks; it forbids name-based quality/reliability/recency/latency/billing
 inference and any presumption that diversity improves outcomes. This describes the historical v2 contract. Fresh v3 admission adds the strict
 support selector and model-free gate below, never a rationale body or extra call.
 
+Planning **v8** requires evidence **v4** when any included eligible role has both
+model and thinking unlocked and the eligible pairs are not a rectangle. That role's
+evidence axis is `tuple` instead of independent `model` and `thinking`. Its identity
+is exactly `{role,provider,model,thinking,facts}`: `facts` is the canonical catalog
+entry digest, and `thinking` is the exact selected level, not null. Options are
+exactly the eligible pairs, at most the generic 255 Choice cap, sorted by role/provider/model/thinking.
+The currently reachable approved-pool ceiling is 224 eligible pairs (32 identities × 7 thinking
+levels). That full product is rectangular and is not emitted as `tuple_`. Joint `tuple_` is only
+a non-rectangle, so an approved pool emits at most 223 tuple options. 224 KiB evidence is a separate byte cap.
+Probabilities, when present, are the one Choice distribution over those pairs. They
+are not a product of model and thinking probabilities and must not be synthesized
+into or from independent axes. Rectangular roles in the same v4 record keep
+independent model/thinking axes. Planning v7/evidence v3 remains the contract for
+plans with no joint tuple question; a v7 record cannot contain a tuple axis, and a
+v8 record cannot be read as v7. No frame or manifest version changes. Choice
+questions remain at most 255 options; a request remains at most 255 questions and
+96 KiB UTF-8 JSON. Retained evidence is at most 224 KiB. If the measured
+upper bound of reachable evidence cannot fit, planning fails before HTTP without
+dropping pairs, retrying, or calling the provider. That bound includes
+maximum-width Choice probabilities and the largest derived support object across
+common providers, references, and optional-role omissions. A legal 255-option
+Choice set, including a multi-provider pool whose one-hot answer would fit, can
+still be unselectable for that reason. `compact-v1` is a local wire encoding, not an
+evidence version or production wire acceptance: it replaces composition candidate
+bodies with catalog indexes into the single canonical capability copy and is used
+only when canonical JSON exceeds 96 KiB and the projection fits. Retained evidence
+still stores canonical objects and digests, never the wire encoding, credentials,
+endpoints, headers, or provider bodies.
+
 Planning **v7** requires evidence **v3**, adding exactly `provider_support`
 to evidence v2 fields and a `provider_support` decision immediately before the
 final `provider_composition` axis. No frame or manifest version changes. Its
@@ -199,8 +228,12 @@ original read/admission compatibility; new v7 records cannot omit support or
 silently interpret a v2 record as supported.
 
 Evidence is at most 224 KiB compact UTF-8 JSON, 100 catalog entries, 13 candidate
-roles, 43 decisions, and three top alternatives. Planning-file reads are at most
-256 KiB; only planning-v5/v6/v7 manifests admit up to 1 MiB serialized JSON, while
+roles, 43 decisions, and three top alternatives. Choice options are at most the generic 255,
+not the 224 reachable approved-pool pairs. Those 224 pairs are rectangular `model_`/`thinking_`
+Choices; joint `tuple_` from an approved pool is at most 223 options. Questions are at most 255,
+and the planner request at most 96 KiB. 224 KiB is the evidence byte cap, not the pair ceiling. Evidence whose measured reachable upper bound, including maximum-width
+probabilities and derived support, cannot fit fails before HTTP; it is not truncated. Planning-file reads are at most
+256 KiB; planning-v5/v6/v7/v8 manifests admit up to 1 MiB serialized JSON, while
 static/legacy manifest limits remain 64 KiB. Full exact status/snapshot evidence
 is bounded; collections replace it with `{version,projection:"summary",source,
 decision_binding,decision_count,provider_comparison,provider_composition}`.
