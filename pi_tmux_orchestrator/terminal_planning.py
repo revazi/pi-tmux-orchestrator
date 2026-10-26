@@ -7,11 +7,13 @@ import os
 from pathlib import Path
 import selectors
 import subprocess
+import sys
 import tempfile
 import time
 from typing import Any
 
 from . import runtime
+from .constants import THINKING_LEVELS
 from .models import CommandResult, OrchestrationError
 from .tmux import command_path, read_text_argument
 
@@ -124,6 +126,115 @@ def _terminal_input(args: Any, project: Path) -> dict[str, Any]:
     return {key: value for key, value in input_value.items() if value is not None}
 
 
+# Keep aligned with accessibleWorkerCandidatesConfirmation in
+# extensions/orchestrator-planner.js. Identity spelling is not a credential.
+_CANDIDATE_HEADER = "Exact accessible/scoped worker candidate set:"
+_CANDIDATE_DESCRIPTION = (
+    "This is the bounded Pi available/scoped set the decision service may choose from. "
+    "It is not the decision-service identity and not an operator, project, or global role lock."
+)
+_CANDIDATE_FOOTER = "End accessible/scoped worker candidate set."
+_CANDIDATE_DIGEST_PREFIX = "Candidate-set digest: "
+_MAX_CANDIDATE_ROWS = 100
+_MAX_IDENTIFIER_LENGTH = 256
+
+
+def _candidate_view_error() -> OrchestrationError:
+    return OrchestrationError(
+        "Preflight authorization requires the exact accessible/scoped worker candidate set",
+        "planning_confirmation_required",
+    )
+
+
+def _canonical_thinking(value: str) -> bool:
+    levels = value.split(",")
+    if not levels or any(level not in THINKING_LEVELS for level in levels):
+        return False
+    return levels == [level for level in THINKING_LEVELS if level in levels]
+
+
+def _valid_candidate_identity(identity: str) -> bool:
+    if (
+        not identity
+        or len(identity) > (_MAX_IDENTIFIER_LENGTH * 2) + 1
+        or any(
+            character.isspace() or ord(character) < 32 or ord(character) == 127
+            for character in identity
+        )
+    ):
+        return False
+    # Provider and model may each contain slashes. Accept a line only when some
+    # split matches the JS identifier bounds; do not interpret the spelling.
+    for index, character in enumerate(identity):
+        if character != "/" or index in {0, len(identity) - 1}:
+            continue
+        provider = identity[:index]
+        model = identity[index + 1 :]
+        if (
+            1 <= len(provider) <= _MAX_IDENTIFIER_LENGTH
+            and 1 <= len(model) <= _MAX_IDENTIFIER_LENGTH
+        ):
+            return True
+    return False
+
+
+def _valid_candidate_row(line: str) -> bool:
+    identity, separator, levels = line.partition(" thinking=")
+    return (
+        bool(separator)
+        and _valid_candidate_identity(identity)
+        and _canonical_thinking(levels)
+    )
+
+
+def preflight_candidate_view(message: object) -> str:
+    if not isinstance(message, str):
+        raise _candidate_view_error()
+    lines = message.splitlines()
+    try:
+        start = lines.index(_CANDIDATE_HEADER)
+        end = lines.index(_CANDIDATE_FOOTER, start + 1)
+    except ValueError as error:
+        raise _candidate_view_error() from error
+    section = lines[start : end + 1]
+    rows = section[3:-1]
+    digest = (
+        section[2].removeprefix(_CANDIDATE_DIGEST_PREFIX) if len(section) > 2 else ""
+    )
+    # Slash-joined rows are display only: distinct exact pairs can look alike.
+    # Upstream catalog validation and the candidate-set digest bind identities.
+    if (
+        len(section) < 5
+        or section[1] != _CANDIDATE_DESCRIPTION
+        or not section[2].startswith(_CANDIDATE_DIGEST_PREFIX)
+        or len(digest) != 64
+        or any(character not in "0123456789abcdef" for character in digest)
+        or not rows
+        or len(rows) > _MAX_CANDIDATE_ROWS
+        or any(not _valid_candidate_row(row) for row in rows)
+    ):
+        raise _candidate_view_error()
+    return "\n".join(section)
+
+
+def _print_preflight_candidate_view(message: object) -> None:
+    section = preflight_candidate_view(message)
+    if runtime.JSON_MODE:
+        print(section, file=sys.stderr)
+        return
+    from .output import human_print
+
+    for line in section.splitlines():
+        human_print(line)
+
+
+def _authorize_extension_confirm(event: dict[str, Any], args: Any) -> bool:
+    title = event.get("title")
+    if title == "Authorize preflight decision call?":
+        _print_preflight_candidate_view(event.get("message"))
+    return _confirmation_value(args, title)
+
+
 def _confirmation_value(args: Any, title: object) -> bool:
     if title == "Authorize preflight decision call?":
         return bool(args.authorize_planning)
@@ -175,12 +286,24 @@ def _read_terminal_result(
                     event.get("type") == "extension_ui_request"
                     and event.get("method") == "confirm"
                 ):
+                    try:
+                        confirmed = _authorize_extension_confirm(event, args)
+                    except OrchestrationError:
+                        _write_rpc(
+                            process,
+                            {
+                                "type": "extension_ui_response",
+                                "id": event.get("id"),
+                                "confirmed": False,
+                            },
+                        )
+                        raise
                     _write_rpc(
                         process,
                         {
                             "type": "extension_ui_response",
                             "id": event.get("id"),
-                            "confirmed": _confirmation_value(args, event.get("title")),
+                            "confirmed": confirmed,
                         },
                     )
         raise OrchestrationError("Dynamic planning process did not complete safely")

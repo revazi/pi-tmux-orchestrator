@@ -34,6 +34,7 @@ import {
 } from "./orchestrator-models.js";
 import { workerCandidatesConfirmation, workerCandidatesFailure } from "./orchestrator-worker-candidates.js";
 import {
+  accessibleWorkerCandidatesConfirmation,
   decisionModelConfirmation,
   metadataDigest,
   approvedWorkerSelection,
@@ -692,6 +693,7 @@ async function applyDynamicPlan(pi, ctx, input, project, signal) {
     "Authorize preflight decision call?",
     [
       decisionModelConfirmation({ ...selection, candidateCount: selection.candidates.length }),
+      accessibleWorkerCandidatesConfirmation(selection.candidates, selection.workerScope.digest),
       workerCandidatesConfirmation(selection.workerScope.metadata),
       planningScopesConfirmation(selection.scopes, selection.locks),
       `Topology policy: ${topology.optionalRoles.length} optional built-ins; ${topology.customRoles.length} trusted custom candidates.`,

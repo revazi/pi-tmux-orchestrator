@@ -292,14 +292,25 @@ decision before the ordinary dry-run preview. Terminal planning runs a private
 one-request Pi RPC control adapter with no tools; task/context travel in a
 mode-0600 request file, never argv. Planning authorization and launch
 authorization are separate: `--authorize-planning` permits the provider call and
-`--yes` permits launch. Omission of either fails before any call. The interactive
-path likewise requires its own confirmation showing the exact decision service,
-selection source, candidate count, and bounded payload categories, then a second
-confirmation after validation showing selected identities, locked custom
-contracts, exact model/thinking values, bounded decision reasons, and operator
-constraints. Declining either gate, cancellation, malformed/oversized policy or
-output, unavailable models, unsupported thinking, ambiguity, or conflicting
-explicit constraints starts nothing.
+`--yes` permits launch. Omission of either fails before any call. A missing
+`--authorize-planning` is rejected before Pi starts, so the terminal path shows
+no candidate view. When the flag is already supplied, terminal human output
+prints the exact accessible/scoped worker candidate set immediately before the
+already-authorized call. That print is not another opportunity to decline.
+Interactive confirmation remains the decline gate and shows the exact decision
+service, selection source, candidate count, and bounded payload categories, then
+the same candidate set. That set lists each provider/model and its
+model-supported thinking levels, plus the candidate-set digest shared by direct
+Jev and Pi fallback. It is not the decision-service identity and not an operator,
+project, or global role lock. The printed section does not include task text,
+guidance, credential values, or endpoints. Catalog identifier spelling is shown
+as-is and is not treated as a credential. The `models` action remains the broader
+available/scoped catalog. A second confirmation after validation shows selected
+identities, locked custom contracts, exact model/thinking values, bounded
+decision reasons, and operator constraints. Declining either interactive
+confirmation, omitting either terminal flag, cancellation, malformed/oversized
+policy or output, unavailable models, unsupported thinking, ambiguity, or
+conflicting explicit constraints starts nothing.
 
 ### Independent planning scopes
 
@@ -1101,7 +1112,7 @@ Common options:
 - `--skip-model-check`
 - `--dynamic-plan`: opt into the shared bounded planner before preview
 - `--planning-scope topology|models|thinking`: repeat to authorize a nonempty unique combination; omission retains all three axes
-- `--authorize-planning`: authorize that one additional provider call (required with `--dynamic-plan`)
+- `--authorize-planning`: authorize that one additional provider call (required with `--dynamic-plan`). A missing flag is rejected before Pi starts and shows no candidate set. When supplied, the set prints immediately before the already-authorized call and is not a second decline gate
 - `--yes`: separately authorize launch after the validated dynamic preview (required with `--dynamic-plan`)
 - `--decision-provider`, `--decision-model`, and `--decision-thinking`: exact per-run decision identity override; provider and model must be supplied together
 - `--allow-static-fallback`: permit only the configured `noEligible: "static"` no-provider fallback
