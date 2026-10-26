@@ -14,6 +14,7 @@ import extension, { testHooks } from "../extensions/tmux-orchestrator.js";
 import { consumeObserverFrames } from "../extensions/orchestrator-parent-protocol.js";
 import { publicRoleAssignments, publicRoleContracts, validControlRole } from "../extensions/orchestrator-role-metadata.js";
 import {
+  accessibleWorkerCandidatesConfirmation,
   approvedWorkerSelection,
   metadataDigest,
   plannerCandidateDigest,
@@ -3462,6 +3463,332 @@ test("worker pool thinking eligibility preserves ordered metadata, digest, and e
   }
 });
 
+test("accessible worker candidates expose full supported thinking and reject inaccessible identities", async () => {
+  const levels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+  const thinkingLevelMap = Object.fromEntries(levels.map((level) => [level, level]));
+  const accessible = {
+    provider: "xai", id: "grok-4.7", reasoning: true, thinkingLevelMap,
+    baseUrl: "https://secret.example/v1", apiKey: "catalog-secret",
+  };
+  const inaccessible = {
+    provider: "unconfigured", id: "catalog-only", reasoning: true, thinkingLevelMap: { max: "max" },
+  };
+  const typesafe = {
+    provider: "typesafe", id: "jev-latest", reasoning: true, thinkingLevelMap: { off: "off" },
+  };
+  let providerCalls = 0;
+  const ctx = {
+    modelRegistry: {
+      getAll: () => { throw new Error("catalog_only_models_must_not_be_read"); },
+      // Auth-only TypeSafe is absent because Pi does not list it in getAvailable(),
+      // not because provider spelling is denied.
+      getAvailable: () => [accessible],
+      complete: () => { providerCalls += 1; throw new Error("provider_called"); },
+    },
+  };
+  const candidates = plannerModelCandidates(ctx);
+  assert.deepEqual(candidates.map((item) => `${item.provider}/${item.modelId}`), ["xai/grok-4.7"]);
+  assert.deepEqual(candidates[0].thinkingLevels, levels);
+  assert.throws(() => approvedWorkerSelection(ctx, {}, validatePlannerTopology(plannerTopology({
+    workerCandidates: approvedPool([accessible, inaccessible]), optionalRoles: [],
+  }))), /approved_worker_candidate_unavailable/);
+  const wide = { provider: "p", id: "a", reasoning: true, thinkingLevelMap, baseUrl: accessible.baseUrl, apiKey: accessible.apiKey };
+  const topology = validatePlannerTopology(scopedPolicy({
+    optionalRoles: [],
+    staticRoles: [],
+    workerCandidates: approvedPool([wide]),
+  }));
+  const wideCtx = {
+    modelRegistry: {
+      getAll: () => { throw new Error("catalog_only_models_must_not_be_read"); },
+      getAvailable: () => [typesafe, wide, inaccessible],
+      complete: async (_model, request) => {
+        providerCalls += 1;
+        return {
+          stopReason: "stop",
+          content: [{ type: "text", text: piDecisionText(request, {
+            version: 1,
+            roles: [
+              { role: "implementer", provider: "p", model: "a", thinking: "max", reason: "One writer." },
+              { role: "reviewer", provider: "p", model: "a", thinking: "xhigh", reason: "Mandatory review." },
+            ],
+          }) }],
+        };
+      },
+    },
+  };
+  const input = {
+    task: "Synthetic", dynamicPlan: true, planningScopes: ["thinking"],
+    withProbe: false, withPlaywright: false, withDjangoExpert: false,
+  };
+  const selection = approvedWorkerSelection(wideCtx, input, topology);
+  assert.deepEqual(selection.candidates.map((item) => item.modelId), ["a"]);
+  const confirmation = accessibleWorkerCandidatesConfirmation(selection.candidates, selection.workerScope.digest);
+  assert.equal(confirmation, [
+    "Exact accessible/scoped worker candidate set:",
+    "This is the bounded Pi available/scoped set the decision service may choose from. It is not the decision-service identity and not an operator, project, or global role lock.",
+    `Candidate-set digest: ${selection.workerScope.digest}`,
+    "p/a thinking=off,minimal,low,medium,high,xhigh,max",
+    "End accessible/scoped worker candidate set.",
+  ].join("\n"));
+  assert.notEqual(selection.workerScope.digest, plannerCandidateDigest(selection.candidates));
+  assert.doesNotMatch(confirmation, /typesafe|catalog-only|https:|catalog-secret|credential|endpoint|Synthetic/);
+  const spelled = accessibleWorkerCandidatesConfirmation([{
+    provider: "openrouter",
+    modelId: "vendor/api_key-https://model",
+    thinkingLevels: ["high", "xhigh", "max"],
+  }], "b".repeat(64));
+  assert.match(spelled, /openrouter\/vendor\/api_key-https:\/\/model thinking=high,xhigh,max/);
+  assert.throws(() => validatePlannerDecision({
+    version: 1,
+    roles: [
+      { role: "implementer", provider: "unconfigured", model: "catalog-only", thinking: "max", reason: "Writer." },
+      { role: "reviewer", provider: "p", model: "a", thinking: "high", reason: "Reviewer." },
+    ],
+  }, selection.candidates, input, undefined, topology), /unavailable_planner_role_model/);
+  const piSelection = selectDecisionModel(wideCtx, { provider: "p", model: "a", thinking: "low" }, plannerPolicy());
+  let piQuestions;
+  let plannerCalls = 0;
+  wideCtx.modelRegistry.complete = async (_model, request) => {
+    plannerCalls += 1;
+    piQuestions = JSON.parse(request.messages[0].content[0].text).questions;
+    return {
+      stopReason: "stop",
+      content: [{ type: "text", text: piDecisionText(request, {
+        version: 1,
+        roles: [
+          { role: "implementer", provider: "p", model: "a", thinking: "max", reason: "One writer." },
+          { role: "reviewer", provider: "p", model: "a", thinking: "xhigh", reason: "Mandatory review." },
+        ],
+      }) }],
+    };
+  };
+  await runPreflightPlanner(wideCtx, input, "/synthetic", piSelection, topology);
+  let jevQuestions;
+  let jevCalls = 0;
+  const jevSelection = selectDecisionModel(wideCtx, undefined, plannerPolicy(), [], { typesafeApiKey: "synthetic-key" });
+  await runPreflightPlanner(wideCtx, input, "/synthetic", jevSelection, topology, undefined, undefined, {
+    typesafeApiKey: "synthetic-key",
+    typesafeFetch: async (_url, options) => {
+      jevCalls += 1;
+      const request = JSON.parse(options.body);
+      jevQuestions = request.questions;
+      assert.equal(options.body.includes("https://secret.example"), false);
+      assert.equal(options.body.includes("catalog-secret"), false);
+      return choiceResponse(request, questionAnswers(request, (id, choices) => {
+        if (id === "thinking_00") return "max";
+        if (id === "thinking_01") return "xhigh";
+        return choices[0];
+      }));
+    },
+  });
+  assert.deepEqual(Object.keys(piQuestions.thinking_00.criteria), levels);
+  assert.deepEqual(piQuestions.thinking_00.criteria, jevQuestions.thinking_00.criteria);
+  assert.deepEqual(Object.keys(piQuestions.thinking_01.criteria), levels);
+  const lockedInput = { ...input, planningScopes: ["models"] };
+  const lockedSelection = approvedWorkerSelection(wideCtx, lockedInput, topology);
+  const lockedRequest = plannerTestHooks.typeSafeDecisionRequestForTest(
+    plannerTestHooks.plannerPayloadForTest(lockedInput, "/synthetic", lockedSelection.candidates, null, scopedTopology(lockedInput, topology)),
+    lockedSelection.candidates,
+    lockedInput,
+    null,
+    scopedTopology(lockedInput, topology),
+  );
+  assert.equal(Object.keys(lockedRequest.request.questions).some((id) => id.startsWith("thinking_") || id.startsWith("tuple_")), false);
+  const narrow = { provider: "p", id: "a", reasoning: true, thinkingLevelMap: { low: "low", high: "high" } };
+  const unsupported = scopedPolicy({ optionalRoles: [], staticRoles: [], workerCandidates: approvedPool([narrow]) });
+  unsupported.builtins.implementer.effective.thinking = "max";
+  unsupported.builtins.reviewer.effective.thinking = "max";
+  assert.throws(() => approvedWorkerSelection({
+    modelRegistry: { getAvailable: () => [narrow], complete: () => { providerCalls += 1; } },
+  }, { dynamicPlan: true, planningScopes: ["models"], withProbe: false, withPlaywright: false, withDjangoExpert: false }, validatePlannerTopology(unsupported)), /dynamic_planning_locked_thinking_unsupported/);
+  assert.equal(providerCalls, 0);
+  assert.equal(plannerCalls, 1);
+  assert.equal(jevCalls, 1);
+});
+
+test("candidate confirmation preserves distinct slash pairs with identical rendered rows", () => {
+  const candidates = [
+    { provider: "openrouter", modelId: "vendor/model" },
+    { provider: "openrouter/vendor", modelId: "model" },
+  ].map((identity) => ({ ...identity, thinkingLevels: ["high", "xhigh", "max"] }));
+  const scope = resolveWorkerCandidates(candidates, {
+    version: 1,
+    all: candidates.map(({ provider, modelId }) => ({ provider, model: modelId })),
+  }, [{ role: "implementer" }, { role: "reviewer" }]);
+  assert.equal(scope.metadata.count, 2);
+  assert.deepEqual(scope.candidates, candidates);
+  assert.notEqual(plannerCandidateDigest([candidates[0]]), plannerCandidateDigest([candidates[1]]));
+  const section = accessibleWorkerCandidatesConfirmation(scope.candidates, scope.digest);
+  assert.equal(section.split("\n")[2], `Candidate-set digest: ${scope.digest}`);
+  assert.deepEqual(section.split("\n").slice(3, -1), [
+    "openrouter/vendor/model thinking=high,xhigh,max",
+    "openrouter/vendor/model thinking=high,xhigh,max",
+  ]);
+});
+
+test("Pi fallback lookup does not deny an available identity by provider spelling", () => {
+  const spelled = {
+    provider: "typesafe", id: "not-auth-only", reasoning: true,
+    thinkingLevelMap: { off: "off", low: "low", high: "high" },
+  };
+  const fallback = {
+    provider: "other", id: "fallback", reasoning: true,
+    thinkingLevelMap: { low: "low" },
+  };
+  const ctx = { modelRegistry: { getAvailable: () => [fallback, spelled] } };
+  const selection = selectDecisionModel(ctx, undefined, plannerPolicy({
+    preferred: { provider: "typesafe", model: "not-auth-only", thinking: "high" },
+    fallbacks: [{ provider: "other", model: "fallback", thinking: "low" }],
+  }));
+  assert.equal(selection.kind, "model");
+  assert.equal(selection.source, "configured-preferred");
+  assert.equal(selection.provider, "typesafe");
+  assert.equal(selection.modelId, "not-auth-only");
+  assert.equal(selection.thinking, "high");
+  const jev = selectDecisionModel(ctx, {
+    provider: "typesafe", model: "not-auth-only", thinking: "high",
+  }, plannerPolicy({
+    preferred: { provider: "other", model: "fallback", thinking: "low" },
+  }), [], { typesafeApiKey: "synthetic-key" });
+  assert.equal(jev.kind, "typesafe");
+  assert.equal(jev.modelId, "jev-latest");
+  assert.equal(jev.thinking, "off");
+  assert.equal(jev.source, "typesafe-auth");
+});
+
+test("heterogeneous high/xhigh/max choices match across adapters and stay bound", async () => {
+  const map = (supported) => Object.fromEntries(
+    ["off", "minimal", "low", "medium", "high", "xhigh", "max"].map((level) => [level, supported.includes(level) ? level : null]),
+  );
+  const writer = { provider: "p", id: "writer", reasoning: true, thinkingLevelMap: map(["high", "max"]) };
+  const review = { provider: "p", id: "review", reasoning: true, thinkingLevelMap: map(["high", "xhigh"]) };
+  const decision = { provider: "p", id: "decision", reasoning: true, thinkingLevelMap: map(["low"]) };
+  const unavailable = { provider: "unconfigured", id: "catalog-only", reasoning: true, thinkingLevelMap: map(["max"]) };
+  let providerCalls = 0;
+  const ctx = {
+    scopedModels: [{ model: writer }, { model: review }, { model: decision }],
+    modelRegistry: {
+      getAvailable: () => { providerCalls += 1; return [writer, review, decision, unavailable]; },
+      complete: () => { providerCalls += 1; throw new Error("provider_called"); },
+    },
+  };
+  const input = {
+    task: "Synthetic", taskIntent: "change", dynamicPlan: true,
+    planningScopes: ["models", "thinking"],
+    withProbe: false, withPlaywright: false, withDjangoExpert: false,
+  };
+  assert.throws(() => approvedWorkerSelection(ctx, input, validatePlannerTopology(scopedPolicy({
+    optionalRoles: [], staticRoles: [], workerCandidates: approvedPool([writer, unavailable]),
+  }))), /approved_worker_candidate_unavailable/);
+  const unsupported = scopedPolicy({
+    optionalRoles: [], staticRoles: [], workerCandidates: approvedPool([writer]),
+  });
+  unsupported.builtins.implementer.effective.thinking = "xhigh";
+  unsupported.builtins.reviewer.effective.thinking = "xhigh";
+  assert.throws(() => approvedWorkerSelection(ctx, {
+    ...input, planningScopes: ["models"],
+  }, validatePlannerTopology(unsupported)), /dynamic_planning_locked_thinking_unsupported/);
+  assert.equal(providerCalls, 0);
+
+  const topology = validatePlannerTopology(scopedPolicy({
+    optionalRoles: [], staticRoles: [], workerCandidates: approvedPool([writer, review]),
+  }));
+  const selection = approvedWorkerSelection(ctx, input, topology);
+  assert.match(accessibleWorkerCandidatesConfirmation(selection.candidates, selection.workerScope.digest), /p\/review thinking=high,xhigh\np\/writer thinking=high,max/);
+  const piSelection = selectDecisionModel(ctx, { provider: "p", model: "decision", thinking: "low" }, plannerPolicy());
+  let piRequest;
+  ctx.modelRegistry.complete = async (_model, request) => {
+    providerCalls += 1;
+    piRequest = JSON.parse(request.messages[0].content[0].text);
+    return {
+      stopReason: "stop",
+      content: [{ type: "text", text: piDecisionText(request, {
+        version: 1,
+        roles: [
+          { role: "implementer", provider: "p", model: "writer", thinking: "max", reason: "One writer." },
+          { role: "reviewer", provider: "p", model: "review", thinking: "xhigh", reason: "Mandatory review." },
+        ],
+      }) }],
+    };
+  };
+  const piResult = await runPreflightPlanner(ctx, input, "/synthetic", piSelection, topology);
+  let jevRequest;
+  const jevSelection = selectDecisionModel(ctx, undefined, plannerPolicy(), [], { typesafeApiKey: "synthetic-key" });
+  const jevResult = await runPreflightPlanner(ctx, input, "/synthetic", jevSelection, topology, undefined, undefined, {
+    typesafeApiKey: "synthetic-key",
+    typesafeFetch: async (_url, options) => {
+      providerCalls += 1;
+      jevRequest = JSON.parse(options.body);
+      const capabilities = jevRequest.state.candidate_model_capabilities;
+      const keyFor = (model, thinking) => {
+        const index = capabilities.findIndex((item) => item.provider === "p" && item.model === model);
+        return `m${index.toString(36)}_${thinking}`;
+      };
+      return choiceResponse(jevRequest, questionAnswers(jevRequest, (id, choices) => {
+        if (id === "tuple_00") return keyFor("writer", "max");
+        if (id === "tuple_01") return keyFor("review", "xhigh");
+        return choices[0];
+      }));
+    },
+  });
+  assert.equal(providerCalls, 2);
+  assert.equal(piResult.plan.decisionModel.thinking, "low");
+  assert.equal(jevResult.plan.decisionModel.thinking, "off");
+  assert.deepEqual(piRequest.state.candidate_model_capabilities, jevRequest.state.candidate_model_capabilities);
+  const capabilities = piRequest.state.candidate_model_capabilities;
+  const indexOf = (model) => capabilities.findIndex((item) => item.model === model);
+  const writerIndex = indexOf("writer");
+  const reviewIndex = indexOf("review");
+  assert.deepEqual(capabilities[writerIndex].thinking_levels, ["high", "max"]);
+  assert.deepEqual(capabilities[reviewIndex].thinking_levels, ["high", "xhigh"]);
+  for (const id of ["tuple_00", "tuple_01"]) {
+    assert.deepEqual(piRequest.questions[id].criteria, jevRequest.questions[id].criteria);
+    const keys = Object.keys(piRequest.questions[id].criteria);
+    assert.equal(keys.includes(`m${writerIndex.toString(36)}_max`), true);
+    assert.equal(keys.includes(`m${writerIndex.toString(36)}_high`), true);
+    assert.equal(keys.includes(`m${reviewIndex.toString(36)}_xhigh`), true);
+    assert.equal(keys.includes(`m${reviewIndex.toString(36)}_high`), true);
+    assert.equal(keys.includes(`m${writerIndex.toString(36)}_xhigh`), false);
+    assert.equal(keys.includes(`m${reviewIndex.toString(36)}_max`), false);
+    assert.equal(keys.includes(`m${writerIndex.toString(36)}_low`), false);
+    assert.equal(keys.includes(`m${reviewIndex.toString(36)}_medium`), false);
+  }
+  assert.deepEqual(piResult.plan.roles.map((role) => [role.role, role.model, role.thinking]), [
+    ["implementer", "writer", "max"],
+    ["reviewer", "review", "xhigh"],
+  ]);
+  assert.deepEqual(jevResult.plan.roles.map((role) => [role.role, role.model, role.thinking]), [
+    ["implementer", "writer", "max"],
+    ["reviewer", "review", "xhigh"],
+  ]);
+  const record = planningRecordForPreview(piResult.plan);
+  assert.equal(record.version, 8);
+  assert.equal(record.evidence.version, 4);
+  assert.deepEqual(record.roles.map((role) => [role.id, role.thinking]), [
+    ["implementer", "max"],
+    ["reviewer", "xhigh"],
+  ]);
+  for (const [role, thinking] of [["implementer", "max"], ["reviewer", "xhigh"]]) {
+    const decision = record.evidence.decisions.find((item) => item.role === role && item.axis === "tuple");
+    assert.equal(decision.options.find((option) => option.id === decision.selected).identity.thinking, thinking);
+  }
+  assert.equal(piResult.plan.bindings.candidateSet, jevResult.plan.bindings.candidateSet);
+  const original = piResult.plan.bindings.candidateSet;
+  writer.thinkingLevelMap = map(["high"]);
+  const stale = approvedWorkerSelection(ctx, input, topology);
+  assert.notEqual(stale.workerScope.digest, original);
+  assert.throws(() => validatePlannerDecision({
+    version: 1,
+    roles: [
+      { role: "implementer", provider: "p", model: "writer", thinking: "max", reason: "Writer." },
+      { role: "reviewer", provider: "p", model: "review", thinking: "xhigh", reason: "Reviewer." },
+    ],
+  }, stale.candidates, input, undefined, topology), /unavailable_planner_role_model/);
+  writer.thinkingLevelMap = map(["high", "max"]);
+  assert.equal(approvedWorkerSelection(ctx, input, topology).workerScope.digest, original);
+});
+
 test("maximum approved union and candidates beyond the old 100-model cut remain exact", () => {
   const models = Array.from({ length: 200 }, (_, i) => ({ provider: "p", id: `exact-${String(i).padStart(3, "0")}`, reasoning: true }));
   const ctx = { modelRegistry: { getAvailable: () => models } };
@@ -4936,6 +5263,16 @@ test("dynamic start plans mixed-provider built-in and trusted custom topology be
   ]);
   assert.equal(ctx.calls.confirmations[0].title, "Authorize preflight decision call?");
   assert.match(ctx.calls.confirmations[0].message, /xai\/grok-4\.6/);
+  assert.match(ctx.calls.confirmations[0].message, /Exact accessible\/scoped worker candidate set:/);
+  assert.match(ctx.calls.confirmations[0].message, /xai\/grok-4\.6 thinking=low,medium,high/);
+  assert.match(ctx.calls.confirmations[0].message, /openai-codex\/gpt-review thinking=low,medium,high/);
+  assert.match(ctx.calls.confirmations[0].message, /Candidate-set digest: [a-f0-9]{64}/);
+  assert.doesNotMatch(ctx.calls.confirmations[0].message, /PRIVATE_DYNAMIC_PLANNER_TASK/);
+  const candidateSection = ctx.calls.confirmations[0].message.slice(
+    ctx.calls.confirmations[0].message.indexOf("Exact accessible/scoped worker candidate set:"),
+    ctx.calls.confirmations[0].message.indexOf("End accessible/scoped worker candidate set.") + "End accessible/scoped worker candidate set.".length,
+  );
+  assert.doesNotMatch(candidateSection, /credential|endpoint|guidance|https:|apiKey/i);
   assert.equal(ctx.calls.confirmations[1].title, "Start tmux orchestration?");
   assert.match(ctx.calls.confirmations[1].message, /Selected 4 workers/);
   assert.match(ctx.calls.confirmations[1].message, /reviewer: openai-codex\/gpt-review thinking=low/);

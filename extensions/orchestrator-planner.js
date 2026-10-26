@@ -308,6 +308,32 @@ export function decisionModelConfirmation(selection) {
   ].join("\n");
 }
 
+const ACCESSIBLE_WORKER_CANDIDATE_HEADER = "Exact accessible/scoped worker candidate set:";
+const ACCESSIBLE_WORKER_CANDIDATE_FOOTER = "End accessible/scoped worker candidate set.";
+
+export function accessibleWorkerCandidatesConfirmation(candidates, digest) {
+  if (!Array.isArray(candidates) || candidates.length < 1 || candidates.length > 100
+      || typeof digest !== "string" || !/^[a-f0-9]{64}$/.test(digest)) {
+    throw new Error("worker_candidate_confirmation_unavailable");
+  }
+  const lines = candidates.map((candidate) => {
+    const projected = publicPlannerCandidate(candidate);
+    if (!boundedIdentifier(projected.provider) || !boundedIdentifier(projected.model)
+        || !Array.isArray(projected.thinking_levels) || projected.thinking_levels.length < 1
+        || projected.thinking_levels.some((level) => !THINKING_ORDER.includes(level))) {
+      throw new Error("worker_candidate_confirmation_unavailable");
+    }
+    return `${projected.provider}/${projected.model} thinking=${projected.thinking_levels.join(",")}`;
+  });
+  return [
+    ACCESSIBLE_WORKER_CANDIDATE_HEADER,
+    "This is the bounded Pi available/scoped set the decision service may choose from. It is not the decision-service identity and not an operator, project, or global role lock.",
+    `Candidate-set digest: ${digest}`,
+    ...lines,
+    ACCESSIBLE_WORKER_CANDIDATE_FOOTER,
+  ].join("\n");
+}
+
 export function staticPlannerFallbackConfirmation(selection) {
   if (selection.kind !== "static") throw new Error("invalid_static_planner_fallback");
   return [

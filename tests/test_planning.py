@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 import io
 import json
 import os
 from pathlib import Path
+import subprocess
 import tempfile
 from unittest import mock
 
@@ -701,7 +702,7 @@ class PlanningAdmissionTests(JsonCliFixture):
                 self.assertIn("unapproved worker model", failed["error"]["message"])
 
     def test_terminal_dynamic_mode_requires_both_explicit_gates(self):
-        code, envelope, raw, _ = self.run_main(
+        code, envelope, raw, stderr = self.run_main(
             [
                 "--json",
                 "start",
@@ -714,6 +715,8 @@ class PlanningAdmissionTests(JsonCliFixture):
         )
         self.assertEqual(code, 2, raw)
         self.assertEqual(envelope["error"]["code"], "planning_confirmation_required")
+        self.assertNotIn("Exact accessible/scoped worker candidate set:", raw)
+        self.assertNotIn("Exact accessible/scoped worker candidate set:", stderr)
 
         code, envelope, raw, _ = self.run_main(
             [
@@ -911,3 +914,361 @@ class PlanningAdmissionTests(JsonCliFixture):
         self.assertEqual(observed["output_mode"], 0o600)
         self.assertIn("--no-tools", command)
         self.assertIn("--no-context-files", command)
+
+    def test_terminal_prints_accessible_candidates_immediately_before_authorized_call(
+        self,
+    ):
+        digest = "a" * 64
+        section = "\n".join(
+            [
+                "Exact accessible/scoped worker candidate set:",
+                "This is the bounded Pi available/scoped set the decision service may choose from. It is not the decision-service identity and not an operator, project, or global role lock.",
+                f"Candidate-set digest: {digest}",
+                "xai/grok-4.7 thinking=off,minimal,low,medium,high,xhigh,max",
+                "End accessible/scoped worker candidate set.",
+            ]
+        )
+        message = "\n".join(
+            [
+                "Decision model: TypeSafe/jev-latest",
+                "Dynamic guidance: configured (abcdefabcdef…).",
+                "PRIVATE_TASK_BODY",
+                section,
+            ]
+        )
+        ORCHESTRATOR.JSON_MODE = False
+        output = io.StringIO()
+        with redirect_stdout(output):
+            self.assertEqual(
+                terminal_planning.preflight_candidate_view(message), section
+            )
+            terminal_planning._print_preflight_candidate_view(message)
+        printed = output.getvalue()
+        self.assertIn(
+            "xai/grok-4.7 thinking=off,minimal,low,medium,high,xhigh,max", printed
+        )
+        self.assertNotIn("PRIVATE_TASK_BODY", printed)
+        self.assertNotIn("Dynamic guidance", printed)
+        self.assertNotIn("https://", printed)
+        with self.assertRaises(OrchestrationError) as missing:
+            terminal_planning.preflight_candidate_view("Decision model only")
+        self.assertEqual(missing.exception.code, "planning_confirmation_required")
+
+        process = mock.MagicMock()
+        process.stdin = io.StringIO()
+        process.stdout = io.StringIO(
+            json.dumps(
+                {
+                    "type": "extension_ui_request",
+                    "id": "confirm-1",
+                    "method": "confirm",
+                    "title": "Authorize preflight decision call?",
+                    "message": message,
+                }
+            )
+            + "\n"
+        )
+        process.poll.return_value = None
+        args = mock.Mock(authorize_planning=True)
+
+        def selector_for(stream, path, write_result):
+            class OnceSelector:
+                def __init__(self):
+                    self.calls = 0
+
+                def register(self, *_args):
+                    pass
+
+                def select(self, *, timeout):
+                    self.calls += 1
+                    if self.calls == 1:
+                        return [(mock.Mock(fileobj=stream), None)]
+                    if write_result:
+                        path.write_text(
+                            json.dumps({"version": 1, "success": True}),
+                            encoding="utf-8",
+                        )
+                    return []
+
+                def close(self):
+                    pass
+
+            return OnceSelector()
+
+        with tempfile.TemporaryDirectory() as directory:
+            output_path = Path(directory) / "result.json"
+            output_path.write_text("", encoding="utf-8")
+            captured = io.StringIO()
+            with (
+                redirect_stdout(captured),
+                mock.patch.object(
+                    terminal_planning.selectors,
+                    "DefaultSelector",
+                    return_value=selector_for(process.stdout, output_path, True),
+                ),
+            ):
+                result = terminal_planning._read_terminal_result(
+                    process, output_path, args
+                )
+        self.assertEqual(result["success"], True)
+        self.assertIn(
+            "thinking=off,minimal,low,medium,high,xhigh,max", captured.getvalue()
+        )
+        self.assertNotIn("PRIVATE_TASK_BODY", captured.getvalue())
+        response = json.loads(process.stdin.getvalue())
+        self.assertEqual(
+            response,
+            {
+                "type": "extension_ui_response",
+                "id": "confirm-1",
+                "confirmed": True,
+            },
+        )
+        self.assertIn("xai/grok-4.7", captured.getvalue())
+
+        declined = mock.MagicMock()
+        declined.stdin = io.StringIO()
+        declined.stdout = io.StringIO(
+            json.dumps(
+                {
+                    "type": "extension_ui_request",
+                    "id": "confirm-2",
+                    "method": "confirm",
+                    "title": "Authorize preflight decision call?",
+                    "message": "Decision model only",
+                }
+            )
+            + "\n"
+        )
+        declined.poll.return_value = None
+        with tempfile.TemporaryDirectory() as directory:
+            output_path = Path(directory) / "result.json"
+            output_path.write_text("", encoding="utf-8")
+            with (
+                mock.patch.object(
+                    terminal_planning.selectors,
+                    "DefaultSelector",
+                    return_value=selector_for(declined.stdout, output_path, False),
+                ),
+                self.assertRaises(OrchestrationError) as blocked,
+            ):
+                terminal_planning._read_terminal_result(declined, output_path, args)
+        self.assertEqual(blocked.exception.code, "planning_confirmation_required")
+        self.assertEqual(
+            json.loads(declined.stdin.getvalue()),
+            {
+                "type": "extension_ui_response",
+                "id": "confirm-2",
+                "confirmed": False,
+            },
+        )
+
+    def test_js_candidate_view_preserves_distinct_slash_pairs_with_identical_rows(self):
+        result = subprocess.run(
+            [
+                "node",
+                "--input-type=module",
+                "-e",
+                """
+import {
+  accessibleWorkerCandidatesConfirmation, plannerCandidateDigest,
+} from './extensions/orchestrator-planner.js';
+const candidates = [
+  { provider: 'openrouter', modelId: 'vendor/model' },
+  { provider: 'openrouter/vendor', modelId: 'model' },
+].map((identity) => ({ ...identity, thinkingLevels: ['high', 'xhigh', 'max'] }));
+console.log(accessibleWorkerCandidatesConfirmation(
+  candidates, plannerCandidateDigest(candidates),
+));
+""",
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=20,
+            env={**os.environ, "TYPESAFE_API_KEY": ""},
+        )
+        section = result.stdout.rstrip("\n")
+        row = "openrouter/vendor/model thinking=high,xhigh,max"
+        self.assertEqual(section.splitlines()[3:-1], [row, row])
+        self.assertEqual(terminal_planning.preflight_candidate_view(section), section)
+        ORCHESTRATOR.JSON_MODE = False
+        output = io.StringIO()
+        with redirect_stdout(output):
+            authorized = terminal_planning._authorize_extension_confirm(
+                {
+                    "title": "Authorize preflight decision call?",
+                    "message": section,
+                },
+                mock.Mock(authorize_planning=True),
+            )
+        self.assertIs(authorized, True)
+        self.assertEqual(output.getvalue(), section + "\n")
+        self.assertEqual(output.getvalue().splitlines().count(row), 2)
+
+    def test_candidate_view_accepts_identifier_spelling_and_has_no_extra_gate(self):
+        digest = "b" * 64
+        description = (
+            "This is the bounded Pi available/scoped set the decision service may "
+            "choose from. It is not the decision-service identity and not an "
+            "operator, project, or global role lock."
+        )
+
+        def section(rows):
+            return "\n".join(
+                [
+                    "Exact accessible/scoped worker candidate set:",
+                    description,
+                    f"Candidate-set digest: {digest}",
+                    *rows,
+                    "End accessible/scoped worker candidate set.",
+                ]
+            )
+
+        spelled = section(
+            [
+                "openrouter/vendor/api_key-https://model thinking=high,xhigh,max",
+                "p/api_key thinking=max",
+            ]
+        )
+        message = "\n".join(
+            [
+                "Decision model: TypeSafe/jev-latest",
+                "Dynamic guidance: configured (abcdefabcdef…).",
+                "PRIVATE_TASK_BODY",
+                spelled,
+            ]
+        )
+        self.assertEqual(terminal_planning.preflight_candidate_view(message), spelled)
+        ORCHESTRATOR.JSON_MODE = True
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        try:
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                terminal_planning._print_preflight_candidate_view(message)
+        finally:
+            ORCHESTRATOR.JSON_MODE = False
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertIn(
+            "api_key-https://model thinking=high,xhigh,max", stderr.getvalue()
+        )
+        self.assertIn("p/api_key thinking=max", stderr.getvalue())
+        self.assertNotIn("PRIVATE_TASK_BODY", stderr.getvalue())
+        self.assertNotIn("Dynamic guidance", stderr.getvalue())
+
+        malformed = [
+            spelled.replace(description, "Task: PRIVATE_TASK_BODY"),
+            spelled.replace(description, "Dynamic guidance: configured."),
+            section(["p/m thinking=max", "Extra: field"]),
+            section(["p/m thinking=ultra"]),
+            section(["p/m thinking=max,high"]),
+            section(["has space/model thinking=high"]),
+            section([f"p/{'m' * 257} thinking=high"]),
+            section([f"p/m-{index} thinking=high" for index in range(101)]),
+            spelled.replace(digest, "c" * 63),
+            "Decision model only",
+        ]
+        for invalid in malformed:
+            with self.assertRaises(OrchestrationError) as blocked:
+                terminal_planning.preflight_candidate_view(invalid)
+            self.assertEqual(blocked.exception.code, "planning_confirmation_required")
+
+        args = mock.Mock(
+            authorize_planning=False,
+            planning_scope=None,
+            dry_run=True,
+            yes=False,
+            attach=False,
+            skip_model_check=False,
+        )
+        with (
+            mock.patch.object(terminal_planning, "_run_terminal_planner") as planner,
+            self.assertRaises(OrchestrationError) as missing,
+        ):
+            terminal_planning.terminal_dynamic_start(args)
+        self.assertEqual(missing.exception.code, "planning_confirmation_required")
+        planner.assert_not_called()
+
+        process = mock.MagicMock()
+        process.stdin = io.StringIO()
+        process.stdout = io.StringIO(
+            json.dumps(
+                {
+                    "type": "extension_ui_request",
+                    "id": "confirm-flag",
+                    "method": "confirm",
+                    "title": "Authorize preflight decision call?",
+                    "message": message,
+                }
+            )
+            + "\n"
+        )
+        process.poll.return_value = None
+
+        class OnceSelector:
+            def __init__(self, stream, path):
+                self.calls = 0
+                self.stream = stream
+                self.path = path
+
+            def register(self, *_args):
+                pass
+
+            def select(self, *, timeout):
+                self.calls += 1
+                if self.calls == 1:
+                    return [(mock.Mock(fileobj=self.stream), None)]
+                self.path.write_text(
+                    json.dumps({"version": 1, "success": True}),
+                    encoding="utf-8",
+                )
+                return []
+
+            def close(self):
+                pass
+
+        with tempfile.TemporaryDirectory() as directory:
+            output_path = Path(directory) / "result.json"
+            output_path.write_text("", encoding="utf-8")
+            captured = io.StringIO()
+            # Not the missing-flag gate: that rejects before Pi. If this handler
+            # is reached, the supplied flag is the only authorization.
+            with (
+                redirect_stdout(captured),
+                mock.patch.object(
+                    terminal_planning.selectors,
+                    "DefaultSelector",
+                    return_value=OnceSelector(process.stdout, output_path),
+                ),
+            ):
+                result = terminal_planning._read_terminal_result(
+                    process, output_path, mock.Mock(authorize_planning=False)
+                )
+        self.assertTrue(result["success"])
+        self.assertEqual(
+            json.loads(process.stdin.getvalue()),
+            {
+                "type": "extension_ui_response",
+                "id": "confirm-flag",
+                "confirmed": False,
+            },
+        )
+        self.assertEqual(process.stdin.getvalue().count("extension_ui_response"), 1)
+        self.assertIn("api_key", captured.getvalue())
+        with redirect_stdout(io.StringIO()):
+            authorized = terminal_planning._authorize_extension_confirm(
+                {
+                    "title": "Authorize preflight decision call?",
+                    "message": message,
+                },
+                mock.Mock(authorize_planning=True),
+            )
+        self.assertIs(authorized, True)
+        self.assertIs(
+            terminal_planning._confirmation_value(
+                mock.Mock(authorize_planning=False),
+                "Authorize preflight decision call?",
+            ),
+            False,
+        )

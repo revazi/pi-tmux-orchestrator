@@ -475,7 +475,9 @@ under separate provider-call authorization with `/login typesafe` or the
   the exact Pi decision model wins over configured identities after TypeSafe
   auth is removed. Confirm
   selected worker model/thinking tuples are available and use only each model's
-  advertised supported levels through `max`. Repeat once with bounded natural-
+  advertised supported levels through `max`. Confirm the authorization view lists
+  that accessible/scoped set and digest before the call, separately from the
+  decision identity and locks. Repeat once with bounded natural-
   language `dynamicGuidance` in the unified `tmux-orchestrator.json` planner member and confirm the
   authorization shows its digest, both direct Jev and Pi-chat receive subordinate
   preferences, the retained plan omits their body, and malformed or oversized guidance fails
@@ -517,7 +519,10 @@ under separate provider-call authorization with `/login typesafe` or the
   and unavailable, stale, duplicate, or unallowlisted identities make no
   provider or launch call. Exercise the equivalent terminal path with
   `start --dynamic-plan --authorize-planning --yes` and confirm that omitting
-  either authorization fails before planning/launch. After accepting a preview,
+  either authorization fails before Pi starts or launch, so a missing
+  `--authorize-planning` shows no candidate set. A supplied flag prints that set
+  immediately before the already-authorized call and is not a second decline gate.
+  After accepting a preview,
   change each mutable class in turn (task/context, planner policy, exact-project
   config or custom resource digest, and available catalog/thinking metadata) and
   confirm pre-launch binding revalidation rejects it with no worker/session.
