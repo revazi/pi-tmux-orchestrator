@@ -12,6 +12,7 @@ from .broker_store import connect_broker_database, record_event, set_meta, utc_n
 from .constants import BROKER_PROTOCOL_VERSION, MAX_RPC_COMMANDS, RPC_TOKEN_PATTERN
 from .models import OrchestrationError
 from .continuation import approved_repair_extension
+from .call_admission import call_limit, extend_call_allowance
 from .role_registry import valid_custom_role_id
 from .storage import load_manifest
 from .worker_resources import revalidate_worker_resources
@@ -53,6 +54,23 @@ class BrokerControlSupport:
         action = message.get("action")
         delivery = message.get("delivery")
         body = message.get("message")
+        call_extension = None
+        if action == "extend_calls":
+            if (
+                not isinstance(delivery, str)
+                or not delivery.startswith("calls:+")
+                or len(delivery) > 14
+                or not delivery[7:].isascii()
+                or not delivery[7:].isdecimal()
+            ):
+                raise OrchestrationError(
+                    "Call continuation is invalid", "invalid_protocol"
+                )
+            call_extension = call_limit(int(delivery[7:]))
+            if delivery != f"calls:+{call_extension}":
+                raise OrchestrationError(
+                    "Call continuation is invalid", "invalid_protocol"
+                )
         if (
             not isinstance(command_id, str)
             or not RPC_TOKEN_PATTERN.fullmatch(command_id)
@@ -60,11 +78,26 @@ class BrokerControlSupport:
             or not RPC_TOKEN_PATTERN.fullmatch(token)
             or not isinstance(role, str)
             or role not in self.manifest["roles"]
-            or action not in {"send", "abort", "restart", "restart_failed", "continue"}
-            or (action == "continue" and role != "implementer")
-            or delivery not in {None, "steer", "follow-up"}
+            or action
+            not in {
+                "send",
+                "abort",
+                "restart",
+                "restart_failed",
+                "continue",
+                "extend_calls",
+            }
+            or (action in {"continue", "extend_calls"} and role != "implementer")
+            or (
+                action != "extend_calls"
+                and delivery not in {None, "steer", "follow-up"}
+            )
             or (action == "send" and (not isinstance(body, str) or not body.strip()))
-            or (action != "send" and (body is not None or delivery is not None))
+            or (
+                action not in {"send", "extend_calls"}
+                and (body is not None or delivery is not None)
+            )
+            or (action == "extend_calls" and body is not None)
         ):
             raise OrchestrationError(
                 "Control message fields are invalid", "invalid_protocol"
@@ -130,6 +163,22 @@ class BrokerControlSupport:
                     status = "accepted"
                 else:
                     status = "conflict"
+            elif action == "extend_calls":
+                try:
+                    extend_call_allowance(database, call_extension)
+                except OrchestrationError as error:
+                    if error.code != "conflict":
+                        raise
+                    status = "conflict"
+                else:
+                    status = "accepted"
+                    record_event(
+                        database,
+                        "call_allowance_extended",
+                        role=role,
+                        delivery_id=command_id,
+                        status="operator_approved",
+                    )
             elif (action != "restart" and role not in self.clients) or (
                 action in {"restart", "continue"} and role not in self.worker_baselines
             ):

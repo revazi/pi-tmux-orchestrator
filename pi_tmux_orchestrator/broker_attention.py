@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from .broker_store import connect_broker_database, record_event, set_meta, utc_now
+from .call_admission import reserve_provider_turn
 from .constants import BROKER_PROTOCOL_VERSION
 from .models import OrchestrationError
 from .worker_attention import assignment_attention_metadata, validate_attention
@@ -200,6 +201,64 @@ class BrokerAttentionSupport:
                     "Report recovery scheduling became uncertain", "broker_uncertain"
                 ) from None
         if actionable:
+            await self.broadcast_workflow("needs_attention", assignment["round"])
+
+    async def handle_provider_turn(
+        self, client: Client, message: dict[str, Any]
+    ) -> None:
+        # No await in the transaction: concurrent roles serialize on the durable
+        # writer reservation; authorization leaves only after COMMIT succeeds.
+        with connect_broker_database(self.coord) as database:
+            database.execute("BEGIN IMMEDIATE")
+            assignment = self._active_attention_assignment(
+                database, client, message["assignment_id"], message.get("resume_id")
+            )
+            if (
+                assignment["report_attempt"] == "attention"
+                and not assignment["resume_authorized"]
+            ):
+                allowed = False
+            else:
+                allowed = reserve_provider_turn(
+                    database,
+                    request_id=message["id"],
+                    role=client.role,
+                    assignment_id=assignment["id"],
+                    generation=client.generation,
+                    resume_id=message.get("resume_id"),
+                )
+            if not allowed:
+                database.execute(
+                    "UPDATE assignments SET report_attempt='attention',attention_reason='blocked' WHERE id=?",
+                    (assignment["id"],),
+                )
+                self._attention_waiting(database, client, assignment)
+            record_event(
+                database,
+                "provider_turn_admission",
+                role=client.role,
+                assignment_id=assignment["id"],
+                round_number=assignment["round"],
+                status="granted" if allowed else "denied",
+            )
+        await self.reply(
+            client, message["id"], allowed, status="granted" if allowed else "conflict"
+        )
+        if not allowed:
+            await self.broadcast_assignment_state(client)
+            await self.broadcast(
+                {
+                    "version": BROKER_PROTOCOL_VERSION,
+                    "type": "attention",
+                    "session": self.manifest["session"],
+                    "role": client.role,
+                    "assignment_id": assignment["id"],
+                    "attention": {
+                        "reason": "blocked",
+                        "summary": "Provider-call admission denied. Inspect enforcing ceilings and retained reservations; allowance extension and continuation are operator-only.",
+                    },
+                }
+            )
             await self.broadcast_workflow("needs_attention", assignment["round"])
 
     async def handle_recovery_turn(

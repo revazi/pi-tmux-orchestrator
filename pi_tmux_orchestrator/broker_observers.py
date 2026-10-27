@@ -93,6 +93,13 @@ class BrokerObserverSupport:
         }
 
     async def broadcast_workflow(self, state: str, round_number: int) -> None:
+        if state in {"active", "ready"}:
+            with connect_broker_database(self.coord, readonly=True) as database:
+                pause = database.execute(
+                    "SELECT value FROM meta WHERE key='call_admission_paused'"
+                ).fetchone()
+                if pause is not None and pause[0] == "1":
+                    state = "needs_attention"
         await self.broadcast(
             {
                 "version": BROKER_PROTOCOL_VERSION,

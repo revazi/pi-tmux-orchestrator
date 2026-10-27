@@ -59,13 +59,14 @@ test("live parent frames reject malformed/private metadata and parent update is 
 });
 
 let harnessSequence = 0;
-async function workerHarness(t, mode) {
+async function workerHarness(t, mode, options = {}) {
   const directory = await mkdtemp(join(tmpdir(), "worker-attention-"));
   const socketPath = join(directory, "broker.sock");
   const incoming = new EventEmitter();
   const frames = [];
   let peer;
   let allowance = 1;
+  let callAllowance = options.calls ?? Infinity;
   const server = net.createServer((connection) => {
     peer = connection;
     let buffer = Buffer.alloc(0);
@@ -79,8 +80,11 @@ async function workerHarness(t, mode) {
         const frame = JSON.parse(buffer.subarray(4, size + 4).toString());
         buffer = buffer.subarray(size + 4);
         frames.push(frame);
-        const success = frame.type !== "recovery_turn" || allowance-- > 0;
-        connection.write(workerFrame({ version: 1, type: "response", id: frame.id, success, status: success ? "recorded" : "conflict" }));
+        const success = frame.type === "provider_turn" ? callAllowance-- > 0 : frame.type !== "recovery_turn" || allowance-- > 0;
+        const response = { version: 1, type: "response", id: frame.id, success,
+          status: success ? (frame.type === "provider_turn" ? "granted" : "recorded") : "conflict" };
+        const projected = frame.type === "provider_turn" && options.response ? options.response(response) : response;
+        if (projected !== null) connection.write(workerFrame(projected));
         incoming.emit(frame.type, frame);
         if (frame.type === "ack") incoming.emit(`delivery:${frame.delivery_id}`, frame);
       }
@@ -93,6 +97,7 @@ async function workerHarness(t, mode) {
     PI_TMUX_ORCHESTRATOR_TOKEN: "b".repeat(32),
     PI_TMUX_ORCHESTRATOR_SOCKET: socketPath,
     PI_TMUX_ORCHESTRATOR_GENERATION: "1",
+    PI_TMUX_ORCHESTRATOR_CALL_ADMISSION: options.calls === undefined ? "0" : "1",
     PI_TMUX_ORCHESTRATOR_GUARDRAILS: JSON.stringify({
       enforcement: "warn-only", warning: {}, hard: {},
     }),
@@ -106,9 +111,10 @@ async function workerHarness(t, mode) {
   const messages = [];
   const aborts = [];
   const pi = { on: (name, hook) => hooks.set(name, hook), registerTool: (tool) => tools.set(tool.name, tool),
+    getSettings: () => options.settings ?? { transport: "sse", retry: { provider: { maxRetries: 0 } } },
     getActiveTools: () => ["read", "write", "orchestrator_report", "orchestrator_attention"], setActiveTools: () => {},
     appendEntry: (customType, data) => entries.push({ type: "custom", customType, data }), sendMessage: (value) => messages.push(value) };
-  const ctx = { mode, sessionManager: { getEntries: () => entries, getBranch: () => [] }, getContextUsage: () => undefined, isIdle: () => true, abort: () => aborts.push(true) };
+  const ctx = { mode, model: { api: "openai-responses" }, sessionManager: { getEntries: () => entries, getBranch: () => [] }, getContextUsage: () => undefined, isIdle: () => true, abort: () => aborts.push(true) };
   worker(pi);
   t.after(async () => {
     hooks.get("session_shutdown")();
@@ -239,6 +245,57 @@ for (const mode of ["tui", "rpc"]) {
       await h.tools.get("orchestrator_report").execute("report", { kind: "implementation", summary: "done" }, undefined, undefined, h.ctx);
     });
   }
+}
+
+for (const mode of ["tui", "rpc"]) {
+  test(`${mode} ordinary turns require fresh broker grants and exhausted ceilings abort before dispatch`, async (t) => {
+    const h = await workerHarness(t, mode, { calls: 2 });
+    assert.deepEqual(h.hooks.get("cache_warming_decision")(), { action: "stop" });
+    assert.deepEqual(h.hooks.get("session_before_compact")(), { cancel: true });
+    assert.deepEqual(h.hooks.get("session_before_tree")(), { cancel: true });
+    await h.hooks.get("before_provider_request")({}, h.ctx);
+    await h.hooks.get("before_provider_request")({}, h.ctx);
+    assert.equal(h.aborts.length, 0);
+    await assert.rejects(h.hooks.get("before_provider_request")({}, h.ctx), /provider_turn_denied/);
+    assert.equal(h.aborts.length, 1);
+    const admissions = h.frames.filter((frame) => frame.type === "provider_turn");
+    assert.equal(admissions.length, 3);
+    assert.equal(new Set(admissions.map((frame) => frame.id)).size, 3);
+    assert.ok(admissions.every((frame) => frame.assignment_id === assignmentId && frame.resume_id === null));
+    assert.equal(h.frames.filter((frame) => frame.type === "recovery_turn").length, 0);
+  });
+
+  test(`${mode} unverifiable transport or provider retries abort instead of bypassing call admission`, async (t) => {
+    const settings = { transport: "auto", retry: { provider: { maxRetries: 0 } } };
+    const h = await workerHarness(t, mode, { calls: 1, settings });
+    await assert.rejects(h.hooks.get("before_provider_request")({}, h.ctx), /capability_unavailable/);
+    settings.transport = "sse";
+    settings.retry.provider.maxRetries = 1;
+    await assert.rejects(h.hooks.get("before_provider_request")({}, h.ctx), /capability_unavailable/);
+    assert.equal(h.aborts.length, 2);
+    assert.equal(h.frames.filter((frame) => frame.type === "provider_turn").length, 0);
+  });
+
+  test(`${mode} a late grant cannot authorize a replacement assignment`, async (t) => {
+    let grant;
+    const h = await workerHarness(t, mode, { calls: 1, response: (value) => { grant = value; return null; } });
+    const request = once(h.incoming, "provider_turn", { signal: AbortSignal.timeout(3000) });
+    const pending = h.hooks.get("before_provider_request")({}, h.ctx);
+    await request;
+    const ack = once(h.incoming, `delivery:${"9".repeat(32)}`, { signal: AbortSignal.timeout(3000) });
+    h.send({ version: 1, type: "assignment", id: "9".repeat(32), assignment_id: "8".repeat(32),
+      kind: "implementation", round: 2, content: "synthetic replacement", trigger: true });
+    await ack;
+    h.send(grant);
+    await assert.rejects(pending, /provider_turn_denied/);
+    assert.equal(h.aborts.length, 1);
+  });
+
+  test(`${mode} malformed authorization is not a dispatch grant`, async (t) => {
+    const h = await workerHarness(t, mode, { calls: 1, response: (response) => ({ ...response, success: "yes" }) });
+    await assert.rejects(h.hooks.get("before_provider_request")({}, h.ctx), /provider_turn_denied/);
+    assert.equal(h.aborts.length, 1);
+  });
 }
 
 test("late report-schema result cannot classify a newer assignment as rejected", async (t) => {

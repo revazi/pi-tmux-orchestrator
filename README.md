@@ -86,7 +86,7 @@ follow-up only to the waiting role owning it. Explicit resume authority survives
 reconnect/restart separately from the consumed automatic allowance. See the [protocol](references/protocol-v1.md#worker-attention-and-report-recovery).
 
 
-Runs can select exact role models and thinking, single/phased flow, optional built-in specialists, budgets, reviewed skills, and worker-context policy. Model-guided planning is opt-in and separately confirmed. Details and strict user-global configuration examples are in the [usage guide](references/usage.md); protocol and custom specialist details are in [protocol](references/protocol-v1.md) and [custom roles](references/custom-roles.md).
+Runs can select exact role models and thinking, single/phased flow, optional built-in specialists, budgets, reviewed skills, and worker-context policy. Static starts additionally support explicitly confirmed [enforcing provider-call ceilings](references/usage.md#opt-in-enforcing-provider-call-ceilings-static-starts), with broker-coordinated admission and operator-only allowance extensions; actual-cost enforcement remains unavailable. Model-guided planning is opt-in and separately confirmed. Details and strict user-global configuration examples are in the [usage guide](references/usage.md); protocol and custom specialist details are in [protocol](references/protocol-v1.md) and [custom roles](references/custom-roles.md).
 
 ## Upgrade to 0.11.1
 

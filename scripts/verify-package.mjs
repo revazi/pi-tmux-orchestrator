@@ -18,6 +18,7 @@ const pythonFiles = [
   "broker_attention.py",
   "worker_attention.py",
   "budgeting.py",
+  "call_admission.py",
   "cli.py",
   "commands.py",
   "configuration.py",
@@ -100,6 +101,7 @@ const expectedFiles = [
   "references/protocol-v1.md",
   "references/dashboard-design.md",
   "references/custom-roles.md",
+  "references/provider-call-admission.md",
   "extensions/orchestrator-worker-roles.js",
   "extensions/orchestrator-role-metadata.js",
   ...pythonFiles,
@@ -141,6 +143,7 @@ const declaredFiles = [
   "references/protocol-v1.md",
   "references/dashboard-design.md",
   "references/custom-roles.md",
+  "references/provider-call-admission.md",
   "bin/pi-tmux-agents",
   "extensions/orchestrator-worker-roles.js",
   "extensions/orchestrator-role-metadata.js",
@@ -288,6 +291,7 @@ const packagedDocs = [
   "references/protocol-v1.md",
   "references/dashboard-design.md",
   "references/custom-roles.md",
+  "references/provider-call-admission.md",
 ];
 const unrelatedRoadmap = /\b(?:Pi Deck|Herdr|future architecture|neutral core|multiplexer-neutral|terminal-neutral|terminal-independent|terminal-client|process-host)\b/i;
 for (const path of packagedDocs) {

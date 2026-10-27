@@ -20,6 +20,7 @@ import {
   appendBudgetArgs,
   budgetConfirmation,
   budgetOverrideParameters,
+  validateCallAdmissionPreview,
 } from "./orchestrator-budgets.js";
 import {
   appendModelArgs,
@@ -458,6 +459,7 @@ function startConfirmation(preview, plannerPlan) {
     `Preflight decision:\n${plannerPlanConfirmation(plannerPlan)}`,
     `Roles/models (CLI policy):\n${roles}`,
     `Effective provider-usage budget policy:\n${budgetConfirmation(data.budget_policy)}`,
+    `Enforcing provider-call ceilings: ${Object.keys(data.call_admission?.limits || {}).length ? JSON.stringify(data.call_admission.limits) : "disabled"}. Cost enforcement unavailable. Enabled call gating requires supported OpenAI SSE APIs with provider retries=0; compaction/cache warming are blocked.`,
     `Repair-round continuation cap: ${repairLimitConfirmation(data)}`,
     `Worker provider context (CLI policy): ${workerContextConfirmation(data)}`,
     `Worker skills (automatic discovery disabled):\n${Object.entries(data.worker_resources?.skills || {}).map(([role, paths]) => `${role}: ${paths.length ? paths.join(", ") : "none"}`).join("\n")}`,
@@ -821,7 +823,8 @@ async function preparedStartPreview(pi, input, project, paths, plannerPlan, sign
     throw new Error("task_intent_preview_mismatch");
   }
   validateWorkerContextPreview(preview.data, input.workerContext);
-  return { preview, boundPlanning: validatedBoundPlanning(preview.data, plannerPlan) };
+  const callAdmissionBinding = validateCallAdmissionPreview(preview.data, input.budgetOverrides?.callLimits);
+  return { preview, callAdmissionBinding, boundPlanning: validatedBoundPlanning(preview.data, plannerPlan) };
 }
 
 async function persistBoundPlanning(path, boundPlanning) {
@@ -842,6 +845,9 @@ async function launchAfterPreview(pi, ctx, start, prepared) {
   const intent = taskIntentMetadata(start.input.taskIntent, start.plannerPlan?.taskIntentRecommendation ?? null);
   if (metadataDigest(intent) !== metadataDigest(prepared.preview.data.task_intent)) {
     throw new Error("stale_task_intent_preview");
+  }
+  if (validateCallAdmissionPreview(prepared.preview.data, start.input.budgetOverrides?.callLimits) !== prepared.callAdmissionBinding) {
+    throw new Error("stale_call_admission_preview");
   }
   await revalidateDynamicBindings(pi, ctx, start.project, start.plannerPlan, start.signal);
   await persistBoundPlanning(start.paths.planning, prepared.boundPlanning);
@@ -869,6 +875,9 @@ async function launchConfirmedStart(pi, ctx, start) {
 
 async function runStart(pi, input, signal, ctx, options = {}) {
   validateStartRequest(input, ctx, options.allowRpc === true);
+  if (input.budgetOverrides?.callLimits !== undefined && input.dynamicPlan === true) {
+    throw new Error("enforcing_call_limits_require_static_start");
+  }
   if (signal?.aborted) throw new Error("start_cancelled");
   const previewOnly = options.previewOnly === true;
   const explicitIntent = taskIntentMetadata(input.taskIntent);

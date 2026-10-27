@@ -476,16 +476,25 @@ class BrokerWorkflowSupport:
             return
         if role == "reviewer":
             if report["verdict"] == "approved":
+                from .call_admission import admission_status
+
                 with connect_broker_database(self.coord) as database:
-                    set_meta(database, "workflow_state", "ready")
+                    state = (
+                        "needs_attention"
+                        if admission_status(database)["paused"]
+                        else "ready"
+                    )
+                    set_meta(database, "workflow_state", state)
                     record_event(
                         database,
-                        "workflow_ready",
+                        "workflow_ready"
+                        if state == "ready"
+                        else "workflow_budget_paused",
                         role=role,
                         round_number=round_number,
-                        status="ready",
+                        status=state,
                     )
-                await self.broadcast_workflow("ready", round_number)
+                await self.broadcast_workflow(state, round_number)
                 return
             await self._deliver_run_state(("implementer",), round_number)
             next_round = round_number + 1

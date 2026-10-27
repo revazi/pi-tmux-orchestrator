@@ -137,6 +137,12 @@ def supervisor_capabilities() -> dict[str, Any]:
             "guardrail_metadata": True,
             "guardrail_mode": "observational",
             "budget_routing_gates": False,
+            "provider_call_admission": {
+                "version": 1,
+                "scopes": ["run", "role", "assignment"],
+                "static_only": True,
+                "cost_enforcement": "unavailable",
+            },
         },
         "limits": {
             "page_items": MAX_JSON_ITEMS,

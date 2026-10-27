@@ -30,6 +30,7 @@ from .broker_store import (
     public_broker_snapshot,
     try_public_broker_snapshot,
     worker_guardrail_policy,
+    worker_call_admission,
     worker_context_mode,
 )
 from .configuration import (
@@ -387,6 +388,15 @@ def status_command(args: argparse.Namespace) -> CommandResult:
             human_print(
                 f"  worker context: default=prune; overrides={json.dumps(context_overrides, sort_keys=True)}"
             )
+            admission = workflow.get("call_admission", {})
+            if admission.get("mode") == "enforcing":
+                human_print(
+                    f"  call admission: enforcing; admitted={admission['admitted_turns']}; ceilings={json.dumps(admission['limits'], sort_keys=True)}; cost enforcement unavailable"
+                )
+                if admission.get("paused"):
+                    human_print(
+                        "  Paused: provider-call ceiling; incomplete, not approved. Explicit extend-calls approval and assignment-bound send are required."
+                    )
             continuation = workflow.get("continuation", {})
             if continuation.get("max_repair_rounds") is not None:
                 human_print(
@@ -644,6 +654,42 @@ def send_command(args: argparse.Namespace) -> CommandResult:
             "event_sequence": (
                 acknowledgement.get("event_sequence") if acknowledgement else None
             ),
+        }
+    )
+
+
+def extend_calls_command(args: argparse.Namespace) -> CommandResult:
+    from .call_admission import call_limit
+
+    extra = call_limit(args.additional)
+    if not args.yes:
+        raise OrchestrationError(
+            "extend-calls increases every configured ceiling by exactly --additional; pass --yes"
+        )
+    session, coord, manifest = control_target(args)
+    if manifest.get("version", 0) < 3:
+        raise OrchestrationError("extend-calls requires a brokered orchestration")
+    _session, live_coord = resolve_session(args.session)
+    if live_coord != coord:
+        raise OrchestrationError(
+            "Call continuation requires the exact live run", "broker_not_live"
+        )
+    acknowledgement = broker_control_request(
+        coord,
+        "implementer",
+        "extend_calls",
+        delivery=f"calls:+{extra}",
+        command_id=args.command_id,
+    )
+    human_print(
+        f"Call allowance extension acknowledged by {session}; use explicit send to resume a waiting assignment"
+    )
+    return CommandResult(
+        data={
+            "session": session,
+            "run_id": coord.name,
+            "additional": extra,
+            **acknowledgement,
         }
     )
 
@@ -1200,6 +1246,9 @@ def run_agent_command(args: argparse.Namespace) -> int:
     environment["PI_TELEMETRY"] = "0"
     if manifest.get("version", 0) >= 3:
         guardrails = worker_guardrail_policy(coord)
+        environment["PI_TMUX_ORCHESTRATOR_CALL_ADMISSION"] = worker_call_admission(
+            coord
+        )
         environment["PI_TMUX_ORCHESTRATOR_CONTEXT_MODE"] = worker_context_mode(
             coord, args.role
         )

@@ -133,7 +133,7 @@ workflow routing. Direct steering can ask for a report or other follow-up. When
 a workflow needs attention, send only to a waiting role that owns the active
 assignment; the broker rejects idle or unassigned targets without masking the
 block. The operator alone decides whether to steer, restart, or stop. There is no budget
-resume command because budgets never pause work. Each role receives a bounded
+resume command for observational budgets because they never pause work. A distinct opt-in static `budgetOverrides.callLimits` policy (terminal `--enforce-provider-calls`) can gate ordinary provider turns through broker-committed allowances. Never infer limits or enable it without explicit operator thresholds and launch confirmation. It requires the verified Pi 1.4.0/OpenAI SSE boundary, blocks compaction/cache warming, and has no actual-cost enforcement. An exhausted allowance is incomplete/needs-attention; only separately confirmed operator `extend-calls` followed by assignment-bound guidance may continue. Models must never approve their own extension. Each role receives a bounded
 baseline. Later
 evidence is projected as one rolling latest-per-role run-state capsule; updates
 for an active role are coalesced until its next assignment. One metadata-only

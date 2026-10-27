@@ -421,6 +421,10 @@ class CustomRoleResourceTests(CustomRoleResourceFixture):
                 ),
                 mock.patch.object(commands, "broker_role_generation", return_value=1),
                 mock.patch.object(commands, "worker_guardrail_policy", return_value={}),
+                mock.patch.object(commands, "worker_call_admission", return_value="0"),
+                mock.patch.object(
+                    rpc_supervisor, "worker_call_admission", return_value="0"
+                ),
                 mock.patch.object(
                     commands, "worker_context_mode", return_value="prune"
                 ),
@@ -456,6 +460,7 @@ class CustomRoleResourceTests(CustomRoleResourceFixture):
                 environment = popen.call_args.kwargs["env"]
                 execute.assert_not_called()
             self.assertEqual(environment["PI_TMUX_ORCHESTRATOR_ROLE"], self.name)
+            self.assertEqual(environment["PI_TMUX_ORCHESTRATOR_CALL_ADMISSION"], "0")
             self.assertEqual(
                 environment["PI_TMUX_ORCHESTRATOR_SPECIALIST_CONTRACT"], "probe"
             )

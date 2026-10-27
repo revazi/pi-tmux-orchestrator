@@ -76,6 +76,7 @@
     "references/protocol-v1.md",
     "references/dashboard-design.md",
     "references/custom-roles.md",
+    "references/provider-call-admission.md",
     "bin/pi-tmux-agents",
     "extensions/orchestrator-worker-roles.js",
     "extensions/orchestrator-role-metadata.js",

@@ -56,6 +56,7 @@ EXPECTED_FILES=(
   pi_tmux_orchestrator/broker_attention.py
   pi_tmux_orchestrator/worker_attention.py
   pi_tmux_orchestrator/budgeting.py
+  pi_tmux_orchestrator/call_admission.py
   pi_tmux_orchestrator/cli.py
   pi_tmux_orchestrator/commands.py
   pi_tmux_orchestrator/configuration.py
@@ -101,6 +102,7 @@ EXPECTED_FILES=(
   pi_tmux_orchestrator/workspace_capsules.py
   references/usage.md
   references/prerelease-testing.md
+  references/provider-call-admission.md
   references/protocol-v1.md
   references/dashboard-design.md
   references/custom-roles.md

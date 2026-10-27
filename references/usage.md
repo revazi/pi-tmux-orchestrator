@@ -1690,6 +1690,71 @@ visible severity; neither blocks non-report tools nor downstream assignments.
 Budget configuration cannot silently skip required review, mark a workflow
 ready, or otherwise alter routing.
 
+### Opt-in enforcing provider-call ceilings (static starts)
+
+Ordinary worker turns can use a **distinct** version-1 admission policy. This
+never changes the observational `warn-only` or compatibility `hard` policy,
+never has inferred/default thresholds, and currently rejects dynamic starts
+before planning. Supply explicit `budgetOverrides.callLimits` (`run`, `role`,
+`assignment`) on a static model-tool start; the interactive launch confirmation
+shows the resolved ceilings and capability restrictions. Terminal example
+(numbers are illustrative, not recommended defaults):
+
+```bash
+pi-tmux-agents start --project "$PWD" --task 'Your change' \
+  --enforce-provider-calls run=40 --enforce-provider-calls assignment=12 --dry-run
+# After reviewing the exact same thresholds, replace --dry-run with:
+# --confirm-call-enforcement
+```
+
+Each scope is optional; a role or assignment ceiling applies independently to
+every role or assignment. Values must be integers from 1 to 1,000,000. A fresh
+broker reservation precedes **every ordinary provider turn**, including report
+recovery. The single writer commits reservations before replying, so concurrent
+roles share one run allowance. A missing/denied/invalid/uncertain authorization
+aborts before dispatch. Grants are never refunded, even after cancellation,
+transport loss, or restart; a lost reply can consume allowance without a call.
+Duplicate grants cannot authorize another dispatch. These conservative admitted
+turn counts are separate from observed provider usage. The metadata ledger is
+bounded to 1,000,000 authorization attempts; exhausting its capacity requires
+stopping the run rather than resetting accounting.
+
+The currently verified boundary is **Pi 1.4.0**, OpenAI completions/responses
+APIs using explicit `transport: "sse"` and `retry.provider.maxRetries: 0` (the
+provider-retry default). Workers reject unsupported request settings; cache
+warming, compaction and tree-summary navigation are blocked in enforcing mode.
+Other APIs/transports and older Pi versions are not established enforcement
+capabilities. This is not an OS sandbox: do not authorize nested provider
+requests from worker tools or unrelated extensions. Already-admitted parallel
+turns and their tools may finish; no arbitrary active tool is killed. A ceiling
+is enforced at admission of the *next* turn, not by cancelling a response.
+
+An exhausted ceiling leaves the workflow non-ready/needs-attention with the
+assignment intact. Status, dashboard and Supervisor workflow metadata expose
+`call_admission`, distinguishing it from observational warnings. Ordinary
+messages, restarts and repair-round approvals do not increase the allowance.
+Only a separately confirmed operator command extends **each configured ceiling**
+by the stated amount, bounded by 1,000,000:
+
+```bash
+pi-tmux-agents extend-calls SESSION --run EXACT_RUN_ID --additional 2 \
+  --command-id 0123456789abcdef0123456789abcdef --yes
+```
+
+Reusing the exact command ID replays its receipt without another increase;
+changing the amount under that ID conflicts. This does not auto-resume work.
+Then use explicit `send` guidance for a waiting role that owns an assignment.
+The model must never invoke this approval itself. Mandatory review is unchanged;
+neither a budget pause nor a continuation acknowledgement is completion.
+
+**Actual-cost enforcement remains unavailable.** Pi's standard `usage.cost`
+calculation uses catalog rates, not verified provider-billing data. The new
+admission status reports that unavailability, and cost is not accepted as an
+enforcing threshold. Do not treat the existing displayed cost as actual billed
+spend. See [provider-free admission evidence](provider-call-admission.md) for
+reproduction and the remaining #182 acceptance boundaries. This initial static
+call-admission slice does not close the full cost/dynamic-planning issue.
+
 The categories have different meanings and costs:
 
 - input is provider-reported non-cached or otherwise provider-classified input;
