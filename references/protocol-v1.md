@@ -787,6 +787,27 @@ it even for duplicate deliveries. The worker journals it and binds settlement to
 the run's starting assignment and epoch, so late pre-guidance settlement cannot
 pause a resumed turn.
 
+The distinct opt-in enforcing policy adds `provider_turn`, with the common
+worker authentication/request ID plus `assignment_id` and optional nullable
+`resume_id`. Every ordinary turn requires a fresh grant; the recovery protocol
+above remains an additional restriction, not a way around call ceilings.
+Schema 13 adds a body-free `provider_admissions` ledger and strict version-1
+call-admission metadata. The broker validates the live generation, active
+assignment and resume epoch inside `BEGIN IMMEDIATE`, checks run/role/assignment
+ceilings, commits the conservative reservation, then replies `granted`. Replayed
+grants never authorize another dispatch; uncertain reservations are not refunded.
+Denial preserves the assignment and projects `needs_attention`, never readiness.
+Legacy migration leaves enforcement disabled.
+
+The authenticated operator control action `extend_calls` uses role `implementer`
+as its registry identity, null message body, and canonical numeric delivery
+`calls:+N`. It extends every configured ceiling by exactly N (bounded by the
+policy maximum); command-ID reuse with a different amount conflicts. Its receipt
+is not dispatch authorization. Separate existing assignment-bound operator
+`send` guidance is required to resume; worker frames cannot increase ceilings.
+See [operator guidance](usage.md#opt-in-enforcing-provider-call-ceilings-static-starts)
+for the static-only capability and cost-unavailable restrictions.
+
 SQLite schema 12 retains per-assignment enums `report_attempt` (`none`, `rejected`,
 `attention`, `accepted`), `reminder_state` (`none`, `reserved`, `used`), optional
 bounded `attention_reason`/last phase, saturated `settlement_count` (0–2), and

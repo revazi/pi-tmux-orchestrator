@@ -1,3 +1,4 @@
+import { appendBudgetArgs, validateCallAdmissionPreview } from "../extensions/orchestrator-budgets.js";
 import { syntheticEvidenceFixture } from "./fixtures/planner-evidence.mjs";
 import { plannerEvidenceLines, strictPlannerJson, MAX_EVIDENCE_BYTES, buildPlannerEvidence, providerCompositionFacts, providerCompositionSummary, tupleEvidenceBoundBytes } from "../extensions/orchestrator-planner-evidence.js";
 import { plannerEvidenceDigest } from "../extensions/orchestrator-planning.js";
@@ -70,6 +71,35 @@ import {
 import { istanbulCoverage } from "../scripts/node-coverage-reporter.mjs";
 
 const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+
+test("enforcing call limits are explicit bounded static-start arguments, not observational hard budgets", () => {
+  const args = [];
+  appendBudgetArgs(args, { budgetOverrides: { callLimits: { run: 8, role: 4, assignment: 2 } } });
+  assert.deepEqual(args, ["--enforce-provider-calls", "run=8", "--enforce-provider-calls", "role=4", "--enforce-provider-calls", "assignment=2", "--confirm-call-enforcement"]);
+  for (const limits of [null, [], {}, { run: true }, { run: 0 }, { run: 1.2 }, { run: 1_000_001 }, { cost: 1 }]) {
+    assert.throws(() => appendBudgetArgs([], { budgetOverrides: { callLimits: limits } }), /invalid_enforcing_call_limits/);
+  }
+  assert.throws(() => appendBudgetArgs([], { dynamicPlan: true, budgetOverrides: { callLimits: { run: 1 } } }), /require_static_start/);
+});
+
+test("enforcing call previews bind exact ceilings and reject unexpected activation", () => {
+  assert.equal(validateCallAdmissionPreview({}, undefined), "[null,null,null]");
+  const preview = { call_admission: { version: 1, limits: { run: 2, assignment: 1 } } };
+  assert.equal(validateCallAdmissionPreview(preview, { assignment: 1, run: 2 }), "[2,null,1]");
+  for (const actual of [undefined, null, { version: 1 }, { version: 1, limits: undefined }, { version: true, limits: { run: 2 } },
+    { version: 1, limits: { run: 3 } }, { version: 1, limits: { run: 2 }, extra: true }]) {
+    assert.throws(() => validateCallAdmissionPreview({ call_admission: actual }, { run: 2 }), /call_admission_preview_mismatch/);
+  }
+  assert.throws(() => validateCallAdmissionPreview(preview, undefined), /call_admission_preview_mismatch/);
+});
+
+test("dynamic enforcing starts reject before provider planning or CLI work", async () => {
+  let calls = 0;
+  const pi = { exec: async () => { calls += 1; throw new Error("unexpected_planning_or_cli"); } };
+  await assert.rejects(testHooks.runStart(pi, { task: "Synthetic", dynamicPlan: true,
+    budgetOverrides: { callLimits: { run: 1 } } }, undefined, context({ confirmations: [true] })), /enforcing_call_limits_require_static_start/);
+  assert.equal(calls, 0);
+});
 
 async function drainPromises() {
   await new Promise((resolve) => setImmediate(resolve));
@@ -391,7 +421,7 @@ test("registers one bounded model tool, auth-only TypeSafe provider, and exact c
   assert.equal(tool.parameters.properties.workerSkills.properties.reviewer.maxItems, 8);
   assert.deepEqual(
     Object.keys(tool.parameters.properties.budgetOverrides.properties),
-    ["enforcement", "warning", "hard"],
+    ["enforcement", "callLimits", "warning", "hard"],
   );
   assert.equal(
     Object.hasOwn(tool.parameters.properties.budgetOverrides.properties, "apiKey"),

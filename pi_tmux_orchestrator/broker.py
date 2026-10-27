@@ -16,6 +16,7 @@ from typing import Any
 
 from . import runtime
 from .budgeting import packaged_budget_policy, validate_budget_config
+from .call_admission import admission_status
 from .broker_control import BrokerControlSupport
 from .broker_observers import BrokerObserverSupport, Observer
 from .broker_workflow import BrokerWorkflowSupport
@@ -515,6 +516,8 @@ class Broker(
                 await self.handle_rejected_report(client, message)
             elif message["type"] == "recovery_turn":
                 await self.handle_recovery_turn(client, message)
+            elif message["type"] == "provider_turn":
+                await self.handle_provider_turn(client, message)
             elif message["type"] == "guardrail":
                 await self.handle_guardrail(client, message)
             elif message["type"] == "ack":
@@ -1238,6 +1241,7 @@ class Broker(
                     state == "active"
                     and active_assignment
                     and workflow_state == "needs_attention"
+                    and not admission_status(database)["paused"]
                 ):
                     workflow_transition = "active"
                     round_number = self.current_round(database)
@@ -1273,6 +1277,7 @@ def initialize_broker_run(
     context_capsule: str = "",
     workspace_capsule: dict[str, Any] | None = None,
     budget_policy: dict[str, Any] | None = None,
+    call_admission_policy: dict[str, Any] | None = None,
     implementation_flow: str = DEFAULT_IMPLEMENTATION_FLOW,
     forced_specialists: tuple[str, ...] | list[str] = (),
     max_repair_rounds: int | None = None,
@@ -1306,6 +1311,7 @@ def initialize_broker_run(
         soft_role_tokens=int(policy["warning"]["role"].get("operational_tokens", 0)),
         soft_total_tokens=int(policy["warning"]["run"].get("operational_tokens", 0)),
         budget_policy=policy,
+        call_admission_policy=call_admission_policy,
         implementation_flow=implementation_flow,
         forced_specialists=forced_specialists,
         max_repair_rounds=max_repair_rounds,

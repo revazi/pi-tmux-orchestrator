@@ -463,7 +463,12 @@ def validate_client_message(
             base | {"state", "usage"},
             base | {"state", "usage", "assignment_id"},
         )
-    elif message_type in {"settlement", "rejected_report", "recovery_turn"}:
+    elif message_type in {
+        "settlement",
+        "rejected_report",
+        "recovery_turn",
+        "provider_turn",
+    }:
         expected = (base | {"assignment_id"}, base | {"assignment_id", "resume_id"})
     elif message_type == "attention":
         expected = (
@@ -502,6 +507,7 @@ def validate_client_message(
         "settlement",
         "rejected_report",
         "recovery_turn",
+        "provider_turn",
     } or (message_type == "lifecycle" and value.get("assignment_id") is not None):
         assignment_id = value.get("assignment_id")
         if not isinstance(assignment_id, str) or not RPC_TOKEN_PATTERN.fullmatch(

@@ -13,6 +13,13 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+from .call_admission import (
+    admission_status,
+    call_policy,
+    create_admission_tables,
+    retained_call_policy,
+    require_admission_runtime,
+)
 from .continuation import continuation_status, repair_policy, retained_repair_policy
 from .budgeting import (
     BUDGET_INTEGER_METRICS,
@@ -38,7 +45,7 @@ from .storage import ensure_private_directory, validate_coordination_directory
 
 from .worker_context import context_policy, retained_context_policy
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 _ACTIVATION_RULE_PATTERN = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
 _SQLITE_BUSY_MARKERS = ("database is locked", "database is busy")
 
@@ -129,6 +136,7 @@ def initialize_broker_database(
     soft_role_tokens: int,
     soft_total_tokens: int,
     budget_policy: dict[str, Any] | None = None,
+    call_admission_policy: dict[str, Any] | None = None,
     implementation_flow: str = DEFAULT_IMPLEMENTATION_FLOW,
     forced_specialists: tuple[str, ...] | list[str] = (),
     max_repair_rounds: int | None = None,
@@ -285,6 +293,7 @@ def initialize_broker_database(
             );
             CREATE INDEX IF NOT EXISTS events_role_sequence ON events(role, sequence);
         """)
+        create_admission_tables(database)
         existing = database.execute(
             "SELECT value FROM meta WHERE key='schema_version'"
         ).fetchone()
@@ -300,6 +309,10 @@ def initialize_broker_database(
             "soft_role_tokens": str(soft_role_tokens),
             "soft_total_tokens": str(soft_total_tokens),
             "budget_policy": json.dumps(policy, separators=(",", ":"), sort_keys=True),
+            "call_admission_policy": json.dumps(
+                call_policy(call_admission_policy), separators=(",", ":")
+            ),
+            "call_admission_paused": "0",
             "implementation_flow": selected_flow,
             "continuation_policy": json.dumps(
                 continuation_policy, separators=(",", ":")
@@ -472,10 +485,21 @@ def prepare_broker_database(coord: Path) -> None:
                         f"ALTER TABLE assignments ADD COLUMN {column} {declaration}"
                     )
             version = 12
+        if version == 12:
+            create_admission_tables(database)
+            database.execute(
+                "INSERT OR IGNORE INTO meta(key,value) VALUES ('call_admission_policy',?)",
+                (json.dumps(call_policy(), separators=(",", ":")),),
+            )
+            database.execute(
+                "INSERT OR IGNORE INTO meta(key,value) VALUES ('call_admission_paused','0')"
+            )
+            version = 13
         if version != SCHEMA_VERSION:
             raise OrchestrationError("Broker database schema is unsupported")
         retained_repair_policy(database)
         retained_context_policy(database)
+        retained_call_policy(database)
         database.execute(
             "UPDATE meta SET value=? WHERE key='schema_version'", (str(version),)
         )
@@ -505,6 +529,12 @@ def record_event(
 
 
 def set_meta(database: sqlite3.Connection, key: str, value: str) -> None:
+    if key == "workflow_state" and value in {"active", "ready"}:
+        pause = database.execute(
+            "SELECT value FROM meta WHERE key='call_admission_paused'"
+        ).fetchone()
+        if pause is not None and pause[0] == "1":
+            value = "needs_attention"
     database.execute("UPDATE meta SET value=? WHERE key=?", (value, key))
     database.execute("UPDATE meta SET value=? WHERE key='updated_at'", (utc_now(),))
 
@@ -625,6 +655,14 @@ def public_specialist_activations(
         value["source"] = _activation_source(value["rule_id"], value["forced"])
         values.append(value)
     return values
+
+
+def worker_call_admission(coord: Path) -> str:
+    with connect_broker_database(coord, readonly=True) as database:
+        enabled = bool(retained_call_policy(database)["limits"])
+    if enabled:
+        require_admission_runtime()
+    return "1" if enabled else "0"
 
 
 def retained_budget_policy(database: sqlite3.Connection) -> dict[str, Any]:
@@ -831,6 +869,7 @@ def public_broker_snapshot(coord: Path) -> dict[str, Any]:
             "workflow": {
                 "state": meta.get("workflow_state", "unknown"),
                 "continuation": continuation_status(database),
+                "call_admission": admission_status(database),
                 "worker_context_policy": retained_context_policy(database),
                 "round": current_round,
                 "implementation_flow": validate_implementation_flow(

@@ -70,6 +70,7 @@ from .rpc import (
 )
 from .specialist_activation import validate_forced_specialists
 from .continuation import repair_policy
+from .call_admission import call_policy, require_admission_runtime
 from .storage import (
     absolute_path,
     canonical_state_root,
@@ -416,6 +417,35 @@ def start_command(args: argparse.Namespace) -> CommandResult:
         validate_task_intent(operator_intent)
         if operator_intent != "change":
             return redirect_task_intent(operator_intent, dry_run=bool(args.dry_run))
+    requested_calls = getattr(args, "enforce_provider_calls", [])
+    if len({scope for scope, _limit in requested_calls}) != len(requested_calls):
+        raise OrchestrationError(
+            "Provider-call scopes must not be repeated", "invalid_arguments"
+        )
+    admission = call_policy({"version": 1, "limits": dict(requested_calls)})
+    if requested_calls and (
+        getattr(args, "dynamic_plan", False) or getattr(args, "planning_scope", None)
+    ):
+        raise OrchestrationError(
+            "Enforcing call ceilings currently require an explicit static start",
+            "invalid_arguments",
+        )
+    if (
+        requested_calls
+        and not args.dry_run
+        and not getattr(args, "confirm_call_enforcement", False)
+    ):
+        raise OrchestrationError(
+            "Review the exact ceilings with --dry-run, then pass --confirm-call-enforcement",
+            "confirmation_required",
+        )
+    if requested_calls and not args.dry_run:
+        require_admission_runtime()
+    if getattr(args, "confirm_call_enforcement", False) and not requested_calls:
+        raise OrchestrationError(
+            "--confirm-call-enforcement requires explicit thresholds",
+            "invalid_arguments",
+        )
     if getattr(args, "dynamic_plan", False):
         from .terminal_planning import terminal_dynamic_start
 
@@ -756,6 +786,7 @@ def start_command(args: argparse.Namespace) -> CommandResult:
         },
         "budget_policy": budget_policy,
         "continuation_policy": continuation_policy,
+        "call_admission": admission,
         "worker_context_policy": context_policy,
         "execution_profile": public_execution_profile(execution_profile),
         "project_config": project_config_metadata,
@@ -883,6 +914,15 @@ def start_command(args: argparse.Namespace) -> CommandResult:
             f"  {role} skills: registry-bound ({len(config['custom_role']['skills'])})"
         )
     human_print(f"Budget policy mode: {budget_policy['enforcement']} (observational)")
+    human_print(
+        f"Provider-call admission: {'enforcing' if requested_calls else 'disabled'}"
+    )
+    for scope, limit in admission["limits"].items():
+        human_print(f"  Enforcing {scope} provider-turn ceiling: {limit}")
+    if requested_calls:
+        human_print(
+            "Cost enforcement: unavailable (catalog cost is not provider billing). Requires Pi SSE/OpenAI completions or responses, provider retries=0; compaction and cache warming are blocked."
+        )
     for level in ("warning", "hard"):
         for scope in ("run", "role", "assignment"):
             thresholds = budget_policy[level][scope]
@@ -953,6 +993,7 @@ def start_command(args: argparse.Namespace) -> CommandResult:
             context_capsule=context_capsule,
             workspace_capsule=workspace_capsule,
             budget_policy=budget_policy,
+            call_admission_policy=admission,
             implementation_flow=implementation_flow,
             forced_specialists=forced_specialists,
             max_repair_rounds=continuation_policy["max_repair_rounds"],

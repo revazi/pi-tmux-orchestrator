@@ -51,6 +51,11 @@ export const budgetOverrideParameters = {
   description: "Explicit per-run budget overrides; user-global policy supplies omitted values",
   properties: {
     enforcement: { type: "string", enum: ["warn-only", "hard"] },
+    callLimits: {
+      type: "object", additionalProperties: false, minProperties: 1,
+      description: "Explicit operator-requested enforcing provider-turn ceilings; static starts only; separately shown in launch confirmation. No inferred values.",
+      properties: Object.fromEntries(SCOPES.map((scope) => [scope, { type: "integer", minimum: 1, maximum: 1_000_000 }])),
+    },
     warning: levelParameters,
     hard: levelParameters,
   },
@@ -88,10 +93,34 @@ function budgetEntries(overrides) {
         .map(([metric, value]) => ({ level, scope, metric, value }))));
 }
 
+export function callLimitBinding(limits = {}) {
+  if (!limits || typeof limits !== "object" || Array.isArray(limits)
+    || Object.keys(limits).some((scope) => !SCOPES.includes(scope))
+    || Object.values(limits).some((value) => !validInteger(value, 1_000_000))) throw new Error("invalid_enforcing_call_limits");
+  return JSON.stringify(SCOPES.map((scope) => limits[scope] ?? null));
+}
+
+export function validateCallAdmissionPreview(data, limits) {
+  const binding = callLimitBinding(limits);
+  const actual = data?.call_admission;
+  if (actual === undefined && limits === undefined) return binding;
+  if (!actual || actual.version !== 1 || actual.limits === undefined || Object.keys(actual).sort().join(",") !== "limits,version"
+    || callLimitBinding(actual.limits) !== binding) throw new Error("call_admission_preview_mismatch");
+  return binding;
+}
+
 export function appendBudgetArgs(args, input) {
   const overrides = input.budgetOverrides;
   if (!overrides) return;
   appendEnforcement(args, overrides.enforcement);
+  if (overrides.callLimits !== undefined) {
+    const limits = overrides.callLimits;
+    callLimitBinding(limits);
+    if (Object.keys(limits).length === 0) throw new Error("invalid_enforcing_call_limits");
+    if (input.dynamicPlan === true) throw new Error("enforcing_call_limits_require_static_start");
+    for (const [scope, limit] of Object.entries(limits)) args.push("--enforce-provider-calls", `${scope}=${limit}`);
+    args.push("--confirm-call-enforcement");
+  }
   for (const { level, scope, metric, value } of budgetEntries(overrides)) {
     if (!METRICS.includes(metric)) throw new Error("invalid_budget_metric");
     args.push(

@@ -20,6 +20,7 @@ from .constants import (
 from .broker import broker_command
 from .budgeting import BUDGET_ENFORCEMENT, parse_budget_override
 from .continuation import validate_repair_limit
+from .call_admission import parse_call_limit
 from .controller import (
     controller_attach_command,
     controller_start_command,
@@ -30,6 +31,7 @@ from .commands import (
     abort_command,
     attach_command,
     continue_command,
+    extend_calls_command,
     doctor_command,
     events_command,
     list_command,
@@ -135,6 +137,13 @@ def supervisor_usage_limit(value: str) -> int:
             f"usage limit must be between 1 and {MAX_JSON_ITEMS}"
         )
     return parsed
+
+
+def enforcing_call_limit(value: str) -> tuple[str, int]:
+    try:
+        return parse_call_limit(value)
+    except OrchestrationError as error:
+        raise argparse.ArgumentTypeError(str(error)) from error
 
 
 def budget_override(
@@ -443,6 +452,19 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="LEVEL.SCOPE.METRIC=VALUE",
         help="override one warning/hard run/role/assignment threshold; use =off to disable",
     )
+    start.add_argument(
+        "--enforce-provider-calls",
+        action="append",
+        type=enforcing_call_limit,
+        default=[],
+        metavar="SCOPE=INTEGER",
+        help="opt-in enforcing run/role/assignment provider-turn ceiling; repeatable; static starts only",
+    )
+    start.add_argument(
+        "--confirm-call-enforcement",
+        action="store_true",
+        help="explicitly approve the exact enforcing thresholds shown in this start preview",
+    )
     for role_name in ("implementer", "reviewer", "probe", "playwright", "django"):
         add_model_arguments(start, role_name)
     start.set_defaults(handler=start_command)
@@ -579,6 +601,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="idempotency key; reuse the same key when retrying this approval",
     )
     continuation.set_defaults(handler=continue_command)
+
+    extension = subparsers.add_parser(
+        "extend-calls", help="explicitly extend every configured provider-call ceiling"
+    )
+    extension.add_argument("session")
+    extension.add_argument(
+        "--run", required=True, help="exact live coordination run ID"
+    )
+    extension.add_argument(
+        "--additional",
+        required=True,
+        type=int,
+        help="add exactly this many calls to each configured ceiling",
+    )
+    extension.add_argument("--command-id", required=True, type=rpc_command_id)
+    extension.add_argument(
+        "--yes", action="store_true", help="confirm this exact allowance extension"
+    )
+    extension.set_defaults(handler=extend_calls_command)
 
     abort = subparsers.add_parser("abort", help="abort one active RPC worker operation")
     abort.add_argument("session")

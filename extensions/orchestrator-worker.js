@@ -72,6 +72,8 @@ export default function orchestratorWorker(pi) {
   const specialistContract = process.env.PI_TMUX_ORCHESTRATOR_SPECIALIST_CONTRACT;
   const reportRole = workerRoleContract(ROLE, specialistContract);
   const contextMode = validateWorkerContextMode(process.env.PI_TMUX_ORCHESTRATOR_CONTEXT_MODE);
+  const callAdmission = process.env.PI_TMUX_ORCHESTRATOR_CALL_ADMISSION;
+  const enforceCalls = callAdmission === "1";
   const guardrailPolicy = parseGuardrailPolicy(
     process.env.PI_TMUX_ORCHESTRATOR_GUARDRAILS,
   );
@@ -625,12 +627,49 @@ export default function orchestratorWorker(pi) {
     // Pi applies only { message } results before agent-state and journal append.
     return replacement ? { message: replacement } : undefined;
   });
-  pi.on("before_agent_start", (event) => {
+  function requireCallCapability(ctx) {
+    if (callAdmission !== undefined && !["0", "1"].includes(callAdmission)) {
+      ctx.abort();
+      throw new Error("orchestration_call_admission_policy_invalid");
+    }
+    if (!enforceCalls) return;
+    const settings = pi.getSettings?.();
+    if (!settings || settings.transport !== "sse"
+      || (settings.retry?.provider?.maxRetries ?? 0) !== 0
+      || !["openai-completions", "openai-responses"].includes(ctx.model?.api)) {
+      ctx.abort();
+      throw new Error("orchestration_call_admission_capability_unavailable");
+    }
+  }
+  // These requests do not necessarily traverse ordinary-turn authorization.
+  pi.on("cache_warming_decision", () => enforceCalls ? { action: "stop" } : undefined);
+  pi.on("session_before_compact", () => enforceCalls ? { cancel: true } : undefined);
+  pi.on("session_before_tree", () => enforceCalls ? { cancel: true } : undefined);
+  pi.on("before_agent_start", (event, ctx) => {
+    requireCallCapability(ctx);
     if (!reminderPending) return undefined;
     reminderPending = false;
     return { systemPrompt: `${event.systemPrompt}\n\n${REPORT_REMINDER}` };
   });
   pi.on("before_provider_request", async (_event, ctx) => {
+    requireCallCapability(ctx);
+    if (enforceCalls) {
+      try {
+        if (!activeAssignment) throw new Error("no_active_assignment");
+        const request = message("provider_turn", { assignment_id: activeAssignment.id, resume_id: attentionState.resumeId });
+        const grant = await brokerRequest(request);
+        if (grant.success !== true || grant.status !== "granted" || grant.version !== VERSION
+          || grant.type !== "response" || grant.id !== request.id
+          || Object.keys(grant).some((key) => !["version", "type", "id", "success", "status", "error"].includes(key))
+          || (grant.error !== undefined && grant.error !== null)
+          || activeAssignment?.id !== request.assignment_id || attentionState.resumeId !== request.resume_id) {
+          throw new Error("invalid_provider_authorization");
+        }
+      } catch {
+        ctx.abort();
+        throw new Error("orchestration_provider_turn_denied");
+      }
+    }
     if (!activeAssignment || !attentionState.recovery) return undefined;
     try {
       await brokerRequest(message("recovery_turn", { assignment_id: activeAssignment.id, resume_id: attentionState.resumeId }));

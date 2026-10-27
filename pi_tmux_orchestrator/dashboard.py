@@ -547,6 +547,11 @@ def _header_lines(
         state_line.extend(
             [Span("   ", "normal"), Span("REPAIR LIMIT · INCOMPLETE", "warning")]
         )
+    admission = snapshot.get("workflow", {}).get("call_admission", {})
+    if admission.get("paused"):
+        state_line.extend(
+            [Span("   ", "normal"), Span("CALL LIMIT · INCOMPLETE", "warning")]
+        )
     usage = snapshot.get("usage", {})
     if usage.get("soft_total_budget_exceeded") is True:
         state_line.extend([Span("   ", "normal"), Span("SOFT RUN BUDGET", "warning")])
