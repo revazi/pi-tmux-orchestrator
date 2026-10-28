@@ -2,9 +2,9 @@
 
 This is the complete operator reference. If you are installing the package or
 starting your first run, begin with the README's
-[quick start](../README.md#quick-start). Existing users upgrading to `0.11.1`
-should read the [0.11.1 upgrade guide](../README.md#upgrade-to-0111) and its
-[versioned migration notes](../releases/v0.11.1.md).
+[quick start](../README.md#quick-start). Existing users upgrading to `0.12.0`
+should read the [0.12.0 upgrade guide](../README.md#upgrade-to-0120) and its
+[versioned migration notes](../releases/v0.12.0.md).
 
 Use this reference when you need profiles, exact project mappings, model and
 budget precedence, CLI flags, retained state, recovery, or controller details.
@@ -23,7 +23,7 @@ The natural-language path uses the `tmux_orchestrator` model tool and preserves
 the same preview, trust, and confirmation boundaries. The standalone CLI and
 model tool retain their full command/action surfaces.
 
-### Explicit task intent (Unreleased)
+### Explicit task intent
 
 Start accepts exactly `change`, `investigation`, `review`, or `advisory` through
 model-tool `taskIntent`, terminal `--task-intent`, and the `/or-start` selector.
@@ -72,7 +72,7 @@ hatch. No role, tool ACL, report schema, or mandatory-review rule is weakened.
 
 ### Model-tool recovery controls
 
-`tmux_orchestrator` has `stop`, `restart`, and `abort` actions (Unreleased), with no
+`tmux_orchestrator` has `stop`, `restart`, and `abort` actions, with no
 new slash commands. These are thin adapters to the canonical CLI controls, not a
 second workflow engine. For example, use synthetic identities like:
 
@@ -751,7 +751,7 @@ or plan substitution. Legacy planning v1–v6 stays readable under its original 
 legacy support is unavailable, not invented. No live call is authorized by these
 model-free contract tests.
 
-### Accepted-plan evidence (Unreleased)
+### Accepted-plan evidence
 
 Fresh accepted previews use planning v7/evidence v3, compatible with manifest v10/v11. The
 versioned evidence projection retains only canonical supplied metadata. Exact
