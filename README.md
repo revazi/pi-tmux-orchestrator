@@ -6,7 +6,7 @@ Coordinate coding agents in visible tmux panes from [Pi](https://github.com/eare
 
 ## Install
 
-Requirements: Pi, Python 3.11+, tmux 3.2+, macOS or Linux. Worker adapters are verified against Pi 0.87.1.
+Requirements: Pi, Python 3.11+, tmux 3.2+, macOS or Linux. Ordinary worker adapters have a Pi 0.87.1 compatibility baseline; opt-in enforcing provider-call ceilings require exactly Pi 1.4.0 and the reviewed OpenAI SSE adapters.
 
 ```sh
 pi install npm:pi-tmux-orchestrator
@@ -38,7 +38,7 @@ Then run `/or-start Describe the change` or ask naturally to use the orchestrato
 
 The dashboard supports arrows or `j`/`k`, Enter to attach/watch, `d` for doctor, `r` to refresh, `x` for confirmed stop, `?` for help, and `q`/Escape to close. Opening it does not run doctor or poll in the background.
 
-## Model-tool recovery (Unreleased)
+## Model-tool recovery
 
 The bounded `tmux_orchestrator` tool also supports exact-session `stop` and
 exact-role `restart`/`abort`, through the authoritative CLI and broker. Stop and
@@ -66,7 +66,7 @@ successful observation that the session is absent. Concurrent retries fail
 uncertain without waiting. A completed stop receipt can be replayed after
 retention without killing a new same-name session; unavailable observations and
 replacement sessions never authorize a kill or claim completion. Retained state is never proof
-of a live broker. The five slash commands and package version 0.11.1 are unchanged.
+of a live broker. The five slash commands are unchanged.
 See [recovery usage](references/usage.md#model-tool-recovery-controls) and
 [compatibility](references/protocol-v1.md#compatibility).
 
@@ -88,10 +88,20 @@ reconnect/restart separately from the consumed automatic allowance. See the [pro
 
 Runs can select exact role models and thinking, single/phased flow, optional built-in specialists, budgets, reviewed skills, and worker-context policy. Static starts additionally support explicitly confirmed [enforcing provider-call ceilings](references/usage.md#opt-in-enforcing-provider-call-ceilings-static-starts), with broker-coordinated admission and operator-only allowance extensions; actual-cost enforcement remains unavailable. Model-guided planning is opt-in and separately confirmed. Details and strict user-global configuration examples are in the [usage guide](references/usage.md); protocol and custom specialist details are in [protocol](references/protocol-v1.md) and [custom roles](references/custom-roles.md).
 
-## Upgrade to 0.11.1
+## Upgrade to 0.12.0
 
-Version 0.11.1 requires operator-approved exact worker models for opt-in dynamic
-planning; ordinary static starts keep their deterministic path. Finish or stop
+Version 0.12.0 adds worker attention/recovery, independently scoped dynamic
+planning, task-intent admission, auditable accepted-plan evidence, and optional
+static provider-call ceilings. Ordinary static starts and the five slash commands
+keep their existing defaults. Existing 0.11.1 approved pools and supported external
+configuration versions remain valid; there is no mandatory configuration rewrite.
+Dynamic planning now rejects unsupported provider-composition claims and oversized
+request/evidence projections before launch. Generate a fresh preview rather than
+reusing an older accepted plan. See [0.12.0 release and migration notes](releases/v0.12.0.md)
+for the exact enforcement boundary, limitations, and rollback.
+
+Users upgrading from before 0.11.1 still need operator-approved exact worker
+models for opt-in dynamic planning (the pool migration below). Finish or stop
 active runs and preserve your external configuration before replacing the
 package. Choose a migration below, then update with
 `pi update npm:pi-tmux-orchestrator` (or reinstall with
@@ -125,7 +135,7 @@ retains one writer and mandatory review; phased inspect/plan is still a precurso
 to implementation, not an investigation-only workflow. Only bounded intent
 metadata is retained, never task, rationale, or provider bodies.
 
-### Single-provider support admission (Unreleased)
+### Single-provider support admission
 
 When the final eligible roster admits both compositions, a homogeneous dynamic
 assignment requires `single_provider` **and** one bounded `provider_support`
@@ -144,9 +154,9 @@ overrides, explicitly choose static/manual planning, or cancel. See the
 [bounded support contract](references/usage.md#single-provider-support-gate) for
 conservative materiality rules. Historical v1–v6 reads/authority remain intact;
 new v7/evidence-v3 records require support metadata and revalidate catalog facts
-at final confirmation. Version 0.11.1 and static defaults remain unchanged.
+at final confirmation. Static defaults remain unchanged.
 
-### Auditable accepted-plan evidence (Unreleased)
+### Auditable accepted-plan evidence
 
 Dynamic planning remains opt-in. Rectangular unlocked catalogs keep planning v7 /
 evidence v3 and independent `model_` / `thinking_` Choices. When both model and
@@ -219,8 +229,8 @@ projection. Collection reads use digest-bound summaries; exact status/snapshot
 reads contain the catalog and alternatives. Strict validation rejects malformed,
 non-normalized, duplicate, oversized, stale, and fact-mismatched evidence before
 launch. No task/context/guidance, credentials, endpoints, response/error bodies,
-or hidden reasoning are retained. See [the evidence contract](references/protocol-v1.md#accepted-planner-evidence-unreleased).
-Version remains 0.11.1; no default rollout or live-provider acceptance is implied.
+or hidden reasoning are retained. See [the evidence contract](references/protocol-v1.md#accepted-planner-evidence).
+No default rollout or live-provider acceptance is implied.
 
 ### Approved worker pools for dynamic planning
 
@@ -256,7 +266,7 @@ use the same approved scope and canonical capabilities. Confirmation and the
 immediate start acknowledgement show pool source/count and exact selected
 assignments, not configuration bodies. Ordinary static starts and configuration
 versions 1–4 remain supported. Planning v1 is read-only; existing v2–v6
-admission remains compatible, while fresh dynamic previews use v7. Older
+admission remains compatible, while fresh dynamic previews use v7 or v8 according to the eligible model/thinking shape. Older
 records remain readable: v1–v4 evidence is unavailable; v5 evidence lacks explicit
 provider-composition decision authority. See
 [approved-pool configuration and migration](references/usage.md#approved-exact-worker-model-pools)
@@ -266,7 +276,7 @@ and [provider-free acceptance](references/prerelease-testing.md#automated-provid
 
 The five commands are unchanged from 0.11.0. For older installations:
 
-| Old command | Use in 0.11.1 |
+| Old command | Use in 0.12.0 |
 |---|---|
 | `/orchestrator-dashboard` | `/or-dashboard` |
 | `/orchestrator-models` | `/or-models` |
@@ -276,15 +286,17 @@ The five commands are unchanged from 0.11.0. For older installations:
 | list/status/help/about/doctor/watch/attach helpers | `/or-dashboard` keyboard actions |
 | supervisor/restart helpers | CLI or `tmux_orchestrator` model tool |
 
-See the authoritative [0.11.1 release and migration notes](releases/v0.11.1.md),
-the exact [GitHub Release](https://github.com/revazi/pi-tmux-orchestrator/releases/tag/v0.11.1),
-and [migration announcement #202](https://github.com/revazi/pi-tmux-orchestrator/issues/202).
+See the authoritative [0.12.0 release and migration notes](releases/v0.12.0.md)
+and the intended [GitHub Release](https://github.com/revazi/pi-tmux-orchestrator/releases/tag/v0.12.0).
+[Release announcement #217](https://github.com/revazi/pi-tmux-orchestrator/issues/217)
+records migration guidance and notice timing.
+The earlier approved-pool migration is archived in [announcement #202](https://github.com/revazi/pi-tmux-orchestrator/issues/202).
 If migration is blocked, finish or stop active runs, run
 `pi remove npm:pi-tmux-orchestrator`, then
-`pi install npm:pi-tmux-orchestrator@0.11.0` and restart Pi. Preserve the original
+`pi install npm:pi-tmux-orchestrator@0.11.1` and restart Pi. Preserve the original
 installation until in-flight runs are safely finished or stopped; do not resume
-them across versions. See [rollback steps](releases/v0.11.1.md#rollback) and the
-[prior 0.11.0 release notes](releases/v0.11.0.md).
+them across versions. See [rollback steps](releases/v0.12.0.md#rollback) and the
+[prior 0.11.1 release notes](releases/v0.11.1.md).
 
 ## Help and documentation
 

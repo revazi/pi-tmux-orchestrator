@@ -108,7 +108,7 @@ intent remains unavailable, not inferred from report kind. These are synthetic
 admission/control-plane checks, not live-provider inference or production-wire
 acceptance. No advisory assignment/report workflow is added.
 
-### Accepted decision-evidence gate (Unreleased)
+### Accepted decision-evidence gate
 
 Issues #193/#194/#195 use **model-free synthetic fixtures only**; do not repeat the stopped
 #174 direct-Jev attempt or infer its missing provider response. Run focused
@@ -166,7 +166,7 @@ and stale/tampered evidence must cause no launch. Static/planning-v1–v4 eviden
 is unavailable, not reconstructed. Test sentinels for every private body surface;
 no model/provider traffic, credentials, raw errors, or endpoint retention is
 necessary. Synthetic wire/schema/package checks are not production acceptance,
-quality, cost-savings, or a diagnosis of #174. Keep version 0.11.1, static defaults,
+quality, cost-savings, or a diagnosis of #174. Keep static defaults
 and historical benchmark/release notes unchanged; obtain independent approval
 before opening a focused PR.
 
@@ -250,7 +250,7 @@ package-tree SHA-256 values, package name/version, relative tarball/package-root
 scripts/run-prerelease-isolated.sh --stage "$STAGE" --check
 ```
 
-The package keeps the current unreleased package version; the Git commit and
+The package keeps the checkout's package version; the Git commit and
 tarball digest identify this pre-release build.
 
 ## 2. Provider-free isolated TUI

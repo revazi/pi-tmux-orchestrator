@@ -60,7 +60,9 @@ provenance fields as unavailable. Profile/project configuration therefore
 changes deterministic startup resolution and bounded manifest metadata, but not
 frame shape, authentication, report ACLs, or delivery/recovery semantics.
 
-## Accepted planner evidence (Unreleased)
+<a id="accepted-planner-evidence-unreleased"></a>
+
+## Accepted planner evidence
 
 Planning **v6** extends v5 with required `evidence` **v2** and an explicit
 orchestration-wide provider-composition decision, without changing manifest
@@ -260,7 +262,9 @@ not provider signatures. No private bodies, credentials, endpoints, raw response
 errors, hidden reasoning, report/diff/log text, or arbitrary explanatory prose are
 part of this contract. This cannot diagnose the unretained failed #174 response.
 
-## Task-intent admission and compatibility (Unreleased)
+<a id="task-intent-admission-and-compatibility-unreleased"></a>
+
+## Task-intent admission and compatibility
 
 Admission is outside broker protocol v1; wire authentication, assignments,
 read-only role ACLs, report kinds, and mandatory reviewer routing are unchanged.
@@ -678,7 +682,9 @@ requires at least a 50% reduction and currently observes 99,170 before versus
 context-size proxy, not provider-specific token savings or production-wire
 acceptance.
 
-## Bounded model-tool recovery projection (Unreleased)
+<a id="bounded-model-tool-recovery-projection-unreleased"></a>
+
+## Bounded model-tool recovery projection
 
 No worker/control wire version or durable broker schema changes. Model-tool
 `stop`, `restart`, `abort`, optional start `session`, exact control `run`, and
@@ -731,7 +737,7 @@ rename, or reuse is permitted.
 
 ## Compatibility
 
-The recovery additions keep package version 0.11.1, JSON schema-v1, broker-v1,
+The recovery additions keep JSON schema-v1, broker-v1,
 and Supervisor API v2. The five slash commands are unchanged. Session names now
 share a 1–128-character ASCII letters/digits/`_`/`.`/`-` bound across CLI and tool;
 existing generated names fit; `.`/`..` are reserved. Legacy names exceeding it must be managed outside
