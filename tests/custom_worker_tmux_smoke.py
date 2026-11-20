@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import secrets
 import shlex
 import shutil
@@ -329,49 +330,86 @@ def respawn_broker(manifest: dict[str, object], coord: Path, wrapper: Path) -> N
     )
 
 
+def recorded_worker_is_live(pid: int, expected_command: str) -> bool:
+    result = subprocess.run(
+        ["ps", "-ww", "-p", str(pid), "-o", "state=", "-o", "command="],
+        text=True,
+        capture_output=True,
+    )
+    # No row alone is not enough to distinguish absence from an inspection error.
+    if result.returncode == 1 and not result.stdout.strip() and not result.stderr:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+
+    rows = result.stdout.splitlines()
+    fields = rows[0].split(maxsplit=1) if len(rows) == 1 else []
+    # GNU ps prints a single state letter; BSD ps may add qualifiers.
+    if (
+        result.returncode
+        or result.stderr
+        or len(fields) != 2
+        or not re.fullmatch(r"[DIRSTUWXZt][+<>AELNSsVWX]*", fields[0])
+    ):
+        raise AssertionError("could not establish recorded worker process state")
+    state, command = fields
+    if state[0] in "XZ":  # Exited, possibly still awaiting reaping.
+        return False
+    # Match the whole invocation. BSD ps may include the /usr/bin/env shebang.
+    if command not in (expected_command, f"/usr/bin/env {expected_command}"):
+        raise AssertionError("recorded worker PID no longer has the exact test command")
+    return True
+
+
+def signal_recorded_worker(
+    pid: int, expected_command: str, signum: signal.Signals
+) -> bool:
+    if not recorded_worker_is_live(pid, expected_command):
+        return False
+    try:
+        os.kill(pid, signum)
+    except ProcessLookupError:
+        # The exact worker exited between inspection and the signal.
+        return False
+    return True
+
+
 async def stop_recorded_workers(record_path: Path, fake_pi: Path) -> None:
     if not record_path.exists():
         return
-    records = [json.loads(line) for line in record_path.read_text().splitlines()]
-    pids = {
-        value.get("pid")
-        for value in records
-        if type(value.get("pid")) is int and value["pid"] > 1
+    workers = {}
+    for line in record_path.read_text().splitlines():
+        value = json.loads(line)
+        pid, argv = value.get("pid"), value.get("argv")
+        if (
+            type(pid) is not int
+            or pid <= 1
+            or not isinstance(argv, list)
+            or not all(isinstance(arg, str) for arg in argv)
+        ):
+            raise AssertionError("invalid synthetic worker launch record")
+        workers[pid] = " ".join(["node", str(fake_pi), *argv])
+    pending = {
+        pid: command
+        for pid, command in workers.items()
+        if signal_recorded_worker(pid, command, signal.SIGTERM)
     }
-    for pid in pids:
-        command = subprocess.run(
-            ["ps", "-p", str(pid), "-o", "command="],
-            text=True,
-            capture_output=True,
-        ).stdout.strip()
-        if not command:
-            continue
-        if str(fake_pi) not in command:
-            raise AssertionError(
-                "recorded worker PID no longer has the exact test command"
-            )
-        os.kill(pid, signal.SIGTERM)
     deadline = time.monotonic() + 3
-    while time.monotonic() < deadline:
-        live = []
-        for pid in pids:
-            try:
-                os.kill(pid, 0)
-            except ProcessLookupError:
-                continue
-            live.append(pid)
-        if not live:
-            return
-        await asyncio.sleep(0.05)
-    for pid in live:
-        command = subprocess.run(
-            ["ps", "-p", str(pid), "-o", "command="],
-            text=True,
-            capture_output=True,
-        ).stdout.strip()
-        if str(fake_pi) in command:
-            os.kill(pid, signal.SIGKILL)
-    raise AssertionError("recorded custom workers required forced cleanup")
+    while pending and time.monotonic() < deadline:
+        pending = {
+            pid: command
+            for pid, command in pending.items()
+            if recorded_worker_is_live(pid, command)
+        }
+        if pending:
+            await asyncio.sleep(0.05)
+    forced = False
+    for pid, command in pending.items():
+        if signal_recorded_worker(pid, command, signal.SIGKILL):
+            forced = True
+    if forced:
+        raise AssertionError("recorded custom workers required forced cleanup")
 
 
 def fixed_planning_record(
