@@ -68,55 +68,7 @@ jobs:
         run: scripts/test.sh
 
       - name: Publish or verify npm package
-        shell: bash
-        run: |
-          set -euo pipefail
-          package_name="$(node -p "require('./package.json').name")"
-          package_version="$(node -p "require('./package.json').version")"
-          package_spec="$package_name@$package_version"
-          lookup="$RUNNER_TEMP/npm-view.json"
-          lookup_error="$RUNNER_TEMP/npm-view.error"
-
-          verify_lookup() {
-            local require_integrity="$1"
-            node - "$lookup" "$package_name" "$package_version" "$GITHUB_SHA" \
-              "$require_integrity" <<'NODE'
-          const [path, expectedName, expectedVersion, expectedCommit, requireIntegrity] =
-            process.argv.slice(2);
-          const metadata = JSON.parse(require("node:fs").readFileSync(path, "utf8"));
-          if (
-            metadata.name !== expectedName ||
-            metadata.version !== expectedVersion ||
-            metadata.gitHead !== expectedCommit ||
-            (requireIntegrity === "yes" && !metadata.dist?.integrity)
-          ) {
-            process.exit(1);
-          }
-          NODE
-          }
-
-          if npm view "$package_spec" --registry=https://registry.npmjs.org/ --json \
-            >"$lookup" 2>"$lookup_error"; then
-            verify_lookup no
-            echo "$package_spec is already published from this exact tag; continuing."
-          else
-            if ! grep -Eq 'E404|Not Found|No match found' "$lookup" "$lookup_error"; then
-              cat "$lookup_error" >&2
-              exit 1
-            fi
-            npm publish --access public --provenance
-          fi
-
-          for attempt in 1 2 3 4 5; do
-            if npm view "$package_spec" --registry=https://registry.npmjs.org/ --json >"$lookup"; then
-              if verify_lookup yes; then
-                exit 0
-              fi
-            fi
-            sleep $((attempt * 3))
-          done
-          echo "npm registry did not confirm the exact release" >&2
-          exit 1
+        run: python3 scripts/release_npm.py
 
       - name: Create GitHub release
         env:

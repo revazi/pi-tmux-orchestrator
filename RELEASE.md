@@ -112,8 +112,9 @@ This is a one-time maintainer setup, not a per-release token workflow.
   git push origin "v$RELEASE_VERSION"
   ```
 
-- [ ] Require the tag-triggered `Release` workflow to rerun all verification, publish the repository root to npm with OIDC provenance, verify exact registry name/version/commit/integrity, and then create the matching GitHub Release.
-- [ ] If npm already contains that exact version from the exact tagged commit, a workflow rerun may skip publication and create the missing GitHub Release. Any metadata mismatch must fail closed.
+- [ ] Require the tag-triggered `Release` workflow to rerun all verification and then run [`scripts/release_npm.py`](scripts/release_npm.py) with pinned npm. It checks the exact registry name, version, `gitHead`, and `dist.integrity` against the tagged commit and an offline pack's SHA-512. An exact match skips publication and permits a missing GitHub Release to be created.
+- [ ] Only a structured npm `E404` permits one repository-root publish with OIDC provenance. After a successful publish, the workflow retries only `E404` for up to 120 seconds (10 seconds between lookups, at most 15 seconds per lookup). A timeout, other error, invalid response, or metadata mismatch stops the job before GitHub Release creation.
+- [ ] If publication fails or registry confirmation does not arrive, inspect the exact npm version before deciding whether to rerun the same tag. A failed publish command is not proof of absence; do not retry publication blindly or move the tag.
 - [ ] Verify npm `latest`, `dist.integrity`, and `gitHead`; then install the exact version into disposable npm and Pi homes and rerun CLI/version and package-provenance discovery without a provider request.
 - [ ] Verify the GitHub Release tag and target commit match npm `gitHead`. Manual npm publication is recovery-only and must be followed by the exact matching tag and GitHub Release.
 - [ ] Add the verified release/npm/install details to the public announcement archive even if it is already closed; reopen it only when migration support requires active issue tracking.
