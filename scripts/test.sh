@@ -32,11 +32,13 @@ printf '%s\n' '==> Ruff lint and format'
 ruff check \
   "$ROOT/pi_tmux_orchestrator" \
   "$ROOT/tests" \
-  "$ROOT/bin/pi-tmux-agents"
+  "$ROOT/bin/pi-tmux-agents" \
+  "$ROOT/scripts/release_npm.py"
 ruff format --check \
   "$ROOT/pi_tmux_orchestrator" \
   "$ROOT/tests" \
-  "$ROOT/bin/pi-tmux-agents"
+  "$ROOT/bin/pi-tmux-agents" \
+  "$ROOT/scripts/release_npm.py"
 
 printf '%s\n' '==> Python syntax'
 python3 - <<PY
