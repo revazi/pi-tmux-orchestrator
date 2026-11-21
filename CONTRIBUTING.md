@@ -46,6 +46,11 @@ Do not push feature work directly to `main` after the initial repository bootstr
 - isolated `pi install` of the npm-installed package root followed by RPC `get_commands` discovery without `--extension`, requiring exact package provenance
 - an offline `npm publish --dry-run` with empty isolated npm configuration
 
+The model-free custom-worker smoke only sends cleanup signals after matching the
+live PID's command to the recorded synthetic invocation. A confirmed exit (including
+an unreaped zombie) needs no signal. Uncertain observations, live command mismatches,
+and any required forced cleanup still fail the smoke.
+
 The test suite must never issue a provider request or inspect real Pi/npm authentication files. Never run `install.sh` against the real home while developing; use `PI_AGENT_HOME` or `PI_CODING_AGENT_DIR` pointing at a temporary directory. Tests must not publish, tag, or claim npm-registry, Pi-gallery, Git-package update, or rollback acceptance.
 
 ## Release preparation
