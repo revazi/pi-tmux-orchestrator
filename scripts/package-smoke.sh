@@ -97,6 +97,7 @@ EXPECTED_FILES=(
   pi_tmux_orchestrator/role_contracts.py
   pi_tmux_orchestrator/custom_role_resources.py
   pi_tmux_orchestrator/worker_context.py
+  pi_tmux_orchestrator/context_advice.py
   pi_tmux_orchestrator/worker_candidates.py
   pi_tmux_orchestrator/evidence_reuse.py
   pi_tmux_orchestrator/workspace_capsules.py

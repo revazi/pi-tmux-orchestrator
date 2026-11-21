@@ -452,7 +452,10 @@ class BrokerWorkflowRuntimeTests(BrokerFixture, unittest.IsolatedAsyncioTestCase
             self.assertFalse(trigger)
             transitions.append(f"deliver:{role}:{kind}:{round_number}")
 
-        async def assign(role: str, kind: str, round_number: int, content: str) -> None:
+        async def assign(
+            role: str, kind: str, round_number: int, content: str, *, prior_kind: str
+        ) -> None:
+            self.assertEqual(prior_kind, "plan")
             self.assertIn("Implement and verify", content)
             transitions.append(f"assign:{role}:{kind}:{round_number}")
 
@@ -532,8 +535,9 @@ class BrokerWorkflowRuntimeTests(BrokerFixture, unittest.IsolatedAsyncioTestCase
             transitions.append(f"workflow:{state}:{round_number}")
 
         async def assign(
-            role: str, kind: str, round_number: int, _content: str
+            role: str, kind: str, round_number: int, _content: str, *, prior_kind: str
         ) -> None:
+            self.assertEqual(prior_kind, "implementation")
             transitions.append(f"assign:{role}:{kind}:{round_number}")
 
         with (

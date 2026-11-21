@@ -12,7 +12,7 @@ import socket
 import stat
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from . import runtime
 from .budgeting import packaged_budget_policy, validate_budget_config
@@ -39,6 +39,7 @@ from .constants import (
     MAX_BROKER_FRAME_BYTES,
     MAX_CONTEXT_CAPSULE_BYTES,
 )
+from .context_advice import context_advice, context_pressure
 from .context_capsules import render_worker_baseline
 from .continuation import repair_limit_reached
 from .custom_role_resources import retained_custom_contracts
@@ -77,6 +78,7 @@ class Broker(
         self.observers: set[Observer] = set()
         self.recent_reports: list[dict[str, Any]] = []
         self.latest_reports: dict[str, dict[str, Any]] = {}
+        self.context_report_bindings: dict[str, tuple[str, int]] = {}
         self.worker_baselines: dict[str, str] = {}
         self.role_run_state: dict[str, str] = {}
         self.pending_run_state: dict[str, int] = {}
@@ -788,13 +790,61 @@ class Broker(
             "Do not wait, sleep, or poll after reporting; the tool ends this assignment."
         )
 
+    def _assignment_context_advice(
+        self,
+        database: Any,
+        role: str,
+        kind: str,
+        round_number: int,
+        prior_kind: Literal["plan", "implementation"] | None,
+        evidence_status: str | None,
+    ) -> str:
+        facts = dict.fromkeys(("relationship", "evidence", "pressure"), "unknown")
+        if role == "implementer" and kind == "implementation" and prior_kind:
+            prior_round = round_number if prior_kind == "plan" else round_number - 1
+            event = self.latest_reports.get(role)
+            state = database.execute(
+                "SELECT generation,active_assignment_id FROM roles WHERE role=?",
+                (role,),
+            ).fetchone()
+            if (
+                event is not None
+                and event["round"] == prior_round
+                and event["report"]["kind"] == prior_kind
+                and state["active_assignment_id"] is None
+                and self.context_report_bindings.get(role)
+                == (event.get("assignment_id"), state["generation"])
+            ):
+                facts["relationship"] = "same" if prior_kind == "plan" else "related"
+                if evidence_status == "metadata_unchanged":
+                    facts["evidence"] = "unchanged"
+                elif evidence_status in {"worktree_changed", "guidance_changed"}:
+                    facts["evidence"] = "stale"
+                usage = event.get("usage")
+                if (
+                    usage is not None
+                    and usage.get("providerCalls", 0) > 0
+                    and event.get("runtime_identity_status") != "conflicting"
+                ):
+                    facts["pressure"] = context_pressure(usage.get("contextPercent"))
+        return json.dumps(
+            {"round": round_number, "kind": kind, **context_advice(facts)},
+            separators=(",", ":"),
+        )
+
     async def assign(
-        self, role: str, kind: str, round_number: int, content: str
+        self,
+        role: str,
+        kind: str,
+        round_number: int,
+        content: str,
+        *,
+        prior_kind: Literal["plan", "implementation"] | None = None,
     ) -> None:
         validate_assignment_kind(role, kind, custom_contracts=self.custom_contracts)
         if role not in self.clients:
             return
-        await self._flush_pending_run_state(role, round_number)
+        evidence_status = await self._flush_pending_run_state(role, round_number)
         assignment_id = secrets.token_hex(16)
         delivery_id = secrets.token_hex(16)
         now = utc_now()
@@ -829,10 +879,15 @@ class Broker(
                         now,
                     ),
                 )
+                # Snapshot history only after repair admission. The advice is never read
+                # by routing, recovery, worker delivery, or the context projection.
+                advice = self._assignment_context_advice(
+                    database, role, kind, round_number, prior_kind, evidence_status
+                )
                 database.execute(
                     "UPDATE roles SET active_assignment_id=?,state='active',activity=NULL,"
-                    "activity_at=NULL,updated_at=? WHERE role=?",
-                    (assignment_id, now, role),
+                    "activity_at=NULL,context_advice=?,updated_at=? WHERE role=?",
+                    (assignment_id, advice, now, role),
                 )
                 if (
                     role == "implementer"
@@ -856,6 +911,7 @@ class Broker(
         if paused:
             await self.broadcast_workflow("needs_attention", round_number)
             return
+        self.context_report_bindings.pop(role, None)
         await self.send(
             self.clients[role],
             {

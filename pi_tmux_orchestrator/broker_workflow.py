@@ -65,6 +65,7 @@ class BrokerWorkflowSupport:
     clients: dict[str, Client]
     recent_reports: list[dict[str, Any]]
     latest_reports: dict[str, dict[str, Any]]
+    context_report_bindings: dict[str, tuple[str, int]]
     role_run_state: dict[str, str]
     pending_run_state: dict[str, int]
     evidence_reuse: EvidenceReuse
@@ -295,7 +296,7 @@ class BrokerWorkflowSupport:
         }
         if runtime_identity is not None:
             report_event["runtime_identity"] = runtime_identity
-        self._remember_report(report_event)
+        self._remember_report(report_event, generation=client.generation)
         await self.broadcast(report_event)
         try:
             await self.route_report(client.role, assignment["round"], report)
@@ -316,18 +317,29 @@ class BrokerWorkflowSupport:
             ) from error
         await self.reply(client, message["id"], True, status="accepted")
 
-    def _remember_report(self, report_event: dict[str, Any]) -> None:
+    def _remember_report(
+        self, report_event: dict[str, Any], *, generation: int | None = None
+    ) -> None:
         role = report_event["role"]
         current = self.latest_reports.get(role)
         if current is None or report_event["round"] >= current["round"]:
             self.latest_reports[role] = report_event
+            if generation is not None:
+                self.context_report_bindings[role] = (
+                    report_event["assignment_id"],
+                    generation,
+                )
             self.evidence_reuse.remember(role)
         self.recent_reports.append(report_event)
         if len(self.recent_reports) > MAX_OBSERVER_REPORTS:
             del self.recent_reports[: len(self.recent_reports) - MAX_OBSERVER_REPORTS]
 
     def _run_state_capsule(
-        self, round_number: int, recipient: str | None = None
+        self,
+        round_number: int,
+        recipient: str | None = None,
+        *,
+        evidence: dict[str, str] | None = None,
     ) -> str:
         with connect_broker_database(self.coord, readonly=True) as database:
             activations = public_specialist_activations(
@@ -339,10 +351,10 @@ class BrokerWorkflowSupport:
             specialist_activations=activations,
             custom_contracts=self.custom_contracts,
             evidence_reuse=(
-                self.evidence_reuse.snapshot()
-                if recipient in self.evidence_reuse.retained_roles
-                else None
-            ),
+                self.evidence_reuse.snapshot() if evidence is None else evidence
+            )
+            if recipient in self.evidence_reuse.retained_roles
+            else None,
         )
 
     def _role_has_active_assignment(self, role: str) -> bool:
@@ -353,22 +365,36 @@ class BrokerWorkflowSupport:
         return row is not None and row["active_assignment_id"] is not None
 
     def _materialize_pending_run_state(
-        self, role: str, round_number: int
+        self, role: str, round_number: int, *, evidence: dict[str, str] | None = None
     ) -> str | None:
         if role in self.pending_run_state or role in self.evidence_reuse.retained_roles:
             self.pending_run_state.pop(role, None)
-            self.role_run_state[role] = self._run_state_capsule(round_number, role)
+            self.role_run_state[role] = self._run_state_capsule(
+                round_number, role, evidence=evidence
+            )
         return self.role_run_state.get(role)
 
-    async def _flush_pending_run_state(self, role: str, round_number: int) -> None:
-        if (
-            role not in self.pending_run_state
-            and role not in self.evidence_reuse.retained_roles
-        ):
-            return
-        content = self._materialize_pending_run_state(role, round_number)
+    async def _flush_pending_run_state(
+        self, role: str, round_number: int
+    ) -> str | None:
+        retained = role in self.evidence_reuse.retained_roles
+        if role not in self.pending_run_state and not retained:
+            return None
+        # Reuse the observation already made for the retained run-state hint.
+        generation = self.evidence_reuse.guidance_generation
+        binding = self.context_report_bindings.get(role)
+        evidence = self.evidence_reuse.snapshot() if retained else None
+        content = self._materialize_pending_run_state(
+            role, round_number, evidence=evidence
+        )
         if content is not None:
             await self.deliver(role, "run_state", round_number, content, trigger=False)
+        if evidence is None or binding != self.context_report_bindings.get(role):
+            return None
+        status = evidence.get(role)
+        if status is not None and generation != self.evidence_reuse.guidance_generation:
+            return "guidance_changed"
+        return status
 
     async def _deliver_run_state(
         self, roles: list[str] | tuple[str, ...], round_number: int
@@ -410,6 +436,7 @@ class BrokerWorkflowSupport:
                     "implementation",
                     round_number,
                     self._assignment("implementer", round_number, "implementation"),
+                    prior_kind="plan",
                 )
             return
         if role == "implementer":
@@ -507,6 +534,7 @@ class BrokerWorkflowSupport:
                 "implementation",
                 next_round,
                 self._assignment("implementer", next_round),
+                prior_kind="implementation",
             )
 
     async def maybe_assign_reviewer(self, round_number: int) -> None:
