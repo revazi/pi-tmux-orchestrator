@@ -59,6 +59,7 @@ const pythonFiles = [
   "role_contracts.py",
   "custom_role_resources.py",
   "worker_context.py",
+  "context_advice.py",
   "worker_candidates.py",
   "evidence_reuse.py",
   "workspace_capsules.py",

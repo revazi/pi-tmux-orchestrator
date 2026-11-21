@@ -34,6 +34,7 @@ class WorkflowHarness(BrokerWorkflowSupport):
         }
         self.recent_reports = []
         self.latest_reports = {}
+        self.context_report_bindings = {}
         self.evidence_reuse = EvidenceReuse(
             Path(manifest["project"]), set(), custom_contracts=self.custom_contracts
         )
@@ -47,7 +48,9 @@ class WorkflowHarness(BrokerWorkflowSupport):
         self.assign = mock.AsyncMock(side_effect=self.create_assignment)
         self._assignment = mock.Mock(return_value="synthetic assignment")
 
-    def create_assignment(self, role, kind, round_number=1, content=""):
+    def create_assignment(
+        self, role, kind, round_number=1, content="", *, prior_kind=None
+    ):
         assignment_id = secrets.token_hex(16)
         now = broker_store.utc_now()
         with broker_store.connect_broker_database(self.coord) as database:
@@ -333,7 +336,11 @@ class WorkflowSupportTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
         workflow = self.workflow(implementation_flow="phased")
         await workflow.report("implementer", "plan")
         workflow.assign.assert_awaited_once_with(
-            "implementer", "implementation", 1, "synthetic assignment"
+            "implementer",
+            "implementation",
+            1,
+            "synthetic assignment",
+            prior_kind="plan",
         )
         workflow.deliver.assert_awaited_once_with(
             "implementer", "run_state", 1, mock.ANY, trigger=False

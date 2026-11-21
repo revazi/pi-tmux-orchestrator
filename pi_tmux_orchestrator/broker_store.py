@@ -35,6 +35,7 @@ from .constants import (
     MAX_JSON_ITEMS,
     WORKER_ACTIVITY_PHASES,
 )
+from .context_advice import MAX_CONTEXT_ADVICE_BYTES, read_context_advice
 from .models import OrchestrationError
 from .specialist_activation import (
     ACTIVATION_DECISIONS,
@@ -45,7 +46,7 @@ from .storage import ensure_private_directory, validate_coordination_directory
 
 from .worker_context import context_policy, retained_context_policy
 
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 _ACTIVATION_RULE_PATTERN = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
 _SQLITE_BUSY_MARKERS = ("database is locked", "database is busy")
 
@@ -206,6 +207,7 @@ def initialize_broker_database(
                 activity TEXT,
                 activity_sequence INTEGER NOT NULL DEFAULT 0,
                 activity_at TEXT,
+                context_advice TEXT,
                 updated_at TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS assignments (
@@ -495,6 +497,13 @@ def prepare_broker_database(coord: Path) -> None:
                 "INSERT OR IGNORE INTO meta(key,value) VALUES ('call_admission_paused','0')"
             )
             version = 13
+        if version == 13:
+            if not any(
+                row["name"] == "context_advice"
+                for row in database.execute("PRAGMA table_info(roles)")
+            ):
+                database.execute("ALTER TABLE roles ADD COLUMN context_advice TEXT")
+            version = 14
         if version != SCHEMA_VERSION:
             raise OrchestrationError("Broker database schema is unsupported")
         retained_repair_policy(database)
@@ -775,7 +784,9 @@ def _public_assignment_guardrails(
     return values
 
 
-def public_broker_snapshot(coord: Path) -> dict[str, Any]:
+def public_broker_snapshot(
+    coord: Path, *, include_context_advice: bool = False
+) -> dict[str, Any]:
     with connect_broker_database(coord, readonly=True) as database:
         meta = {
             row["key"]: row["value"]
@@ -790,14 +801,30 @@ def public_broker_snapshot(coord: Path) -> dict[str, Any]:
             if schema_version >= 8
             else "NULL AS activity,0 AS activity_sequence,NULL AS activity_at"
         )
+        advice_column = ""
+        if include_context_advice:
+            advice_column = (
+                ",CASE WHEN typeof(context_advice)='text' "
+                f"AND length(CAST(context_advice AS BLOB)) <= {MAX_CONTEXT_ADVICE_BYTES} "
+                "THEN CAST(context_advice AS BLOB) END AS context_advice"
+                if schema_version >= 14
+                else ",NULL AS context_advice"
+            )
         roles = []
         for row in database.execute(
             f"SELECT role,state,connected,active_assignment_id,generation,{provider_calls},"
             "input_tokens,output_tokens,cache_read_tokens,cache_write_tokens,reasoning_tokens,"
-            f"cost_total,context_tokens,context_window,context_percent,{activity_columns},updated_at "
-            "FROM roles ORDER BY role"
+            f"cost_total,context_tokens,context_window,context_percent,{activity_columns},updated_at"
+            f"{advice_column} FROM roles ORDER BY role"
         ):
             value = dict(row)
+            if include_context_advice:
+                raw = value["context_advice"]
+                value["context_advice"] = (
+                    read_context_advice(raw.decode("ascii"))
+                    if isinstance(raw, bytes) and raw.isascii()
+                    else None
+                )
             value["connected"] = bool(value["connected"])
             if (
                 value["activity"] is not None
@@ -912,10 +939,14 @@ def public_broker_snapshot(coord: Path) -> dict[str, Any]:
         }
 
 
-def try_public_broker_snapshot(coord: Path) -> dict[str, Any] | None:
+def try_public_broker_snapshot(
+    coord: Path, *, include_context_advice: bool = False
+) -> dict[str, Any] | None:
     """Return a snapshot or None when the writer briefly holds the database."""
     try:
-        return public_broker_snapshot(coord)
+        return public_broker_snapshot(
+            coord, include_context_advice=include_context_advice
+        )
     except OrchestrationError as error:
         if error.code == "broker_not_ready":
             return None

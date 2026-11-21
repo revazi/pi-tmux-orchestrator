@@ -546,6 +546,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     status = subparsers.add_parser("status", help="show pane and workflow status")
     status.add_argument("session", nargs="?")
+    status.add_argument(
+        "--context-advice",
+        action="store_true",
+        help="include historical assignment context advice (not applied)",
+    )
     status.set_defaults(handler=status_command)
 
     events = subparsers.add_parser(

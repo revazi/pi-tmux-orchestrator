@@ -88,6 +88,12 @@ reconnect/restart separately from the consumed automatic allowance. See the [pro
 
 Runs can select exact role models and thinking, single/phased flow, optional built-in specialists, budgets, reviewed skills, and worker-context policy. Static starts additionally support explicitly confirmed [enforcing provider-call ceilings](references/usage.md#opt-in-enforcing-provider-call-ceilings-static-starts), with broker-coordinated admission and operator-only allowance extensions; actual-cost enforcement remains unavailable. Model-guided planning is opt-in and separately confirmed. Details and strict user-global configuration examples are in the [usage guide](references/usage.md); protocol and custom specialist details are in [protocol](references/protocol-v1.md) and [custom roles](references/custom-roles.md).
 
+`pi-tmux-agents status [SESSION] --context-advice` shows
+[historical context advice](references/usage.md#assignment-boundary-context-advice)
+for the latest assignment created for each role. It uses bounded broker facts, makes no
+model call, and never changes default pruning or explicit start-time context selections.
+Default status and Pi status/watch output are unchanged.
+
 ## Upgrade to 0.12.0
 
 Version 0.12.0 adds worker attention/recovery, independently scoped dynamic

@@ -369,7 +369,9 @@ def status_command(args: argparse.Namespace) -> CommandResult:
     files: list[tuple[Path, os.stat_result]] = []
     file_values: list[dict[str, Any]] = []
     if manifest.get("version", 0) >= 3:
-        broker_snapshot = try_public_broker_snapshot(coord)
+        broker_snapshot = try_public_broker_snapshot(
+            coord, include_context_advice=getattr(args, "context_advice", False)
+        )
         if broker_snapshot is None:
             human_print("Workflow: temporarily unavailable")
         else:
@@ -422,6 +424,16 @@ def status_command(args: argparse.Namespace) -> CommandResult:
                 latest_usage = _status_assignment_usage(worker)
                 if latest_usage is not None:
                     human_print(f"    {latest_usage}")
+                advice = worker.get("context_advice")
+                if advice is not None:
+                    human_print(
+                        f"    historical context advice v{advice['version']} "
+                        f"round={advice['round']} kind={advice['kind']}: "
+                        f"{advice['recommendation'] or 'no recommendation'} (not applied); "
+                        f"source={advice['source']} reasons={','.join(advice['reasons'])} "
+                        f"unknown={','.join(advice['unknown_inputs']) or 'none'} "
+                        f"tradeoffs={','.join(advice['tradeoffs']) or 'none'}"
+                    )
                 for guardrail in worker.get("assignment_guardrails", []):
                     human_print(
                         f"    guardrail={guardrail['level']} metric={guardrail['metric']} "

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import unittest
 from unittest import mock
 
@@ -58,7 +59,7 @@ class RepairPolicyTests(BrokerFixture):
                 database.execute(
                     "SELECT value FROM meta WHERE key='schema_version'"
                 ).fetchone()[0],
-                "13",
+                "14",
             )
             self.assertEqual(retained_repair_policy(database), repair_policy(None))
         for policy in (
@@ -159,7 +160,16 @@ class RepairAdmissionTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
         return message
 
     def snapshot(self):
-        return broker_store.public_broker_snapshot(self.coord)
+        return broker_store.public_broker_snapshot(
+            self.coord, include_context_advice=True
+        )
+
+    def implementer_advice(self):
+        return next(
+            role["context_advice"]
+            for role in self.snapshot()["roles"]
+            if role["role"] == "implementer"
+        )
 
     def control(self, action="continue", command_id="c" * 32, role="implementer"):
         with broker_store.connect_broker_database(
@@ -185,8 +195,10 @@ class RepairAdmissionTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
 
     async def test_zero_cap_allows_initial_work_and_review_but_no_repair(self):
         broker = await self.start_broker()
+        initial_advice = self.implementer_advice()
         report = await self.pause(broker)
         state = self.snapshot()
+        self.assertEqual(self.implementer_advice(), initial_advice)
         self.assertEqual(state["workflow"]["state"], "needs_attention")
         self.assertEqual(
             state["workflow"]["continuation"],
@@ -235,6 +247,10 @@ class RepairAdmissionTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(state["continuation"]["max_repair_rounds"], 1)
         self.assertEqual(state["continuation"]["repair_rounds_admitted"], 1)
         self.assertIsNone(state["continuation"]["pending_repair_round"])
+        advice = self.implementer_advice()
+        self.assertEqual(advice["round"], 2)
+        self.assertEqual(advice["facts"]["relationship"], "unknown")
+        self.assertIsNone(advice["recommendation"])
         self.assertTrue(broker.send_raw.await_args.args[1]["duplicate"])
         # A different ID cannot approve more work while that repair is active.
         await broker.handle_control(
@@ -273,6 +289,27 @@ class RepairAdmissionTests(BrokerFixture, unittest.IsolatedAsyncioTestCase):
         self.assertEqual(state["state"], "active")
         self.assertEqual(state["continuation"]["repair_rounds_admitted"], 1)
         self.assertIsNone(state["continuation"]["max_repair_rounds"])
+        advice = self.implementer_advice()
+        self.assertEqual(advice["round"], 2)
+        self.assertEqual(advice["facts"]["relationship"], "related")
+        self.assertEqual(advice["unknown_inputs"], ["evidence", "pressure"])
+        self.assertIsNone(advice["recommendation"])
+
+    async def test_operator_reopened_work_is_unknown_even_after_approved_review(self):
+        broker = await self.start_broker(None)
+        await self.finish(broker, "implementer")
+        await self.finish(broker, "reviewer", "approved")
+        await broker.handle_control(
+            mock.Mock(),
+            mock.Mock(),
+            {**self.control("send"), "message": "OPERATOR_CANARY", "delivery": "steer"},
+        )
+        self.assertEqual(self.snapshot()["workflow"]["state"], "active")
+        advice = self.implementer_advice()
+        self.assertEqual(advice["round"], 2)
+        self.assertEqual(advice["facts"]["relationship"], "unknown")
+        self.assertIsNone(advice["recommendation"])
+        self.assertNotIn("OPERATOR_CANARY", json.dumps(self.snapshot()))
 
     async def test_phased_initial_implementation_does_not_consume_repair_allowance(
         self,
