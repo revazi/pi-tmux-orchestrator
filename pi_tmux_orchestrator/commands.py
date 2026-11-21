@@ -369,7 +369,9 @@ def status_command(args: argparse.Namespace) -> CommandResult:
     files: list[tuple[Path, os.stat_result]] = []
     file_values: list[dict[str, Any]] = []
     if manifest.get("version", 0) >= 3:
-        broker_snapshot = try_public_broker_snapshot(coord, include_context_advice=True)
+        broker_snapshot = try_public_broker_snapshot(
+            coord, include_context_advice=getattr(args, "context_advice", False)
+        )
         if broker_snapshot is None:
             human_print("Workflow: temporarily unavailable")
         else:

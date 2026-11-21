@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
-import argparse
+import io
 import itertools
 import json
+import sys
 import unittest
+from contextlib import redirect_stdout
 from unittest import mock
 
 from broker_test_support import BrokerFixture, assignment_usage_snapshot
 
-from pi_tmux_orchestrator import broker_store, commands, evidence_reuse
+from pi_tmux_orchestrator import broker_store, cli, commands, evidence_reuse, runtime
 from pi_tmux_orchestrator.broker import Broker, Client, initialize_broker_run
 from pi_tmux_orchestrator.context_advice import (
     MAX_CONTEXT_ADVICE_BYTES,
@@ -296,34 +298,58 @@ class ContextAdviceBoundaryTests(BrokerFixture, unittest.IsolatedAsyncioTestCase
         )
         self.assertIsNone(self.advice()["recommendation"])
 
-    async def test_status_renders_only_bounded_advice_for_both_transports(self):
+    async def test_cli_status_advice_is_opt_in_for_both_transports(self):
         broker = await self.start_plan()
         await self.finish_plan(broker)
-        for transport in ("tui", "rpc"):
-            manifest = {**self.manifest, "transport": transport}
-            save_manifest(self.coord, manifest)
-            if transport == "rpc":
-                for role in manifest["roles"]:
-                    rpc_role_paths(self.coord, role, create=True)
+        advice = self.advice()
+        self.assertEqual(advice["unknown_inputs"], ["evidence", "pressure"])
+
+        def status(*flags):
+            stdout = io.StringIO()
             with (
                 mock.patch.object(
-                    commands,
-                    "resolve_session",
-                    return_value=(manifest["session"], self.coord),
+                    sys,
+                    "argv",
+                    ["pi-tmux-agents", "status", self.manifest["session"], *flags],
                 ),
-                mock.patch.object(commands, "tmux", return_value=mock.Mock(stdout="")),
-                mock.patch.object(commands, "human_print") as human,
+                mock.patch.object(runtime, "JSON_MODE", False),
+                redirect_stdout(stdout),
             ):
-                result = commands.status_command(
-                    argparse.Namespace(session=manifest["session"])
-                )
-            self.assertEqual(
-                result.data["broker"]["roles"][0]["context_advice"], self.advice()
-            )
-            self.assertNotIn("context_advice", result.data["roles"][0]["broker_state"])
-            self.assertEqual(self.advice()["unknown_inputs"], ["evidence", "pressure"])
-            self.assertIn("no recommendation (not applied)", str(human.call_args_list))
-            self.assertNotIn("ADVICE_REPORT_CANARY", json.dumps(result.data))
+                self.assertEqual(cli.main(), 0)
+            return stdout.getvalue()
+
+        for transport in ("tui", "rpc"):
+            with self.subTest(transport=transport):
+                save_manifest(self.coord, {**self.manifest, "transport": transport})
+                if transport == "rpc":
+                    for role in self.manifest["roles"]:
+                        rpc_role_paths(self.coord, role, create=True)
+                with (
+                    mock.patch.object(
+                        commands,
+                        "resolve_session",
+                        return_value=(self.manifest["session"], self.coord),
+                    ),
+                    mock.patch.object(
+                        commands, "tmux", return_value=mock.Mock(stdout="")
+                    ),
+                ):
+                    default_json = status("--json")
+                    opted_in_json = status("--json", "--context-advice")
+                    default_human = status()
+                    opted_in_human = status("--context-advice")
+
+                # Pi status/watch use the unflagged envelope. Advice must not
+                # consume any of their existing detail budget.
+                self.assertNotIn('"context_advice"', default_json)
+                opted_in = json.loads(opted_in_json)
+                implementer, reviewer = opted_in["data"]["broker"]["roles"]
+                self.assertEqual(implementer.pop("context_advice"), advice)
+                self.assertIsNone(reviewer.pop("context_advice"))
+                self.assertEqual(opted_in, json.loads(default_json))
+                self.assertNotIn("historical context advice", default_human)
+                self.assertIn("no recommendation (not applied)", opted_in_human)
+                self.assertNotIn("ADVICE_REPORT_CANARY", opted_in_json)
 
     async def test_schema_thirteen_and_malformed_optional_metadata_remain_readable(
         self,

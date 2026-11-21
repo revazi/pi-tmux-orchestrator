@@ -540,9 +540,10 @@ or unobservable inputs require reinspection; unchanged metadata is not content
 identity or verification authority. Default-prune runs perform no such observations.
 
 Broker schema 14 adds one optional context-advice record per role, overwritten
-only when a distinct assignment is created. `status --json` exposes it under
-`data.broker.roles[].context_advice`; it is not a worker, observer, dashboard,
-Supervisor, or operator-control field. Version 1 fits in 512 bytes and uses fixed
+only when a distinct assignment is created. `status --context-advice --json`
+exposes it under `data.broker.roles[].context_advice`. Default CLI status and Pi
+status/watch omit the field; it is not a worker, observer, dashboard, Supervisor,
+or operator-control field. Version 1 fits in 512 bytes and uses fixed
 enums for input facts, source, recommendation, reasons, unknown inputs, and
 tradeoffs. Only the boundary's round and assignment kind identify its scope. No
 receipt, digest, raw pressure sample, or payload body is added by advice. Older
